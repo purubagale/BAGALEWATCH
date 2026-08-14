@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+db.sqlite3
+.env
+
+# Bind-mounted at runtime via docker-compose.yml (../docker-compose.yml)
+# for persistence — no need to bake any local uploads into the image.
+media/

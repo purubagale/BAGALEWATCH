@@ -1,0 +1,2388 @@
+/* BAGALEWATCH BTS v2 — Phase 1 styles. Deliberately plain CSS (no
+   Tailwind/CSS-in-JS dependency) — matches the "small, boring tooling"
+   choices elsewhere in Phase 0/1 rather than introducing a styling
+   framework decision this phase doesn't need to make yet. */
+
+* { box-sizing: border-box; }
+
+/* ── Design tokens (2026-08-07 NTC branding pass) ─────────────────────
+   Colors sampled directly from the real Nepal Telecom logo
+   (logo.jpg / public/ntc-logo.jpg): blue #0153A5, gold #E4B54D. Two
+   themes share the same brand colors — only the neutral background/
+   text/border scale and a few contrast-sensitive derived shades change.
+   Dark is the default (`:root`, no attribute needed) to match the
+   app's existing look; `[data-theme="light"]` overrides it. Toggled by
+   ThemeContext (theme/ThemeContext.tsx), which sets
+   `document.documentElement.dataset.theme` and persists the choice to
+   localStorage.
+
+   Semantic naming, not color naming — call sites should read
+   `var(--brand-primary)` / `var(--text-muted)`, never a raw hex, so a
+   future palette change never requires touching component CSS again.
+
+   Two brand tokens deliberately differ by role, not just theme:
+   - `--brand-primary` is the TRUE logo blue (#0153A5) — used for solid
+     fills (buttons, header-in-light-mode, badges) where enough area
+     carries it regardless of exact luminance.
+   - `--link-accent` is a LIGHTER tint of that same blue, used only for
+     TEXT/border accents in dark mode (active tab labels, links, focus
+     outlines) — #0153A5 is a fairly dark, low-luminance blue, and reads
+     poorly as small text or a thin border directly against this app's
+     near-black backgrounds (the previous accent, #7f77dd, was chosen
+     specifically because it was bright enough to read there). In light
+     mode the true blue already has excellent contrast on white, so
+     `--link-accent` just equals `--brand-primary` there — no separate
+     tint needed.
+   - `--brand-accent` (gold) is reserved for BRAND moments — the
+     selected-site map marker, the active-nav underline — not reused for
+     generic "warning" status, which stays its own semantically distinct
+     amber (`--status-warning`) so a status badge is never visually
+     confused with a brand accent. */
+:root {
+  /* Brand */
+  --brand-primary: #0153A5;
+  --brand-primary-hover: #013C77;
+  --brand-primary-active: #012E5B;
+  --link-accent: #94B7D9;
+  --brand-accent: #E4B54D;
+  --brand-accent-rgb: 228, 181, 77;
+  --brand-primary-rgb: 1, 83, 165;
+
+  /* Text on top of a solid brand-colored fill (buttons, solid badges) —
+     always white regardless of theme, since brand-primary is dark
+     enough in both themes to keep white text legible. */
+  --text-on-brand: #ffffff;
+  /* Text on top of the translucent "selected row" wash below — dark
+     theme washes stay dark enough for white text; light theme's wash
+     is pale, so it needs dark text instead. */
+  --text-on-selected: #ffffff;
+  /* Soft, theme-aware selected-row/active-tab background — an alpha
+     over brand-primary so it naturally reads as "a wash of brand blue"
+     over whatever surface sits beneath it, without a separate literal
+     color per theme. */
+  --brand-primary-soft: rgba(var(--brand-primary-rgb), 0.16);
+  --brand-primary-soft-strong: rgba(var(--brand-primary-rgb), 0.32);
+
+  /* Neutral surface scale (dark, default) */
+  --bg-app: #0b0d12;
+  --bg-surface: #12151c;
+  --bg-surface-alt: #0e1016;
+  --bg-hover: #1e2330;
+  --bg-hover-strong: #262c3d;
+  --header-bg: var(--bg-surface);
+  --header-text: var(--text-primary);
+  --header-text-muted: var(--text-tertiary);
+  --header-hover-bg: var(--bg-hover);
+
+  /* Text scale (dark, default) */
+  --text-primary: #e6e9ef;
+  --text-secondary: #cbd2e0;
+  --text-tertiary: #b6bcc8;
+  --text-muted: #9aa4b8;
+  --text-faint: #8b93a5;
+  --text-dim: #6b7280;
+  --code-text: #93c5fd;
+
+  /* Borders (dark, default) */
+  --border: #2a2f3a;
+  --border-subtle: #1c202a;
+
+  /* Status — semantically meaningful (pass/warn/fail/info), theme-aware
+     but intentionally never brand-colored, so a badge's meaning never
+     depends on which brand accent happens to look similar. Dark values
+     are the app's existing bright/glow palette (already tuned for
+     near-black backgrounds); light values below are separately tuned
+     for legibility on white. */
+  --status-success: #4ade80;
+  --status-success-bg: #14532d;
+  --status-success-bg-subtle: #14271b;
+  --status-success-border: #166534;
+  --status-warning: #fbbf24;
+  --status-warning-bg: #713f12;
+  --status-danger: #f87171;
+  --status-danger-bg: #7f1d1d;
+  --status-danger-bg-subtle: #2a1414;
+  --status-danger-border: #991b1b;
+  --status-danger-text-subtle: #fca5a5;
+  --status-info: #38bdf8;
+  --status-info-bg: #0c4a6e;
+  --status-success-text-subtle: #86efac;
+  --btn-danger-text: #fecaca;
+
+  /* Phase 3: shared RAG (red/amber/green) palette for the reporting
+     suite (SLA/NTA/Monthly/Scatter/Trend/RF Audit) — chained onto the
+     status tokens above rather than hardcoded a second time, so both
+     naming schemes stay in sync automatically. Kept under their
+     original names since these are read directly by name from TSX
+     (`var(--rpt-green)` etc in NtaCompliancePage.tsx/SlaTrackerPage.tsx)
+     — renaming would mean touching those call sites for no benefit. */
+  --rpt-green: var(--status-success);
+  --rpt-yellow: var(--status-warning);
+  --rpt-red: var(--status-danger);
+  --rpt-blue: var(--status-info);
+  --rpt-hint: var(--text-dim);
+
+  /* RAN technology identity colors (2026-08-08, Site Detail redesign) —
+     ported from v1's _techBadge() (bts_monitor.html ~3664: 2G=#f97316,
+     3G=#eab308, everything else incl. 4G/5G=#22c55e). Deliberately its
+     OWN token set, not reused from the --status-* palette above: these
+     badges identify WHICH RADIO TECHNOLOGY a sector is, not whether
+     something passed/warned/failed — conflating the two would make a 2G
+     sector badge visually read as "a warning," which it isn't. Fixed
+     across both themes (not redefined under [data-theme="light"] below),
+     same treatment as --brand-accent — a technology's identity color
+     shouldn't change with the user's theme preference, and each already
+     carries its own background/border alpha for contrast on either. */
+  --tech-2g: #f97316;
+  --tech-2g-bg: rgba(249, 115, 22, 0.15);
+  --tech-2g-border: rgba(249, 115, 22, 0.4);
+  --tech-3g: #eab308;
+  --tech-3g-bg: rgba(234, 179, 8, 0.15);
+  --tech-3g-border: rgba(234, 179, 8, 0.4);
+  --tech-4g: #22c55e;
+  --tech-4g-bg: rgba(34, 197, 94, 0.15);
+  --tech-4g-border: rgba(34, 197, 94, 0.4);
+
+  /* Elevation — added in this pass; previously every card/panel was
+     flat (border only, no shadow), which reads as "unfinished" next to
+     the depth cues most polished dashboards use. Kept subtle. */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.4);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
+
+/* Light theme — same brand blue/gold, a genuinely different neutral
+   scale (white/near-white surfaces, dark text) rather than a naive
+   "invert the dark palette" pass, since several dark-mode colors
+   (bright green/amber status text, the pale blue link tint) would fail
+   contrast on white. Toggle via the header's theme button; default
+   remains dark so existing users see no change until they opt in. */
+:root[data-theme='light'] {
+  --link-accent: var(--brand-primary);
+  --text-on-selected: var(--text-primary);
+  --brand-primary-soft: rgba(var(--brand-primary-rgb), 0.10);
+  --brand-primary-soft-strong: rgba(var(--brand-primary-rgb), 0.16);
+
+  --bg-app: #f3f5f8;
+  --bg-surface: #ffffff;
+  --bg-surface-alt: #eef1f6;
+  --bg-hover: #e9edf3;
+  --bg-hover-strong: #dbe3ee;
+  --header-bg: var(--brand-primary);
+  --header-text: #ffffff;
+  --header-text-muted: rgba(255, 255, 255, 0.78);
+  --header-hover-bg: rgba(255, 255, 255, 0.14);
+
+  --text-primary: #12151c;
+  --text-secondary: #333a46;
+  --text-tertiary: #4b5262;
+  --text-muted: #5b6472;
+  --text-faint: #6b7280;
+  --text-dim: #7a8394;
+  --code-text: #0153A5;
+
+  --border: #d7dce3;
+  --border-subtle: #e5e9ef;
+
+  --status-success: #15803d;
+  --status-success-bg: #dcfce7;
+  --status-success-bg-subtle: #ecfdf3;
+  --status-success-border: #86efac;
+  --status-warning: #92400e;
+  --status-warning-bg: #fef3c7;
+  --status-danger: #b91c1c;
+  --status-danger-bg: #fee2e2;
+  --status-danger-bg-subtle: #fef2f2;
+  --status-danger-border: #fca5a5;
+  --status-danger-text-subtle: #b91c1c;
+  --status-info: #0369a1;
+  --status-info-bg: #e0f2fe;
+  --status-success-text-subtle: #15803d;
+
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.08);
+  --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+body, input, button {
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+body {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+/* Global focus + form-field polish (2026-08-07) — genuinely missing
+   before this pass: no input/select/textarea anywhere had a visible
+   focus state, and buttons/links only showed the browser's default
+   (inconsistent-looking, easy to miss) outline. `:focus-visible` (not
+   plain `:focus`) so mouse clicks don't show a ring, only keyboard/
+   assistive-tech focus does — the standard modern pattern for this. */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 1px;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 3px var(--brand-primary-soft);
+}
+
+/* Themed scrollbars (Chromium/Edge/Safari) — a small but noticeable
+   polish touch; Firefox falls back to its own default (no equivalent
+   two-line API), which is an acceptable, non-broken fallback. */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); background-clip: padding-box; }
+
+/* App shell (2026-08-08 rewrite) — replaced the old header-on-top +
+   full-width-content layout with a left sidebar + right content column,
+   per an explicit design reference (Databricks' left icon rail +
+   breadcrumb top bar). `.app-shell` is now the flex ROW root; the old
+   `.app-header` (a single horizontal bar holding logo+nav+user actions)
+   is split into `.app-sidebar` (logo + nav, vertical, persistent) and
+   `.app-topbar` (breadcrumb + search/theme/user actions, inside the
+   content column so it scrolls with nothing but sits above `.app-main`). */
+.app-shell {
+  display: flex;
+  height: 100vh;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────── */
+/* Collapsed by default (icon rail only) — expands on hover OR when
+   pinned via the footer toggle button. Reuses --header-bg/--header-text
+   (the same "neutral-dark in dark mode, solid brand blue in light mode"
+   tokens the old horizontal header used) so the branding investment from
+   the design-system pass carries over to its new shape rather than
+   needing a second color decision. Width transitions via CSS for a
+   smooth expand/collapse; WHETHER to render label/description text at
+   all is a JS decision (Layout.tsx's `sidebarExpanded`), not just
+   opacity — an icon-only rail has no room for wrapped text regardless of
+   opacity, so this avoids invisible-but-still-laid-out content. */
+.app-sidebar {
+  width: 64px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--header-bg);
+  border-right: 2px solid var(--brand-accent);
+  transition: width 0.18s ease;
+  overflow: hidden;
+}
+.app-sidebar.expanded { width: 240px; }
+
+.app-sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 12px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+/* Circular "badge" logo (2026-08-08 follow-up — "will it look better if
+   both top and bottom exceeded"). A negative vertical margin equal on
+   BOTH sides makes the badge's rendered box taller than the space it
+   reserves in the flex row's own height calc, so it visually pops out
+   past the brand row's top AND bottom edges symmetrically instead of
+   sitting flush inside it (the earlier sidebar rewrite accidentally
+   dropped this — the very first horizontal-header version of this badge
+   had it, `margin: -6px 0`, but it got left off when the badge was
+   re-homed into `.app-sidebar-brand`). The source image itself was also
+   fixed the same day: the real logo file is a vertical lockup (circular
+   emblem ABOVE a Nepali wordmark) — the old crop centered a circle on
+   the whole rectangle and sliced through the wordmark; `ntc-logo.jpg` is
+   now pre-cropped to just the emblem, square, so a circular CSS crop of
+   it never touches the text. */
+.app-logo {
+  height: 48px;
+  width: 48px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 3px solid var(--brand-accent);
+  box-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.35),
+    0 0 0 3px var(--header-bg);
+  background: #ffffff;
+  flex-shrink: 0;
+  margin: -10px 0;
+}
+.app-sidebar-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--header-text);
+  line-height: 1.25;
+}
+
+.app-sidebar-nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-sidebar-row { display: flex; align-items: center; }
+.app-sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: var(--header-text-muted);
+  text-decoration: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.app-sidebar-link:hover { background: var(--header-hover-bg); color: var(--header-text); }
+/* Active page: same soft brand wash the old top-nav used, but a LEFT
+   gold bar (inset box-shadow, so it doesn't shift layout) instead of a
+   bottom underline — the natural vertical-nav equivalent. */
+.app-sidebar-link.active {
+  background: var(--brand-primary-soft-strong);
+  color: var(--header-text);
+  box-shadow: inset 3px 0 0 var(--brand-accent);
+}
+.app-sidebar-icon {
+  width: 22px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 17px;
+  line-height: 1;
+}
+/* Uploaded per-item icon image (2026-08-08 follow-up) — sized to sit
+   inside the same 22px rail slot the emoji fallback uses. */
+.app-sidebar-icon-img { width: 18px; height: 18px; object-fit: contain; vertical-align: middle; }
+.app-breadcrumb-icon-img { width: 14px; height: 14px; object-fit: contain; vertical-align: -2px; }
+.app-sidebar-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+.app-sidebar-label {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app-sidebar-desc {
+  font-size: 11px;
+  color: var(--header-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app-sidebar-link.active .app-sidebar-desc { color: inherit; opacity: 0.75; }
+
+.app-sidebar-caret-btn {
+  background: transparent;
+  border: none;
+  color: var(--header-text-muted);
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.app-sidebar-caret-btn:hover { background: var(--header-hover-bg); color: var(--header-text); }
+
+/* Submenu, indented under its parent — only ever rendered when the
+   sidebar itself is expanded (see Layout.tsx), so there's no collapsed-
+   width variant to style. */
+.app-sidebar-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 22px;
+  margin: 2px 0 4px;
+}
+
+.app-sidebar-footer {
+  flex-shrink: 0;
+  padding: 8px;
+  border-top: 1px solid var(--header-hover-bg);
+}
+.app-sidebar-pin-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: none;
+  color: var(--header-text-muted);
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.app-sidebar-pin-btn:hover { background: var(--header-hover-bg); color: var(--header-text); }
+.app-sidebar-pin-btn.pinned { color: var(--brand-accent); }
+
+/* ── Content column + top bar ─────────────────────────────────────── */
+.app-content-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+/* Breadcrumb bar — deliberately a plain neutral surface (not the bold
+   brand-colored bg the old horizontal header used), since that color
+   now lives on the sidebar; a colored bar here too would compete with it
+   and add no information of its own. */
+.app-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 18px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  min-height: 48px;
+}
+.app-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.app-breadcrumb-sep { color: var(--text-dim); }
+.app-breadcrumb-current { color: var(--text-primary); font-weight: 600; }
+
+.app-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.app-topbar-actions button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.app-topbar-actions button:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Dark/light theme toggle (2026-08-07, re-homed into .app-topbar-actions
+   2026-08-08) — shared with the pre-login toggle on LoginPage.tsx
+   (`.login-theme-toggle`). Deliberately styled with the same neutral
+   text/border tokens as `.app-topbar-actions button` (NOT --header-text)
+   — this button sits on a plain surface (`.app-topbar`'s --bg-surface,
+   or `.login-page`'s --bg-app) in BOTH places it's used, never on the
+   bold-blue header bar the --header-* tokens are tuned for. Using
+   --header-text here would have rendered as white-on-white in light
+   theme on the login page — caught while re-homing the header into the
+   sidebar, not from a live visual check (still pending).  */
+.theme-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.theme-toggle-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.app-topbar-role {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.app-main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ── Login ─────────────────────────────────────────────────────── */
+/* Bright-card theme (2026-08-11) — modeled on a reference "Health
+   Workforce Registry" login screen the user liked: dotted background,
+   dark pill badge above the card, circular logo avatar, pill-shaped
+   icon-prefixed inputs, a solid pill submit button, and a bottom
+   disclaimer pill. Kept every existing branding hook (logo/name/
+   subtitle/field labels/button text all still come from useBranding())
+   and every design token (--brand-primary etc.) instead of the
+   reference's own colors, so this reads as "this app, restyled" rather
+   than a foreign color scheme bolted on. Works in both themes: the dot
+   pattern and badge invert automatically via --bg-app/--text-primary
+   rather than hardcoded light-only colors. */
+.login-page {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  background-color: var(--bg-app);
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 24px 24px;
+  position: relative;
+  padding: 24px 16px;
+}
+/* Theme toggle is reachable pre-login too (2026-08-07) — "allow user to
+   change theme with selection by themselves" wasn't scoped to only
+   logged-in sessions, and the login screen is the very first thing
+   anyone sees. Positioned corner-absolute since .login-page is otherwise
+   just a centering flex container with nothing else to anchor it to. */
+.login-theme-toggle { position: absolute; top: 16px; right: 16px; }
+/* Inverted-contrast pill so it stays a solid, legible badge in either
+   theme without a second hardcoded color: dark-on-light in light theme
+   (--text-primary is near-black, --bg-app is near-white), light-on-dark
+   in dark theme (--text-primary is near-white, --bg-app is near-black). */
+.login-badge {
+  background: var(--text-primary);
+  color: var(--bg-app);
+  padding: 6px 18px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  box-shadow: var(--shadow-sm);
+}
+.login-avatar {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: var(--brand-primary-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 4px;
+}
+.login-logo {
+  display: block;
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.login-card {
+  width: 360px;
+  max-width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  box-shadow: var(--shadow-md);
+  padding: 32px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.login-card h1 { font-size: 19px; margin: 0; text-align: center; }
+.login-subtitle { margin: 0 0 8px; color: var(--text-faint); font-size: 13px; text-align: center; }
+/* Pill-shaped icon-prefixed fields, replacing the old stacked
+   label+input rows — the icon lives inside the same pill as the input
+   (not a separate element) so focus/hover styling only needs one
+   target. `.login-field` itself is the focus ring anchor via
+   :focus-within since the actual <input> is borderless. */
+.login-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 16px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.login-field:focus-within {
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 3px var(--brand-primary-soft);
+}
+.login-field-icon {
+  display: flex;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.login-field-icon svg { width: 17px; height: 17px; }
+.login-field input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 10px 0;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+.login-field input::placeholder { color: var(--text-faint); }
+.login-error { color: var(--status-danger); font-size: 13px; text-align: center; }
+.login-submit {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--brand-primary);
+  border: none;
+  border-radius: 999px;
+  padding: 12px;
+  color: var(--text-on-brand);
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.login-submit svg { width: 17px; height: 17px; }
+.login-submit:hover:not(:disabled) { background: var(--brand-primary-hover); }
+.login-submit:disabled { opacity: 0.5; cursor: default; }
+.login-disclaimer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  padding: 10px 20px;
+  border-radius: 999px;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: var(--shadow-sm);
+}
+.login-disclaimer svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--text-faint); }
+
+/* ── Sites page (sidebar tree + map) ──────────────────────────────*/
+.sites-page {
+  display: flex;
+  height: 100%;
+}
+.sites-sidebar {
+  /* width now set inline from SitesPage's sidebarWidth state (2026-07-30
+     drag-to-resize) — no fixed width here anymore, just the shrink/scroll
+     behavior that width doesn't control. */
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface-alt);
+}
+.sites-sidebar-resize-handle {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: var(--bg-surface-alt);
+  border-right: 1px solid var(--border);
+  position: relative;
+}
+.sites-sidebar-resize-handle:hover,
+.sites-sidebar-resize-handle:active { background: var(--brand-primary); }
+.sites-sidebar-header {
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+}
+.sites-sidebar-count { color: var(--text-dim); font-weight: 400; }
+/* Search box + virtualized scroll area now split into two stacked flex
+   children (2026-07-30) — sidebar-tree-wrap is the sidebar's actual 2nd
+   flex child (replacing the old direct .sidebar-tree), min-height: 0 is
+   needed on both levels so the inner virtualized list can still scroll
+   instead of the whole column growing to fit its content. */
+.sidebar-tree-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sidebar-tree-search { padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.sidebar-tree-search input {
+  width: 100%;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.sidebar-tree-empty { padding: 16px 12px; color: var(--text-dim); font-size: 12px; }
+.sidebar-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tree-row-province { font-weight: 600; background: var(--bg-surface); }
+.tree-row-district { padding-left: 22px; color: var(--text-secondary); }
+.tree-row-site { padding-left: 36px; color: var(--text-tertiary); }
+.tree-row:hover { background: var(--bg-hover); }
+.tree-row-selected { background: var(--brand-primary-soft-strong) !important; color: var(--text-on-selected); }
+.tree-caret { width: 12px; color: var(--text-dim); flex-shrink: 0; }
+.tree-label { overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; min-width: 0; }
+.tree-count { margin-left: auto; color: var(--text-dim); font-size: 11px; }
+.tree-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.tree-row-actions { margin-left: auto; display: flex; gap: 4px; flex-shrink: 0; }
+/* Per-site tech badges (2026-08-10) — same --tech-2g/-3g/-4g palette as
+   .sector-tech-badge (Site Detail's Sectors table), shrunk to fit inside
+   a 30px tree row alongside the status dot/label/edit icons. `min-width:
+   0` + `flex: 1 1 auto` on .tree-label above is what actually makes room
+   for these: without it the label never shrinks and pushes badges off
+   the visible row (row-level overflow:hidden just clips them silently). */
+.tree-tech-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-radius: 3px;
+  padding: 1px 4px;
+  border: 1px solid;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+.tree-tech-badge.tech-2g { color: var(--tech-2g); background: var(--tech-2g-bg); border-color: var(--tech-2g-border); }
+.tree-tech-badge.tech-3g { color: var(--tech-3g); background: var(--tech-3g-bg); border-color: var(--tech-3g-border); }
+.tree-tech-badge.tech-4g { color: var(--tech-4g); background: var(--tech-4g-bg); border-color: var(--tech-4g-border); }
+.tree-row-all-sites { font-weight: 600; background: var(--bg-hover); border-bottom: 1px solid var(--border); cursor: pointer; }
+.tree-row-all-sites:hover { background: var(--bg-hover); }
+.tree-row-action-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+.tree-row-action-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.sites-map-wrap {
+  flex: 1;
+  position: relative;
+}
+/* Scope-status badge (2026-08-04, map scope selection folded in from the
+   retired standalone Topology page) — a small floating overlay, same
+   "position: absolute over the map" convention as .map-add-toggle
+   (top-right) and .site-quickview (bottom-left) already use on this
+   page. Deliberately NOT a normal-flow element above the map: doing so
+   would push .site-map down and require restructuring this wrapper as a
+   flex column, which risks touching the map's own sizing/rendering — the
+   whole point of this feature is to add scope filtering without
+   affecting how the map itself is laid out or themed. */
+.sites-scope-status {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 1000;
+  background: var(--bg-surface)ee;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  max-width: calc(100% - 160px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.site-map {
+  height: 100%;
+  width: 100%;
+  background: var(--bg-app);
+}
+.site-quickview {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  background: var(--bg-surface)ee;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  z-index: 1000;
+  min-width: 220px;
+}
+.site-quickview-title { font-weight: 700; font-size: 14px; }
+.site-quickview-meta { color: var(--text-faint); font-size: 12px; margin: 4px 0 8px; }
+/* Selected-site marker highlight (2026-07-30) — a pulsing gold ring at
+   the selected site's coordinates. Plain L.divIcon markup/CSS instead of
+   swapping the real marker's icon inside the cluster group, which would
+   need reaching into leaflet.markercluster's internals; this floats
+   above everything (zIndexOffset in MapView.tsx) and works identically
+   whether the underlying marker is individually visible or currently
+   folded into a cluster bubble. */
+.selected-site-marker { position: relative; pointer-events: none; }
+.selected-site-marker-ring {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 3px solid var(--brand-accent);
+  box-sizing: border-box;
+  animation: selected-site-pulse 1.6s ease-out infinite;
+}
+.selected-site-marker-dot {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand-accent);
+}
+@keyframes selected-site-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(var(--brand-accent-rgb), 0.6); }
+  70% { box-shadow: 0 0 0 14px rgba(var(--brand-accent-rgb), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--brand-accent-rgb), 0); }
+}
+
+/* Topology page (2026-07-30 v1 port) */
+.topo-page-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px;
+  overflow: auto;
+}
+.topo-scope-status {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  padding: 8px 0 12px;
+  flex-shrink: 0;
+}
+.topo-empty-state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 13px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+.topo-map-toolbar-wrap { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1; }
+.topo-map-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.topo-map-toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.topo-filter-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.topo-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.topo-chip.active { background: var(--bg-hover); color: var(--text-primary); border-width: 2px; }
+.topo-chip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.topo-map-wrap { width: 100%; flex: 1; min-height: 360px; }
+.topo-map-wrap .dt-coverage-map { height: 100%; }
+.topo-map-fullscreen { background: var(--bg-app); width: 100%; height: 100vh; }
+.topo-map-fullscreen .dt-coverage-map { border-radius: 0; border: none; }
+
+/* Topology marker popup — raw HTML string content (see TopologyMap.tsx's
+   ScopeMarkers), so it's styled by plain class selectors, not JSX. */
+.topo-popup { font-size: 12px; min-width: 160px; }
+.topo-popup-title { font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+.topo-popup-meta { color: var(--text-faint); margin-bottom: 2px; }
+.topo-popup-status { font-weight: 600; margin: 4px 0; }
+.topo-popup-link {
+  background: var(--brand-primary);
+  border: none;
+  border-radius: 6px;
+  padding: 5px 9px;
+  color: var(--text-on-brand);
+  cursor: pointer;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.topo-popup-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.topo-popup-delete {
+  background: var(--status-danger-bg);
+  border: none;
+  border-radius: 6px;
+  padding: 5px 9px;
+  color: var(--text-on-brand);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+/* Status-dot marker (2026-07-30) — L.marker + L.divIcon standing in for
+   what used to be a plain L.circleMarker, so drag-to-relocate works (see
+   TopologyMap.tsx's statusDivIcon doc comment: CircleMarker/Path layers
+   have no built-in drag support in core Leaflet, only L.Marker does).
+   className: 'topo-dot-marker' on the L.divIcon call REPLACES Leaflet's
+   default 'leaflet-div-icon' class (an options key, not appended), so no
+   explicit reset of that default white-box style is needed here. */
+.topo-dot-marker { background: transparent; border: none; }
+.topo-dot-marker-circle { display: block; border-radius: 50%; box-sizing: border-box; }
+.topo-map-toolbar-actions button.active { background: var(--brand-primary); color: var(--text-on-brand); border-color: var(--brand-primary); }
+
+/* Map overlay toolbar (2026-08-11, extended for the satellite toggle —
+   previously just ".map-add-toggle" floating alone) — one flex row,
+   top-right over the map, same positioning approach as .site-quickview
+   (bottom-left) already uses on this page. Wrapping both buttons in a
+   shared flex container (rather than each absolutely positioned on its
+   own) means the satellite toggle and "+ Add Site" never overlap
+   regardless of whether canCreate hides the latter. */
+.sites-map-toolbar { position: absolute; top: 12px; right: 12px; z-index: 1000; display: flex; gap: 8px; }
+.sites-map-toolbar button.active,
+.map-add-toggle.active { background: var(--brand-primary); color: var(--text-on-brand); border-color: var(--brand-primary); }
+
+.site-quickview button {
+  background: var(--brand-primary);
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text-on-brand);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+/* ── Site detail ───────────────────────────────────────────────── */
+/* max-width raised from 960px (2026-08-09, "right part have sufficient
+   space but not utilized" layout pass) — 960px was sized for a single
+   narrow column; the two-column layout below (.site-detail-layout) needs
+   room for a ~320px sidebar alongside it. 1400px comfortably fits both
+   without the main column itself becoming unreadably wide on a large
+   monitor (same reasoning DtDataManagerPage's pages use `maxWidth: 'none'`
+   for — a wide table/map needs the room — except Site Detail's own
+   content genuinely tops out around here, so a real cap reads better than
+   'none'). */
+.site-detail-page { padding: 20px 28px; max-width: 1400px; }
+.back-link { color: var(--link-accent); text-decoration: none; font-size: 13px; }
+/* "← Back to search results" (2026-08-07) reuses .back-link's look but is
+   a <button>, not a <Link> — it reopens the Advanced Search modal via
+   SearchModalContext rather than navigating anywhere. */
+.back-link-btn { background: none; border: none; padding: 0; font: inherit; cursor: pointer; }
+.site-detail-page h1 { margin: 10px 0 4px; }
+.site-detail-meta { color: var(--text-faint); font-size: 13px; margin-bottom: 20px; }
+.site-detail-page h2 { font-size: 15px; margin: 24px 0 10px; }
+.muted { color: var(--text-dim); font-size: 12px; }
+
+/* Two-column layout (2026-08-09) — Identity + KPI tabs on the left at a
+   readable width, a sidebar (quick-stats card + location mini-map) filling
+   what used to be dead space on a wide monitor. Sectors stays OUTSIDE this
+   grid, full-width below both columns — a data table needs horizontal
+   room, not a column fighting a 320px sidebar for it.
+   min-width: 0 on the main column is load-bearing, not decorative: same
+   reasoning as DtSessionHistoryPage's flex split (a grid/flex item's
+   default min-width is its content's min-content size, which for the KPI
+   grids/inputs inside can exceed the track and silently blow out the
+   sidebar's width otherwise). Collapses to one column under 900px, since
+   below that a 320px sidebar squeezes the main column too narrow for the
+   4-column KPI grid to stay legible.
+
+   No `align-items: start` here (2026-08-09 follow-up: "again the right
+   part is empty") — that was making the sidebar column sit at its own
+   natural (short) height while the main column kept going, leaving a
+   visibly blank grey gutter below the two cards for as long as Identity+
+   KPI had more content than Quick Stats+Location did. Default `stretch`
+   makes the sidebar's own box match the main column's full height instead;
+   `.site-sidebar-card-grow` below then lets the Location card actually USE
+   that height (bigger map) rather than just sitting in a taller box with
+   the same empty space moved below the card instead of below the sidebar. */
+.site-detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; }
+.site-detail-main { min-width: 0; }
+.site-detail-sidebar { display: flex; flex-direction: column; gap: 16px; }
+@media (max-width: 900px) {
+  .site-detail-layout { grid-template-columns: 1fr; }
+}
+
+.site-sidebar-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+}
+/* The Location card (only) grows to fill whatever extra height the
+   sidebar's stretch gives it — see .site-detail-layout's comment above.
+   min-height: 0 overrides a flex item's default min-height:auto, which
+   would otherwise refuse to shrink below the mini-map's own content size
+   and could push the sidebar taller than intended on a short viewport. */
+.site-sidebar-card-grow { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.site-sidebar-card-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 12px;
+}
+.site-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12.5px;
+}
+.site-stat-row:last-child { border-bottom: none; padding-bottom: 0; }
+.site-stat-label { color: var(--text-secondary); }
+.site-stat-value { color: var(--text-primary); font-weight: 600; text-align: right; }
+.site-status-badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #fff;
+}
+.site-tech-flags { display: flex; gap: 6px; flex-wrap: wrap; }
+.site-tech-flag {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+}
+.site-tech-flag.entered { color: var(--status-success); border-color: var(--status-success); }
+
+/* .site-mini-map-container (root element SiteLocationMiniMap.tsx
+   returns) fills its parent .site-sidebar-card-grow, and .site-mini-map-wrap
+   in turn fills whatever's left after the sector-divergence note (if
+   shown) — flex: 1 instead of the fixed 200px this started at, so the map
+   actually uses the extra height stretch now gives the sidebar rather
+   than leaving it blank below a small fixed box. min-height is a floor
+   for the collapsed single-column mobile layout (see the 900px
+   breakpoint above), where the sidebar no longer stretches to match
+   anything and flex: 1 alone has nothing to grow into. */
+.site-mini-map-container { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.site-mini-map-wrap {
+  flex: 1;
+  min-height: 240px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.site-mini-map-wrap .leaflet-container { height: 100%; width: 100%; background: var(--bg-surface-alt); }
+.site-mini-map-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+/* className on the L.divIcon call REPLACES Leaflet's default marker
+   image/shadow entirely — same technique TopologyMap.tsx's
+   .topo-dot-marker uses (see that rule's comment), so this needs the
+   same background/border reset or a faint square ghost shows through
+   behind the dot. */
+.site-mini-map-dot-marker { background: transparent; border: none; }
+.site-mini-map-dot {
+  display: block;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+/* Sector-expansion note (2026-08-09) — shown under the mini-map whenever
+   at least one sector's own GPS override diverges from the site's own
+   location, see SiteLocationMiniMap.tsx's points computation. */
+.site-mini-map-note {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--status-warning);
+  background: var(--status-warning-bg);
+  border: 1px solid var(--status-warning);
+  border-radius: var(--radius-md);
+  padding: 6px 9px;
+}
+
+.kpi-table {
+  width: auto;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.kpi-table td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+.kpi-table td:first-child { color: var(--text-tertiary); width: 240px; }
+
+/* Sectors table (2026-08-08 redesign) — row-bottom-borders + a rounded
+   scroll wrapper instead of the old every-cell-bordered grid, closer to
+   v1's actual sector table look (bts_monitor.html ~3700: `border-bottom:
+   1px solid var(--bdr)` per row, no full cell grid). Only ever used here
+   (unlike .edit-grid), so safe to restyle freely. */
+.sectors-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.sectors-table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 12px; }
+.sectors-table th, .sectors-table td { padding: 8px 12px; white-space: nowrap; }
+.sectors-table thead tr { border-bottom: 1px solid var(--border); }
+.sectors-table th {
+  background: var(--bg-surface);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.sectors-table tbody tr { border-bottom: 1px solid var(--border-subtle); transition: background-color 0.1s ease; }
+.sectors-table tbody tr:last-child { border-bottom: none; }
+.sectors-table tbody tr:hover { background: var(--bg-hover); }
+.sectors-table td.sector-cell-name { font-weight: 600; color: var(--text-primary); }
+.sectors-table td.sector-cell-accent { color: var(--link-accent); }
+.sectors-table td.sector-cell-num { text-align: right; color: var(--text-secondary); }
+.sectors-table td.sector-cell-actions { text-align: center; white-space: nowrap; }
+/* Per-sector GPS override display (2026-08-09) — see SiteDetailPage.tsx's
+   Location column and Sector.lat/lng's docstring in models.py. */
+.sector-location-inherited { color: var(--text-faint); font-style: italic; }
+.sector-location-override { color: var(--link-accent); font-size: 11px; white-space: nowrap; }
+.sector-icon-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 3px 5px;
+  border-radius: 4px;
+}
+.sector-icon-btn:hover { color: var(--text-primary); background: var(--bg-hover-strong); }
+
+.page-status {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-faint);
+}
+.page-status-error { color: var(--status-danger); }
+
+/* ── Phase 2: shared form/button primitives ───────────────────────── */
+.btn-primary, .btn-secondary, .btn-danger {
+  border-radius: var(--radius-sm);
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.btn-primary { background: var(--brand-primary); color: var(--text-on-brand); box-shadow: var(--shadow-sm); }
+.btn-primary:hover { background: var(--brand-primary-hover); }
+.btn-primary:active { background: var(--brand-primary-active); }
+.btn-secondary { background: transparent; border-color: var(--border); color: var(--text-primary); }
+.btn-secondary:hover { background: var(--bg-hover); }
+.btn-primary:disabled, .btn-secondary:disabled, .btn-danger:disabled { opacity: 0.5; cursor: default; }
+.btn-small { padding: 3px 8px; font-size: 12px; }
+.btn-danger { background: var(--status-danger-bg); border-color: var(--status-danger-border); color: var(--btn-danger-text); }
+.btn-danger:hover { background: var(--status-danger-border); }
+
+.form-error {
+  background: var(--status-danger-bg-subtle);
+  border: 1px solid var(--status-danger-bg);
+  color: var(--status-danger-text-subtle);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin: 12px 0;
+}
+
+.edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px 16px;
+}
+.edit-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.edit-grid input, .kpi-table input, .sector-cell-input {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  width: 100%;
+}
+.kpi-table input { max-width: 140px; }
+.sector-cell-input { min-width: 70px; }
+
+/* ── Site detail: edit mode header ────────────────────────────────── */
+.site-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+.site-title-input {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text-primary);
+  font-size: 20px;
+  font-weight: 700;
+  margin-top: 10px;
+}
+.site-detail-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-top: 10px;
+}
+
+/* ── Site Detail redesign (2026-08-08, "site details and sector details
+   are beautifully displayed in v1 but in v2 it is in plain display")
+   ─────────────────────────────────────────────────────────────────────
+   Ported from v1's Edit Site modal (.f-section/.f-row/.f-group/.f-label/
+   .f-input/.tm-tabs — bts_monitor.html lines ~223-306, ~837-908) and its
+   Sectors tab (_techBadge()/_sectorIdLabel()/azimuth-layout markup,
+   ~3664-3738), remapped onto v2's OWN design tokens instead of v1's
+   separate --acc/--bdr/--surf2/--txt/--muted/--hint variable set.
+   Deliberately new, scoped class names (site-form-*, kpi-tabs/kpi-tab/
+   kpi-pane-empty, sector-tech-badge, sector-azimuth-*) rather than
+   redefining .edit-grid/.kpi-table/.sectors-table above — those three are
+   also used by several other pages (MenuAdminPage, BrandingPage,
+   ThresholdsPage, ...), so changing them here would have silently
+   restyled pages nobody asked to change. */
+.site-form-section {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--link-accent);
+  margin: 22px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.site-form-section:first-child { margin-top: 0; }
+.site-form-section-hint {
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-dim);
+  margin-left: 8px;
+}
+.site-form-row { display: grid; gap: 12px; margin-bottom: 12px; }
+.site-form-row.cols-2 { grid-template-columns: 1fr 1fr; }
+.site-form-row.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+.site-form-row.cols-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+.site-form-group { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.site-form-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.site-form-value { font-size: 13px; color: var(--text-primary); padding: 6px 0; }
+.site-form-group input, .site-form-group select {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  width: 100%;
+}
+.site-form-group input:focus, .site-form-group select:focus {
+  outline: none;
+  border-color: var(--link-accent);
+}
+.site-form-group input[readonly] { opacity: 0.55; }
+
+/* Tabbed 4G LTE / 3G UMTS / 2G GSM KPI panel — v1's tm-tabs pattern,
+   reused here rather than v1's own .tm-tab (which this app already uses
+   elsewhere for a different tab bar) to keep this panel's tab styling
+   independently tunable. */
+.kpi-tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 14px; gap: 4px; }
+.kpi-tab {
+  padding: 9px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.kpi-tab:hover { color: var(--text-primary); }
+.kpi-tab.active { color: var(--link-accent); border-bottom-color: var(--link-accent); }
+.kpi-pane-empty {
+  padding: 28px 20px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  background: var(--bg-surface-alt);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* Sector tech badges — colors are --tech-2g/-3g/-4g (see :root), not the
+   --status-* palette; see that token block's comment for why. `.tech-4g`
+   also covers any tech value that ISN'T literally "2G" or "3G" (5G,
+   blank, etc.) — same fallback-to-green rule v1's _techBadge() uses. */
+.sector-tech-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border-radius: 4px;
+  padding: 2px 7px;
+  border: 1px solid;
+  display: inline-block;
+  white-space: nowrap;
+}
+.sector-tech-badge.tech-2g { color: var(--tech-2g); background: var(--tech-2g-bg); border-color: var(--tech-2g-border); }
+.sector-tech-badge.tech-3g { color: var(--tech-3g); background: var(--tech-3g-bg); border-color: var(--tech-3g-border); }
+.sector-tech-badge.tech-4g { color: var(--tech-4g); background: var(--tech-4g-bg); border-color: var(--tech-4g-border); }
+
+.sector-azimuth-heading {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 18px 0 8px;
+}
+.sector-azimuth-grid { display: flex; gap: 10px; flex-wrap: wrap; }
+.sector-azimuth-card {
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  text-align: center;
+  min-width: 92px;
+}
+.sector-azimuth-card-icon { font-size: 18px; line-height: 1; }
+.sector-azimuth-card-label { font-size: 11px; font-weight: 600; color: var(--text-primary); margin-top: 4px; }
+.sector-azimuth-card-deg { font-size: 10px; color: var(--text-muted); margin-top: 1px; }
+
+/* ── Phase 2: admin pages (Thresholds/Tree/Users/Permissions) ───────── */
+.admin-page { padding: 20px 28px; max-width: 1100px; }
+.admin-page h1 { margin: 0 0 4px; }
+.admin-page h2 { font-size: 15px; margin: 24px 0 10px; display: flex; align-items: center; }
+.admin-page-actions { display: flex; gap: 8px; margin-top: 16px; }
+
+.form-success {
+  background: var(--status-success-bg-subtle);
+  border: 1px solid var(--status-success-border);
+  color: var(--status-success-text-subtle);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin: 12px 0;
+}
+.form-error-inline { margin: 4px 0; }
+
+/* API Access page (2026-08-12) — example curl commands in the "Using a
+   key" section. Reuses the same admin-page prose width, just monospace
+   + a subtle background so it reads as a code sample, not body text. */
+.code-block {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.admin-table th, .admin-table td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+/* Header styling (2026-08-07) — small caps + letter-spacing, matching
+   the micro-copy treatment already used elsewhere (.report-card-label,
+   .dt-explore-list-title) so table headers read as one consistent
+   "section label" style across the app instead of just being slightly
+   darker body text. */
+.admin-table th {
+  background: var(--bg-surface);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+/* Advanced Site Search (2026-08-06) result rows navigate to site detail on click. */
+.admin-table-row-clickable { transition: background-color 0.1s ease; }
+.admin-table-row-clickable:hover { background: var(--bg-hover); }
+/* RowLimitSelect.tsx (2026-08-07) — shared render-cap control for any
+   table over the full site dataset. */
+.row-limit-select { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-tertiary); }
+.row-limit-select select { background: var(--bg-app); border: 1px solid var(--border); border-radius: 5px; color: var(--text-primary); padding: 4px 6px; }
+
+/* ── Phase 3: reporting suite (SLA/NTA/Monthly/Scatter/Trend/RF Audit) ── */
+.report-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.report-toolbar select {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.report-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.report-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  padding: 12px 14px;
+  text-align: center;
+}
+.report-card-val { font-size: 22px; font-weight: 700; }
+.report-card-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 3px; }
+.report-card-sub { font-size: 9px; color: var(--text-dim); margin-top: 1px; }
+.report-table-wrap { overflow-x: auto; }
+.report-table-wrap .admin-table { font-size: 12px; white-space: nowrap; }
+.report-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+}
+.report-badge-pass { background: var(--status-success-bg); color: var(--status-success); }
+.report-badge-warn { background: var(--status-warning-bg); color: var(--status-warning); }
+.report-badge-fail { background: var(--status-danger-bg); color: var(--status-danger); }
+
+/* Scatter Plot (core/reports.py's ScatterDataView + ScatterPlotPage.tsx,
+   ported from bts_monitor.html's renderScatterPlot() canvas). */
+.admin-page canvas {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+/* KPI Trend (core/kpi_trend.py + KpiTrendPage.tsx, ported from
+   bts_monitor.html's #trend-modal — tbtn/feat-tabs/feat-tab/trend-*
+   class names match v1's on purpose, since this is a near-literal port
+   of that modal's chart layout, just as a full page instead of a modal). */
+.tbtn {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.tbtn.active { border-color: var(--link-accent); color: var(--text-primary); }
+.feat-tabs { display: flex; border-bottom: 1px solid var(--border); gap: 2px; }
+.feat-tab {
+  padding: 9px 16px;
+  font-size: 10px;
+  cursor: pointer;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.feat-tab.active { color: var(--link-accent); border-bottom-color: var(--link-accent); }
+.trend-chart-wrap {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  padding: 12px;
+}
+.trend-chart-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.trend-canvas { width: 100%; height: 140px; display: block; }
+
+.scatter-tooltip {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  z-index: 10;
+  box-shadow: var(--shadow-md);
+}
+
+.md-report {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 18px 22px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.md-report h2 { font-size: 17px; margin: 0 0 10px; }
+.md-report h3 { font-size: 14px; margin: 18px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; color: var(--text-primary); }
+.md-report h4 { font-size: 13px; margin: 12px 0 4px; color: var(--status-info); }
+.md-report hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+.md-report p { margin: 6px 0; }
+.md-report ul { margin: 6px 0; padding-left: 18px; }
+.md-report .md-table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 12px; }
+.md-report .md-table th, .md-report .md-table td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
+.md-report .md-table th { background: var(--bg-app); color: var(--text-muted); font-weight: 600; }
+.admin-table input[type="text"], .admin-table input:not([type]), .admin-table input[type="number"], .admin-table input[type="password"] {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 7px;
+  color: var(--text-primary);
+  font-size: 13px;
+  width: 100%;
+  min-width: 90px;
+}
+.admin-table select { background: var(--bg-app); border: 1px solid var(--border); border-radius: 5px; color: var(--text-primary); padding: 5px; }
+.admin-table-key { font-family: ui-monospace, monospace; color: var(--code-text); }
+.admin-table-actions { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+.inline-checkbox { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-tertiary); }
+
+.permissions-table th { text-align: center; font-size: 11px; }
+.permissions-table td { text-align: center; }
+.permissions-table td:first-child, .permissions-table th:first-child { text-align: left; }
+
+/* RF Audit (core/rf_audit.py + RfAuditPage.tsx, ported from
+   bts_monitor.html's #audit-modal, ~line 1182-1328 / 11655-12167) —
+   class names are new (not v1's f-group/chk-row/finding-item), following
+   this codebase's own edit-grid/report-card/admin-table primitives
+   instead of importing v1's separate CSS vocabulary wholesale. */
+.audit-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.audit-section-hdr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+}
+.audit-section-title { color: var(--text-primary); }
+.audit-chk-row {
+  display: grid;
+  grid-template-columns: 1fr auto 200px;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+.audit-chk-row:last-child { border-bottom: none; }
+.audit-chk-label { color: var(--text-secondary); }
+.audit-chk-label small { display: block; color: var(--text-dim); font-size: 10px; margin-top: 2px; }
+.audit-chk-status { display: flex; gap: 4px; }
+.chk-btn {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.chk-pass.on { background: var(--status-success-bg); border-color: var(--status-success-border); color: var(--status-success); }
+.chk-fail.on { background: var(--status-danger-bg); border-color: var(--status-danger-border); color: var(--status-danger); }
+.chk-na.on { background: var(--bg-hover); border-color: var(--border); color: var(--text-muted); }
+.audit-chk-note {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+  width: 100%;
+}
+.audit-meas-input {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+  width: 100%;
+  margin-top: 6px;
+}
+.audit-eval-result {
+  font-size: 11px;
+  padding: 8px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  margin: 8px 0 16px;
+}
+.audit-finding {
+  display: flex;
+  gap: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+.audit-finding-bar { width: 4px; border-radius: 2px; flex-shrink: 0; }
+
+/* ── Tree admin page ──────────────────────────────────────────────── */
+.tree-active-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 12px 0;
+}
+.tree-folder-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+.tree-folder-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tree-subfolder-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0 0 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tree-subfolder-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.tree-assign-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.tree-assign-row select, .tree-assign-row input {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.tree-site-matches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-width: 480px;
+}
+.tree-site-matches li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.tree-site-matches li:last-child { border-bottom: none; }
+
+/* ── Drive-Test Data Manager (core/drive_test.py + DtDataManagerPage.tsx,
+   ported from bts_monitor.html's DT Data Manager modal — Phase 4b/4c).
+   Reuses report-toolbar/report-card/admin-table/feat-tabs like every
+   other Phase 3/4 page; only genuinely new shapes (drop zone, coverage
+   map chrome, duplicate-upload dialog) get their own classes. */
+.dt-drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 28px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 13px;
+  cursor: pointer;
+  margin: 12px 0;
+}
+.dt-drop-zone:hover, .dt-drop-zone.drag-over {
+  border-color: var(--link-accent);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+}
+.dt-drop-zone-hint {
+  margin-top: 8px;
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+  color: var(--text-dim);
+}
+
+.dt-coverage-map-wrap { margin-top: 12px; }
+.dt-metric-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.dt-metric-tab {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.dt-metric-tab.active { border-color: var(--link-accent); color: var(--text-primary); }
+.dt-coverage-map {
+  height: 420px;
+  width: 100%;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.dt-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.dt-legend-item { display: flex; align-items: center; gap: 5px; }
+.dt-legend-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+/* Compare Sessions — multi-panel small-multiples layout (2026-08-05,
+   replacing a single map + metric-tab switcher per user-attached v1
+   reference: one small map per metric type, shown simultaneously, each
+   with its own inline per-band count legend instead of a separate stats
+   table).
+   **Switched from CSS Grid to flex-wrap, 2026-08-07 (4th resize attempt)**
+   — per explicit follow-up ("donot overlap while expanding, relate with
+   other whole panel and move other if needed"), an expanded panel needs
+   to visually push its neighbors out of the way, not just draw on top of
+   them. That's not something CSS Grid's `fr` columns can do: a `1fr`
+   track ignores a resized item's actual on-screen size, so growing one
+   panel just overlapped whatever was in the next column (the z-index
+   hover-bump from the previous attempt only hid the collision, it didn't
+   fix it). Flexbox with `flex-wrap: wrap` genuinely reflows — when a
+   flex item's main size is overridden by an interactive `resize` drag,
+   the browser recomputes the row exactly like a real layout change: if
+   the growing panel no longer fits next to its neighbor, the neighbor
+   wraps down to the next line automatically. No JS layout code needed for
+   this, it's native flexbox behavior. */
+.dt-compare-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+}
+/* Resizable card (2026-08-07, 6th and final attempt — see
+   DtCompareMap.tsx's `MetricPanel` doc comment for the full story). Native
+   CSS `resize: both` is GONE — every previous attempt fixed one real bug
+   (grid `fr` tracks not reflowing, `max-width`/`flex-grow` leaving no
+   room to grow), but the resize still broke past a certain width because
+   this page's `.app-main` scroll container doesn't auto-scroll during a
+   native resize drag. Replaced with a hand-rolled `.dt-compare-panel-
+   resize-handle` driven by `window`-level mousemove/mouseup (same pattern
+   as this app's own sidebar/history-divider drag-resize), which has no
+   such limitation — it computes size purely from mouse delta, unbounded
+   by any ancestor's visible scroll position.
+   `flex: 0 0 360px` is still the CSS-only starting size (before any drag)
+   — same reasoning as the 5th attempt: no `flex-grow` so there's real
+   slack, no `max-width` so growth isn't capped. Once the user drags,
+   `MetricPanel` overrides this via inline `style` instead. */
+.dt-compare-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 360px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  background: var(--bg-surface-alt);
+  padding: 10px;
+  min-width: 280px;
+  min-height: 220px;
+  overflow: hidden;
+}
+.dt-compare-panel-resize-handle {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  z-index: 2;
+  background: linear-gradient(
+    135deg,
+    transparent 0 30%,
+    #4b5262 30% 40%,
+    transparent 40% 55%,
+    #4b5262 55% 65%,
+    transparent 65% 80%,
+    #4b5262 80% 90%,
+    transparent 90% 100%
+  );
+}
+.dt-compare-panel-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+.dt-compare-panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex: none;
+}
+.dt-compare-panel-title-row .dt-compare-panel-title { margin-bottom: 0; }
+.dt-compare-panel-maptoggle {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dt-compare-panel-maptoggle:hover { background: var(--bg-hover-strong); }
+.dt-compare-panel-resizable {
+  flex: 1 1 260px;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.dt-compare-panel-map {
+  height: 100%;
+  width: 100%;
+}
+.dt-compare-panel-legend { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; flex: none; }
+.dt-compare-panel-legend-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); }
+.dt-compare-panel-legend-count { margin-left: auto; color: var(--text-dim); }
+
+/* Compare Sessions (2026-08-07, 5th revision) — the old global "Show
+   sessions separately"/"Blank view" toggle checkboxes are gone (see
+   DtCompareMap.tsx's doc comment); every panel always starts as this
+   blank SVG scatter, with its own per-panel "🗺️ Map" button
+   (.dt-compare-panel-maptoggle above) to load a real Leaflet map on
+   demand instead. */
+.dt-compare-panel-blank {
+  background: #ffffff;
+  display: block;
+}
+.dt-compare-panel-blank-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Phase 4d — Explore-by-coordinate tab */
+.dt-explore-search-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dt-explore-coord-input {
+  flex: 1;
+  min-width: 260px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 7px 10px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.dt-explore-radius-input {
+  width: 70px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 7px 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.dt-explore-radius-label { color: var(--text-muted); font-size: 11px; }
+
+/* ~1km nearby-site tagging (2026-07-30) — Session History search box +
+   table cell. Search box mirrors .dt-explore-coord-input's look since
+   it's the same "free-text search" affordance, just full-width above
+   a table instead of inline in a row. */
+.dt-history-search-input {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 7px 10px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.dt-nearby-sites-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-tertiary); }
+
+/* Session History drag-resize divider + collapsed-panel tab (2026-07-30) */
+.dt-history-resize-handle {
+  width: 6px;
+  align-self: stretch;
+  margin: 0 8px;
+  cursor: col-resize;
+  border-radius: 3px;
+  background: transparent;
+  position: relative;
+}
+.dt-history-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+  border-radius: 1px;
+}
+.dt-history-resize-handle:hover::after,
+.dt-history-resize-handle:active::after { background: var(--brand-primary); }
+.dt-history-expand-tab {
+  align-self: stretch;
+  width: 22px;
+  margin-left: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+}
+.dt-history-expand-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+.dt-explore-tech-row { display: flex; gap: 4px; margin-top: 8px; }
+.dt-explore-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
+.dt-explore-list-col { min-width: 0; }
+.dt-explore-list-title { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+/* dt-explore-map-wrap is the div react actually re-renders on every
+   isFullscreen change (unlike react-leaflet's MapContainer, whose own
+   `style`/`className` props are only read ONCE at first mount and then
+   ignored — MapContainer hands the container div to Leaflet's imperative
+   code after that, so toggling a height value through MapContainer's
+   props never took effect; this was the real reason invalidateSize()
+   alone didn't fix the black-area bug). Height lives entirely on this
+   wrapper; .dt-coverage-map below just fills whatever height the wrapper
+   currently has, so it never needs its own reactive style prop. */
+/* position: relative added 2026-08-05 — the "Open site detail" quickview
+   card (.site-quickview, absolutely positioned bottom-left) needs a
+   positioned ancestor to anchor to; without this it would anchor to the
+   page instead of the map. */
+.dt-explore-map-wrap { position: relative; height: 420px; width: 100%; margin-top: 12px; }
+.dt-explore-map-wrap .dt-coverage-map { height: 100%; }
+.dt-explore-map-fullscreen { background: var(--bg-app); width: 100%; height: 100vh; margin-top: 0; }
+.dt-explore-map-fullscreen .dt-coverage-map { border-radius: 0; border: none; }
+
+.row-selected { background: var(--brand-primary-soft-strong); }
+.dt-session-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--link-accent);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+.dt-session-link:hover { text-decoration: underline; }
+
+/* Advanced Site Search results' Location column (2026-08-09) — opens the
+   Sites Topology map instead of Site Detail, so it needs its own click
+   target distinct from the row's own onClick (see
+   AdvancedSiteSearchModal.tsx's openOnMap()). */
+.search-result-location-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--link-accent);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.search-result-location-link:hover { text-decoration: underline; }
+
+/* Generic modal chrome — new (v1's is a raw innerHTML string, not a CSS
+   class file); shared by any page that needs a lightweight confirm/prompt
+   dialog, starting with the duplicate-upload dialog here. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+}
+.modal-box {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  width: 100%;
+  margin: 0 16px;
+}
+.modal-hdr { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.modal-hdr h2 { margin: 0; font-size: 15px; }
+.modal-body { padding: 14px 18px; }
+.modal-footer { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+
+.dt-dup-card {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+.dt-dup-card-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--link-accent); margin-bottom: 4px; }
+.dt-dup-card-name { font-size: 12px; font-weight: 700; color: var(--text-primary); }
+.dt-dup-card-sub { font-size: 10px; color: var(--text-faint); }
+
+/* Backup & Restore — Complete Project (2026-08-05), BackupPage.tsx.
+   Card look ported from v1's modal panels (background var-equivalent
+   surf2, border, rounded corners) as plain stacked sections on a full
+   page instead of a modal — this app doesn't have a v1-style CSS
+   variable theme file, so colors are hardcoded to match the app's
+   existing dark palette (same greys/blues used by .dt-compare-panel
+   etc.) rather than introduced as new variables for one page. */
+.backup-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  padding: 16px;
+  margin-bottom: 14px;
+}
+.backup-card-hdr { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.backup-card-title { font-size: 13px; font-weight: 700; color: var(--text-primary); }
+.backup-summary-list {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.9;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+.backup-summary-list strong { color: var(--text-primary); }
+.backup-note-card {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.7;
+  margin-bottom: 14px;
+}
+.backup-note-card strong { color: var(--text-secondary); }
+.backup-scope-row { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; font-size: 12px; color: var(--text-secondary); }
+.backup-scope-opt { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.backup-scope-opt select { margin-left: 4px; }
+.backup-xlsx-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.backup-xlsx-card { border: 1px solid var(--border); border-radius: 6px; padding: 12px; background: var(--bg-surface-alt); }
+.backup-xlsx-card-title { font-size: 11px; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; }
+.backup-import-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.backup-import-col { min-width: 0; }
+.backup-restore-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.backup-restore-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  cursor: pointer;
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+/* ── Dashboard (2026-08-08) ────────────────────────────────────────── */
+.dashboard-page { padding: 24px 28px; max-width: 1200px; }
+.dashboard-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.dashboard-header h1 { margin: 0 0 4px; }
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+}
+.dash-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  text-decoration: none;
+  color: inherit;
+  min-height: 108px;
+}
+.dash-card-shortcut {
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+.dash-card-shortcut:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--brand-primary);
+}
+.dash-card-icon { font-size: 26px; line-height: 1; margin-bottom: 6px; }
+/* Uploaded MenuItem icon image (2026-08-08 follow-up) — sized to match
+   the emoji fallback's visual weight in both the card grid and the
+   smaller Customize-mode row. */
+.dash-card-icon-img { width: 26px; height: 26px; object-fit: contain; }
+.dash-customize-icon .dash-card-icon-img { width: 18px; height: 18px; }
+/* Menu section page (2026-08-08 follow-up: "initial dashboard after
+   login and menu-submenu dashboard after header menu click should be
+   different") — deliberately NOT styled like `.dashboard-page` even
+   though it shares the same `.dashboard-grid` card layout underneath.
+   A colored banner (not a plain heading) + an explicit back-to-Dashboard
+   link + accent-bordered cards are what make this read as "you drilled
+   into a section," not "this is the home page again." */
+.menu-section-page { padding: 24px 28px; max-width: 1200px; }
+.menu-section-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--brand-primary-soft-strong);
+  border: 1px solid var(--brand-primary);
+  border-radius: var(--radius-lg);
+  padding: 18px 22px;
+  margin-bottom: 10px;
+}
+.menu-section-banner h1 { margin: 0; font-size: 20px; }
+.menu-section-banner p { margin: 4px 0 0; color: var(--text-muted); font-size: 13px; }
+.menu-section-banner-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  font-size: 26px;
+  background: var(--bg-surface);
+  border: 2px solid var(--brand-accent);
+  border-radius: 50%;
+}
+.menu-section-banner-icon .dash-card-icon-img { width: 28px; height: 28px; }
+.menu-section-back-link {
+  display: inline-block;
+  margin: 12px 0 18px;
+  font-size: 13px;
+  color: var(--brand-primary);
+}
+.menu-section-back-link:hover { text-decoration: underline; }
+/* Accent-bordered card variant, distinct from Dashboard's plain
+   hover-lift `.dash-card-shortcut` tile — a colored left edge instead of
+   a shadow-on-hover is the at-a-glance visual difference between "a
+   section item" and "a dashboard shortcut," even when the two grids sit
+   right next to each other in a screenshot. */
+.section-card {
+  border-left: 3px solid var(--brand-accent);
+}
+.section-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-left-color: var(--brand-primary);
+}
+.dash-card-value { font-size: 28px; font-weight: 700; color: var(--text-primary); line-height: 1.1; }
+.dash-card-label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.dash-card-stat .dash-card-label { color: var(--text-muted); font-weight: 500; }
+.dash-card-desc { font-size: 12px; color: var(--text-muted); }
+
+.dashboard-customize { margin-top: 4px; }
+.dash-customize-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 14px 0;
+}
+.dash-customize-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+.dash-customize-icon { font-size: 18px; margin-bottom: 0; }
+.dash-customize-label { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; }
+.dash-customize-type { font-size: 11px; }
+.dash-customize-controls { display: flex; align-items: center; gap: 8px; }
+
+/* ── Branding settings (2026-08-08 follow-up) ────────────────────────── */
+.branding-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+.branding-section h2 { font-size: 14px; margin: 0 0 12px; }
+.branding-logo-row { display: flex; align-items: center; gap: 20px; }
+.branding-logo-preview {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 3px solid var(--brand-accent);
+  box-shadow: var(--shadow-sm);
+  background: #ffffff;
+  flex-shrink: 0;
+}
+.branding-logo-controls { display: flex; flex-direction: column; gap: 10px; }
+.branding-logo-buttons { display: flex; gap: 8px; }
+.branding-name-row { display: flex; gap: 10px; max-width: 420px; }
+.branding-name-row input {
+  flex: 1;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+.branding-login-text-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px 16px;
+  margin-top: 10px;
+}
+.branding-login-text-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.branding-login-text-grid input {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+.branding-save-ok {
+  background: var(--status-success-bg-subtle);
+  border: 1px solid var(--status-success-border);
+  color: var(--status-success-text-subtle);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin: 12px 0;
+}
+
+/* ── Per-menu-item icon image (2026-08-08, second follow-up) ─────────── */
+.menu-icon-preview-row { display: flex; align-items: center; gap: 10px; grid-column: 1 / -1; }
+/* Route field + "Generate" button (2026-08-08, opaque-path follow-up) —
+   the button fills in a random token so an admin creating a custom menu
+   item (e.g. "Master Data") doesn't have to think one up, or default to
+   a descriptive path that defeats the point of this whole feature. */
+.menu-route-row { display: flex; gap: 8px; align-items: center; }
+.menu-route-row input { flex: 1; min-width: 0; }
+.menu-icon-preview {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-app);
+  padding: 3px;
+}
+.menu-icon-thumb { width: 16px; height: 16px; object-fit: contain; vertical-align: -3px; }

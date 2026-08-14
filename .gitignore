@@ -1,0 +1,29 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+backend-django/db.sqlite3
+
+# Node
+node_modules/
+frontend-react/dist/
+
+# Env files with real secrets — only .env.example is ever committed
+.env
+**/.env
+
+# Go — compiled binaries, not source. `worker` is the Linux/container
+# build output (built fresh by backend-go/Dockerfile); `worker.exe` is
+# what a local `go build` produces on Windows. Neither belongs in git —
+# spotted `worker.exe` already staged in the very first `git add .`
+# before this pattern existed (2026-08-12).
+backend-go/worker
+backend-go/*.exe
+
+# Uploaded media (menu icons, branding logo) — bind-mounted into the
+# django container via docker-compose.yml for persistence across
+# rebuilds/machine migration (2026-08-08). The folder itself is tracked
+# (via .gitkeep below) so it exists before the first upload; its runtime
+# contents are not source and shouldn't be committed.
+backend-django/media/*
+!backend-django/media/.gitkeep
