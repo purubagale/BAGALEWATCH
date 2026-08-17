@@ -515,6 +515,55 @@ export interface DtSample {
   scrambling_code: number | null
 }
 
+// Compound events decoded from a .trp file's Call.*/Data.*/Location.*
+// namespaces (2026-08-14, "detect and store separately but relating to
+// session as particular events for which the log is taken like fallback
+// events from fallback log, download success event from DL log etc") —
+// mirrors lib/trpAnalysis.ts's TrpaEventRow exactly. Kept as a type for
+// reuse (e.g. a future diagnostic view), but per a same-day follow-up
+// ("i need to store only the data like total no. of call attempted...")
+// the raw per-event list is no longer what gets written into
+// DtSessionMeta — see DtCallSummary/DtDownloadSummary below, which is
+// what actually gets stored. `sourceFile` ties an event back to which
+// uploaded .trp file it came from.
+export interface DtSessionEvent {
+  ts: string
+  type: string
+  sourceFile: string
+  lat: number | null
+  lng: number | null
+  fields: Record<string, string | number>
+}
+
+// Aggregate call/download KPI counts derived from the events above
+// (2026-08-15, replacing the raw per-event table per the user's explicit
+// "store only the data like total no. of call attempted, total call
+// success, total call drop, total call rejected, percentage... for 4g dl,
+// total download attempted/succeed/fail... for 4g fallback, total call
+// attempted, total no. of fallback, success, fail" ask). Mirrors
+// lib/trpAnalysis.ts's DtCallSummary/DtDownloadSummary exactly — see that
+// module's own comment for exactly how "success"/"drop"/"rejected" are
+// derived from real TEMS event structure (never from guessed numeric
+// Cause/EndType code meanings, which have no public documentation).
+export interface DtCallSummary {
+  attempted: number
+  setupSuccess: number
+  rejected: number
+  completed: number
+  dropped: number
+  fallbackDetected: number
+  setupSuccessRatePct: number | null
+  rejectRatePct: number | null
+  dropRatePct: number | null
+}
+
+export interface DtDownloadSummary {
+  attempted: number
+  succeeded: number
+  failed: number
+  successRatePct: number | null
+}
+
 // Meta is an unnormalized JSON blob (matches v1's meta_json exactly) —
 // only the keys this phase's UI actually reads are typed; anything else
 // v1 might have stored (e.g. a future session's siteId/siteDistKm from
@@ -540,6 +589,30 @@ export interface DtSessionMeta {
   // only for sessions from before this feature shipped and not yet
   // backfilled; an empty array means "computed, nothing found nearby".
   nearby_site_ids?: string[]
+  // TEMS-native compound events extracted from the .trp file(s) this
+  // session was built from (see DtSessionEvent above) — kept as an
+  // optional field for backward-compat/future reuse, but no longer
+  // written by the .trp upload flow (see callSummary/downloadSummary
+  // below, which replaced this as of the 2026-08-15 follow-up).
+  events?: DtSessionEvent[]
+  // Aggregate call-outcome counts (see DtCallSummary above) — present
+  // only when this session's source .trp file(s) contained at least one
+  // Call.* event (a voice/CSFB-fallback-type capture). Absent for a
+  // pure-data (4G DL) capture or a CSV/XLSX template upload.
+  callSummary?: DtCallSummary
+  // Aggregate download-outcome counts (see DtDownloadSummary above) —
+  // present only when the source file(s) contained at least one
+  // Data.Ftp.Download.Begin/EndEvent. Absent for a voice-only capture or
+  // a CSV/XLSX template upload.
+  downloadSummary?: DtDownloadSummary
+  // Auto-detected NTC test type ('DL' | 'Fallback' | 'Voice' | 'Mixed') —
+  // see DtUploadPage.tsx's detectTrpTestType (2026-08-15, "make it
+  // identifiable... during session save": two real 4G .trp sessions from
+  // the same date/district previously landed with the exact same
+  // auto-generated name and no way to tell them apart). Also folded into
+  // the auto-generated session name itself, so this field is mostly for
+  // any future filtering/badge use — the name alone already carries it.
+  testType?: string
   [key: string]: unknown
 }
 

@@ -14,6 +14,7 @@ import type {
   DashboardCard,
   DashboardCardLayoutEntry,
   DtBandsMap,
+  DtSample,
   DtSessionCreate,
   DtSessionDetail,
   DtSessionListItem,
@@ -462,11 +463,26 @@ export function useDtSessions() {
   })
 }
 
+// gcTime shortened from the default 5 minutes (2026-08-15 memory audit) —
+// a single session's `samples` array can now legitimately hold hundreds
+// of thousands of real rows (a `.trp`-derived session; see
+// DtUploadPage.tsx's decimation comment for why even a decimated one can
+// still be sizeable). The default 5-minute cache meant every large
+// session a user opened while browsing Session History — or every
+// session picked for Compare Sessions below — stayed fully resident in
+// memory for 5 minutes after the component using it unmounted, so
+// clicking through several big sessions in a row could accumulate
+// multiple full sample arrays at once even after navigating away from
+// each. 60s is enough to make "go back and forth between two sessions"
+// still feel instant, without that multi-minute pileup.
+export const DT_SESSION_GC_TIME = 60_000
+
 export function useDtSession(id: number | undefined) {
   return useQuery({
     queryKey: ['dt-session', id],
     queryFn: () => apiJson<DtSessionDetail>(`/api/v2/dt-sessions/${id}/`),
     enabled: id !== undefined,
+    gcTime: DT_SESSION_GC_TIME,
   })
 }
 
@@ -484,6 +500,23 @@ export function useDeleteDtSession() {
   return useMutation({
     mutationFn: (id: number) => apiJson<void>(`/api/v2/dt-sessions/${id}/`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dt-sessions'] }),
+  })
+}
+
+// Companion to useCreateDtSession for large sessions (2026-08-14 fix — a
+// real 363,082-sample .trp upload hit "Could not save this session (HTTP
+// 413)" sending everything in one POST). DtUploadPage.tsx's
+// saveSessionChunked() creates the session with an empty/small samples
+// list, then calls this repeatedly with bounded batches — see
+// DT_SAMPLES_BATCH_SIZE's comment in the backend's serializers.py. No
+// per-call cache invalidation here on purpose: a large session can mean
+// dozens of sequential batch calls, and invalidating ['dt-sessions'] on
+// every one would refetch the whole list that many times for no benefit
+// — the caller invalidates once after the full batch sequence finishes.
+export function useAppendDtSamples() {
+  return useMutation({
+    mutationFn: ({ id, samples }: { id: number; samples: DtSample[] }) =>
+      apiJson<{ appended: number }>(`/api/v2/dt-sessions/${id}/samples/`, { method: 'POST', body: JSON.stringify({ samples }) }),
   })
 }
 

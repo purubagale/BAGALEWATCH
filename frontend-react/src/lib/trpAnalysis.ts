@@ -593,6 +593,214 @@ function trpaFormatRawValue(val: number | Uint8Array | null): string | number | 
   return String(val)
 }
 
+// ── Compound event extraction (2026-08-14, "detect and store... events
+// for which the log is taken like fallback events from fallback log,
+// download success event from DL log etc") ──────────────────────────────
+//
+// Everything above (trpScanDataRecords + the curated per-tech field
+// dictionaries) only ever decodes ONE level of nesting: a data.cdf sample
+// record's field-3 "parameter" list, where each parameter is a flat
+// [declared id, scalar value] pair. Real TEMS exports ALSO declare
+// compound "Event" records under Call.*/Data.*/Location.* namespaces
+// (confirmed 2026-08-14 by hand against 3 real sample files — a voice-
+// call capture, a 4G DL/FTP capture, and a second voice-call capture with
+// a Location.PositionLostEvent) whose "value" bytes are themselves
+// ANOTHER full set of [child declared id, child value] pairs — the exact
+// same wire shape as the outer parameter list, just one level deeper.
+// Real decoded examples from that investigation: Call.CallEndEvent
+// (CallEstablished, Cause, EndType, ServingRadioTechnology),
+// Call.CallSetupEvent (SetupTime), Data.Ftp.Download.EndEvent (File,
+// FileSize, Duration, ServiceThroughputAverage, ServiceStatus,
+// ClientIpAddress, ServerIpAddress), Data.SessionStatisticsEvent
+// (LteBandwidth, LteFrequencyBand, AverageThroughputLte, TimeSpentOnLte).
+// These are entirely separate from the Radio.* signal dictionaries above
+// — they carry real, TEMS-native, explicitly-tagged occurrences, exactly
+// the "TEMS's own explicit marker" the user asked for over any inferred/
+// threshold-based detection.
+//
+// Deliberately generic rather than a hardcoded Call/Data/Location field
+// dictionary (the user's own scoping answer: "according to the log
+// file" — whatever event types a given file's declarations actually
+// contain should be picked up, not a fixed upfront category list). The
+// approach: for EVERY field-3 parameter entry in EVERY sample record
+// (not just ones in a curated `wantedIds` map — a plain scalar dictionary
+// lookup would miss these entirely, since compound-event declarations
+// were never added to any per-tech `serving`/`neighbor` dictionary),
+// attempt to decode its value bytes as a nested [child id, child value]
+// list via the exact same decode shape trpScanDataRecords already uses
+// for the outer parameter list. If that nested decode succeeds AND every
+// child id resolves to a real declared path, it's treated as a genuine
+// compound event (type = the outer field's own declared path, e.g.
+// "Call.CallEndEvent"); if decoding fails or even ONE child id is
+// unrecognized, it's left alone as an ordinary scalar/opaque field (same
+// conservative "don't fabricate" stance as trpaFormatRawValue's own
+// printable/hex fallback) — never guessed at.
+export interface TrpaEventRow {
+  ts: number
+  isoTs: string
+  lat: number | null
+  lon: number | null
+  /** The compound event's own declared path, e.g. "Call.CallEndEvent",
+   * "Data.Ftp.Download.EndEvent", "Location.PositionLostEvent" — whatever
+   * this specific file's declarations.cdf actually names it. */
+  type: string
+  /** Decoded child field path -> value, e.g. { "Call.CallEndEvent.Cause":
+   * 2, "Call.CallEndEvent.CallEstablished": 0 }. Keyed by the child's own
+   * full declared path (not a short name) so two different event types
+   * sharing a field name never collide. */
+  fields: Record<string, string | number>
+}
+
+/** Attempts to decode one field-3 parameter's `value` bytes as a nested
+ * compound event (see module comment above). Returns null (treat as an
+ * ordinary non-event field) unless EVERY top-level item in `value`
+ * decodes cleanly as a [declared child id, value] pair with a KNOWN
+ * child declaration — a strict, conservative match, not a best-effort
+ * guess, since a real scalar byte-string field (an IMSI, an APN, ordinary
+ * opaque bytes) could otherwise coincidentally parse as garbage-looking
+ * "fields" if this were lenient. */
+function trpTryDecodeEventFields(value: Uint8Array, declById: Map<number, TrpDecl>): Record<string, string | number> | null {
+  let inner: FlatField[]
+  try {
+    inner = trpDecodeFlat(value, 0, value.length)
+  } catch {
+    return null
+  }
+  if (!inner.length) return null
+  const fields: Record<string, string | number> = {}
+  for (const [, kind, v] of inner) {
+    if (kind !== 'len') return null
+    let pair: FlatField[]
+    try {
+      pair = trpDecodeFlat(v as Uint8Array, 0, (v as Uint8Array).length)
+    } catch {
+      return null
+    }
+    let childId: number | null = null
+    let childVal: number | Uint8Array | null = null
+    for (const [pf, pk, pv] of pair) {
+      if (pf === 1 && pk === 'v') childId = pv as number
+      else if (pf !== 1) childVal = pv as number | Uint8Array
+    }
+    if (childId === null || childVal === null) return null
+    const decl = declById.get(childId)
+    if (!decl) return null
+    const formatted = trpaFormatRawValue(childVal)
+    if (formatted === null) return null
+    fields[decl.path] = formatted
+  }
+  return Object.keys(fields).length ? fields : null
+}
+
+/** Excluded from event extraction (2026-08-14, verified live against the
+ * 3 real sample files): TEMS also declares hundreds of RAW over-the-air
+ * Layer3 protocol messages this same way (MeasurementReport, PagingRequest,
+ * SystemInformation, the GSM Cc/Mm/Rr call-control messages, etc., all
+ * under Message.Layer3.*, plus a generic Radio.Common.Layer3MessageEvent
+ * wrapper that fires once per message). These decode 100% correctly by the
+ * exact same nested-pair logic as a real named event — confirmed live: a
+ * single 46-second 2G voice capture alone produced 289 of them — but they
+ * are a raw protocol TRACE, not the kind of named business/service
+ * occurrence the user asked for ("fallback events... download success
+ * event"). Bundling hundreds of these into every session's persisted meta
+ * JSON (fetched on every session-list load) would be architecturally wrong
+ * for what meta is for (a small aggregate blob, not a full protocol log) —
+ * and would bury the handful of real Call/Data/Location events that
+ * actually matter. Everything else this file's declarations contain still
+ * gets picked up generically (Call.*, Data.*, Location.*, the periodic
+ * Radio.Lte.SessionStatistics.*Event/SessionUsage.*Event snapshots, etc.)
+ * — this is a targeted 2-item exclusion of a firehose category, not a
+ * narrowing back down to a fixed category whitelist. A full raw Layer3
+ * message trace would be a good fit for the separate TRP File Analysis
+ * diagnostic page (unbounded, throwaway, XLSX-exportable) if ever wanted
+ * there — just not for this session-tied feature. */
+const EXCLUDED_EVENT_PATH_PREFIXES = ['Message.Layer3.']
+const EXCLUDED_EVENT_PATHS = new Set(['Radio.Common.Layer3MessageEvent'])
+function isExcludedEventPath(path: string): boolean {
+  if (EXCLUDED_EVENT_PATHS.has(path)) return true
+  return EXCLUDED_EVENT_PATH_PREFIXES.some((p) => path.startsWith(p))
+}
+
+/** Scans an inflated data.cdf part for compound events, independent of
+ * (and in addition to) trpScanDataRecords' curated scalar extraction
+ * above — see module comment. Walks the same record structure (field 1 =
+ * timestamp sub-message, field 3 = repeated parameter entries) but
+ * inspects EVERY parameter regardless of `wantedIds`, since event-root
+ * declarations are never in the curated per-tech dictionaries.
+ * Defensively capped at `maxEvents` (real files carry a handful to a few
+ * dozen per file — see module comment's real examples — so this should
+ * never actually trigger; it exists only as insurance against a
+ * pathological file, matching this codebase's general defensiveness
+ * convention). */
+function trpScanEvents(
+  buf: Uint8Array,
+  declById: Map<number, TrpDecl>,
+  maxEvents = 5000,
+): { events: { ts: number; type: string; fields: Record<string, string | number> }[]; capped: boolean } {
+  const n = buf.length
+  let pos = 0
+  const events: { ts: number; type: string; fields: Record<string, string | number> }[] = []
+  let capped = false
+  while (pos < n) {
+    let reclen: number, pos2: number
+    try {
+      ;[reclen, pos2] = trpReadVarint(buf, pos)
+    } catch {
+      break
+    }
+    const recStart = pos2
+    const recEnd = recStart + reclen
+    if (recEnd > n) break
+    let fields: FlatField[]
+    try {
+      fields = trpDecodeFlat(buf, recStart, recEnd)
+    } catch {
+      pos = recEnd
+      continue
+    }
+    let ts: number | null = null
+    for (const [f, kind, v] of fields) {
+      if (f === 1 && kind === 'len') {
+        try {
+          const hdr = trpDecodeFlat(v as Uint8Array, 0, (v as Uint8Array).length)
+          for (const [hf, hk, hv] of hdr) if (hf === 1 && hk === 'v') ts = hv as number
+        } catch {
+          // malformed timestamp sub-message — event(s) in this record are
+          // skipped below (ts stays null), same as trpScanDataRecords.
+        }
+      }
+    }
+    if (ts !== null) {
+      for (const [f, kind, v] of fields) {
+        if (f !== 3 || kind !== 'len') continue
+        try {
+          const pfields = trpDecodeFlat(v as Uint8Array, 0, (v as Uint8Array).length)
+          let pid: number | null = null
+          let val: number | Uint8Array | null = null
+          for (const [pf, pk, pv] of pfields) {
+            if (pf === 1 && pk === 'v') pid = pv as number
+            else if (pf !== 1) val = pv as number | Uint8Array
+          }
+          if (pid === null || val === null || !(val instanceof Uint8Array)) continue
+          const rootDecl = declById.get(pid)
+          if (!rootDecl || isExcludedEventPath(rootDecl.path)) continue
+          const decoded = trpTryDecodeEventFields(val, declById)
+          if (!decoded) continue
+          if (events.length >= maxEvents) {
+            capped = true
+            continue
+          }
+          events.push({ ts, type: rootDecl.path, fields: decoded })
+        } catch {
+          // malformed parameter sub-message — skip just this one field.
+        }
+      }
+    }
+    pos = recEnd
+  }
+  return { events, capped }
+}
+
 // ── Per-file analysis (v1 lines ~10055-10254) ────────────────────────────
 
 export type TrpaRow = { ts: number; isoTs: string; lat: number | null; lon: number | null } & Record<string, unknown>
@@ -670,6 +878,14 @@ export interface TrpaFileResult {
   rawPathLabels: Record<string, string>
   rawTruncated: boolean
   totalDeclarationsFound: number
+  /** Compound events decoded from this file — see the "Compound event
+   * extraction" module comment above trpTryDecodeEventFields. Whatever
+   * event types this file's own declarations actually contain (the Call
+   * namespace for a voice/fallback-type capture, the Data/Ftp namespace
+   * for a download-type capture, the Location namespace where present) —
+   * never a fixed category list. Empty array (not undefined) when the
+   * file has no recognizable compound events at all. */
+  events: TrpaEventRow[]
   /** Human-readable notes about anything this file's parse had to work
    * around — missing/unparseable GPS track, a noisy declaration scan
    * (many single-byte resyncs), data.cdf truncation, or falling back
@@ -853,6 +1069,35 @@ export async function trpaAnalyzeFile(buffer: ArrayBuffer, fileName: string, opt
     warnings.push(`Sample data (data.cdf) appears truncated — stopped after ${pct}% of the decompressed bytes; later samples in the drive are likely missing.`)
   }
 
+  // Compound-event extraction (2026-08-14) — independent pass over the
+  // SAME already-inflated dataInflated buffer (no extra decompression
+  // cost), using ALL of this provider's declared ids (not just the
+  // curated wantedAll set above) since event-root declarations were
+  // never added to any per-tech serving/neighbor dictionary. See
+  // trpScanEvents' own comment for why this can't reuse wantedAll.
+  const declById = new Map<number, TrpDecl>()
+  for (const d of decls) declById.set(d.id, d)
+  const { events: rawEvents, capped: eventsCapped } = trpScanEvents(dataInflated, declById)
+  const events: TrpaEventRow[] = rawEvents
+    .map((e) => {
+      const gps = trpCorrelateGps(gpsPoints, e.ts)
+      return {
+        ts: e.ts,
+        isoTs: new Date(Math.round(e.ts * 1000)).toISOString(),
+        lat: gps ? gps.lat : null,
+        lon: gps ? gps.lng : null,
+        type: e.type,
+        fields: e.fields,
+      }
+    })
+    .sort((a, b) => a.ts - b.ts)
+  if (events.length) {
+    warnings.push(`Found ${events.length} named event(s) with explicit TEMS markers (e.g. call setup/end, FTP download completion) beyond the curated radio fields — see Events.`)
+  }
+  if (eventsCapped) {
+    warnings.push('Event extraction hit its per-file cap (5000 events) — later events were dropped.')
+  }
+
   const servingRows: TrpaRow[] = []
   const neighborRows: TrpaRow[] = []
   const rawSamples: TrpaRawSample[] = []
@@ -1005,7 +1250,7 @@ export async function trpaAnalyzeFile(buffer: ArrayBuffer, fileName: string, opt
     tech: chosenTech, provider: chosenProvider, servingRows, neighborRows, bestServerRows, summary,
     servingKeysFound, neighborKeysFound, autoDiscoveredServingKeys, autoDiscoveredNeighborKeys,
     fieldPaths, cfg, rawSamples, rawPaths, rawPathLabels, rawTruncated,
-    totalDeclarationsFound: decls.length, warnings,
+    totalDeclarationsFound: decls.length, events, warnings,
   }
 }
 
@@ -1137,4 +1382,163 @@ export function trpaCombineResults(perFileResults: TrpaFileResult[]): TrpaCombin
     combinedSpanM: trpaRound(spanM, 1), combinedMobility,
     meanLat: trpaRound(meanLat, 7), meanLon: trpaRound(meanLon, 7),
   }
+}
+
+// ── Call/download KPI summaries (2026-08-15 follow-up) ───────────────────
+// The per-event table from the initial "detect and store events" pass
+// (see TrpaEventRow above) was correct but too raw for what the user
+// actually wanted: "i need to store only the data like total no. of call
+// attempted, total call success, total call drop, total call rejected,
+// percentage... for 4g dl, total no. of download attempted, total
+// download succeed, total download fail... for 4g fallback, total no. of
+// call attempted, total no. of fallback, success, fail". This section
+// aggregates the already-decoded TrpaEventRow[] into exactly those
+// counts — no new binary decoding, pure aggregation over events that
+// were already verified correct against 3 real files.
+//
+// Deliberately does NOT classify outcomes using the numeric `Cause`/
+// `EndType`/`CallEstablished` codes on Call.CallEndEvent — no authoritative
+// public TEMS documentation for their exact meaning could be found (see
+// this module's other enum-uncertainty notes), and guessing at them here
+// would risk silently wrong numbers in what's meant to be a real
+// operational KPI figure. Every classification below instead uses
+// STRUCTURAL evidence — which named TEMS events did or didn't fire for a
+// given call/download attempt — which is unambiguous and requires no
+// external documentation to defend:
+//   - "attempted"  = a Call.CallAttemptEvent (or Call.CallInitiationEvent
+//                    if that's absent) exists for this call index.
+//   - "setupSuccess" = that call index also has a Call.CallSetupEvent —
+//                    TEMS's own explicit "the call was set up" marker.
+//                    This is the standard telecom Call Setup Success Rate
+//                    (CSSR) definition.
+//   - "rejected"   = attempted but never reached CallSetupEvent.
+//   - "completed"  = reached CallSetupEvent AND has a Call.CallEndEvent —
+//                    a clean, TEMS-logged end.
+//   - "dropped"    = reached CallSetupEvent but NEVER got a CallEndEvent
+//                    — the standard telecom Call Drop definition (a
+//                    connected call that ended abnormally). Confirmed
+//                    against real data: sample file `ff023691.trp`'s call
+//                    reached CallSetupEvent but its provider never even
+//                    DECLARES a CallEndEvent namespace at all — and that
+//                    same file logs a `General.ServiceProvider.
+//                    HealthChangedEvent` ("Device restart due to
+//                    DiagnosticMalfunction") right where a normal call
+//                    would still be running — real, structural evidence
+//                    of an abnormal drop, not a guess.
+//   - "fallbackDetected" = Call.CallEndEvent.SrvccHandoverOccurredDuringCall
+//                    decoded as 1 — TEMS's own literal, self-describing
+//                    SRVCC/fallback marker (the field NAME states its own
+//                    meaning; no external enum table needed). Real
+//                    limitation, stated plainly rather than hidden: this
+//                    field only ever appears ON a CallEndEvent, so a
+//                    dropped call's fallback status is structurally
+//                    unknowable from this marker — `fallbackDetected` can
+//                    only ever be true for a `completed` call. None of
+//                    the 3 real sample files had this flag set true (the
+//                    field is declared but its value never fired in any
+//                    of those 3 specific calls) — so real fallback counts
+//                    will read 0 until a capture where CSFB actually
+//                    triggers mid-call is uploaded.
+//   - Downloads: "attempted" = count of Data.Ftp.Download.BeginEvent (or
+//                    EndEvent count if Begin is somehow missing);
+//                    "succeeded" = the paired EndEvent reports a real
+//                    positive FileSize or ServiceThroughputAverage (i.e.
+//                    TEMS actually recorded completion data) — again
+//                    structural, not a guessed status-code meaning.
+//                    Confirmed against the real DL file: its first
+//                    download cycle's EndEvent has FileSize=10534912 and
+//                    ServiceThroughputAverage=4391.4 (succeeded); its
+//                    second cycle's EndEvent has neither (File decoded as
+//                    empty bytes) — failed.
+
+export interface DtCallSummary {
+  attempted: number
+  setupSuccess: number
+  rejected: number
+  completed: number
+  dropped: number
+  fallbackDetected: number
+  setupSuccessRatePct: number | null
+  rejectRatePct: number | null
+  dropRatePct: number | null
+}
+
+export interface DtDownloadSummary {
+  attempted: number
+  succeeded: number
+  failed: number
+  successRatePct: number | null
+}
+
+function trpaFieldEndingWith(fields: Record<string, string | number>, suffix: string): string | number | undefined {
+  for (const [k, v] of Object.entries(fields)) if (k.endsWith(suffix)) return v
+  return undefined
+}
+
+function trpaCallIndexOf(e: TrpaEventRow): number | null {
+  const v = trpaFieldEndingWith(e.fields, '.CallIndex')
+  return typeof v === 'number' ? v : null
+}
+
+function trpaPct(n: number, d: number): number | null {
+  return d > 0 ? Math.round((n / d) * 1000) / 10 : null
+}
+
+/** Aggregates every Call.* event in `events` into the call KPI summary
+ * described above, grouped by each call's own CallIndex field (every
+ * Call.* event type carries its own copy of this field — confirmed
+ * against all 3 real sample files). Returns null when `events` has no
+ * Call.* events at all (a pure data/DL-only capture), matching the
+ * "only build a section for what the log actually contains" convention
+ * the rest of this feature already follows. */
+export function trpaSummarizeCallEvents(events: TrpaEventRow[]): DtCallSummary | null {
+  const callEvents = events.filter((e) => e.type.startsWith('Call.'))
+  if (!callEvents.length) return null
+  const byIndex = new Map<number, TrpaEventRow[]>()
+  for (const e of callEvents) {
+    const idx = trpaCallIndexOf(e)
+    if (idx === null) continue
+    const arr = byIndex.get(idx) ?? []
+    arr.push(e)
+    byIndex.set(idx, arr)
+  }
+  let attempted = 0
+  let setupSuccess = 0
+  let completed = 0
+  let dropped = 0
+  let fallbackDetected = 0
+  for (const group of byIndex.values()) {
+    const hasAttempt = group.some((e) => e.type === 'Call.CallAttemptEvent') || group.some((e) => e.type === 'Call.CallInitiationEvent')
+    const hasSetup = group.some((e) => e.type === 'Call.CallSetupEvent')
+    const endEvt = group.find((e) => e.type === 'Call.CallEndEvent')
+    if (hasAttempt) attempted++
+    if (hasSetup) setupSuccess++
+    if (hasSetup && endEvt) completed++
+    if (hasSetup && !endEvt) dropped++
+    if (endEvt && trpaFieldEndingWith(endEvt.fields, '.SrvccHandoverOccurredDuringCall') === 1) fallbackDetected++
+  }
+  const rejected = Math.max(0, attempted - setupSuccess)
+  return {
+    attempted, setupSuccess, rejected, completed, dropped, fallbackDetected,
+    setupSuccessRatePct: trpaPct(setupSuccess, attempted),
+    rejectRatePct: trpaPct(rejected, attempted),
+    dropRatePct: trpaPct(dropped, setupSuccess),
+  }
+}
+
+/** Aggregates every Data.Ftp.Download.* Begin/End event pair in `events`
+ * into the download KPI summary described above. Returns null when there
+ * are no download Begin/End events at all (a voice-only capture). */
+export function trpaSummarizeDownloadEvents(events: TrpaEventRow[]): DtDownloadSummary | null {
+  const begins = events.filter((e) => e.type === 'Data.Ftp.Download.BeginEvent')
+  const ends = events.filter((e) => e.type === 'Data.Ftp.Download.EndEvent')
+  if (!begins.length && !ends.length) return null
+  const attempted = Math.max(begins.length, ends.length)
+  const succeeded = ends.filter((e) => {
+    const fileSize = trpaFieldEndingWith(e.fields, '.FileSize')
+    const throughput = trpaFieldEndingWith(e.fields, '.ServiceThroughputAverage')
+    return (typeof fileSize === 'number' && fileSize > 0) || (typeof throughput === 'number' && throughput > 0)
+  }).length
+  const failed = Math.max(0, attempted - succeeded)
+  return { attempted, succeeded, failed, successRatePct: trpaPct(succeeded, attempted) }
 }

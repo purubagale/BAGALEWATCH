@@ -24,10 +24,13 @@ from rest_framework.response import Response
 
 from .models import DriveTestSample, DriveTestSession
 from .serializers import (
+    DT_SAMPLES_BATCH_SIZE,
+    DriveTestSampleSerializer,
     DriveTestSessionDetailSerializer,
     DriveTestSessionListSerializer,
     DriveTestSessionNearSerializer,
     DriveTestSessionWriteSerializer,
+    _nearby_site_ids,
 )
 from .views import IsAdminOrSuperadmin
 
@@ -77,9 +80,54 @@ class DriveTestSessionViewSet(
         return DriveTestSessionListSerializer
 
     def get_permissions(self):
-        if self.action in ('create', 'destroy'):
+        if self.action in ('create', 'destroy', 'samples'):
             return [IsAuthenticated(), IsAdminOrSuperadmin()]
         return [IsAuthenticated()]
+
+    @action(detail=True, methods=['post'])
+    def samples(self, request, pk=None):
+        """`POST /api/v2/dt-sessions/<id>/samples/` — appends a batch of
+        already-parsed samples to an EXISTING session. Companion to
+        create() for large sessions: DtUploadPage.tsx's
+        saveSessionChunked() now creates the session with an empty/small
+        samples list, then calls this repeatedly with
+        DT_SAMPLES_BATCH_SIZE-sized batches (2026-08-14 fix for a real
+        "Could not save this session (HTTP 413)" a 363,082-sample .trp
+        upload hit — see DT_SAMPLES_BATCH_SIZE's own comment in
+        serializers.py for the full story).
+
+        Purely additive, same as create() — bulk_create only, nothing
+        here ever updates or deletes an existing sample or session.
+        `meta.nearby_site_ids` is updated incrementally (this batch's
+        site matches unioned into whatever was already there) rather
+        than recomputed from scratch each call, so it converges to the
+        same correct full-session set by the last batch without needing
+        every prior batch's points in memory at once.
+        """
+        session = self.get_object()
+        payload = request.data.get('samples')
+        if not isinstance(payload, list) or not payload:
+            return Response({'samples': ['This field is required and must be a non-empty list.']}, status=400)
+        if len(payload) > DT_SAMPLES_BATCH_SIZE:
+            return Response(
+                {'samples': [f'Max {DT_SAMPLES_BATCH_SIZE} samples per request — send the rest as further requests.']},
+                status=400,
+            )
+        ser = DriveTestSampleSerializer(data=payload, many=True)
+        ser.is_valid(raise_exception=True)
+        rows = ser.validated_data
+        DriveTestSample.objects.bulk_create(
+            [DriveTestSample(session=session, **row) for row in rows],
+            batch_size=1000,
+        )
+        new_site_ids = _nearby_site_ids((row.get('lat'), row.get('lng')) for row in rows)
+        meta = session.meta or {}
+        if new_site_ids:
+            meta['nearby_site_ids'] = sorted(set(meta.get('nearby_site_ids') or []) | set(new_site_ids))
+        session.meta = meta
+        session.size_bytes = (session.size_bytes or 0) + sum(len(str(row)) for row in rows)
+        session.save(update_fields=['meta', 'size_bytes'])
+        return Response({'appended': len(rows)}, status=201)
 
     @action(detail=False, methods=['get'])
     def near(self, request):

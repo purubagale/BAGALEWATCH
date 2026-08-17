@@ -3,11 +3,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import { apiErrorMessage, apiJson } from '../api/client'
-import { useDeleteDtSession, useDtSession, useDtSessions, useSites } from '../api/queries'
+import { DT_SESSION_GC_TIME, useDeleteDtSession, useDtSession, useDtSessions, useSites } from '../api/queries'
 import type { DtSessionDetail, DtSessionListItem } from '../api/types'
 import { isAllowed } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import DtCompareMap, { MAX_COMPARE } from '../components/DtCompareMap'
+import DtCallDownloadSummary from '../components/DtCallDownloadSummary'
 import DtCoverageMap from '../components/DtCoverageMap'
 
 // Split out of the former single-page DtDataManagerPage.tsx (2026-08-09
@@ -96,6 +97,10 @@ export default function DtSessionHistoryPage() {
       queryKey: ['dt-session', id],
       queryFn: () => apiJson<DtSessionDetail>(`/api/v2/dt-sessions/${id}/`),
       enabled: comparing,
+      // Same shortened gcTime as useDtSession (2026-08-15 memory audit) —
+      // Compare Sessions is the worst case for this: up to MAX_COMPARE=4
+      // full large sample arrays fetched and cached at once.
+      gcTime: DT_SESSION_GC_TIME,
     })),
   })
   const compareSessions = compareQueries.map((q) => q.data).filter((s): s is DtSessionDetail => !!s)
@@ -347,6 +352,10 @@ export default function DtSessionHistoryPage() {
                           </div>
                         </div>
                         <DtCoverageMap samples={sessionDetail.samples} tech={sessionDetail.tech} />
+                        <DtCallDownloadSummary
+                          callSummary={sessionDetail.meta?.callSummary}
+                          downloadSummary={sessionDetail.meta?.downloadSummary}
+                        />
                       </div>
                     )}
                   </div>

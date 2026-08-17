@@ -153,3 +153,34 @@ const POOR_COLORS = new Set(['#dc2626', '#991b1b', '#7f1d1d'])
 export function isPoorBand(bands: Band[], v: number | null | undefined): boolean {
   return POOR_COLORS.has(bandColor(bands, v))
 }
+
+// Caps how many real samples get drawn as individual Leaflet markers
+// (2026-08-14 fix — a real 363,082-sample .trp-derived session made "the
+// application" feel slow: DtCoverageMap.tsx draws ONE real
+// L.circleMarker (SVG, not canvas — see that file's own history comment)
+// per GPS-tagged sample, which that component's own comment says was
+// only ever built/verified against "a few thousand points at most" — not
+// the real scale multi-file .trp upload now produces. Same "cap what's
+// rendered, don't fabricate" principle as
+// feedback_unbounded_result_tables_crash_browser — evenly STRIDES
+// through the array rather than truncating to the first N, so a long
+// route still shows its full geographic extent (just less densely
+// sampled) instead of only its first few kilometers.
+//
+// Deliberately NOT applied to DtCompareMap.tsx's real-map mode without a
+// separate decision — that file's own comment records an explicit prior
+// user reversal of a similar cap on its blank/plots-only panel ("do not
+// limit to 500... need full plot there"); its guidance for that panel
+// type is to prefer canvas rendering over dropping points again, not to
+// silently reapply a cap. If Compare's real-Leaflet-map mode needs this
+// same treatment, that's a separate call, not an automatic extension of
+// this one.
+export const MAX_MAP_DOTS = 15000
+
+export function subsampleForMap<T>(items: T[], max: number = MAX_MAP_DOTS): T[] {
+  if (items.length <= max) return items
+  const stride = items.length / max
+  const out: T[] = []
+  for (let i = 0; i < max; i++) out.push(items[Math.floor(i * stride)])
+  return out
+}

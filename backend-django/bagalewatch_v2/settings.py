@@ -20,6 +20,20 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-only-insecure-key-override-in-.en
 DEBUG = os.environ.get('DEBUG', '0') == '1'
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
 
+# Django's own default (2.5MB) is well under a single DT-session sample
+# batch (2026-08-14 fix — a real 25-file .trp upload produced 363,082
+# samples and got "Could not save this session (HTTP 413)"). The client
+# now chunks large sessions into DT_SAMPLES_BATCH_SIZE-sized POSTs (see
+# DriveTestSessionWriteSerializer's own comment in core/serializers.py and
+# DtUploadPage.tsx's saveSessionChunked()), so no single request should
+# ever need more than a few MB in practice — this is deliberately raised
+# well past that as defense-in-depth, not because any single request is
+# expected to need 20MB. The OTHER half of this same fix is
+# frontend-react/nginx.conf's `client_max_body_size`, which sits in front
+# of Django and rejects an oversized body before it ever reaches here —
+# both had to move together or one just replaces the other's error.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
+
 # ── Security hardening (2026-08-08, "secure the system for unauthorized
 # access and tampering" follow-up) ──────────────────────────────────────
 # Explicit rather than relying on Django's own defaults for the two that

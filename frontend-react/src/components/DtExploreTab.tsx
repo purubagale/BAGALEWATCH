@@ -5,7 +5,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useDtSessionsNear, useSites } from '../api/queries'
 import type { DtSessionDetail, DtTech, SiteListItem } from '../api/types'
-import { ALL_TECHS, bandColor, type TaggedMetric } from '../lib/dtBands'
+import { ALL_TECHS, bandColor, subsampleForMap, type TaggedMetric } from '../lib/dtBands'
 import { useDtMetrics } from '../lib/useDtMetrics'
 import { haversineKm } from '../lib/dtTemplateParser'
 import { pointInPolygon, polygonAverageCenter, polygonBoundingRadiusKm, type LatLng } from '../lib/geo'
@@ -316,6 +316,12 @@ function NearSitesLayer({ sites, onSelect }: { sites: { s: SiteListItem; d: numb
   return null
 }
 
+// 2026-08-15 memory audit: same unbounded-circleMarker shape as
+// DtCoverageMap.tsx/DtCompareMap.tsx had — the backend `near()` endpoint
+// (drive_test.py) has no row cap of its own, only a radius bound (max
+// 50km), so a wide-radius search that happens to sweep across a long
+// `.trp`-derived session's route can still return a very large sample
+// set. Same subsampleForMap() treatment as the other two map components.
 function NearSamplesLayer({ sessions, metric }: { sessions: DtSessionDetail[]; metric: TaggedMetric }) {
   const map = useMap()
 
@@ -323,17 +329,12 @@ function NearSamplesLayer({ sessions, metric }: { sessions: DtSessionDetail[]; m
     const layer = L.layerGroup()
     for (const session of sessions) {
       if (session.tech !== metric.tech) continue
-      for (const sample of session.samples) {
-        if (sample.lat == null || sample.lng == null) continue
-        const v = sample[metric.key] as number | null
-        // Skip "no data" samples entirely rather than plotting a grey
-        // dot for them — per explicit user request 2026-07-30. bandColor()
-        // still returns grey (#94a3b8) as its own fallback for other
-        // callers (e.g. the legend swatch), this just stops that fallback
-        // color from ever being used to actually place a marker here.
-        if (v == null) continue
+      const withVal = session.samples.filter((sample) => sample.lat != null && sample.lng != null && sample[metric.key] != null)
+      const drawn = subsampleForMap(withVal)
+      for (const sample of drawn) {
+        const v = sample[metric.key] as number
         const color = bandColor(metric.bands, v)
-        L.circleMarker([sample.lat, sample.lng], {
+        L.circleMarker([sample.lat as number, sample.lng as number], {
           radius: 3,
           color,
           fillColor: color,

@@ -599,6 +599,26 @@ def _nearby_site_ids(sample_points, radius_km=NEARBY_SITE_RADIUS_KM):
     return matched
 
 
+# Max samples accepted in ONE request, for both create() (the `samples`
+# field below) and DriveTestSessionViewSet.samples() (core/drive_test.py's
+# batch-append action). 2026-08-14 fix: a real 25-file .trp upload
+# produced a 363,082-sample session and hit "Could not save this session
+# (HTTP 413)" — nginx's default 1MB body cap rejected the single giant
+# JSON POST before Django even saw it. Raising the body-size limits
+# (nginx.conf's client_max_body_size, settings.py's
+# DATA_UPLOAD_MAX_MEMORY_SIZE) fixes the immediate error, but a single
+# 300k+-item nested-serializer validation pass is also slow (DRF's
+# per-item Python validation, not the bulk_create itself, dominates) and
+# risks the request just timing out instead of 413ing. The real fix is
+# this cap: DtUploadPage.tsx's saveSessionChunked() now creates the
+# session with an empty/small samples list, then POSTs the rest in
+# DT_SAMPLES_BATCH_SIZE-sized batches to the append action — this
+# constant is enforced on BOTH paths so a non-UI caller (a script, the
+# DRF browsable API) can't bypass it by hitting create() directly with
+# everything inline.
+DT_SAMPLES_BATCH_SIZE = 5000
+
+
 class DriveTestSessionWriteSerializer(serializers.ModelSerializer):
     """POST /api/v2/dt-sessions/ — creates a session and its samples in
     one call. No update/upsert-by-id path (unlike v1's PUT, which
@@ -606,13 +626,26 @@ class DriveTestSessionWriteSerializer(serializers.ModelSerializer):
     Phase 4a's ids are server-assigned on create, so the duplicate-
     upload dialog's "Replace Old" action is just DELETE-old +
     POST-new from the client, not a special server-side upsert. Simpler
-    than v1's contract, same end-user behavior."""
+    than v1's contract, same end-user behavior.
+
+    `samples` here is capped at DT_SAMPLES_BATCH_SIZE (see that
+    constant's own comment) — a session with more than that is expected
+    to be created with 0 (or a small first batch of) samples, then filled
+    in via repeated calls to DriveTestSessionViewSet.samples()."""
     samples = DriveTestSampleSerializer(many=True, write_only=True, required=False)
 
     class Meta:
         model = DriveTestSession
         fields = ['id', 'name', 'tech', 'date', 'uploaded_date', 'meta', 'samples']
         read_only_fields = ['id']
+
+    def validate_samples(self, value):
+        if len(value) > DT_SAMPLES_BATCH_SIZE:
+            raise serializers.ValidationError(
+                f'Max {DT_SAMPLES_BATCH_SIZE} samples per request — create the session with fewer/no '
+                f'samples, then POST the rest in batches to /api/v2/dt-sessions/<id>/samples/.'
+            )
+        return value
 
     def create(self, validated_data):
         samples_data = validated_data.pop('samples', [])

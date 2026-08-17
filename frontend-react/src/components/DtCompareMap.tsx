@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { DtSessionDetail } from '../api/types'
-import { bandColor, type Band, type TaggedMetric } from '../lib/dtBands'
+import { bandColor, subsampleForMap, type Band, type TaggedMetric } from '../lib/dtBands'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 import { useDtMetrics } from '../lib/useDtMetrics'
 
@@ -26,6 +26,18 @@ export const SESSION_HUES = ['#2563eb', '#dc2626', '#9333ea', '#ea580c']
 export const COMPARE_LABELS = ['S1', 'S2', 'S3', 'S4']
 export const MAX_COMPARE = 4
 
+// 2026-08-15 memory audit: this used to build ONE real L.circleMarker
+// (SVG DOM node) per GPS-tagged sample across every compared session,
+// exactly the same unbounded-rendering shape DtCoverageMap.tsx already
+// hit for real on 2026-08-14 (see subsampleForMap's own comment) — just
+// worse here, since Compare Sessions fetches and renders UP TO
+// MAX_COMPARE=4 full sessions at once instead of one. With .trp-derived
+// sessions now able to reach hundreds of thousands of points, comparing
+// even 2 large sessions could mean hundreds of thousands of real SVG
+// nodes across this map's panels. Now runs every session's samples
+// through the SAME subsampleForMap() cap DtCoverageMap already uses —
+// `fitBounds` above (FitToMetricSessions) still uses the FULL point set
+// so the map still frames the true route extent.
 function CompareDots({ sessions, metric }: { sessions: DtSessionDetail[]; metric: TaggedMetric }) {
   const map = useMap()
 
@@ -33,17 +45,17 @@ function CompareDots({ sessions, metric }: { sessions: DtSessionDetail[]; metric
     const layer = L.layerGroup()
     sessions.forEach((s, si) => {
       if (s.tech !== metric.tech) return
-      for (const sample of s.samples) {
-        if (sample.lat == null || sample.lng == null) continue
-        const v = sample[metric.key] as number | null
-        if (v == null) continue
+      const withVal = s.samples.filter((sample) => sample.lat != null && sample.lng != null && sample[metric.key] != null)
+      const drawn = subsampleForMap(withVal)
+      for (const sample of drawn) {
+        const v = sample[metric.key] as number
         const color = bandColor(metric.bands, v)
         // Same styling as DtExploreTab's NearSamplesLayer — weight: 0 (no
         // outline stroke at all), fillColor is the only color shown, so
         // the dot always reads as its real band color regardless of
         // which session it came from. Session identity is still in the
         // tooltip on hover.
-        L.circleMarker([sample.lat, sample.lng], {
+        L.circleMarker([sample.lat as number, sample.lng as number], {
           radius: 3,
           color,
           fillColor: color,
@@ -117,29 +129,46 @@ function bandCounts(sessions: DtSessionDetail[], metric: TaggedMetric): Map<stri
 // blank white view pane only with the plots and index as i have
 // uploaded earlier" (referring to the same v1 reference screenshot that
 // drove the original multi-panel grid layout). No basemap tiles, no
-// Leaflet instance at all — just each sample plotted as a dot inside a
-// plain SVG, positioned by normalizing its lat/lng into the panel's own
-// bounding box (min/max of whatever points are actually being shown),
-// colored exactly the same way (`bandColor`) as the real-map version.
-// This deliberately does NOT try to preserve true geographic aspect
-// ratio/scale — it's a relative scatter of "where these points sit
-// relative to each other," matching what the uploaded reference showed
-// (no basemap, no scale bar), not a substitute for the real map.
+// Leaflet instance at all — just each sample plotted as a dot,
+// positioned by normalizing its lat/lng into the panel's own bounding
+// box (min/max of whatever points are actually being shown), colored
+// exactly the same way (`bandColor`) as the real-map version. This
+// deliberately does NOT try to preserve true geographic aspect ratio/
+// scale — it's a relative scatter of "where these points sit relative to
+// each other," matching what the uploaded reference showed (no basemap,
+// no scale bar), not a substitute for the real map.
 //
 // **2026-08-07 memory-audit finding, capped — then REVERTED same day per
-// explicit follow-up.** A `pointLimit` (shared RowLimitSelect control)
-// was added here to cap rendered points after the audit flagged
-// uncapped SVG rendering as a Medium risk. User then reported this
+// explicit follow-up.** A `pointLimit` was added here after the audit
+// flagged uncapped SVG rendering as a Medium risk; user reported this
 // broke their actual comparison workflow ("do not limit to 500, i was
-// confused earlier, need full plot there") — a blank/plots-only panel
-// is a single cheap SVG with no Leaflet instance or tile requests behind
-// it, unlike the real-map mode's per-panel `MapContainer`, so the
-// audit's unbounded-DOM-node concern doesn't carry the same weight here.
-// Reverted to always plotting every real sample. If this panel type
-// becomes a genuine performance problem at higher point counts, prefer
-// canvas-based rendering (like the Scatter Plot page) over silently
-// dropping points again.
+// confused earlier, need full plot there") and it was reverted to
+// plotting every real sample, with standing guidance in this comment:
+// "if this panel type becomes a genuine performance problem at higher
+// point counts, prefer canvas-based rendering... over silently dropping
+// points again."
+//
+// **2026-08-15 memory-crash audit: that point has now been reached for
+// real.** `.trp`-derived sessions can carry hundreds of thousands of
+// points — an order of magnitude beyond what motivated the 2026-08-07
+// revert — and this was still rendering one real `<circle>` SVG DOM node
+// per point, per panel, with Compare Sessions showing up to
+// MAX_COMPARE=4 sessions × several metric panels each simultaneously.
+// Per the standing guidance above, rewritten to draw on a `<canvas>`
+// instead (same technique as `ScatterPlotPage.tsx`) — EVERY real point
+// is still plotted, nothing is dropped or subsampled, only the rendering
+// target changed from DOM nodes to canvas pixels. Hover tooltips still
+// work: a coarse spatial grid (bucketed by a fixed pixel cell size,
+// built once per draw alongside the points themselves) makes hit-testing
+// on `mousemove` an O(1) bucket lookup instead of an O(n) scan over
+// potentially hundreds of thousands of points, which would otherwise
+// make the mouse visibly lag.
+const SCATTER_GRID_CELL = 6
 function ScatterPanelPlot({ sessions, metric }: { sessions: DtSessionDetail[]; metric: TaggedMetric }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const [tooltip, setTooltip] = useState<{ left: number; top: number; text: string } | null>(null)
+
   const points = useMemo(() => {
     const pts: { lat: number; lng: number; color: string; tooltip: string }[] = []
     sessions.forEach((s, si) => {
@@ -159,6 +188,105 @@ function ScatterPanelPlot({ sessions, metric }: { sessions: DtSessionDetail[]; m
     return pts
   }, [sessions, metric])
 
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const wrap = wrapRef.current
+    if (!canvas || !wrap || !points.length) return
+
+    const lats = points.map((p) => p.lat)
+    const lngs = points.map((p) => p.lng)
+    const minLat = Math.min(...lats)
+    const maxLat = Math.max(...lats)
+    const minLng = Math.min(...lngs)
+    const maxLng = Math.max(...lngs)
+    const latSpan = maxLat - minLat || 0.001
+    const lngSpan = maxLng - minLng || 0.001
+    const PAD = 14
+
+    // Redraws at whatever size the wrapping div is CURRENTLY rendered at
+    // (matches the old SVG's `width:100%; height:100%` responsive
+    // behavior — the panel is user-resizable via the drag handle in
+    // MetricPanel, so a fixed canvas size would stop scaling with it).
+    function draw() {
+      if (!canvas || !wrap) return
+      const W = wrap.clientWidth || 300
+      const H = wrap.clientHeight || 220
+      const toXY = (lat: number, lng: number): [number, number] => [
+        PAD + ((lng - minLng) / lngSpan) * (W - 2 * PAD),
+        H - PAD - ((lat - minLat) / latSpan) * (H - 2 * PAD),
+      ]
+      const dpr = window.devicePixelRatio || 1
+      canvas.style.width = `${W}px`
+      canvas.style.height = `${H}px`
+      canvas.width = W * dpr
+      canvas.height = H * dpr
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      ctx.scale(dpr, dpr)
+      ctx.clearRect(0, 0, W, H)
+      // Paint an explicit white base layer (2026-08-17, "display in white
+      // panel in default not in black" — a real screenshot showed this
+      // panel rendering black by default). clearRect() alone only resets
+      // the canvas to TRANSPARENT, not white; that relied on the
+      // .dt-compare-panel-blank wrapper's CSS background (#ffffff)
+      // showing through, which is fragile (canvas is an opaque-by-default
+      // replaced element in some browsers/dark-mode configurations). Paint
+      // white directly onto the canvas itself so the panel is guaranteed
+      // white regardless of what's behind it.
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, W, H)
+
+      // Spatial grid for O(1) hover hit-testing (see module comment
+      // above) — built in the SAME pass as drawing, no second loop.
+      const grid = new Map<string, { px: number; py: number; tooltip: string }[]>()
+      for (const p of points) {
+        const [px, py] = toXY(p.lat, p.lng)
+        ctx.beginPath()
+        ctx.arc(px, py, 2, 0, Math.PI * 2)
+        ctx.fillStyle = p.color
+        ctx.fill()
+        const key = `${Math.floor(px / SCATTER_GRID_CELL)},${Math.floor(py / SCATTER_GRID_CELL)}`
+        const bucket = grid.get(key)
+        if (bucket) bucket.push({ px, py, tooltip: p.tooltip })
+        else grid.set(key, [{ px, py, tooltip: p.tooltip }])
+      }
+
+      canvas.onmousemove = (e) => {
+        const rect = canvas.getBoundingClientRect()
+        const mx = ((e.clientX - rect.left) / rect.width) * W
+        const my = ((e.clientY - rect.top) / rect.height) * H
+        const cellX = Math.floor(mx / SCATTER_GRID_CELL)
+        const cellY = Math.floor(my / SCATTER_GRID_CELL)
+        let nearest: { px: number; py: number; tooltip: string } | null = null
+        let minD = 5
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            const bucket = grid.get(`${cellX + dx},${cellY + dy}`)
+            if (!bucket) continue
+            for (const cand of bucket) {
+              const d = Math.hypot(mx - cand.px, my - cand.py)
+              if (d < minD) {
+                minD = d
+                nearest = cand
+              }
+            }
+          }
+        }
+        if (nearest) {
+          setTooltip({ left: (nearest.px / W) * rect.width + 10, top: (nearest.py / H) * rect.height - 8, text: nearest.tooltip })
+        } else {
+          setTooltip(null)
+        }
+      }
+      canvas.onmouseleave = () => setTooltip(null)
+    }
+
+    draw()
+    const ro = new ResizeObserver(draw)
+    ro.observe(wrap)
+    return () => ro.disconnect()
+  }, [points])
+
   if (!points.length) {
     return (
       <div className="dt-compare-panel-map dt-compare-panel-blank dt-compare-panel-blank-empty">
@@ -167,34 +295,18 @@ function ScatterPanelPlot({ sessions, metric }: { sessions: DtSessionDetail[]; m
     )
   }
 
-  const lats = points.map((p) => p.lat)
-  const lngs = points.map((p) => p.lng)
-  const minLat = Math.min(...lats)
-  const maxLat = Math.max(...lats)
-  const minLng = Math.min(...lngs)
-  const maxLng = Math.max(...lngs)
-  const latSpan = maxLat - minLat || 0.001
-  const lngSpan = maxLng - minLng || 0.001
-  const W = 300
-  const H = 220
-  const PAD = 14
-
   return (
-    <svg
-      className="dt-compare-panel-map dt-compare-panel-blank"
-      viewBox={`0 0 ${W} ${H}`}
-      preserveAspectRatio="xMidYMid meet"
-    >
-      {points.map((p, i) => {
-        const x = PAD + ((p.lng - minLng) / lngSpan) * (W - 2 * PAD)
-        const y = H - PAD - ((p.lat - minLat) / latSpan) * (H - 2 * PAD)
-        return (
-          <circle key={i} cx={x} cy={y} r={2.5} fill={p.color}>
-            <title>{p.tooltip}</title>
-          </circle>
-        )
-      })}
-    </svg>
+    <div ref={wrapRef} className="dt-compare-panel-map dt-compare-panel-blank" style={{ position: 'relative' }}>
+      <canvas ref={canvasRef} style={{ background: '#ffffff', display: 'block' }} />
+      {tooltip && (
+        <div
+          className="scatter-tooltip"
+          style={{ position: 'absolute', left: tooltip.left, top: tooltip.top, pointerEvents: 'none' }}
+        >
+          {tooltip.text}
+        </div>
+      )}
+    </div>
   )
 }
 

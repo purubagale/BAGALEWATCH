@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { DtSample, DtTech } from '../api/types'
-import { bandColor, type DtMetric } from '../lib/dtBands'
+import { bandColor, subsampleForMap, type DtMetric } from '../lib/dtBands'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 import { useDtMetrics } from '../lib/useDtMetrics'
 
@@ -12,9 +12,16 @@ const DEFAULT_ZOOM = 7
 
 /** Plots one session's samples as colored dots, imperative-layer pattern
  * (see MapView.tsx's ClusteredMarkers for why: react-leaflet v5 has no
- * working cluster wrapper). No clustering here — DT sessions run a few
- * thousand points at most, not 4,700+ sites, so plain CircleMarkers via
- * raw Leaflet calls are fast enough without chunked loading.
+ * working cluster wrapper). No clustering here — this assumed DT
+ * sessions run a few thousand points at most, not 4,700+ sites, so plain
+ * CircleMarkers via raw Leaflet calls would be fast enough without
+ * chunked loading. **That assumption broke for real on 2026-08-14**: a
+ * 363,082-sample multi-file .trp session (see DtUploadPage.tsx's .trp
+ * upload feature) made the whole app feel slow/frozen while its
+ * coverage map tried to draw one real SVG circleMarker per sample. Now
+ * subsampled via dtBands.ts's subsampleForMap() before drawing — see
+ * that function's own comment for why this is capped here but NOT in
+ * DtCompareMap.tsx.
  *
  * Real bug, still being chased as of 2026-07-29: four fix attempts so
  * far (stale container size, the `bounds`/`boundsOptions` MapContainer
@@ -103,6 +110,10 @@ export default function DtCoverageMap({ samples, tech }: { samples: DtSample[]; 
   const activeMetric = metrics.find((m) => m.key === metricKey) ?? metrics[0]
 
   const withGps = useMemo(() => samples.filter((s) => s.lat != null && s.lng != null), [samples])
+  // What actually gets drawn — bounds/fitBounds above still uses the FULL
+  // withGps (cheap, just a min/max pass) so the map always frames the
+  // real full route even when the dots themselves are subsampled.
+  const drawnSamples = useMemo(() => subsampleForMap(withGps), [withGps])
   const bounds = useMemo(
     () => (withGps.length ? L.latLngBounds(withGps.map((s) => [s.lat as number, s.lng as number])) : null),
     [withGps],
@@ -147,7 +158,7 @@ export default function DtCoverageMap({ samples, tech }: { samples: DtSample[]; 
               attribution="&copy; OpenStreetMap contributors"
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
-            <CoverageDots samples={samples} metric={activeMetric} />
+            <CoverageDots samples={drawnSamples} metric={activeMetric} />
           </>
         )}
       </MapContainer>
@@ -160,6 +171,12 @@ export default function DtCoverageMap({ samples, tech }: { samples: DtSample[]; 
           </span>
         ))}
       </div>
+      {drawnSamples.length < withGps.length && (
+        <div className="muted" style={{ fontSize: 10, marginTop: 4 }}>
+          Showing {drawnSamples.length.toLocaleString()} of {withGps.length.toLocaleString()} GPS points on the map
+          (subsampled evenly along the route for performance — the summary stats above use every real point).
+        </div>
+      )}
     </div>
   )
 }
