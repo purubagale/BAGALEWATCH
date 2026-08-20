@@ -179,6 +179,57 @@ services:
       timeout: 5s
       retries: 5
 
+  pgadmin:
+    # Web-based GUI for Postgres, reachable via a real browser URL (2026-
+    # 08-20 — "how to access db locally through url"). `db` itself
+    # deliberately has no `ports:` published (see its own comment above)
+    # and speaks the raw Postgres wire protocol, not HTTP, so it was
+    # never going to be reachable by pointing a browser at it directly —
+    # this container is what actually bridges "browser" to "Postgres".
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    environment:
+      # NOT a ".local" domain — pgAdmin's own email-format validator
+      # rejects it as a reserved/special-use TLD (mDNS local addresses),
+      # regardless of CHECK_EMAIL_DELIVERABILITY being off; hit this for
+      # real on first boot, container crash-looped on it (see RUNBOOK).
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@bagalewatch.app}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?set PGADMIN_PASSWORD in .env}
+      # Silences pgAdmin's own "you should set a master password" nag on
+      # every login — harmless to leave on for a single-admin local tool,
+      # but there's nothing here worth trading convenience for on a
+      # loopback-only service already gated by PGADMIN_DEFAULT_PASSWORD.
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Named volume so saved connections/preferences survive a
+      # `docker compose down` / rebuild, same reasoning as `db`'s own
+      # pgdata volume above.
+      - bagalewatch_v2_pgadmin_data:/var/lib/pgadmin
+      # Pre-registers the "db" server (host/port/db/user only, never a
+      # password — pgAdmin has no way to store one here unencrypted, and
+      # shouldn't) so first login already has a connection ready to click
+      # instead of an empty server tree. Read-only: pgAdmin only reads
+      # this once on first boot to seed its own internal config DB.
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+    # Bound to 127.0.0.1 only, not a bare "5050:80" — same LAN-hardening
+    # reasoning as every other `ports:` decision in this file (see `db`'s
+    # own comment above). This is a raw admin surface over your entire
+    # database; anyone who can reach it can read/write everything.
+    # Reachable at http://localhost:5050 from THIS machine only. If you
+    # genuinely need it from another machine on the LAN, change this to
+    # your host's LAN IP (e.g. "192.168.1.20:5050:80") rather than "0.0.0.0"
+    # or a bare port — never leave this open to the whole network.
+    ports:
+      - "127.0.0.1:5050:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/misc/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   frontend:
     # Removed the `args:` block that used to pass VITE_DJANGO_API_URL/
     # VITE_NODE_GATEWAY_URL here (2026-08-10 port-hiding pass) — it never
@@ -202,3 +253,8 @@ volumes:
   bagalewatch_v2_pgdata:
     # Named volume, entirely separate from anything the v1 system uses —
     # v1 has no volumes at all, it's a single SQLite file on disk.
+  bagalewatch_v2_pgadmin_data:
+    # pgAdmin's own internal config DB (saved servers, preferences) —
+    # entirely separate from bagalewatch_v2_pgdata above, which is the
+    # actual application data pgAdmin connects TO, not where pgAdmin
+    # itself lives.
