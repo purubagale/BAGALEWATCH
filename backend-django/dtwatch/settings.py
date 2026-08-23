@@ -57,6 +57,21 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 # settings now require an explicit, separate opt-in once TLS is actually
 # in place in front of Django.
 if os.environ.get('HTTPS_ENABLED', '0') == '1':
+    # Required whenever TLS is terminated by something in FRONT of Django
+    # (Traefik, on this deployment). Without it Django sees the proxy's
+    # plain-HTTP forward, request.is_secure() stays False, and
+    # SECURE_SSL_REDIRECT below issues a redirect to https:// that the proxy
+    # answers with another plain-HTTP forward — an infinite loop that makes
+    # the whole site unreachable the moment HTTPS_ENABLED is turned on
+    # (2026-08-23, when dtwatch.ntc.net.np was put behind the Traefik proxy
+    # at 172.16.41.201).
+    #
+    # Safe here precisely BECAUSE it sits inside this opt-in: trusting
+    # X-Forwarded-Proto is only sound when a proxy you control always sets
+    # it, and HTTPS_ENABLED=1 is the operator asserting exactly that. If
+    # Django were ever exposed directly, a client could forge the header and
+    # defeat the redirect — which is why this must not be set unconditionally.
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_SSL_REDIRECT = True
