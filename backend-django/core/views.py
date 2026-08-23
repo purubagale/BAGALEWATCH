@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.core.cache import cache
 from django.db import connection, transaction
@@ -71,6 +72,9 @@ def health(request):
     monitoring. Confirms the Django process is up AND can reach its own
     (v2-only) Postgres database — never touches the v1 SQLite file.
     """
+    # Version fields (2026-08-23) so the About page can compare the running
+    # backend against the frontend bundle. This endpoint is already public and
+    # already names the service, so a build version adds no new exposure.
     db_ok = True
     db_error = None
     try:
@@ -86,6 +90,9 @@ def health(request):
         'status': 'ok' if db_ok else 'degraded',
         'database': 'ok' if db_ok else 'unreachable',
         'database_error': db_error,
+        'version': settings.APP_VERSION,
+        'build_tag': settings.BUILD_TAG,
+        'git_sha': settings.GIT_SHA,
     }, status=200 if db_ok else 503)
 
 

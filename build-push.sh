@@ -51,15 +51,20 @@
 #   NEXUS_USER / NEXUS_PASSWORD   non-interactive docker login
 #   SKIP_LOGIN=1 / SKIP_GIT_TAG=1 / FORCE_GIT_TAG=1 / PUSH_GIT_TAG=y|n
 #
-# NO --build-arg FOR THE FRONTEND, deliberately — this is the one place this
-# script departs from dutychart's. dt-watch's frontend-react/Dockerfile
-# declares no `ARG`, so build args are silently ignored; that exact bug
-# already shipped here once and is documented in docker-compose.yml's
-# `frontend` service comment (2026-08-10 port-hiding pass). Vite reads
-# frontend-react/.env, which the Dockerfile pulls in via `COPY . .`. Both vars
-# in it are blank on purpose (same-origin through nginx), so a normal build
-# needs nothing. If you ever DO need them baked in, edit that .env before
-# building — don't add a --build-arg here and expect it to take effect.
+# FRONTEND BUILD ARGS (2026-08-23). This block used to say build args do not
+# work here, and it was right at the time: frontend-react/Dockerfile declared
+# no `ARG`, so every --build-arg was silently discarded — a bug that shipped
+# once and is documented in docker-compose.yml's `frontend` comment. The
+# Dockerfile now declares ARG VITE_APP_VERSION / VITE_BUILD_TAG /
+# VITE_GIT_SHA, so the version below really is baked into the bundle.
+#
+# Only the frontend needs them: Vite inlines VITE_* at build time, whereas
+# Django reads APP_VERSION from its environment at runtime, so the backend
+# image stays version-agnostic and the same image can be re-tagged.
+#
+# VITE_DJANGO_API_URL / VITE_NODE_GATEWAY_URL are still NOT passed — they
+# remain blank on purpose (same-origin through nginx). Set them in
+# frontend-react/.env if a build ever needs them.
 #
 set -euo pipefail
 
@@ -264,6 +269,14 @@ build_component() {
     -f "$dir/Dockerfile"
   )
   [[ $TAG_LATEST == 1 ]] && args+=(-t "$image:latest")
+  # Vite inlines these at build time; see the FRONTEND BUILD ARGS note above.
+  if [[ $name == frontend ]]; then
+    args+=(
+      --build-arg "VITE_APP_VERSION=$VERSION"
+      --build-arg "VITE_BUILD_TAG=$IMMUTABLE_TAG"
+      --build-arg "VITE_GIT_SHA=$GITSHA"
+    )
+  fi
   docker buildx build "${args[@]}" "./$dir"
 }
 

@@ -5,6 +5,7 @@ import { useTheme } from '../contexts/ThemeContext'
 import { ApiError } from '../api/client'
 import { useBranding } from '../api/queries'
 import { DASHBOARD_PATH } from '../constants/opaqueRoutes'
+import { APP_VERSION } from '../lib/version'
 
 /** Reasons the backend can bounce a failed SSO attempt back to /login.
  *
@@ -225,6 +226,10 @@ export default function LoginPage() {
           </div>
         )}
       </div>
+
+      {/* Plain text, not a link to /about: that page shows a git SHA and
+          build tag, which is more than an unauthenticated visitor needs. */}
+      <div className="login-version">{APP_VERSION}</div>
 
       <div className="login-disclaimer">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

@@ -37,6 +37,7 @@ import type {
   ThresholdMap,
   TreeState,
   UserWrite,
+  HealthInfo,
 } from './types'
 
 export function useSites() {
@@ -358,6 +359,16 @@ export function useSaveDashboardLayout() {
 // BrandingSettingsView's docstring — GET is IsAuthenticated, not
 // superadmin-gated). Cached like most other reads; a superadmin's own
 // save invalidates it immediately via useUpdateBranding below.
+// Build stamp of the running backend, for AboutPage. Long staleTime: this
+// only changes on a redeploy, and a redeploy reloads the page anyway.
+export function useHealth() {
+  return useQuery({
+    queryKey: ['health'],
+    queryFn: () => apiJson<HealthInfo>('/api/v2/health/'),
+    staleTime: 5 * 60_000,
+  })
+}
+
 export function useBranding() {
   return useQuery({
     queryKey: ['branding'],

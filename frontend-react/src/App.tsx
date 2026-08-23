@@ -9,6 +9,7 @@ import MenuSectionGate from './components/MenuSectionGate'
 import { DASHBOARD_PATH, OPAQUE_PATHS, SITES_PATH } from './constants/opaqueRoutes'
 import DashboardPage from './pages/DashboardPage'
 import LoginPage from './pages/LoginPage'
+import AboutPage from './pages/AboutPage'
 import SsoCallbackPage from './pages/SsoCallbackPage'
 import MenuSectionPage from './pages/MenuSectionPage'
 import SitesPage from './pages/SitesPage'
@@ -175,6 +176,11 @@ function App() {
             chunk fetch here would add a round trip before the one-time
             code can be exchanged — and that code expires in ~60s. */}
         <Route path="/sso/callback" element={<SsoCallbackPage />} />
+        {/* Not in the dynamic menu, so not subject to the per-menu
+            permissions matrix — an About page every role can open.
+            Still behind ProtectedRoute: it exposes the git SHA and
+            build tag, which is more than a stranger needs. */}
+        <Route path="/about" element={<ProtectedRoute><AboutPage /></ProtectedRoute>} />
         {/* Dashboard keeps its own opaque alias like every other
             top-level route (2026-08-08 follow-up: "for dashboard, sites
             topology... plain path is displayed, correct them also") but

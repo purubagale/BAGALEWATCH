@@ -100,6 +100,12 @@ services:
     environment:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
+      # Build stamp (2026-08-23), read at runtime and reported on /health/ so
+      # the About page can compare it against the frontend bundle. Unset for a
+      # local `docker compose up`, which correctly reports `dev`.
+      APP_VERSION: ${APP_VERSION:-dev}
+      BUILD_TAG: ${BUILD_TAG:-}
+      GIT_SHA: ${GIT_SHA:-}
       # Django now uses Redis as its cache backend too (2026-08-08
       # scaling pass — see settings.py's CACHES comment), not just the
       # Node gateway/Go worker. Overrides whatever REDIS_URL a copy-pasted
@@ -209,6 +215,14 @@ services:
     # proxy (nginx.conf) instead of a separate published port.
     build:
       context: ./frontend-react
+      # Vite inlines VITE_* at BUILD time, so unlike django's runtime env above
+      # these have to be build args. The Dockerfile now declares matching ARGs
+      # (2026-08-23) — before that it declared none and every build arg here
+      # was silently discarded, which is the bug the comment below records.
+      args:
+        VITE_APP_VERSION: ${APP_VERSION:-dev}
+        VITE_BUILD_TAG: ${BUILD_TAG:-}
+        VITE_GIT_SHA: ${GIT_SHA:-}
     restart: unless-stopped
     depends_on:
       - django

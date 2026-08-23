@@ -2543,3 +2543,71 @@ textarea:focus {
   letter-spacing: 0.04em;
   vertical-align: middle;
 }
+/* ── Version + About (2026-08-23) ─────────────────────────────────*/
+/* The sidebar brand becomes two stacked lines when expanded: the app name
+   and, under it, the build version as the sole entry point to /about. */
+.app-sidebar-brand-text { min-width: 0; }
+.app-version-chip {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.02em;
+  color: var(--header-text-muted);
+  text-decoration: none;
+  opacity: 0.85;
+}
+.app-version-chip:hover { opacity: 1; text-decoration: underline; }
+
+/* Login page counterpart. Plain text, not a link — see LoginPage's comment. */
+.login-version {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 0.02em;
+}
+:root[data-theme='light'] .login-version { color: rgba(0, 0, 0, 0.45); }
+
+.about-page { max-width: 620px; }
+.about-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-surface-alt);
+  padding: 4px 14px;
+}
+.about-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.about-row:last-child { border-bottom: none; }
+.about-label { color: var(--text-tertiary); font-size: 13px; }
+/* Long build tags must wrap rather than widen the row and push the label
+   off-screen — the immutable tag is ~40 characters. */
+.about-value {
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.about-value-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.about-warn {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--status-warn, var(--border));
+  background: var(--bg-surface-alt);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.about-dev-note { margin-top: 16px; font-size: 12px; }
+.about-dev-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+}

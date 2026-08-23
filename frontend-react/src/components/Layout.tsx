@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
+import { APP_VERSION } from '../lib/version'
 import { useEffect, useRef, useState } from 'react'
-import { NavLink, useLocation, useSearchParams } from 'react-router-dom'
+import { Link, NavLink, useLocation, useSearchParams } from 'react-router-dom'
 import { useBranding, useMenuTree, useSiteSearch } from '../api/queries'
 import type { MenuTreeNode, SiteSearchParams } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
@@ -208,7 +209,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   // (BrandingSettings is a lazy-created singleton, so a fresh install's
   // GET comes back `{app_name: '', logo_url: null}`, not an error).
   const { data: branding } = useBranding()
-  const brandLogoSrc = branding?.logo_url || '/ntc-logo.jpg'
+  const brandLogoSrc = branding?.logo_url || '/nt-logo.png'
   const brandName = branding?.app_name || 'DT-WATCH BTS v2'
   const [openGroupIds, setOpenGroupIds] = useState<Set<number>>(new Set())
   function toggleGroup(id: number) {
@@ -314,7 +315,18 @@ export default function Layout({ children }: { children: ReactNode }) {
               uploaded via the Branding settings page. */}
           <div className="app-sidebar-brand">
             <img src={brandLogoSrc} alt={brandName} className="app-logo" />
-            {sidebarExpanded && <div className="app-sidebar-title">{brandName}</div>}
+            {sidebarExpanded && (
+              <div className="app-sidebar-brand-text">
+                <div className="app-sidebar-title">{brandName}</div>
+                {/* Version chip (2026-08-23) — the only entry point to
+                    /about, which is why it is a link rather than plain text.
+                    Rendered only when the sidebar is expanded; collapsed it
+                    would sit under a 32px logo with nowhere to go. */}
+                <Link to="/about" className="app-version-chip" title="About this build">
+                  {APP_VERSION}
+                </Link>
+              </div>
+            )}
           </div>
 
           <nav className="app-sidebar-nav">

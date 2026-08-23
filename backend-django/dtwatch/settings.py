@@ -330,6 +330,18 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
+# ── Build version (2026-08-23) ──────────────────────────────────────────
+# Read at RUNTIME, unlike the frontend's Vite-inlined VITE_APP_VERSION, so
+# the same backend image can be re-tagged without a rebuild. Supplied by
+# docker-compose from the environment; `dev` when unset, so a local build
+# never claims a release version. Reported on the public /health/ endpoint,
+# which is what lets the About page show whether the frontend and backend
+# images actually match — they diverge the moment one service is redeployed
+# without the other.
+APP_VERSION = os.environ.get('APP_VERSION', 'dev')
+BUILD_TAG = os.environ.get('BUILD_TAG', '')
+GIT_SHA = os.environ.get('GIT_SHA', '')
+
 SPECTACULAR_SETTINGS = {
     'TITLE': 'DT-WATCH BTS v2 API',
     'DESCRIPTION': 'REST API for the DT-WATCH BTS v2 backend (Django service).',

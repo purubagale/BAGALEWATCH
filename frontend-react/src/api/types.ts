@@ -7,6 +7,18 @@ export type CrudPerm = { read?: boolean; write?: boolean; update?: boolean; dele
 /** How a user authenticates. `sso` means Keycloak owns their role and
  * re-applies it on every login, so editing it here would not stick. */
 export type AuthSource = 'local' | 'sso'
+/** GET /api/v2/health/ — public, and the only place the RUNNING backend's
+ * build stamp is exposed. Mirrors core/views.py's health(). */
+export interface HealthInfo {
+  service: string
+  status: string
+  database: string
+  database_error: string | null
+  version: string
+  build_tag: string
+  git_sha: string
+}
+
 export type PermissionValue = boolean | CrudPerm
 export type PermissionMap = Record<string, PermissionValue>
 
