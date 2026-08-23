@@ -303,16 +303,21 @@ textarea:focus {
    emblem ABOVE a Nepali wordmark) — the old crop centered a circle on
    the whole rectangle and sliced through the wordmark; `ntc-logo.jpg` is
    now pre-cropped to just the emblem, square, so a circular CSS crop of
-   it never touches the text. */
+   it never touches the text.
+
+   The gold ring (`border: 3px solid var(--brand-accent)` plus a
+   `0 0 0 3px var(--header-bg)` spacer shadow that only existed to hold
+   that ring off the sidebar) was dropped 2026-08-23 — "the circle in gold
+   logo is not good, may be remove gold circle". The default mark is now
+   the gold NT emblem itself (nt-logo-gold.webp), so a gold ring around a
+   gold glyph read as a double outline. The faint disc behind it comes
+   from `.app-sidebar-brand .app-logo` further down and stays: the emblem
+   is transparent-backed and needs something to sit on. */
 .app-logo {
   height: 48px;
   width: 48px;
   object-fit: cover;
   border-radius: 50%;
-  border: 3px solid var(--brand-accent);
-  box-shadow:
-    0 3px 10px rgba(0, 0, 0, 0.35),
-    0 0 0 3px var(--header-bg);
   background: #ffffff;
   flex-shrink: 0;
   margin: -10px 0;
