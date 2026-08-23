@@ -2058,3 +2058,67 @@ governed by `LOCAL_LOGIN_ENABLED`. That is a deliberate way back in if Keycloak
 is unreachable after the cutover - and equally a password surface worth
 restricting (IP allowlist in nginx, or unmounting `/admin/`) once SSO is
 mandatory.
+
+## Staging deploy is ONE compose file + `.env` (2026-08-23)
+
+`172.16.62.51` (`ssw-prod`), `/data/dtwatch`, serving
+`https://dtwatch.ntc.net.np` through the Traefik proxy on `172.16.41.201`.
+It started out as a copy of this repo's override chain — `docker-compose.yml`
+plus `docker-compose.remote-db.yml` plus `docker-compose.deploy.yml`, wired
+together by `COMPOSE_FILE` in `.env`. That chain is right *here*, where each
+override is a switch you flip; on a deploy host it means the effective config
+cannot be read, only computed, and a separator-ordered env var decides what
+runs. The host now holds exactly:
+
+```
+/data/dtwatch/
+  docker-compose.yml   <- generated, flattened, do not edit
+  .env                 <- every value still comes from here
+  data/{media,redis}   <- bind mounts, deliberately in this folder not a Docker volume
+```
+
+Regenerate the flattened file with `scripts/render-deploy-compose.sh`, which
+is `docker compose config` over the three files with two flags that are the
+whole reason the script exists:
+
+- `--no-interpolate` keeps `${VAR}` unresolved. Plain `config` substitutes
+  from `.env`, which would bake `SECRET_KEY`, the Postgres password and the
+  Keycloak client secret into a file that then gets `scp`'d around.
+- `--no-path-resolution` keeps `./data/media` relative instead of rewriting it
+  to this workstation's `/mnt/d/...`.
+
+It also forces `name:` and `networks.default.name`. `config` derives both from
+the checkout's directory (`dt-watch`), while the host's containers are named
+after its own (`dtwatch`) — and a project-name mismatch does not error, it
+silently starts a **second** stack next to the running one.
+
+**Deploy sequence** (four images, one tag):
+
+```bash
+SKIP_GIT_TAG=1 SKIP_LOGIN=1 bash ./build-push.sh v0.1.3-dev   # as a user logged into Nexus
+scripts/render-deploy-compose.sh /tmp/dtwatch-deploy.yml
+scp /tmp/dtwatch-deploy.yml kiran@172.16.62.51:/data/dtwatch/docker-compose.yml
+# then on the host: set IMAGE_TAG / APP_VERSION / BUILD_TAG / GIT_SHA in .env
+cd /data/dtwatch && docker compose up -d
+```
+
+`IMAGE_TAG` pins the immutable `$VERSION-BUILDNO-NPTTIME-GITSHA` tag; it and
+`APP_VERSION` are separate mechanisms (one selects the image, the other is what
+the app *reports*) and both must move together or About shows a mismatch.
+Build all four components even for a one-service change — the compose file
+pins a single `IMAGE_TAG` for all of them, so a frontend-only build leaves the
+other three images without that tag and the pull fails.
+
+**Gotchas hit while doing this, all environment, none code:**
+
+- `./build-push.sh` is not executable over the Windows mount — `bash ./build-push.sh`.
+- Run it as the WSL user that holds the Nexus login (`kiran`), not `root`:
+  `root` has no `~/.docker/config.json`, and `SKIP_LOGIN=1` then pushes
+  unauthenticated and fails on a `401` only at the very end of the build.
+- Both WSL users need `git config --global --add safe.directory /mnt/d/Projects/dt-watch`,
+  or the build stamps `GIT_SHA` as `unknown`.
+- `ssh kiran@172.16.62.51` works from WSL, not from Git Bash on the Windows
+  host — the key lives in the WSL user's home.
+- Multi-line remote commands: `scp` a script and run it. A `ssh host "…"`
+  heredoc nests three shells' quoting and half of it silently executes
+  locally instead.
