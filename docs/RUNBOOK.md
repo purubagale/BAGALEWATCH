@@ -1948,3 +1948,113 @@ User: "do i need .env in every folder in dt-watch or one in root is okey". One i
 **Two overriding-precedence traps this makes easier to hit, both now called out in `.env.example` itself:** `POSTGRES_HOST` and `REDIS_URL` are set under the services' `environment:` in `docker-compose.yml`, which **wins over** anything in `.env`. So putting an external Postgres IP in `POSTGRES_HOST` alone does *not* point the app at that server (django and go-worker still get `db`), and a stale `REDIS_URL` line is silently inert.
 
 **Verification.** With only `.env` and `.env.example` present in the whole repo — no per-service env files, no injected shell vars — a plain `docker compose config` resolves clean (`rc=0`) and lists exactly `db django frontend go-worker node-gateway`. The merged django environment shows its `ALLOWED_HOSTS`/`DEBUG`/`CORS_*`/`POSTGRES_*` values coming through from the root file, with `POSTGRES_HOST: db` and the shared-Redis `REDIS_URL` correctly overriding it. Still not run end-to-end — no images have been built on this machine yet.
+## Keycloak SSO (2026-08-23)
+
+Design and decisions: `docs/superpowers/specs/2026-08-23-keycloak-sso-design.md`.
+
+Keycloak authenticates; DT-WATCH keeps authorization. The backend brokers the
+whole OIDC flow and then mints the app's **own** SimpleJWT, so the permissions
+matrix, `IsAdminOrSuperadmin` and the frontend's refresh interceptor are all
+unchanged. Same pattern already running in `pms/nt-pms` against this realm.
+
+**Local login is unaffected and still on by default.** `LOCAL_LOGIN_ENABLED=1`
+is the shipped default; SSO is purely additive until you decide otherwise.
+
+### Keycloak side (must be done first - nothing in the app can do this)
+
+The realm `company` on `sso.ntc.net.np` also serves GitLab, Grafana and
+Rocket.Chat, so treat every step here as a production change.
+
+1. **Create client** `dtwatch`:
+   - Client authentication: **On** (confidential - the secret must stay
+     server-side, which is the whole reason the flow is brokered).
+   - Standard flow: **on**. Direct access grants / implicit: **off**.
+   - PKCE code challenge method: **S256**.
+   - Attach the existing **`groups`** client scope. Without it the ID token
+     carries no `groups` claim and *every* login is refused with
+     `no_app_access` - this is the single most likely setup mistake.
+2. **Valid redirect URIs** - the backend callback, not an SPA route, and the
+   trailing slash matters:
+   - `http://dtwatch.ntc.net.np:5180/api/v2/auth/sso/callback/`
+   - later, `https://dtwatch.ntc.net.np/api/v2/auth/sso/callback/`
+3. **Create group `dtwatch`** and add the people who should have access. This
+   is the entitlement group and nothing else - role comes from the existing
+   `superadmin` / `platform-admins` / `viewers` groups.
+4. **Hosts entries** pointing at `127.0.0.1`, in BOTH `C:\Windows\System32\drivers\etc\hosts` and
+   WSL's `/etc/hosts`.
+
+Either mapper setting for "Full group path" works - the app normalises
+`/dtwatch` and `/parent/dtwatch` to the same thing, so that checkbox cannot
+silently lock everyone out.
+
+### App side
+
+Fill in `.env` (see `.env.example` for the annotated block) and restart:
+
+```
+KEYCLOAK_SSO_ENABLED=1
+KEYCLOAK_ISSUER=https://sso.ntc.net.np/realms/company
+KEYCLOAK_CLIENT_ID=dtwatch
+KEYCLOAK_CLIENT_SECRET=<from the client's Credentials tab>
+KEYCLOAK_REDIRECT_URI=http://dtwatch.ntc.net.np:5180/api/v2/auth/sso/callback/
+```
+
+SSO stays completely dark until enabled AND all of issuer/client id/secret/
+redirect URI are present - deliberately, so a half-configured client cannot
+redirect to Keycloak and then fail *after* the user has typed their password.
+Check with:
+
+```bash
+docker compose exec django python -c "from core import sso_config as c; print(c.is_configured())"
+```
+
+### Role mapping
+
+| Keycloak group | DT-WATCH role |
+|---|---|
+| `superadmin` | `superadmin` |
+| `platform-admins` | `admin` |
+| `viewers` | `viewer` |
+| in `dtwatch`, none of the above | `viewer` |
+
+Re-applied on **every** login - Keycloak is the source of truth. Editing an SSO
+user's role on the Users page therefore does nothing lasting, which is why that
+field is rendered read-only with an `SSO` tag for those users. Change the
+person's Keycloak group instead. Adjust the table via `KEYCLOAK_ROLE_GROUP_MAP`
+if the realm's group names differ; it is config, not code, so a name mismatch
+is an `.env` edit rather than a rebuild.
+
+### Manual smoke test (the mocked tests cannot prove the realm is right)
+
+The 40 automated tests mock JWKS and the token endpoint, so they verify the
+flow's logic but say nothing about whether the client, redirect URI and group
+mapper are configured correctly. Walk this once after setup:
+
+1. A user in `dtwatch` + `superadmin` -> lands on the dashboard as `superadmin`.
+2. A user in `dtwatch` only -> lands as `viewer`.
+3. A user NOT in `dtwatch` -> bounced to `/login` with the "not authorised for
+   DT-WATCH" message. Confirm no account was created for them.
+4. Cancel at the Keycloak login form -> back at `/login`, no error dialog.
+5. Reload `/sso/callback?code=...` after a successful login -> "already been
+   used" message, not a crash (proves the code is single-use).
+6. Users page -> the SSO user's role shows the `SSO` tag and is not editable.
+7. Local login still works with a password account.
+8. Then set `LOCAL_LOGIN_ENABLED=0`, restart, and confirm the password form is
+   gone and `POST /api/v2/auth/login/` returns 403.
+
+### Revocation window
+
+DT-WATCH issues its own tokens, so a user disabled in Keycloak keeps working
+DT-WATCH tokens until their refresh expires. SSO sessions therefore use
+`SSO_REFRESH_TOKEN_LIFETIME` (1h) rather than the 12h local default. To cut
+that to minutes, see the design spec's "Session lifetime and revocation" - it
+costs storing a Keycloak refresh token per session, which is why it was not
+built up front.
+
+### Break-glass
+
+Django admin at `/admin/` uses Django's own session login and is **not**
+governed by `LOCAL_LOGIN_ENABLED`. That is a deliberate way back in if Keycloak
+is unreachable after the cutover - and equally a password surface worth
+restricting (IP allowlist in nginx, or unmounting `/admin/`) once SSO is
+mandatory.
