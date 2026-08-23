@@ -24,7 +24,7 @@ def main():
         sys.exit(1)
 
     source_path = sys.argv[1]
-    tmp_dir = tempfile.mkdtemp(prefix='bagalewatch_v2_check_')
+    tmp_dir = tempfile.mkdtemp(prefix='dtwatch_check_')
     copy_path = os.path.join(tmp_dir, 'snapshot.db')
     shutil.copy2(source_path, copy_path)
 

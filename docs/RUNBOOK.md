@@ -1,4 +1,4 @@
-# BAGALEWATCH BTS v2 — Runbook
+# DT-WATCH BTS v2 — Runbook
 
 ## What this is
 
@@ -12,7 +12,7 @@ what's new and, importantly, what's NOT yet verified on real hardware.
 
 This stack never touches the v1 system. Concretely, as of Phase 0:
 
-- **Different folder.** This whole tree lives at `bagalewatch-v2/` inside the
+- **Different folder.** This whole tree lives at `dt-watch/` inside the
   v1 project folder, as a clearly separate subtree — not mixed into any v1
   file. (The migration plan describes a true sibling folder next to the v1
   project folder; that wasn't reachable from the tooling used to build this,
@@ -77,16 +77,17 @@ Once both are installed, this is the "Action item before Phase 1" from
 below — do this once, end to end, before Phase 1 work starts:
 
 ```powershell
-cd bagalewatch-v2\backend-go
+cd dt-watch\backend-go
 go build ./...          # first real compile check for the Go worker
 ```
 
 ```bash
-cd bagalewatch-v2
-cp .env.example .env                                   # fill in POSTGRES_PASSWORD
-cp backend-django/.env.example backend-django/.env      # fill in SECRET_KEY, POSTGRES_PASSWORD (match .env)
-cp backend-node/.env.example backend-node/.env
-cp frontend-react/.env.example frontend-react/.env
+cd dt-watch
+cp .env.example .env    # the ONLY env file needed (2026-08-21) — fill in
+                        # SECRET_KEY and POSTGRES_PASSWORD. The old
+                        # backend-django/.env + backend-node/.env were
+                        # merged into it; frontend-react/.env is optional
+                        # (build-time Vite vars, blank on purpose).
 docker compose up --build
 ```
 
@@ -117,7 +118,7 @@ did not). Given that:
 | Node gateway | **Fully run**: `npm install`, started the server, hit `/health` over HTTP, and opened a real WebSocket connection to `/ws` and got the expected `welcome` + `echo` messages back. |
 | React app | **Fully run**: `npm install`, `npm run build` succeeded, `npm run preview` served the built app and returned valid HTML on port 5180. |
 | Go worker | **Compiled successfully** — `go build ./...` run on the user's real Windows machine on 2026-07-27, zero errors, zero output. (Needed `$env:GOFLAGS="-p=1"` to avoid a Windows "paging file too small" / out-of-memory error from the compiler's default per-core parallelism — a host memory-pressure issue, not a code issue.) **Also confirmed healthy as a running container** — see below. |
-| docker-compose.yml | **Fully run end-to-end** — `docker compose up --build` on the user's real machine, 2026-07-27. All 6 containers (db, redis, django, node-gateway, go-worker, frontend) report `Up ... (healthy)`. Hit two real snags along the way, both fixed: (1) a corrupted `docker-desktop` WSL distro (`componentsVersion.json` missing) — fixed by unregistering `docker-desktop`/`docker-desktop-data` via `wsl --unregister` and letting Docker Desktop reprovision them; (2) Postgres credential/DB-name mismatch between the root `.env` and `backend-django/.env` (a typo — `bagalewatch` vs. the correct `bagalewatch_v2`) — fixed by aligning both files and `docker compose down -v` to force Postgres to reinitialize its named volume with the correct name. |
+| docker-compose.yml | **Fully run end-to-end** — `docker compose up --build` on the user's real machine, 2026-07-27. All 6 containers (db, redis, django, node-gateway, go-worker, frontend) report `Up ... (healthy)`. Hit two real snags along the way, both fixed: (1) a corrupted `docker-desktop` WSL distro (`componentsVersion.json` missing) — fixed by unregistering `docker-desktop`/`docker-desktop-data` via `wsl --unregister` and letting Docker Desktop reprovision them; (2) Postgres credential/DB-name mismatch between the root `.env` and `backend-django/.env` (a typo — `dtwatch` vs. the correct `dtwatch`) — fixed by aligning both files and `docker compose down -v` to force Postgres to reinitialize its named volume with the correct name. |
 | Seed/inspect script | **Fully run against the real production `bagalewatch.db`**, see above — this is the most important one to have verified, since it's the one script allowed near v1 data. |
 
 **Phase 0 is now fully verified end-to-end on the user's real machine, including the browser UI itself — no open action items.** `curl http://localhost:8000/api/v2/health/` returns `{"status":"ok","database":"ok"}`; node-gateway (8090) and go-worker (8070) health endpoints and `docker compose ps` all confirmed healthy; and opening `http://localhost:5180` shows the actual React shell with both live status checks green, on 2026-07-27. (Historical record — as of the 2026-08-10 port-hiding pass, ports 8000/8090/8070 are no longer published to the host; see the updated health-check commands above.)
@@ -129,7 +130,7 @@ Two more real bugs surfaced and fixed getting to that final green state:
 ## Directory structure
 
 ```
-bagalewatch-v2/
+dt-watch/
 ├── backend-django/     Django + DRF — API/auth/admin, owns the Postgres schema
 ├── backend-node/       Node.js — WebSocket real-time gateway
 ├── backend-go/         Go — TRP parsing + heavy processing (Phase 4/5)
@@ -247,7 +248,7 @@ verification Phase 0 got and Phase 1 still needs:**
 
 1. **Django checks + migrations (SQLite smoke test, same pattern as Phase 0):**
    ```powershell
-   cd bagalewatch-v2\backend-django
+   cd dt-watch\backend-django
    python -m venv venv
    venv\Scripts\activate
    pip install -r requirements.txt
@@ -280,7 +281,7 @@ verification Phase 0 got and Phase 1 still needs:**
 
 3. **React build:**
    ```powershell
-   cd bagalewatch-v2\frontend-react
+   cd dt-watch\frontend-react
    npm install
    npm run build
    ```
@@ -292,7 +293,7 @@ verification Phase 0 got and Phase 1 still needs:**
 
 4. **Full stack**, once 1–3 pass individually:
    ```powershell
-   cd bagalewatch-v2
+   cd dt-watch
    docker compose up --build
    ```
    Then log in at `http://localhost:5180` with a real account and confirm
@@ -338,7 +339,7 @@ before this fix), and the command prints a warning listing any site IDs
 that fell through, so a future data-quality surprise won't be silent.
 
 The earlier `_SITE_REGION_MAP` extraction script
-(`bagalewatch-v2/scripts/extract_site_region_map.py`) is left in the repo
+(`dt-watch/scripts/extract_site_region_map.py`) is left in the repo
 but is **not** wired into the seed command anymore — its docstring now
 says so explicitly, in case a future feature genuinely needs the
 site_id → current-province mapping it produces.
@@ -436,7 +437,7 @@ else this phase.
 **To verify (same pattern as every prior phase — run on the real
 machine, report back the actual output):**
 ```powershell
-cd bagalewatch-v2\backend-django
+cd dt-watch\backend-django
 python manage.py makemigrations core
 python manage.py migrate
 python manage.py test core
@@ -718,7 +719,7 @@ docker compose exec django python manage.py take_kpi_snapshot
 
 or via cron on a Linux host running the stack:
 ```
-0 1 * * * cd /path/to/bagalewatch-v2 && docker compose exec -T django python manage.py take_kpi_snapshot
+0 1 * * * cd /path/to/dt-watch && docker compose exec -T django python manage.py take_kpi_snapshot
 ```
 
 **New module `core/kpi_trend.py`** (deliberately not `reports.py` — see
@@ -1085,7 +1086,7 @@ If that's clean, then rebuild (`vite.js build`) and click through: Explore tab �
 
 **JWT persists across a normal page refresh now.** User asked: "when i refresh my browser, it gets logged out from the system, only log out after hard refresh or after logout button click." Investigated `api/client.ts` (tokens were a pure module-level variable, wiped by ANY reload) and `auth/AuthContext.tsx` (no restore-on-mount logic existed). **Technical caveat, communicated to the user, not silently ignored**: no web API can tell a "hard" refresh (cache-bypass reload) apart from a "soft" one — `sessionStorage`/`localStorage` persist identically across both, clearing only when the tab/window itself is closed. The literal ask isn't achievable; what was built instead is "stay logged in across any refresh, log out only via the Logout button, token/refresh-token expiry, or closing the tab," which covers the actual complaint (routine refreshes kicking the user out).
 
-Implementation: `api/client.ts` now mirrors `accessToken`/`refreshToken` into `sessionStorage` (`bagalewatch_access_token`/`bagalewatch_refresh_token`) on every `setTokens()`/`clearTokens()`/silent-refresh, reading them back at module load via `readStorage()` (wrapped in try/catch — some private-browsing contexts throw on `sessionStorage` access); new `getRefreshToken()` export added alongside the existing `getAccessToken()`. `AuthContext.tsx` adds a `restoring` boolean (`true` initially only if a token was found in storage) and a mount-time effect that calls `GET /api/v2/auth/me/` (already existed, unused until now) to re-hydrate `user` when a token survived a reload — going through the existing `apiFetch`, so an expired *access* token still transparently silent-refreshes via the existing 401-retry path, and only a genuinely dead refresh token clears everything and drops the user to `/login`. `auth/ProtectedRoute.tsx` now checks `restoring` before checking `user`, so it doesn't redirect a valid restored session to `/login` on the single render before the `/me/` call resolves.
+Implementation: `api/client.ts` now mirrors `accessToken`/`refreshToken` into `sessionStorage` (`dtwatch_access_token`/`dtwatch_refresh_token`) on every `setTokens()`/`clearTokens()`/silent-refresh, reading them back at module load via `readStorage()` (wrapped in try/catch — some private-browsing contexts throw on `sessionStorage` access); new `getRefreshToken()` export added alongside the existing `getAccessToken()`. `AuthContext.tsx` adds a `restoring` boolean (`true` initially only if a token was found in storage) and a mount-time effect that calls `GET /api/v2/auth/me/` (already existed, unused until now) to re-hydrate `user` when a token survived a reload — going through the existing `apiFetch`, so an expired *access* token still transparently silent-refreshes via the existing 401-retry path, and only a genuinely dead refresh token clears everything and drops the user to `/login`. `auth/ProtectedRoute.tsx` now checks `restoring` before checking `user`, so it doesn't redirect a valid restored session to `/login` on the single render before the `/me/` call resolves.
 
 `tsc -b` NOT run (sandbox shell still unavailable this session) — reviewed by hand only. Before trusting this, on the real machine:
 ```powershell
@@ -1558,7 +1559,7 @@ Deliberately did NOT strip `?fromSearch=1` after use (unlike `?edit=1`/`?addSect
 
 **Colors sampled directly from the logo**, not guessed or recalled from general "NTC branding" knowledge — `logo.jpg` was already sitting in the project root from an earlier session. Ran it through Pillow (`Image.getcolors()`, most-frequent-pixel analysis): background blue is `#0153A5` (96,953 of ~115,000 sampled pixels), the tower/text gold clusters around `#E4B54D`.
 
-**Assets** (`frontend-react/public/`): `ntc-logo.jpg` (the real logo, used in header + login), `favicon-16.png`/`favicon-32.png`/`apple-touch-icon.png`/`favicon-192.png` (center-cropped-square + resized via Pillow). `index.html` updated: real favicon links replacing the old placeholder `favicon.svg`, `<meta name="theme-color" content="#0153A5">`, title changed to "BAGALEWATCH BTS — Nepal Telecom". The old `favicon.svg`/`icons.svg` files are left in `public/` unreferenced rather than deleted (harmless, not worth the risk of breaking something else that might still reference them).
+**Assets** (`frontend-react/public/`): `ntc-logo.jpg` (the real logo, used in header + login), `favicon-16.png`/`favicon-32.png`/`apple-touch-icon.png`/`favicon-192.png` (center-cropped-square + resized via Pillow). `index.html` updated: real favicon links replacing the old placeholder `favicon.svg`, `<meta name="theme-color" content="#0153A5">`, title changed to "DT-WATCH BTS — Nepal Telecom". The old `favicon.svg`/`icons.svg` files are left in `public/` unreferenced rather than deleted (harmless, not worth the risk of breaking something else that might still reference them).
 
 **Design tokens** — `App.css`'s old 6-line `:root { --rpt-* }` block replaced with a full semantic token system (~60 CSS custom properties): brand (`--brand-primary`/`--brand-primary-hover`/`--brand-accent`), neutral surface scale (`--bg-app`/`--bg-surface`/`--bg-surface-alt`/`--bg-hover`), text scale (`--text-primary` through `--text-dim`), borders, status colors (success/warning/danger/info, each with a badge-style soft-bg variant), and elevation (`--shadow-sm`/`--shadow-md`, `--radius-sm/md/lg`). `--rpt-green`/`--rpt-yellow`/`--rpt-red`/`--rpt-blue`/`--rpt-hint` are kept under their original names (chained onto the new status tokens via `var()`) since `NtaCompliancePage.tsx`/`SlaTrackerPage.tsx` read them directly by name — renaming would've meant touching those files for no benefit.
 
@@ -1570,9 +1571,9 @@ Two brand-color roles were deliberately kept separate rather than using one blue
 
 **A real bug during this pass, caught before shipping**: the blanket replacement script ran over the ENTIRE file including the token block it had just inserted, so lines like `--bg-app: #0b0d12;` got rewritten to the self-referential `--bg-app: var(--bg-app);` — every token would have resolved to nothing. Caught by re-reading the file with the `Read` tool right after (not trusting the script's own success message) and noticing `--text-primary: var(--bg-surface);` in the light theme block, which is an obviously wrong pairing. Fixed by regenerating the token block from the pristine source file and re-splicing it in, leaving the (correctly-tokenized) rest of the file untouched. Verified with a second pass afterward: no `--x: var(--x)` self-references anywhere, and a `tinycss2` parse of the final file reports zero errors.
 
-**Theme toggle** — `contexts/ThemeContext.tsx` (new, matches the existing `SearchModalContext.tsx` convention: plain React context, fail-safe `useTheme()` that falls back to dark if no provider is found rather than throwing). Sets `document.documentElement.dataset.theme = 'light'` (or deletes the attribute for dark, so dark stays the literal zero-attribute default — existing users see no visual change until they opt in) and persists the choice to `localStorage` under `bagalewatch_theme`. Wrapped around `<App>` in `main.tsx`. Toggle button (☀️/🌙) added to the header (next to Search/Sign out, `Layout.tsx`) AND the login page (top-right corner, reachable before authentication too, since the request wasn't scoped to logged-in sessions only).
+**Theme toggle** — `contexts/ThemeContext.tsx` (new, matches the existing `SearchModalContext.tsx` convention: plain React context, fail-safe `useTheme()` that falls back to dark if no provider is found rather than throwing). Sets `document.documentElement.dataset.theme = 'light'` (or deletes the attribute for dark, so dark stays the literal zero-attribute default — existing users see no visual change until they opt in) and persists the choice to `localStorage` under `dtwatch_theme`. Wrapped around `<App>` in `main.tsx`. Toggle button (☀️/🌙) added to the header (next to Search/Sign out, `Layout.tsx`) AND the login page (top-right corner, reachable before authentication too, since the request wasn't scoped to logged-in sessions only).
 
-**Logo integration**: header (`app-header-brand` — logo + title, left of the nav toggle), login page (64px logo above the "BAGALEWATCH BTS" heading, subtitle changed to "Nepal Telecom · 4G RAN O&M — sign in"), and the browser tab (favicon).
+**Logo integration**: header (`app-header-brand` — logo + title, left of the nav toggle), login page (64px logo above the "DT-WATCH BTS" heading, subtitle changed to "Nepal Telecom · 4G RAN O&M — sign in"), and the browser tab (favicon).
 
 **Other polish applied everywhere via the shared primitives** (so it lands on all ~15 pages at once, not just wherever new code happens to touch): global `:focus-visible` outline in brand blue on every input/select/textarea/button/link (there was NO visible focus state anywhere before this — a real, previously-missing accessibility gap, not just cosmetic); `:focus` box-shadow ring on form fields; themed scrollbars (Chromium/Safari/Edge); `box-shadow: var(--shadow-sm/md)` added to every previously-flat elevated surface (`.login-card`, `.modal-box`, `.report-card`, `.tree-folder-card`, `.audit-section`, `.backup-card`, `.md-report`, `.dt-compare-panel`, `.scatter-tooltip`); table headers (`.admin-table th`, `.sectors-table th`) restyled as small-caps muted labels, matching the micro-copy style `.report-card-label` already used, instead of just slightly-darker body text; `.btn-danger` folded into the same base selector as `.btn-primary`/`.btn-secondary` (it was previously missing border-radius/padding/font-size entirely wherever used alone without `.btn-small`, e.g. `BackupPage.tsx`'s Restore button — a genuine pre-existing bug this incidentally fixes); button/link/nav hover transitions (`transition: background-color 0.15s ease`) added where missing.
 
@@ -1648,7 +1649,7 @@ Screenshot of the sidebar's logo/brand area attached: "here it is one level subm
 
 **Customizable branding** — new singleton `BrandingSettings` model (`app_name`, `logo` `ImageField`, same `pk=1`/`get_or_create` convention as the pre-existing `TreeSettings`), migration `0014` + a `0015` data migration seeding a `Branding` nav row (`/branding`, superadmin-only). `GET/PUT /api/v2/branding/` (`BrandingSettingsView`). The logo travels as a base64 data URL in a plain JSON field (`logo_data_url`), NOT multipart/form-data — this app's shared `apiFetch()` client force-sets `Content-Type: application/json` on any request with a body unless one's already set, which would corrupt a real multipart upload; rather than special-casing the shared client for one endpoint, this follows the SAME convention `BackupPage.tsx` already established (read the file client-side, send its content as JSON). The view validates the data URL's mime type (`image/*` only), caps decoded size at 5MB, and swaps the stored file (`obj.logo.delete(save=False)` before assigning the new one, so replacing a logo never leaves an orphaned upload). **GET is deliberately `AllowAny`, not `IsAuthenticated`** — caught during verification: `LoginPage.tsx` renders before the user has a token at all, so an auth-gated GET would have made the login page's own branding silently fail to load every single time. There's nothing sensitive in the response (a display name + a public image URL), so this is a considered exception, not an oversight. PUT stays superadmin-only, matching every other app-wide-setting write.
 
-**Frontend wiring** — new `BrandingPage.tsx` (`/branding`, superadmin-gated the same way `MenuAdminPage.tsx` gates itself, i.e. a plain in-component role check backing up the server's own 403) with a file input (client-side `FileReader.readAsDataURL()` → preview → Save), a Remove-logo button (only shown once a custom logo exists), and an app-name text field. `Layout.tsx`'s sidebar brand block and `LoginPage.tsx` both now read `useBranding()` and fall back to the stock `/ntc-logo.jpg` + "BAGALEWATCH BTS" when nothing's been customized (a fresh install's GET comes back `{app_name: '', logo_url: null}`, not an error, so the fallback is the common case, not an edge case). A new `useBrandingSideEffects()` hook, called once at the `App()` root (so it also runs pre-login, matching the GET's `AllowAny` reasoning), pushes a customized name into `document.title` and a customized logo into every `<link rel="icon">`/`<link rel="apple-touch-icon">` tag — the two places outside React's own render tree that also need to reflect a custom logo, and can't be set via JSX.
+**Frontend wiring** — new `BrandingPage.tsx` (`/branding`, superadmin-gated the same way `MenuAdminPage.tsx` gates itself, i.e. a plain in-component role check backing up the server's own 403) with a file input (client-side `FileReader.readAsDataURL()` → preview → Save), a Remove-logo button (only shown once a custom logo exists), and an app-name text field. `Layout.tsx`'s sidebar brand block and `LoginPage.tsx` both now read `useBranding()` and fall back to the stock `/ntc-logo.jpg` + "DT-WATCH BTS" when nothing's been customized (a fresh install's GET comes back `{app_name: '', logo_url: null}`, not an error, so the fallback is the common case, not an edge case). A new `useBrandingSideEffects()` hook, called once at the `App()` root (so it also runs pre-login, matching the GET's `AllowAny` reasoning), pushes a customized name into `document.title` and a customized logo into every `<link rel="icon">`/`<link rel="apple-touch-icon">` tag — the two places outside React's own render tree that also need to reflect a custom logo, and can't be set via JSX.
 
 **Verification**: `python3 manage.py check` — clean both immediately after the base64 rewrite and again after the `AllowAny` fix. `tsc -b --force` — zero errors. Ran the full migration chain (`0001`→`0015`) against a fresh throwaway sqlite DB. Exercised `BrandingSettingsView` directly: unauthenticated GET returns 200 with defaults (confirming the login-page fix actually works); superadmin PUT with a real base64-encoded 1×1 PNG succeeds and `logo_url` resolves to a real `/media/branding/logo.png` URL; a non-superadmin PUT is rejected 403; a malformed data URL and a non-image mime type are both rejected 400 with a field-level error; `remove_logo: true` clears it back to `null`. Exercised multi-level submenus directly: built a real 3-level chain (SLA → NTA → Monthly Report) via three separate PATCHes, confirmed `MenuTreeView` returns them correctly nested for superadmin; confirmed a genuine cycle attempt (re-parenting SLA under its own descendant Monthly Report) is rejected 400 with the "already a descendant" message; confirmed an admin role with a read grant on `sla` but not `nta` sees SLA in the tree with an empty `children` array (each node's own access is checked independently of its parent's — a parent being visible does not implicitly grant visibility to its children). **Not yet click-tested live in a browser** — recommend the user, after migrating and rebuilding the frontend: (a) confirm the sidebar's logo now overflows evenly top and bottom, with no wordmark clipping visible on hover-zoom; (b) build a real 2+-level submenu via Menu Admin and confirm it renders correctly indented in the sidebar with working expand/collapse at each level; (c) as superadmin, visit Branding, upload a logo and set a custom name, and confirm it immediately shows in the sidebar, on the login page (after signing out), and in the browser tab's favicon/title; (d) confirm "Remove custom logo" reverts everything to the stock Nepal Telecom branding.
 
@@ -1767,7 +1768,7 @@ User's request: "add feature to create api to share certain data of system to ot
 - `GET /dt-sessions/<id>/` — metadata only, matching the internal API's own "samples can be 100,000+ rows, never inline them" convention.
 - `GET/POST /dt-sessions/<id>/samples/` — paginated raw samples / append more to an existing session.
 
-**Deliberately NOT built:** no DELETE anywhere in this module (an external system can create/update but never remove BAGALEWATCH data — matches the "share/receive" framing of the request, not "full remote CRUD"); sector upserts are additive-only, matched by `cell_name`, never deleting an unmentioned sector (the internal `SiteWriteSerializer`'s "full replace" contract would let a partial external KPI push silently wipe sectors it never meant to touch — see `ExternalSiteWriteSerializer`'s own docstring in `core/serializers.py`); every write path uses hand-written plain `Serializer`s (not the internal `ModelSerializer`s) specifically so an OMITTED field stays genuinely absent from `validated_data` instead of being silently defaulted/blanked — true partial-update semantics for a KPI feed that only wants to push a handful of fields per call.
+**Deliberately NOT built:** no DELETE anywhere in this module (an external system can create/update but never remove DT-WATCH data — matches the "share/receive" framing of the request, not "full remote CRUD"); sector upserts are additive-only, matched by `cell_name`, never deleting an unmentioned sector (the internal `SiteWriteSerializer`'s "full replace" contract would let a partial external KPI push silently wipe sectors it never meant to touch — see `ExternalSiteWriteSerializer`'s own docstring in `core/serializers.py`); every write path uses hand-written plain `Serializer`s (not the internal `ModelSerializer`s) specifically so an OMITTED field stays genuinely absent from `validated_data` instead of being silently defaulted/blanked — true partial-update semantics for a KPI feed that only wants to push a handful of fields per call.
 
 **Internal admin surface:** `ApiKeyViewSet` at `/api/v2/api-keys/` (JWT-authenticated, superadmin-only, same convention as Users/Menu Admin/Permissions/Branding) backs the new **API Access** page (`ApiAccessPage.tsx`, migration `0030_seed_api_access_menuitem.py` seeds its `MenuItem` at opaque path `/n8w5qk`, `access='superadmin'`). Create/edit/revoke/delete keys, pick scopes via checkboxes, optional expiry date. The plaintext key is shown exactly once in a dismissible banner right after creation, with a copy button — never persisted client-side beyond that render, never fetchable again from any GET. The page also documents the base URL, header name, and two example `curl` commands.
 
@@ -1797,7 +1798,7 @@ The user click-tested the feature above immediately after it shipped, with a rea
 
 **What changed:**
 - `frontend-react/nginx.conf` — added `client_max_body_size 20m;`.
-- `backend-django/bagalewatch_v2/settings.py` — added `DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024`.
+- `backend-django/dtwatch/settings.py` — added `DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024`.
 - `backend-django/core/serializers.py` — new `DT_SAMPLES_BATCH_SIZE = 5000` constant; `DriveTestSessionWriteSerializer` gained `validate_samples()` rejecting an inline `samples` list over that cap (so a non-UI caller — a script, the DRF browsable API — can't bypass it by hitting `create()` directly with everything inline).
 - `backend-django/core/drive_test.py` — new `POST /api/v2/dt-sessions/<id>/samples/` action (`DriveTestSessionViewSet.samples()`), admin/superadmin-gated same as `create()`/`destroy()`. Appends a batch of already-validated samples via `bulk_create` to an EXISTING session — purely additive, no update/delete path, same guarantee every other write path in this feature already has. `meta.nearby_site_ids` is updated incrementally (this batch's matches unioned into whatever was already there) rather than recomputed from scratch each call, so it's correct without needing every prior batch's points in memory.
 - `frontend-react/src/api/queries.ts` — new `useAppendDtSamples()` hook, deliberately with no per-call cache invalidation (a large session means dozens of sequential batch calls; invalidating `['dt-sessions']` on every one would refetch the whole list that many times for nothing).
@@ -1906,10 +1907,44 @@ User tried opening `localhost:5432` in a browser expecting to see the database a
 
 **Added:** a `pgadmin` service (`dpage/pgadmin4`) to `docker-compose.yml`, giving a real browser-reachable admin UI at `http://localhost:5050`. Bound to `127.0.0.1:5050:80` only — same LAN-hardening reasoning as every other `ports:` decision in this file; this is a raw admin surface over the entire database, so it never gets a bare/LAN-facing port. Depends on `db` being healthy first. Two new root `.env` vars, `PGADMIN_EMAIL`/`PGADMIN_PASSWORD` (own pgAdmin login, unrelated to the app's own users) — a real password was generated and written directly into the local `.env` (never into chat, never committed — `.env` stays gitignored like the rest of this file's secrets).
 
-**Persistence + convenience:** new named volume `bagalewatch_v2_pgadmin_data` (pgAdmin's own internal config DB — saved connections/preferences — entirely separate from `bagalewatch_v2_pgdata`, which is the actual application data pgAdmin connects TO). `pgadmin/servers.json` (new file, read-only bind mount) pre-registers a "BAGALEWATCH v2 (docker)" server pointing at `db:5432`/`bagalewatch_v2`/`bagalewatch` so the server tree isn't empty on first login — it can only carry host/port/db/username, never a password (pgAdmin has no secure way to pre-seed one), so the first connection still prompts once. If `POSTGRES_USER` has ever been changed from the `bagalewatch` default, this file's `Username` needs a matching manual edit or the pre-registered connection will fail.
+**Persistence + convenience:** new named volume `dtwatch_pgadmin_data` (pgAdmin's own internal config DB — saved connections/preferences — entirely separate from `bagalewatch_v2_pgdata`, which is the actual application data pgAdmin connects TO). `pgadmin/servers.json` (new file, read-only bind mount) pre-registers a "DT-WATCH v2 (docker)" server pointing at `db:5432`/`dtwatch`/`dtwatch` so the server tree isn't empty on first login — it can only carry host/port/db/username, never a password (pgAdmin has no secure way to pre-seed one), so the first connection still prompts once. If `POSTGRES_USER` has ever been changed from the `dtwatch` default, this file's `Username` needs a matching manual edit or the pre-registered connection will fail.
 
 **Verification.** `docker-compose.yml` YAML and `pgadmin/servers.json` JSON both parse clean (`python3 -c "import yaml; yaml.safe_load(...)"` / `json.load(...)`). Docker itself isn't available in this sandbox, so `docker compose up -d pgadmin` and an actual browser login were NOT run here — that's the real next step on the user's machine.
 
-**Real bug hit on first actual run:** the container crash-looped (`Restarting (1)`, `localhost:5050` refused to connect). `docker compose logs pgadmin` showed the real cause: `'admin@bagalewatch.local' does not appear to be a valid email address... The part after the @-sign is a special-use or reserved name`. pgAdmin's `PGADMIN_DEFAULT_EMAIL` runs through an email-format validator that rejects reserved/special-use TLDs (`.local` is one, being the mDNS reserved domain) even with `CHECK_EMAIL_DELIVERABILITY: False` — that setting only skips the DNS-deliverability check, not basic syntax/domain validation. Fixed by changing the default (and the value already written into the user's real `.env`) from `admin@bagalewatch.local` to `admin@bagalewatch.app` in both `docker-compose.yml` and `.env.example`. This is a real, confirmed-live crash+fix, not a guess — caught from the user's own `docker compose ps`/`logs` output. Next step after this fix ships: `docker compose up -d pgadmin` again to pick up the corrected `.env`, then re-check `docker compose ps` shows it `Up`/healthy before retrying `http://localhost:5050`.
+**Real bug hit on first actual run:** the container crash-looped (`Restarting (1)`, `localhost:5050` refused to connect). `docker compose logs pgadmin` showed the real cause: `'admin@dtwatch.local' does not appear to be a valid email address... The part after the @-sign is a special-use or reserved name`. pgAdmin's `PGADMIN_DEFAULT_EMAIL` runs through an email-format validator that rejects reserved/special-use TLDs (`.local` is one, being the mDNS reserved domain) even with `CHECK_EMAIL_DELIVERABILITY: False` — that setting only skips the DNS-deliverability check, not basic syntax/domain validation. Fixed by changing the default (and the value already written into the user's real `.env`) from `admin@dtwatch.local` to `admin@dtwatch.app` in both `docker-compose.yml` and `.env.example`. This is a real, confirmed-live crash+fix, not a guess — caught from the user's own `docker compose ps`/`logs` output. Next step after this fix ships: `docker compose up -d pgadmin` again to pick up the corrected `.env`, then re-check `docker compose ps` shows it `Up`/healthy before retrying `http://localhost:5050`.
 
 **Verification.** Sandbox still down at time of fix — reviewed manually, not compiled. Purely additive (one CSS property, one canvas fill call), no logic change to point plotting. Recommend re-opening Compare Sessions on any session pair as the visual check once the sandbox/build is available.
+
+## pgAdmin removed (2026-08-21)
+
+User: "i dont want pgadmin so remove it". Dropped from `docker-compose.yml`: the whole `pgadmin` service, its named volume `dtwatch_pgadmin_data`, and the `pgadmin/servers.json` file + folder it bind-mounted (git history keeps both if it's ever wanted back — see the 2026-08-20 section above for the full original rationale). The root `.env`/`.env.example` `PGADMIN_EMAIL`/`PGADMIN_PASSWORD` vars are gone too; `PGADMIN_PASSWORD` had been declared `${PGADMIN_PASSWORD:?...}`, so with the service gone that's one fewer required secret before `docker compose up` will even start.
+
+Nothing else referenced it — `db` still publishes no ports, and the way to inspect the database from the host is back to what the `db` service comment has always recommended: `docker compose exec db psql -U dtwatch_user dtwatch_db`. **This drops the 5050 port publish entirely**, which also removes the one raw-admin-over-the-whole-database HTTP surface this stack had.
+
+**Verification.** `docker compose config -q` passes on the trimmed file (Docker 29.7.2 / Compose v5.5.0, WSL), and `docker compose config --services` now lists exactly `db django frontend go-worker node-gateway` — no `pgadmin`, no orphan volume reference. No container had ever been created from it on this machine, so there was no leftover volume to prune.
+
+## Shared Redis for the whole workspace, opt-in per machine (2026-08-21)
+
+User: "my many apps using redis, so can i use single redis in this environment so that i dont want many containers lets start with dt-watch". Every app in `d:\Projects` (dt-watch, dutychart, meeting, nt-pms) bundles its own `redis:7-alpine`, which on one dev box means four idle Redis containers.
+
+**Added, outside this repo:** `d:\Projects\shared-redis\` — one password-protected, AOF-persisted `shared-redis` container on an external Docker network of the same name, plus a logical-DB registry (0-15, one index per app-purpose) in its compose header. Auth is new relative to the bundled Redis containers, which correctly ran with none: theirs sat alone on one project-private network, this one is joined by several projects at once.
+
+**Added, in this repo:** `docker-compose.shared-redis.yml` — an *override*, deliberately not an edit to `docker-compose.yml`. The committed compose file keeps its bundled `redis` so a standalone/customer deploy stays a plain "copy the folder, `docker compose up`" (which `docs/SERVER_MIGRATION*.md` depends on). The override drops the bundled service (`redis: !reset null` — Compose's merge rules can otherwise only add/replace, never remove), re-states just the surviving `db` gates (`depends_on: !override`, because a `depends_on` naming a deleted service is a hard config error), joins both `default` and the external network, and repoints `REDIS_URL` for django/node-gateway/go-worker. It activates only via `COMPOSE_FILE` in the gitignored `.env`, so a plain `docker compose up` here picks it up while nothing committed changes.
+
+**DB indices kept identical to the bundled Redis** — Django cache on 1, node-gateway + go-worker together on 0 — so there was no key migration, and the two services that a future Phase 6 pub/sub path needs on a shared keyspace stay on one index (Redis pub/sub and queues do not cross DB indices).
+
+**Real gotcha found while verifying, worth remembering:** `redis://:PASSWORD@host` sends an *empty* ACL username, and Redis 6+ answers `WRONGPASS invalid username-password pair` even when the password is correct — reproduced live with `redis-cli -u` against this container. redis-py (Django) and ioredis (node-gateway) both happen to normalise the empty username away and would have worked, but that isn't guaranteed across clients and it makes `redis-cli -u "$REDIS_URL"` fail while the app succeeds. Every URL uses the explicit `redis://default:PASSWORD@shared-redis:6379/N` form instead.
+
+**Verification (real, on Docker 29.7.2 / Compose v5.5.0 in WSL — not a sandbox review).** Container healthy; authed `PING` → `PONG`, unauthed → `NOAUTH`, write/read on DB 1 OK. From a throwaway container on the shared network — i.e. a different compose project, the case that actually matters — the exact URL form these services use returned `PONG` and `client info` confirmed `db=0`/`db=1`; a wrong password was refused. A plain `docker compose config` in this folder (no `-f` flags) resolves via `COMPOSE_FILE` to no `redis` service, all three `REDIS_URL`s on `shared-redis`, the external network wired, `rc=0`. **Not yet run end-to-end** — the images were never built on this machine and `backend-django/.env`/`backend-node/.env`/`frontend-react/.env` don't exist yet, so `docker compose up` itself is still the next step.
+
+## One root `.env` for the whole stack (2026-08-21)
+
+User: "do i need .env in every folder in dt-watch or one in root is okey". One is enough, and it's now the only one. `docker-compose.yml`'s `env_file:` for both django and node-gateway points at `./.env`, the same file compose already read for `${...}` interpolation; `backend-django/.env.example` and `backend-node/.env.example` are deleted and their comments merged into the root `.env.example`, which is now the single authoritative list.
+
+**Why merging is safe here — checked, not assumed.** No var name means two different things across the two services: `PORT` is read only by the node gateway (`backend-node/src/server.js`, defaulting to 8090 anyway), gunicorn hardcodes `bind = '0.0.0.0:8000'` (`gunicorn.conf.py`) and never looks at `PORT`, and django's `CORS_ALLOWED_ORIGINS` vs the gateway's singular `CORS_ALLOWED_ORIGIN` are distinct names. The gateway's two vars are now left unset entirely since its own defaults already match what the old file specified. Side effect worth knowing: the root file's compose-only lines (`COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR`, `SHARED_REDIS_PASSWORD`) now also appear in those containers' environment — harmless, nothing reads them there.
+
+**`frontend-react/.env` is the one exception and stays optional.** It's read by Vite at image BUILD time via the Dockerfile's `COPY . .`, not by compose at run time, so it can't be merged into a compose `env_file`. Both vars in it are deliberately blank (2026-08-10 port-hiding pass), so the file can simply be absent unless the built app must call a non-same-origin django/node instance.
+
+**Two overriding-precedence traps this makes easier to hit, both now called out in `.env.example` itself:** `POSTGRES_HOST` and `REDIS_URL` are set under the services' `environment:` in `docker-compose.yml`, which **wins over** anything in `.env`. So putting an external Postgres IP in `POSTGRES_HOST` alone does *not* point the app at that server (django and go-worker still get `db`), and a stale `REDIS_URL` line is silently inert.
+
+**Verification.** With only `.env` and `.env.example` present in the whole repo — no per-service env files, no injected shell vars — a plain `docker compose config` resolves clean (`rc=0`) and lists exactly `db django frontend go-worker node-gateway`. The merged django environment shows its `ALLOWED_HOSTS`/`DEBUG`/`CORS_*`/`POSTGRES_*` values coming through from the root file, with `POSTGRES_HOST: db` and the shared-Redis `REDIS_URL` correctly overriding it. Still not run end-to-end — no images have been built on this machine yet.

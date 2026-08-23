@@ -209,7 +209,7 @@ function exportXlsx(c: TrpaCombined) {
     ['What this workbook contains'],
     [
       'Combined analysis of ' + c.files.length +
-        ' TEMS Investigation .trp drive-test file(s) by BAGALEWATCH BTS, covering a drive-test route/area. Each file was decoded independently (declarations.cdf = parameter dictionary, data.cdf = timestamped samples, reverse-engineered — .trp has no public spec) then pooled. Field-path dictionaries for 4G/2G are confirmed against real sample files; 3G/WCDMA is best-effort and unverified.',
+        ' TEMS Investigation .trp drive-test file(s) by DT-WATCH BTS, covering a drive-test route/area. Each file was decoded independently (declarations.cdf = parameter dictionary, data.cdf = timestamped samples, reverse-engineered — .trp has no public spec) then pooled. Field-path dictionaries for 4G/2G are confirmed against real sample files; 3G/WCDMA is best-effort and unverified.',
     ],
     [''],
     ...(hasRawData

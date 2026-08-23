@@ -19,7 +19,7 @@ export default function LoginPage() {
   // Telecom logo/app name when nothing's been customized yet.
   const { data: branding } = useBranding()
   const brandLogoSrc = branding?.logo_url || '/ntc-logo.jpg'
-  const brandName = branding?.app_name || 'BAGALEWATCH BTS'
+  const brandName = branding?.app_name || 'DT-WATCH BTS'
   // Login-page text customization (2026-08-08 follow-up: "let superadmin
   // to customize the login interface texts also") — same fallback
   // convention as the logo/name above: an empty string from the server

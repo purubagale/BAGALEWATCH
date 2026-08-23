@@ -152,8 +152,8 @@ class Command(BaseCommand):
         if not os.path.isfile(source_path):
             raise CommandError(f'{source_path} does not exist or is not a file.')
 
-        tmp_dir = tempfile.mkdtemp(prefix='bagalewatch_v2_seed_')
-        copy_path = os.path.join(tmp_dir, 'bagalewatch_snapshot.db')
+        tmp_dir = tempfile.mkdtemp(prefix='dtwatch_seed_')
+        copy_path = os.path.join(tmp_dir, 'dtwatch_snapshot.db')
         self.stdout.write(f'Copying (read-only) {source_path}\n            -> {copy_path}')
         shutil.copy2(source_path, copy_path)
         self.stdout.write(self.style.SUCCESS(f'Copy complete: {os.path.getsize(copy_path):,} bytes.'))

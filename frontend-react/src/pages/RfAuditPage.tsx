@@ -298,7 +298,7 @@ export default function RfAuditPage() {
     L.push('**P3 — Planned:**'); p3.forEach((a) => L.push(`- ${a}`))
     L.push('')
     L.push('---')
-    L.push(`*RF Site Audit Report — BAGALEWATCH BTS · ${date}*`)
+    L.push(`*RF Site Audit Report — DT-WATCH BTS · ${date}*`)
     L.push(`*Score: ${overall}/100 | Grade: ${grade.split('—')[0].trim()}*`)
     return L.join('\n')
   }

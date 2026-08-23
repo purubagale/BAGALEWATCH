@@ -752,7 +752,7 @@ class BrandingSettings(models.Model):
     Both fields are optional/blank-able — absence means "use the
     built-in NTC default" (the real logo.jpg-derived `ntc-logo.jpg` still
     shipped as a static frontend asset, and the literal string
-    "BAGALEWATCH BTS v2"), so a fresh install with nothing customized yet
+    "DT-WATCH BTS v2"), so a fresh install with nothing customized yet
     renders identically to how the app looked before this feature
     existed, rather than showing a broken image or blank title."""
     id = models.PositiveSmallIntegerField(primary_key=True, default=1)

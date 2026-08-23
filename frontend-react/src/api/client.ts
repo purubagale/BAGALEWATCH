@@ -1,4 +1,4 @@
-// BAGALEWATCH BTS v2 — API client.
+// DT-WATCH BTS v2 — API client.
 //
 // Tokens were originally kept in a module-level variable only (per §5 of
 // the migration plan, "stored in memory... to reduce XSS exposure"), which
@@ -36,8 +36,8 @@
 // not needed for the common local-dev case either, going forward.
 const DJANGO_API_URL = import.meta.env.VITE_DJANGO_API_URL || ''
 
-const ACCESS_KEY = 'bagalewatch_access_token'
-const REFRESH_KEY = 'bagalewatch_refresh_token'
+const ACCESS_KEY = 'dtwatch_access_token'
+const REFRESH_KEY = 'dtwatch_refresh_token'
 
 function readStorage(key: string): string | null {
   try {

@@ -12,7 +12,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 // (see App.css's own opening comment).
 export type Theme = 'dark' | 'light'
 
-const STORAGE_KEY = 'bagalewatch_theme'
+const STORAGE_KEY = 'dtwatch_theme'
 
 function readStoredTheme(): Theme {
   if (typeof window === 'undefined') return 'dark'

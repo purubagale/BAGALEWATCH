@@ -9,7 +9,7 @@ class UserAdmin(DjangoUserAdmin):
     # Extends Django's built-in UserAdmin (keeps password-change UI, etc.)
     # with the v1-parity fields.
     fieldsets = DjangoUserAdmin.fieldsets + (
-        ('BAGALEWATCH role', {'fields': ('role', 'name', 'dept')}),
+        ('DT-WATCH role', {'fields': ('role', 'name', 'dept')}),
     )
     list_display = ('username', 'role', 'name', 'dept', 'is_active', 'last_login')
     list_filter = ('role', 'is_active')

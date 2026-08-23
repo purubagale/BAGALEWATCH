@@ -1,4 +1,4 @@
-// BAGALEWATCH BTS v2 — Node.js real-time gateway.
+// DT-WATCH BTS v2 — Node.js real-time gateway.
 //
 // Owns: WebSocket push for live alarm/threshold notifications, DT-upload
 // progress, TRP job progress, multi-user tree-edit sync, and the
@@ -52,7 +52,7 @@ app.get('/health', (req, res) => {
     // Redis being down degrades real-time push but the gateway process
     // itself is still up and should report 200 so orchestration doesn't
     // restart-loop it over a transient Redis blip — degraded, not dead.
-    service: 'bagalewatch-v2-node-gateway',
+    service: 'dt-watch-node-gateway',
     status: ok ? 'ok' : 'degraded',
     redis: redisStatus,
     websocket_clients: wss ? wss.clients.size : 0,
@@ -63,7 +63,7 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 wss.on('connection', (socket) => {
-  socket.send(JSON.stringify({ type: 'welcome', message: 'bagalewatch-v2 real-time gateway connected' }));
+  socket.send(JSON.stringify({ type: 'welcome', message: 'dt-watch real-time gateway connected' }));
 
   socket.on('message', (raw) => {
     // Phase 0: no client->server commands defined yet. Echo back so a
@@ -73,5 +73,5 @@ wss.on('connection', (socket) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`[bagalewatch-v2-node-gateway] listening on :${PORT} (http + ws at /ws)`);
+  console.log(`[dt-watch-node-gateway] listening on :${PORT} (http + ws at /ws)`);
 });

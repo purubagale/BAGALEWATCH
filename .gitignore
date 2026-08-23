@@ -27,3 +27,6 @@ backend-go/*.exe
 # contents are not source and shouldn't be committed.
 backend-django/media/*
 !backend-django/media/.gitkeep
+
+# graphify knowledge graph output — build artifact, rebuilt with `graphify extract`
+graphify-out/

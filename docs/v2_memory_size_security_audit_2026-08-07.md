@@ -1,5 +1,5 @@
-# BAGALEWATCH BTS v2 — Memory, Size & Security Audit
-**Date:** 2026-08-07 · **Scope:** `bagalewatch-v2/` (React + Django). v1 (`bts_monitor.html`) not in scope.
+# DT-WATCH BTS v2 — Memory, Size & Security Audit
+**Date:** 2026-08-07 · **Scope:** `dt-watch/` (React + Django). v1 (`bts_monitor.html`) not in scope.
 
 Every finding below was verified against the real source and, where practical, against a real running instance (dev DB, live API calls, actual payload sizes) — not guessed. Severity is rated High / Medium / Low based on how directly it could cause a crash, data exposure, or real user impact in this specific app.
 

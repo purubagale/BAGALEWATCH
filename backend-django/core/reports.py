@@ -327,7 +327,7 @@ def build_monthly_report(month=None, style='executive', region='all'):
     if high_prb:
         L.append(f'- **P2 CAPACITY:** {len(high_prb)} site(s) with PRB >85% — capacity upgrade planning required')
     L.append('- **P3 ROUTINE:** Continue drive test programme and quarterly RF audit schedule')
-    L.append(f'\n---\n*{month_name} — Nepal Telecom BAGALEWATCH BTS — {date_str}*')
+    L.append(f'\n---\n*{month_name} — Nepal Telecom DT-WATCH BTS — {date_str}*')
 
     return {
         'markdown': '\n'.join(L),

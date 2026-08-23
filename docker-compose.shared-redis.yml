@@ -1,0 +1,104 @@
+# dt-watch → shared Redis override (2026-08-21).
+#
+# WHAT THIS IS FOR
+# The committed docker-compose.yml bundles its own `redis` service so this
+# stack stays a self-contained "copy the folder, `docker compose up`"
+# deploy on a fresh server (see docs/SERVER_MIGRATION*.md). On a dev
+# machine that also runs dutychart / meeting / nt-pms, that's four idle
+# Redis containers. This override file swaps the bundled one for the
+# single shared Redis in d:\Projects\shared-redis — WITHOUT touching the
+# committed compose file, so nothing about a standalone deploy changes.
+#
+# HOW IT ACTIVATES
+# It is not applied unless asked for. Two ways:
+#   1. Per command:  docker compose -f docker-compose.yml -f docker-compose.shared-redis.yml up -d
+#   2. Permanently on this machine (preferred): set COMPOSE_FILE in .env —
+#      see .env.example. Because .env is gitignored, that choice stays
+#      local to this machine and a plain `docker compose up` here then
+#      picks up both files automatically.
+#
+# PREREQUISITE
+#   cd d:\Projects\shared-redis && docker compose up -d
+# That stack creates the external `shared-redis` network this file joins.
+# Without it, `docker compose up` fails immediately with "network
+# shared-redis declared as external, but could not be found" — a loud
+# failure, not a silent fallback to a second Redis.
+
+services:
+  # Remove the bundled redis service entirely. `!reset` is the Compose
+  # YAML tag for deleting a key an earlier file set (the merge rules
+  # otherwise only add/replace, never remove), so this is the one way to
+  # drop a whole service from an override rather than leaving a stopped
+  # duplicate container around.
+  redis: !reset null
+
+  django:
+    # `!override` replaces the base file's depends_on wholesale instead of
+    # merging into it — needed because the base gates on BOTH db and
+    # redis, and a depends_on entry naming a service that no longer
+    # exists is a hard config error. The db gate is kept verbatim; the
+    # shared Redis gets no gate because it lives in a different compose
+    # project, so `condition: service_healthy` can't see it. Django only
+    # touches Redis per-request (cache backend), by which point a
+    # long-running shared container is up anyway.
+    depends_on: !override
+      db:
+        condition: service_healthy
+    environment:
+      # `default:` (Redis' own built-in ACL user) is spelled out on
+      # purpose. The shorter `redis://:PASSWORD@host` form sends an EMPTY
+      # username, which Redis 6+ rejects outright with "WRONGPASS invalid
+      # username-password pair" even when the password is correct —
+      # confirmed live here on 2026-08-21 while verifying this file, using
+      # redis-cli against this very container. redis-py (Django) and
+      # ioredis (node-gateway) happen to normalise the empty username away
+      # and would have worked, but nothing about that is guaranteed across
+      # clients, and it makes `redis-cli -u "$REDIS_URL"` — the obvious way
+      # to debug a connection — fail while the app succeeds. The explicit
+      # form behaves identically everywhere.
+      # DB 1 — same index the bundled Redis used for Django's cache, so
+      # no key layout changes. See the registry in
+      # d:\Projects\shared-redis\docker-compose.yml before changing it.
+      REDIS_URL: redis://default:${SHARED_REDIS_PASSWORD:?set SHARED_REDIS_PASSWORD in .env — copy it from shared-redis/.env}@shared-redis:6379/1
+    networks:
+      # `default` must be listed explicitly. The base file gives no
+      # service an explicit network, so every container lands on the
+      # project's `default` network; naming any network here replaces that
+      # implicit membership, and dropping `default` would cut Django off
+      # from `db` and from the frontend's nginx proxy.
+      - default
+      - shared-redis
+
+  node-gateway:
+    # Base depends_on was redis-only, so it can go entirely. ioredis is
+    # configured with lazyConnect + a 2s retryStrategy (backend-node/src/
+    # server.js), so it reconnects on its own if Redis is slow or briefly
+    # restarts — no startup gate needed.
+    depends_on: !reset null
+    environment:
+      # DB 0, matching the bundled Redis (the base file's plain
+      # `redis://redis:6379` = DB 0). Kept on the SAME index as go-worker
+      # below, exactly as before, because the planned Phase 6 real-time
+      # path has Django enqueue and the Go worker consume — separating
+      # them onto different DBs would break pub/sub between them, since
+      # Redis pub/sub and queues don't cross DB indices.
+      REDIS_URL: redis://default:${SHARED_REDIS_PASSWORD:?set SHARED_REDIS_PASSWORD in .env — copy it from shared-redis/.env}@shared-redis:6379/0
+    networks:
+      - default
+      - shared-redis
+
+  go-worker:
+    depends_on: !override
+      db:
+        condition: service_healthy
+    environment:
+      # DB 0 — see node-gateway's note above.
+      REDIS_URL: redis://default:${SHARED_REDIS_PASSWORD:?set SHARED_REDIS_PASSWORD in .env — copy it from shared-redis/.env}@shared-redis:6379/0
+    networks:
+      - default
+      - shared-redis
+
+networks:
+  shared-redis:
+    # Created and owned by d:\Projects\shared-redis — never by this stack.
+    external: true

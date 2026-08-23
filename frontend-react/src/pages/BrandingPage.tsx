@@ -6,7 +6,7 @@ import { useAuth } from '../auth/AuthContext'
 // Customize the org-wide logo + app name (2026-08-08 follow-up: "add
 // feature to customize logo and name") — shown in the sidebar brand
 // block (Layout.tsx) and the login page (LoginPage.tsx), both of which
-// fall back to the stock Nepal Telecom logo/"BAGALEWATCH BTS" when
+// fall back to the stock Nepal Telecom logo/"DT-WATCH BTS" when
 // nothing's been customized yet. See BrandingSettingsView's docstring on
 // the Django side for why the logo travels as a base64 data URL instead
 // of multipart/form-data.
@@ -134,7 +134,7 @@ export default function BrandingPage() {
       <h1>Branding</h1>
       <p className="muted">
         Customize the logo and app name shown in the sidebar and on the sign-in page. Leave blank to use the default
-        Nepal Telecom logo and "BAGALEWATCH BTS" name.
+        Nepal Telecom logo and "DT-WATCH BTS" name.
       </p>
 
       {saveError && <div className="login-error">{saveError}</div>}
@@ -178,7 +178,7 @@ export default function BrandingPage() {
             type="text"
             value={currentName}
             onChange={(e) => setAppName(e.target.value)}
-            placeholder="BAGALEWATCH BTS"
+            placeholder="DT-WATCH BTS"
             maxLength={100}
           />
           <button type="button" onClick={handleSaveName} disabled={updateBranding.isPending}>

@@ -1,4 +1,4 @@
-# Migrating BAGALEWATCH BTS v2 to a LAN server
+# Migrating DT-WATCH BTS v2 to a LAN server
 
 Goal: move the whole Docker Compose stack (Postgres, Redis, Django, the
 Node gateway, the Go worker, the React frontend) off this Windows dev
@@ -99,7 +99,7 @@ skip anything covered by `.gitignore`, which includes
 `backend-django/media/` (your uploaded menu icons and branding logo) and
 every `.env` file (your real secrets). A straight copy brings everything.
 
-From this Windows machine, zip the whole `bagalewatch-v2` folder (and,
+From this Windows machine, zip the whole `dt-watch` folder (and,
 importantly, the `bagalewatch.db` file that sits one level above it —
 `docker-compose.yml`'s `django` service expects it at `../bagalewatch.db`
 relative to itself; without it Docker may refuse to start that service
@@ -107,9 +107,9 @@ even though nothing actively re-reads it after the initial legacy-data
 seed you already ran).
 
 ```
-BAGALEWATCH BTS RAN O&M MANAGEMENT/
+DT-WATCH BTS RAN O&M MANAGEMENT/
 ├── bagalewatch.db          ← include this
-└── bagalewatch-v2/         ← and this whole folder
+└── dt-watch/         ← and this whole folder
 ```
 
 Before zipping, it's worth excluding `backend-django/venv/`,
@@ -123,10 +123,26 @@ Transfer via `scp` (from a terminal — WSL, Git Bash, or PowerShell with
 OpenSSH client installed):
 
 ```bash
-scp -r "bagalewatch-v2" "bagalewatch.db" youruser@192.168.1.50:/home/youruser/bagalewatch/
+scp -r "dt-watch" "bagalewatch.db" youruser@192.168.1.50:/home/youruser/dtwatch/
 ```
 
 (A USB drive works exactly as well if `scp` isn't set up yet.)
+
+> **Before you copy: strip the shared-Redis lines out of `.env`.** This
+> Windows dev machine points the stack at a single workspace-wide Redis
+> (`d:\Projects\shared-redis`) via three lines at the bottom of `.env` —
+> `COMPOSE_PATH_SEPARATOR`, `COMPOSE_FILE`, `SHARED_REDIS_PASSWORD`. Since
+> the copy above deliberately includes `.env`, those lines travel to the
+> server, where that Redis does not exist. Delete them (and, optionally,
+> `docker-compose.shared-redis.yml`) and the server falls back to the
+> `redis` service bundled in `docker-compose.yml`, which is what a
+> standalone deploy wants. **This fails loudly, not silently** — if you
+> forget, the very first `docker compose up` stops immediately with
+> `network shared-redis declared as external, but could not be found`, and
+> nothing starts. Sharing one Redis across apps is a dev-box convenience;
+> on a production host each app should keep its own (see RUNBOOK,
+> 2026-08-21).
+
 
 ---
 
@@ -138,23 +154,23 @@ plain files you can copy — dump it to a portable `.sql` file instead.
 **On this Windows machine**, with the stack currently running:
 
 ```bash
-docker compose exec -T db pg_dump -U bagalewatch -d bagalewatch_v2 > bagalewatch_v2_backup.sql
+docker compose exec -T db pg_dump -U dtwatch_user -d dtwatch_db > dtwatch_backup.sql
 ```
 
 Copy that file to the server too:
 
 ```bash
-scp bagalewatch_v2_backup.sql youruser@192.168.1.50:/home/youruser/bagalewatch/
+scp dtwatch_backup.sql youruser@192.168.1.50:/home/youruser/dtwatch/
 ```
 
 **On the server**, start just the database first so it initializes an
 empty schema, then load your real data into it:
 
 ```bash
-cd /home/youruser/bagalewatch/bagalewatch-v2
+cd /home/youruser/dtwatch/dt-watch
 docker compose up -d db
 # wait ~10s for it to become healthy
-docker compose exec -T db psql -U bagalewatch -d bagalewatch_v2 < ../bagalewatch_v2_backup.sql
+docker compose exec -T db psql -U dtwatch_user -d dtwatch_db < ../dtwatch_backup.sql
 ```
 
 Your uploaded menu icons/branding logo already came along for free in
@@ -174,13 +190,15 @@ had to be hand-set to the server's real IP. That's no longer true: nginx
 now proxies `/api/`, `/media/`, and `/admin/` straight to django over
 Docker's internal network, so the browser only ever talks to
 `http://192.168.1.50:5180` for everything. Leave `frontend-react/.env`
-and the root `.env` blank as shipped — do NOT set `VITE_DJANGO_API_URL`/
+blank as shipped — do NOT set `VITE_DJANGO_API_URL`/
 `VITE_NODE_GATEWAY_URL` unless you have a genuinely unusual setup (see
 `frontend-react/.env`'s own comment).
 
 **The backend does still need to accept the Host header your friends'
-browsers will send** (the server's real IP, not "localhost"). Edit
-`backend-django/.env` on the server:
+browsers will send** (the server's real IP, not "localhost"). Edit the
+root `.env` on the server (as of 2026-08-21 that single file IS the
+django/node environment — `backend-django/.env` and `backend-node/.env`
+no longer exist):
 
 ```
 ALLOWED_HOSTS=*
@@ -198,8 +216,13 @@ admin reachable at `http://192.168.1.50:5180/admin/` from another
 machine — note the port is now **5180**, not 8000, since that's the only
 address that's actually reachable from outside the server.
 
-`backend-node/.env`'s `CORS_ALLOWED_ORIGIN` is unaffected by this pass —
-leave it as `http://192.168.1.50:5180`.
+The node gateway's own singular `CORS_ALLOWED_ORIGIN` (note: no trailing
+S — a different var from django's) now lives in that same root `.env`,
+and is left unset by default because the code's built-in default is
+`http://localhost:5180`. On a LAN server that default is wrong, so add
+`CORS_ALLOWED_ORIGIN=http://192.168.1.50:5180` alongside the three lines
+above — it only matters once something actually calls the gateway from a
+browser, which no frontend code does yet.
 
 (Replace `192.168.1.50` everywhere above with whatever IP you actually
 assigned in step 2.)
@@ -209,7 +232,7 @@ assigned in step 2.)
 ## 6. Build and start everything
 
 ```bash
-cd /home/youruser/bagalewatch/bagalewatch-v2
+cd /home/youruser/dtwatch/dt-watch
 docker compose up --build -d
 docker compose ps
 ```
@@ -300,8 +323,8 @@ editing them (`VITE_*` vars are compiled in — a config-only restart
 won't pick up a change, you need `docker compose up --build frontend`
 again).
 
-**"Bad Request (400)" from Django** — `ALLOWED_HOSTS` in
-`backend-django/.env` doesn't include the server's IP; re-check step 5
+**"Bad Request (400)" from Django** — `ALLOWED_HOSTS` in the root `.env`
+doesn't include the server's IP; re-check step 5
 and restart the django container.
 
 **CORS errors in the browser console** — `CORS_ALLOWED_ORIGINS` (Django)
@@ -310,6 +333,6 @@ or `CORS_ALLOWED_ORIGIN` (Node gateway) doesn't match the exact origin
 
 **`docker compose up` fails immediately on the django service** — check
 that `bagalewatch.db` actually made it to `../bagalewatch.db` relative to
-`bagalewatch-v2/` on the server (step 3); that bind mount source must
+`dt-watch/` on the server (step 3); that bind mount source must
 exist even though nothing routinely reads it after the initial legacy
 data seed.

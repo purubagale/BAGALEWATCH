@@ -17,7 +17,7 @@ place, see the research pass that preceded this feature).
 **What this deliberately does NOT do:**
 - No DELETE anywhere in this module. An external system can create and
   update Sites/Sectors/DT sessions, and append DT samples, but can never
-  remove data from BAGALEWATCH — matching the "share/receive," not "full
+  remove data from DT-WATCH — matching the "share/receive," not "full
   remote CRUD," framing of the original request. Deleting a site/session
   a superadmin cares about should always be a deliberate in-app action.
 - Sector upserts are ADDITIVE only (matched by `cell_name`, created or
@@ -211,7 +211,7 @@ class ExternalDtSessionListCreateView(ExternalApiView):
     POST (scope `dt:write`) — creates one new session, with an optional
     inline batch of samples (capped at `MAX_SAMPLES_PER_REQUEST` — send
     the rest via `POST .../<id>/samples/`). `uploaded_by` is always null
-    for an externally-created session (there is no BAGALEWATCH user to
+    for an externally-created session (there is no DT-WATCH user to
     attribute it to); the creating key's name is stamped into
     `meta.created_via_api_key` instead, for traceability."""
 

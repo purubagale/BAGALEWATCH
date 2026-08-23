@@ -1,3 +1,3 @@
-module bagalewatch-v2-go
+module dt-watch-go
 
 go 1.23

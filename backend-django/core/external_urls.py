@@ -1,5 +1,5 @@
 # External data-exchange API (2026-08-12) — mounted at
-# /api/external/v1/ by bagalewatch_v2/urls.py, deliberately its own
+# /api/external/v1/ by dtwatch/urls.py, deliberately its own
 # urlconf module rather than folded into core/urls.py's router: every
 # view here is API-key authenticated (core/api_auth.py), not JWT, and
 # keeping them in a visibly separate file makes that split obvious at a

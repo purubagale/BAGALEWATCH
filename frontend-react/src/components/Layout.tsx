@@ -11,7 +11,7 @@ import { useTreeStore } from '../store/treeStore'
 import AdvancedSiteSearchModal from './AdvancedSiteSearchModal'
 import { DEFAULT_ROW_LIMIT } from './RowLimitSelect'
 
-const SIDEBAR_PIN_KEY = 'bagalewatch_sidebar_pinned'
+const SIDEBAR_PIN_KEY = 'dtwatch_sidebar_pinned'
 
 // One rendering path for a single sidebar row's link — used for
 // top-level leaves AND indented submenu children (2026-08-08 sidebar
@@ -209,7 +209,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   // GET comes back `{app_name: '', logo_url: null}`, not an error).
   const { data: branding } = useBranding()
   const brandLogoSrc = branding?.logo_url || '/ntc-logo.jpg'
-  const brandName = branding?.app_name || 'BAGALEWATCH BTS v2'
+  const brandName = branding?.app_name || 'DT-WATCH BTS v2'
   const [openGroupIds, setOpenGroupIds] = useState<Set<number>>(new Set())
   function toggleGroup(id: number) {
     setOpenGroupIds((prev) => {

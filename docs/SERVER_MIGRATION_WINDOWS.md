@@ -1,4 +1,4 @@
-# Migrating BAGALEWATCH BTS v2 to a LAN server (Windows)
+# Migrating DT-WATCH BTS v2 to a LAN server (Windows)
 
 Same goal as `docs/SERVER_MIGRATION.md` (move the whole Docker Compose
 stack — Postgres, Redis, Django, the Node gateway, the Go worker, the
@@ -92,7 +92,7 @@ skip anything covered by `.gitignore`, which includes
 `backend-django/media/` (your uploaded menu icons and branding logo) and
 every `.env` file (your real secrets). A straight copy brings everything.
 
-From this current machine, copy the whole `bagalewatch-v2` folder
+From this current machine, copy the whole `dt-watch` folder
 **and** the `bagalewatch.db` file that sits one level above it —
 `docker-compose.yml`'s `django` service expects it at
 `../bagalewatch.db` relative to itself; without it Docker may refuse to
@@ -100,9 +100,9 @@ start that service even though nothing actively re-reads it after the
 initial legacy-data seed you already ran.
 
 ```
-BAGALEWATCH BTS RAN O&M MANAGEMENT\
+DT-WATCH BTS RAN O&M MANAGEMENT\
 ├── bagalewatch.db          ← include this
-└── bagalewatch-v2\         ← and this whole folder
+└── dt-watch\         ← and this whole folder
 ```
 
 Before copying, it's worth excluding `backend-django\venv\`,
@@ -127,7 +127,7 @@ first:
   Server"), then from this machine:
 
   ```powershell
-  scp -r "bagalewatch-v2" "bagalewatch.db" youruser@192.168.1.50:C:\bagalewatch\
+  scp -r "dt-watch" "bagalewatch.db" youruser@192.168.1.50:C:\dtwatch\
   ```
 
 ---
@@ -140,20 +140,20 @@ plain files you can copy — dump it to a portable `.sql` file instead.
 **On this machine**, with the stack currently running (PowerShell):
 
 ```powershell
-docker compose exec -T db pg_dump -U bagalewatch -d bagalewatch_v2 > bagalewatch_v2_backup.sql
+docker compose exec -T db pg_dump -U dtwatch_user -d dtwatch_db > dtwatch_backup.sql
 ```
 
-Copy `bagalewatch_v2_backup.sql` to the server using whichever method
+Copy `dtwatch_backup.sql` to the server using whichever method
 you used in step 3 (USB / share / `scp`).
 
 **On the server**, start just the database first so it initializes an
 empty schema, then load your real data into it:
 
 ```powershell
-cd C:\bagalewatch\bagalewatch-v2
+cd C:\dtwatch\dt-watch
 docker compose up -d db
 # wait ~10s for it to become healthy
-Get-Content ..\bagalewatch_v2_backup.sql | docker compose exec -T db psql -U bagalewatch -d bagalewatch_v2
+Get-Content ..\dtwatch_backup.sql | docker compose exec -T db psql -U dtwatch_user -d dtwatch_db
 ```
 
 (`Get-Content ... | docker compose exec -T ...` is PowerShell's
@@ -176,13 +176,20 @@ had to be hand-set to the server's real IP. That's no longer true: nginx
 now proxies `/api/`, `/media/`, and `/admin/` straight to django over
 Docker's internal network, so the browser only ever talks to
 `http://192.168.1.50:5180` for everything. Leave `frontend-react\.env`
-and the root `.env` blank as shipped — do NOT set `VITE_DJANGO_API_URL`/
+blank as shipped — do NOT set `VITE_DJANGO_API_URL`/
 `VITE_NODE_GATEWAY_URL` unless you have a genuinely unusual setup (see
 `frontend-react\.env`'s own comment).
 
 **The backend does still need to accept the Host header your friends'
 browsers will send** (the server's real IP, not "localhost"). Edit
-`backend-django\.env` on the server:
+the root `.env` on the server (as of 2026-08-21 that single file IS the
+django/node environment — `backend-django\.env` and `backend-node\.env` no
+longer exist), and delete its three shared-Redis lines
+(`COMPOSE_PATH_SEPARATOR`, `COMPOSE_FILE`, `SHARED_REDIS_PASSWORD`) if the
+copy brought them over — they point at a Redis that only exists on the dev
+machine, and `docker compose up` refuses to start with
+`network shared-redis declared as external, but could not be found` until
+they're gone:
 
 ```
 ALLOWED_HOSTS=*
@@ -200,8 +207,11 @@ admin reachable at `http://192.168.1.50:5180/admin/` from another
 machine — note the port is now **5180**, not 8000, since that's the only
 address that's actually reachable from outside the server.
 
-`backend-node\.env`'s `CORS_ALLOWED_ORIGIN` is unaffected by this pass —
-leave it as `http://192.168.1.50:5180`.
+The node gateway's own singular `CORS_ALLOWED_ORIGIN` (no trailing S — a
+different var from django's) now lives in that same root `.env` and is
+unset by default, because the code already defaults to
+`http://localhost:5180`. On a LAN server, add
+`CORS_ALLOWED_ORIGIN=http://192.168.1.50:5180` next to the lines above.
 
 (Replace `192.168.1.50` everywhere above with whatever IP you actually
 assigned in step 2.)
@@ -211,7 +221,7 @@ assigned in step 2.)
 ## 6. Build and start everything
 
 ```powershell
-cd C:\bagalewatch\bagalewatch-v2
+cd C:\dtwatch\dt-watch
 docker compose up --build -d
 docker compose ps
 ```
@@ -233,7 +243,7 @@ published:
 PowerShell, run as Administrator:
 
 ```powershell
-New-NetFirewallRule -DisplayName "BAGALEWATCH frontend" -Direction Inbound -LocalPort 5180 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "DT-WATCH frontend" -Direction Inbound -LocalPort 5180 -Protocol TCP -Action Allow
 ```
 
 Deliberately **not** opening 5432 (Postgres) or 6379 (Redis) — nothing
@@ -323,7 +333,7 @@ won't pick up a change, you need `docker compose up --build frontend`
 again).
 
 **"Bad Request (400)" from Django** — `ALLOWED_HOSTS` in
-`backend-django\.env` doesn't include the server's IP; re-check step 5
+the root `.env` doesn't include the server's IP; re-check step 5
 and restart the django container.
 
 **CORS errors in the browser console** — `CORS_ALLOWED_ORIGINS` (Django)
@@ -332,7 +342,7 @@ or `CORS_ALLOWED_ORIGIN` (Node gateway) doesn't match the exact origin
 
 **`docker compose up` fails immediately on the django service** — check
 that `bagalewatch.db` actually made it to `..\bagalewatch.db` relative to
-`bagalewatch-v2\` on the server (step 3); that bind mount source must
+`dt-watch\` on the server (step 3); that bind mount source must
 exist even though nothing routinely reads it after the initial legacy
 data seed.
 

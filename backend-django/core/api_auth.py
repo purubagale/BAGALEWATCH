@@ -7,8 +7,8 @@ concerns share this module because they're two sides of the same coin:
 1. `ApiKeyAuthentication` / `require_scope()` / `ApiKeyRateThrottle` —
    used by core/external_api.py's views (mounted at `/api/external/v1/`)
    to authenticate and authorize EXTERNAL systems calling into
-   BAGALEWATCH. Deliberately separate from the JWTAuthentication the rest
-   of `/api/v2/` uses — external systems are not BAGALEWATCH users, have
+   DT-WATCH. Deliberately separate from the JWTAuthentication the rest
+   of `/api/v2/` uses — external systems are not DT-WATCH users, have
    no role, and should never be able to log in through the normal
    `/auth/login/` flow at all.
 
@@ -57,10 +57,14 @@ def generate_api_key():
     """Returns (full_key, prefix, key_hash). Called once at creation —
     `full_key` is the only time the caller ever sees the real secret;
     only `prefix` (for lookup) and `key_hash` (for verification) are
-    persisted to ApiKey. `bw_` prefix identifies this as a BAGALEWATCH
-    key at a glance (same convention as e.g. Stripe's `sk_`/`pk_`
-    prefixes) and lets `ApiKeyAuthentication` reject an obviously-wrong
-    header cheaply, before ever touching the database."""
+    persisted to ApiKey. `bw_` prefix identifies this as one of our keys
+    at a glance (same convention as e.g. Stripe's `sk_`/`pk_` prefixes)
+    and lets `ApiKeyAuthentication` reject an obviously-wrong header
+    cheaply, before ever touching the database. The `bw_` spelling
+    predates the DT-WATCH rename and is deliberately kept: it is baked
+    into every key already issued to an external system and into the
+    `key_prefix` column, so changing it would invalidate live keys for
+    nothing but cosmetics."""
     prefix = secrets.token_hex(4)  # 8 hex chars — short enough to display, long enough to not collide
     secret = secrets.token_urlsafe(32)
     full_key = f'bw_{prefix}_{secret}'

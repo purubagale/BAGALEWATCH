@@ -1,5 +1,5 @@
 """
-URL configuration for bagalewatch_v2.
+URL configuration for dtwatch.
 
 Deliberately versioned under /api/v2/ (distinct from the v1 system's
 /api/v1/ endpoints in bagalewatch_api.py) so both APIs could theoretically

@@ -1,4 +1,4 @@
-# BAGALEWATCH BTS v2 — full stack, self-hosted via Docker Compose.
+# DT-WATCH BTS v2 — full stack, self-hosted via Docker Compose.
 #
 # ISOLATION GUARANTEE (see docs/RUNBOOK.md for the full explanation):
 # every port here is chosen so this entire stack can run on the same
@@ -8,19 +8,24 @@
 # other v1 file.
 #
 # Usage:
-#   cp backend-django/.env.example backend-django/.env   (and fill in real secrets)
-#   cp backend-node/.env.example backend-node/.env
-#   cp frontend-react/.env.example frontend-react/.env
-#   cp .env.example .env
+#   cp .env.example .env      (and fill in real secrets)
 #   docker compose up --build
+#
+# One .env, at the root, for everything — compose interpolation AND the
+# django/node containers' own environment (2026-08-21). The per-service
+# backend-django/.env and backend-node/.env are gone. frontend-react/.env
+# is the one exception and is OPTIONAL: it's read by Vite at image BUILD
+# time (the Dockerfile's `COPY . .`), not by compose at run time, and both
+# vars in it are deliberately blank — so skip it unless the built app has
+# to call a django/node instance that isn't same-origin.
 
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-bagalewatch_v2}
-      POSTGRES_USER: ${POSTGRES_USER:-bagalewatch}
+      POSTGRES_DB: ${POSTGRES_DB:-dtwatch_db}
+      POSTGRES_USER: ${POSTGRES_USER:-dtwatch_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     # `max_connections` raised from Postgres' own default of 100
     # (2026-08-08, "100 concurrent users" scaling pass) — gunicorn's
@@ -42,7 +47,7 @@ services:
     # since Docker manipulates iptables directly and commonly bypasses
     # ufw's own rules (a well-known Docker gotcha, not specific to this
     # app). If you need to inspect the DB from the host for debugging, use
-    # `docker compose exec db psql -U bagalewatch bagalewatch_v2` instead
+    # `docker compose exec db psql -U dtwatch_user dtwatch_db` instead
     # of a host-side client, or temporarily add back
     # `ports: ["127.0.0.1:5432:5432"]` (loopback-only, never a bare
     # "5432:5432") for the duration of that session.
@@ -50,15 +55,16 @@ services:
       - bagalewatch_v2_pgdata:/var/lib/postgresql/data
     healthcheck:
       # -d is required — without it, pg_isready falls back to libpq's
-      # default of "a database named the same as the user" ('bagalewatch'),
-      # which doesn't exist (only 'bagalewatch_v2' does). That mismatch is
-      # harmless (pg_isready still reports ready — it only checks the
-      # server accepts connections, not that the query itself succeeds)
-      # but it was spamming the container logs with a misleading
-      # "FATAL: database "bagalewatch" does not exist" every interval,
+      # default of "a database named the same as the user"
+      # ('dtwatch_user'), which doesn't exist (only 'dtwatch_db' does).
+      # That mismatch is harmless (pg_isready still reports ready — it
+      # only checks the server accepts connections, not that the query
+      # itself succeeds) but it was spamming the container logs with a
+      # misleading "FATAL: database "dtwatch_user" does not exist" every
+      # interval,
       # which looked like a real bug during Phase 1 verification
       # (2026-07-27) and cost a debugging round-trip to rule out.
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bagalewatch} -d ${POSTGRES_DB:-bagalewatch_v2}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dtwatch_user} -d ${POSTGRES_DB:-dtwatch_db}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -79,7 +85,18 @@ services:
     build: ./backend-django
     restart: unless-stopped
     env_file:
-      - ./backend-django/.env
+      # Single root .env for the whole stack (2026-08-21 — "do i need .env in
+      # every folder in dt-watch or one in root is okey"). This used to be
+      # ./backend-django/.env, with a second one under backend-node/. One
+      # file is safe here because no var name means two different things
+      # across the two services: `PORT` is read only by the node gateway
+      # (backend-node/src/server.js), gunicorn hardcodes `0.0.0.0:8000`
+      # (backend-django/gunicorn.conf.py) and ignores it, and django's
+      # CORS_ALLOWED_ORIGINS vs node's CORS_ALLOWED_ORIGIN are separate
+      # names. Compose already reads this same file for ${...} interpolation,
+      # so its COMPOSE_FILE/SHARED_REDIS_PASSWORD lines now also land in the
+      # container environment — harmless, nothing reads them there.
+      - ./.env
     environment:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
@@ -138,7 +155,8 @@ services:
     build: ./backend-node
     restart: unless-stopped
     env_file:
-      - ./backend-node/.env
+      # Same single root .env as django — see its comment above.
+      - ./.env
     environment:
       REDIS_URL: redis://redis:6379
     depends_on:
@@ -179,57 +197,6 @@ services:
       timeout: 5s
       retries: 5
 
-  pgadmin:
-    # Web-based GUI for Postgres, reachable via a real browser URL (2026-
-    # 08-20 — "how to access db locally through url"). `db` itself
-    # deliberately has no `ports:` published (see its own comment above)
-    # and speaks the raw Postgres wire protocol, not HTTP, so it was
-    # never going to be reachable by pointing a browser at it directly —
-    # this container is what actually bridges "browser" to "Postgres".
-    image: dpage/pgadmin4:latest
-    restart: unless-stopped
-    environment:
-      # NOT a ".local" domain — pgAdmin's own email-format validator
-      # rejects it as a reserved/special-use TLD (mDNS local addresses),
-      # regardless of CHECK_EMAIL_DELIVERABILITY being off; hit this for
-      # real on first boot, container crash-looped on it (see RUNBOOK).
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@bagalewatch.app}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?set PGADMIN_PASSWORD in .env}
-      # Silences pgAdmin's own "you should set a master password" nag on
-      # every login — harmless to leave on for a single-admin local tool,
-      # but there's nothing here worth trading convenience for on a
-      # loopback-only service already gated by PGADMIN_DEFAULT_PASSWORD.
-      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
-    depends_on:
-      db:
-        condition: service_healthy
-    volumes:
-      # Named volume so saved connections/preferences survive a
-      # `docker compose down` / rebuild, same reasoning as `db`'s own
-      # pgdata volume above.
-      - bagalewatch_v2_pgadmin_data:/var/lib/pgadmin
-      # Pre-registers the "db" server (host/port/db/user only, never a
-      # password — pgAdmin has no way to store one here unencrypted, and
-      # shouldn't) so first login already has a connection ready to click
-      # instead of an empty server tree. Read-only: pgAdmin only reads
-      # this once on first boot to seed its own internal config DB.
-      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
-    # Bound to 127.0.0.1 only, not a bare "5050:80" — same LAN-hardening
-    # reasoning as every other `ports:` decision in this file (see `db`'s
-    # own comment above). This is a raw admin surface over your entire
-    # database; anyone who can reach it can read/write everything.
-    # Reachable at http://localhost:5050 from THIS machine only. If you
-    # genuinely need it from another machine on the LAN, change this to
-    # your host's LAN IP (e.g. "192.168.1.20:5050:80") rather than "0.0.0.0"
-    # or a bare port — never leave this open to the whole network.
-    ports:
-      - "127.0.0.1:5050:80"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:80/misc/ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
   frontend:
     # Removed the `args:` block that used to pass VITE_DJANGO_API_URL/
     # VITE_NODE_GATEWAY_URL here (2026-08-10 port-hiding pass) — it never
@@ -253,8 +220,5 @@ volumes:
   bagalewatch_v2_pgdata:
     # Named volume, entirely separate from anything the v1 system uses —
     # v1 has no volumes at all, it's a single SQLite file on disk.
-  bagalewatch_v2_pgadmin_data:
-    # pgAdmin's own internal config DB (saved servers, preferences) —
-    # entirely separate from bagalewatch_v2_pgdata above, which is the
-    # actual application data pgAdmin connects TO, not where pgAdmin
-    # itself lives.
+    # (A second volume, dtwatch_pgadmin_data, lived here until
+    # 2026-08-21 when the pgadmin service was dropped — see RUNBOOK.)

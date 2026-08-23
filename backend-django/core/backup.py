@@ -157,7 +157,7 @@ class BackupExportView(APIView):
             '_type': BACKUP_TYPE,
             '_version': BACKUP_VERSION,
             '_created': datetime.now(dt_timezone.utc).isoformat(),
-            '_app': 'BAGALEWATCH BTS v2',
+            '_app': 'DT-WATCH BTS v2',
             'meta': {
                 'sitesCount': len(sites_data),
                 'sectorsCount': sectors_count,
@@ -196,7 +196,7 @@ class BackupImportView(APIView):
         data = body.get('data')
         restore = body.get('restore') or {}
         if not isinstance(data, dict) or data.get('_type') != BACKUP_TYPE:
-            return Response({'detail': 'Not a valid BAGALEWATCH v2 backup file.'}, status=400)
+            return Response({'detail': 'Not a valid DT-WATCH v2 backup file.'}, status=400)
 
         restored = []
         with transaction.atomic():

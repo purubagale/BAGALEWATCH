@@ -1,4 +1,4 @@
-// BAGALEWATCH BTS v2 — Go worker service.
+// DT-WATCH BTS v2 — Go worker service.
 //
 // Owns the performance-critical processing tier: the TRP (.trp) binary
 // decoder port (Phase 5 — the highest-risk single item in the migration
@@ -31,7 +31,7 @@ type healthResponse struct {
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	resp := healthResponse{
-		Service: "bagalewatch-v2-go-worker",
+		Service: "dt-watch-go-worker",
 		Status:  "ok",
 	}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
@@ -49,7 +49,7 @@ func main() {
 	mux.HandleFunc("/health", healthHandler)
 
 	addr := ":" + port
-	log.Printf("[bagalewatch-v2-go-worker] listening on %s", addr)
+	log.Printf("[dt-watch-go-worker] listening on %s", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server failed: %v", err)
 	}

@@ -1,4 +1,4 @@
-# Migrating BAGALEWATCH BTS v2 to a LAN server with no internet access
+# Migrating DT-WATCH BTS v2 to a LAN server with no internet access
 
 Addendum to `docs/SERVER_MIGRATION.md` (Linux) / `docs/SERVER_MIGRATION_WINDOWS.md`
 (Windows). Read this FIRST if the server won't have internet access — it
@@ -54,16 +54,22 @@ repeated here.
 
 ## 2. On the Windows machine: build the images
 
-From `bagalewatch-v2/` (with your `.env` files already filled in — same
+From `dt-watch/` (with your `.env` files already filled in — same
 as step 5 of the main guide, but do it now, BEFORE building, since the
 frontend bakes its API URLs in at build time):
 
 ```bash
 # Edit these first (see SERVER_MIGRATION.md step 5 for the exact values —
 # use the server's fixed IP from step 2 of that guide, not localhost):
-#   bagalewatch-v2/.env
-#   backend-django/.env
-#   backend-node/.env
+#   dt-watch/.env   ← the only one, as of 2026-08-21; the old
+#                           backend-django/.env and backend-node/.env
+#                           were merged into it
+#
+# And DELETE its three shared-Redis lines (COMPOSE_PATH_SEPARATOR,
+# COMPOSE_FILE, SHARED_REDIS_PASSWORD) before building — they point at a
+# Redis that only exists on the dev machine, and with COMPOSE_FILE set,
+# even `docker compose build` here resolves the missing external network
+# and fails.
 
 docker compose build
 ```
@@ -87,14 +93,14 @@ docker compose config --images
 ```
 
 You should see six images: `postgres:16-alpine`, `redis:7-alpine`, and
-four `bagalewatch-v2-*` images (django, node-gateway, go-worker,
+four `dt-watch-*` images (django, node-gateway, go-worker,
 frontend). Save all of them into one portable file:
 
 ```bash
-docker save -o bagalewatch_images.tar \
+docker save -o dtwatch_images.tar \
   postgres:16-alpine redis:7-alpine \
-  bagalewatch-v2-django bagalewatch-v2-node-gateway \
-  bagalewatch-v2-go-worker bagalewatch-v2-frontend
+  dt-watch-django dt-watch-node-gateway \
+  dt-watch-go-worker dt-watch-frontend
 ```
 
 (Substitute the real names from `docker compose config --images` if
@@ -110,7 +116,7 @@ Same as `SERVER_MIGRATION.md` step 4 — this part was never internet-
 dependent:
 
 ```bash
-docker compose exec -T db pg_dump -U bagalewatch -d bagalewatch_v2 > bagalewatch_v2_backup.sql
+docker compose exec -T db pg_dump -U dtwatch_user -d dtwatch_db > dtwatch_backup.sql
 ```
 
 ---
@@ -168,9 +174,9 @@ just with more files this time):
 
 ```
 bagalewatch.db                    ← v1's data, for the legacy-data seed
-bagalewatch-v2/                   ← the whole project folder (.env files included)
-bagalewatch_images.tar            ← from step 3 above
-bagalewatch_v2_backup.sql         ← from step 4 above
+dt-watch/                   ← the whole project folder (.env files included)
+dtwatch_images.tar            ← from step 3 above
+dtwatch_backup.sql         ← from step 4 above
 docker-offline-debs/              ← Linux only, from step 5
   (or Docker Desktop Installer.exe + the WSL2 kernel update .msi — Windows only)
 ```
@@ -205,13 +211,13 @@ mid-install).
 ## 8. On the server: load the images and restore the database
 
 ```bash
-cd bagalewatch-v2
-docker load -i ../bagalewatch_images.tar
+cd dt-watch
+docker load -i ../dtwatch_images.tar
 docker images    # confirm all six are now present locally
 
 docker compose up -d db
 # wait ~10s for it to become healthy
-docker compose exec -T db psql -U bagalewatch -d bagalewatch_v2 < ../bagalewatch_v2_backup.sql
+docker compose exec -T db psql -U dtwatch_user -d dtwatch_db < ../dtwatch_backup.sql
 ```
 
 ---

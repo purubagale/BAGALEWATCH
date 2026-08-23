@@ -13,7 +13,7 @@ import MenuSectionPage from './pages/MenuSectionPage'
 import SitesPage from './pages/SitesPage'
 import { findNodeByPath } from './utils/menuTree'
 
-// BAGALEWATCH BTS v2 — React app.
+// DT-WATCH BTS v2 — React app.
 //
 // Phase 1: auth + read-only Sites/Sectors (login, sidebar tree, map,
 // per-site KPI display). Phase 2 (§6 of the migration plan) adds full

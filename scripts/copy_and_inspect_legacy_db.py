@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BAGALEWATCH BTS v2 — safe, read-only snapshot of the v1 SQLite database.
+DT-WATCH BTS v2 — safe, read-only snapshot of the v1 SQLite database.
 
 This is the ONLY tool in this repo that is allowed to reference the v1
 system's bagalewatch.db, and it never opens that file directly — it makes
@@ -39,8 +39,8 @@ def main():
     # Copy first. shutil.copy2 opens the source read-only — this process
     # never opens bagalewatch.db in write mode, and never runs any SQL
     # against the live file.
-    tmp_dir = tempfile.mkdtemp(prefix="bagalewatch_v2_seed_")
-    copy_path = os.path.join(tmp_dir, "bagalewatch_snapshot.db")
+    tmp_dir = tempfile.mkdtemp(prefix="dtwatch_seed_")
+    copy_path = os.path.join(tmp_dir, "dtwatch_snapshot.db")
     print(f"Copying (read-only) {source_path}\n            -> {copy_path}")
     shutil.copy2(source_path, copy_path)
     print(f"Copy complete: {os.path.getsize(copy_path):,} bytes.")

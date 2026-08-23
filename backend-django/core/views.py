@@ -81,7 +81,7 @@ def health(request):
         db_error = str(exc)
 
     return Response({
-        'service': 'bagalewatch-v2-django',
+        'service': 'dt-watch-django',
         'status': 'ok' if db_ok else 'degraded',
         'database': 'ok' if db_ok else 'unreachable',
         'database_error': db_error,

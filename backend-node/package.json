@@ -1,7 +1,7 @@
 {
-  "name": "bagalewatch-v2-node-gateway",
+  "name": "dt-watch-node-gateway",
   "version": "0.1.0",
-  "description": "BAGALEWATCH BTS v2 — Node.js real-time gateway (WebSocket notifications, relayed from Go via Redis pub/sub). Standalone system, no dependency on the v1 Python server.",
+  "description": "DT-WATCH BTS v2 — Node.js real-time gateway (WebSocket notifications, relayed from Go via Redis pub/sub). Standalone system, no dependency on the v1 Python server.",
   "type": "module",
   "main": "src/server.js",
   "scripts": {

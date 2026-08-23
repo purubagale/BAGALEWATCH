@@ -326,7 +326,7 @@ export default function BackupPage() {
       const json = JSON.stringify(payload, null, 2)
       const now = new Date()
       const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`
-      downloadBlob(new Blob([json], { type: 'application/json' }), `BAGALEWATCH_BTS_v2_Backup_${stamp}.netwatch`)
+      downloadBlob(new Blob([json], { type: 'application/json' }), `DT-WATCH_BTS_v2_Backup_${stamp}.netwatch`)
       setExportedInfo(`Exported ${payload.meta.sitesCount} sites, ${Math.round(json.length / 1024)} KB`)
     } catch (err) {
       setExportError(apiErrorMessage(err, 'Export failed.'))
@@ -371,7 +371,7 @@ export default function BackupPage() {
       try {
         const data = JSON.parse(String(e.target?.result)) as BackupExportPayload
         if (data._type !== 'BAGALEWATCH_BTS_V2_BACKUP') {
-          setLoadError('Not a valid BAGALEWATCH v2 backup file.')
+          setLoadError('Not a valid DT-WATCH v2 backup file.')
           setLoadedBackup(null)
           return
         }

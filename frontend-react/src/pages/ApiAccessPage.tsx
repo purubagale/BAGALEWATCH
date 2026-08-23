@@ -159,7 +159,7 @@ export default function ApiAccessPage() {
     <div className="admin-page">
       <h1>API Access</h1>
       <p className="muted">
-        Manage credentials for external systems to share data with, or receive data from, BAGALEWATCH — a separate
+        Manage credentials for external systems to share data with, or receive data from, DT-WATCH — a separate
         API-key-authenticated surface at <code>{origin}/api/external/v1/</code>, distinct from this app's own login.
       </p>
 

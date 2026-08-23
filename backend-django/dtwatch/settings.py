@@ -1,5 +1,5 @@
 """
-Django settings for the BAGALEWATCH BTS v2 backend.
+Django settings for the DT-WATCH BTS v2 backend.
 
 This is a NEW, standalone system — it never reads or writes the v1
 system's files (bts_monitor.html, netwatch_server.py, bagalewatch_api.py,
@@ -122,7 +122,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = 'bagalewatch_v2.urls'
+ROOT_URLCONF = 'dtwatch.urls'
 
 TEMPLATES = [
     {
@@ -139,7 +139,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'bagalewatch_v2.wsgi.application'
+WSGI_APPLICATION = 'dtwatch.wsgi.application'
 
 # ── Database ──────────────────────────────────────────────────────────
 # Postgres by default (matches the v2 architecture plan). DJANGO_DB_ENGINE
@@ -159,8 +159,8 @@ else:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.environ.get('POSTGRES_DB', 'bagalewatch_v2'),
-            'USER': os.environ.get('POSTGRES_USER', 'bagalewatch'),
+            'NAME': os.environ.get('POSTGRES_DB', 'dtwatch_db'),
+            'USER': os.environ.get('POSTGRES_USER', 'dtwatch_user'),
             'PASSWORD': os.environ.get('POSTGRES_PASSWORD', ''),
             'HOST': os.environ.get('POSTGRES_HOST', 'db'),
             'PORT': os.environ.get('POSTGRES_PORT', '5432'),
@@ -247,7 +247,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Uploaded branding logo (2026-08-08, v2-only — v1 has no equivalent file
 # upload feature) — first real user-uploaded file in this app, so this is
 # the first time MEDIA_ROOT/MEDIA_URL have been needed. Served via
-# bagalewatch_v2/urls.py's static() helper in DEBUG; a real deployment
+# dtwatch/urls.py's static() helper in DEBUG; a real deployment
 # behind nginx/gunicorn would serve /media/ directly from this same
 # directory (a bind-mounted volume in docker-compose), same convention
 # as any other Django app.
@@ -305,8 +305,8 @@ SIMPLE_JWT = {
 }
 
 SPECTACULAR_SETTINGS = {
-    'TITLE': 'BAGALEWATCH BTS v2 API',
-    'DESCRIPTION': 'REST API for the BAGALEWATCH BTS v2 backend (Django service).',
+    'TITLE': 'DT-WATCH BTS v2 API',
+    'DESCRIPTION': 'REST API for the DT-WATCH BTS v2 backend (Django service).',
     'VERSION': '2.0.0-phase1',
 }
 

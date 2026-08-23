@@ -30,4 +30,4 @@ EXPOSE 8000
 # on. See gunicorn.conf.py's own comment for the full worker-count math
 # and the `timeout=120` carried forward unchanged from here.
 ENTRYPOINT ["./entrypoint.sh"]
-CMD ["gunicorn", "bagalewatch_v2.wsgi:application", "-c", "gunicorn.conf.py"]
+CMD ["gunicorn", "dtwatch.wsgi:application", "-c", "gunicorn.conf.py"]
