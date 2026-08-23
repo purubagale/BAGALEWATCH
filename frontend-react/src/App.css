@@ -2476,12 +2476,17 @@ textarea:focus {
 }
 .branding-section h2 { font-size: 14px; margin: 0 0 12px; }
 .branding-logo-row { display: flex; align-items: center; gap: 20px; }
+/* Same gold ring came off here 2026-08-23 as on `.app-logo`: this tile is a
+   PREVIEW of the sidebar mark, so a ring the real sidebar no longer draws
+   would misrepresent what the uploaded file will look like. A neutral
+   hairline replaces it — the tile still needs an edge, because a
+   transparent-backed logo on a white disc otherwise has no boundary. */
 .branding-logo-preview {
   width: 80px;
   height: 80px;
   object-fit: cover;
   border-radius: 50%;
-  border: 3px solid var(--brand-accent);
+  border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
   background: #ffffff;
   flex-shrink: 0;
