@@ -12,6 +12,7 @@ What these tests cannot prove is that the *realm* is configured correctly
 smoke-test checklist in the design spec.
 """
 import time
+from unittest import mock
 from unittest.mock import patch
 
 import jwt
@@ -512,6 +513,27 @@ class LogoutSsoTests(SSOTestBase):
         # post_logout_redirect_uri and 400s on anything not absolute and
         # registered, which would dead-end the user at sign-out.
         self.assertNotIn('post_logout_redirect_uri', url)
+
+    def test_login_url_setting_is_read_from_the_environment(self):
+        """Guards the class of bug that made this feature ship broken twice in
+        this project: an .env key that nothing in settings.py ever reads, so
+        the deployment looks configured and the code sees the default.
+
+        override_settings cannot catch it — it sets the attribute the test is
+        supposed to be proving exists — so assert the plumbing directly.
+        """
+        import os
+        from importlib import reload
+        from dtwatch import settings as settings_module
+
+        with mock.patch.dict(
+            os.environ, {'SSO_FRONTEND_LOGIN_URL': 'https://example.test/login'}
+        ):
+            reloaded = reload(settings_module)
+            self.assertEqual(
+                reloaded.SSO_FRONTEND_LOGIN_URL, 'https://example.test/login'
+            )
+        reload(settings_module)  # restore for the rest of the suite
 
     @override_settings(SSO_FRONTEND_LOGIN_URL='https://dtwatch.ntc.net.np/login')
     def test_absolute_post_logout_url_is_sent(self):

@@ -79,15 +79,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const ctl = new AbortController()
       const bail = setTimeout(() => ctl.abort(), LOGOUT_CALL_TIMEOUT_MS)
       try {
-        const res = await fetch(`${DJANGO_API_URL}/auth/logout/`, {
+        // The /api/v2 prefix belongs in the path, not in DJANGO_API_URL —
+        // that is empty by default (same-origin through nginx) and every
+        // other caller spells the prefix out, including refreshAccessToken in
+        // client.ts. Omitting it here sent the POST to /auth/logout/, which
+        // nginx answered with a 405 HTML page, so this function silently fell
+        // back to a local-only logout and the Keycloak session survived —
+        // i.e. exactly the bug this whole change set out to fix.
+        const res = await fetch(`${DJANGO_API_URL}/api/v2/auth/logout/`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },
           signal: ctl.signal,
         })
         // 204 = nothing to end. A 200 body carries the Keycloak URL.
-        if (res.ok && res.status !== 204) {
-          const body = await res.json().catch(() => null)
-          if (body?.keycloak_logout_url) target = body.keycloak_logout_url as string
+        if (res.status !== 204) {
+          const body = res.ok ? await res.json().catch(() => null) : null
+          if (body?.keycloak_logout_url) {
+            target = body.keycloak_logout_url as string
+          } else {
+            // Loud rather than silent: a misrouted or changed endpoint still
+            // signs the user out of DT-WATCH, which looks like success while
+            // leaving the Keycloak session alive. That is not a failure mode
+            // to swallow twice.
+            console.warn(
+              `[auth] logout: no keycloak_logout_url in response (HTTP ${res.status}); ` +
+              'signing out of DT-WATCH only — the Keycloak session may still be open.',
+            )
+          }
         }
       } catch {
         // Timed out, offline, or the token was already dead — fall through

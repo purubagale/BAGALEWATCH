@@ -448,6 +448,12 @@ KEYCLOAK_DEFAULT_ROLE = os.environ.get('KEYCLOAK_DEFAULT_ROLE', 'viewer')
 # same host in every deployment.
 SSO_FRONTEND_CALLBACK_URL = os.environ.get('SSO_FRONTEND_CALLBACK_URL', '/sso/callback')
 SSO_FRONTEND_UNAUTHORIZED_URL = os.environ.get('SSO_FRONTEND_UNAUTHORIZED_URL', '/login')
+# Post-logout return target for RP-Initiated Logout. Unlike the two above it
+# is handed to KEYCLOAK, not used as a local redirect, so it has to be
+# absolute AND registered on the client — see sso_config.frontend_login_url().
+# Empty default on purpose: sso.build_end_session_url() then omits the
+# parameter rather than sending a relative path Keycloak would 400 on.
+SSO_FRONTEND_LOGIN_URL = os.environ.get('SSO_FRONTEND_LOGIN_URL', '')
 
 SSO_STATE_TTL = int(os.environ.get('SSO_STATE_TTL', 600))
 SSO_LOGIN_CODE_TTL = int(os.environ.get('SSO_LOGIN_CODE_TTL', 60))
