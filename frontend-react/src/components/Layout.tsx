@@ -209,7 +209,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   // (BrandingSettings is a lazy-created singleton, so a fresh install's
   // GET comes back `{app_name: '', logo_url: null}`, not an error).
   const { data: branding } = useBranding()
-  const brandLogoSrc = branding?.logo_url || '/nt-logo.png'
+  const brandLogoSrc = branding?.logo_url || '/nt-logo-gold.webp'
   const brandName = branding?.app_name || 'DT-WATCH BTS v2'
   const [openGroupIds, setOpenGroupIds] = useState<Set<number>>(new Set())
   function toggleGroup(id: number) {

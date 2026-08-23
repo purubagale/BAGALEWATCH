@@ -32,6 +32,12 @@
 // just immediately redirects. Going forward the sidebar/breadcrumb/
 // dashboard only ever generate the new opaque links, since they're built
 // straight from MenuItem.path (which the migrations already renamed).
+// NOTE: '/about' is deliberately absent from this map (2026-08-23). The
+// obfuscation exists so a URL does not advertise what the system does;
+// '/about' advertises nothing, it is registered as a static route in
+// App.tsx, and its MenuItem is seeded with '/about' directly (see
+// 0032_seed_about_menuitem.py). Adding an alias here would create two URLs
+// for one page and buy nothing.
 export const OPAQUE_PATHS: Record<string, string> = {
   '/dashboard': '/m4h8qz',
   '/sites': '/e6t2pv',

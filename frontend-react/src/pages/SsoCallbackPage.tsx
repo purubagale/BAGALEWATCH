@@ -64,7 +64,7 @@ export default function SsoCallbackPage() {
       <div className="login-page">
         <div className="login-card">
           <div className="login-logo-wrap">
-            <img src="/nt-logo.png" alt="" className="login-logo" />
+            <img src="/nt-logo-gold.webp" alt="" className="login-logo" />
           </div>
           <h1 className="login-heading">Sign-in failed</h1>
           <div className="login-error">{error}</div>
@@ -80,7 +80,7 @@ export default function SsoCallbackPage() {
     <div className="login-page">
       <div className="login-card">
         <div className="login-logo-wrap">
-          <img src="/nt-logo.png" alt="" className="login-logo" />
+          <img src="/nt-logo-gold.webp" alt="" className="login-logo" />
         </div>
         <h1 className="login-heading">Signing in…</h1>
         <p className="login-note">Completing single sign-on, please wait.</p>

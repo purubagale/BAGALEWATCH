@@ -419,6 +419,40 @@ class LocalLoginToggleTests(TestCase):
         self.assertEqual(real.json(), fake.json())
 
 
+class HealthBuildStampTests(TestCase):
+    """The build stamp must not leak to unauthenticated callers.
+
+    /health/ is AllowAny because docker-compose's healthcheck and uptime
+    monitoring hit it without credentials. But an exact build tag plus git SHA
+    tells an anonymous visitor which commit is deployed, and this app is served
+    through a public-facing proxy. Flagged by a security review on 2026-08-23
+    after the fields were first added unconditionally.
+    """
+
+    @override_settings(APP_VERSION='v1.2.3', BUILD_TAG='v1.2.3-1-x-abc', GIT_SHA='abc')
+    def test_anonymous_gets_no_build_stamp(self):
+        body = self.client.get(reverse('health')).json()
+        # Health itself must still work — the healthcheck depends on it.
+        self.assertEqual(body['status'], 'ok')
+        self.assertEqual(body['service'], 'dt-watch-django')
+        for leaked in ('version', 'build_tag', 'git_sha'):
+            self.assertNotIn(leaked, body)
+
+    @override_settings(APP_VERSION='v1.2.3', BUILD_TAG='v1.2.3-1-x-abc', GIT_SHA='abc')
+    def test_authenticated_gets_the_build_stamp(self):
+        """AboutPage needs it, and gets it from the same endpoint — no second
+        route — because DRF still runs its authentication classes on an
+        AllowAny view."""
+        user = User.objects.create(username='someone', role='viewer')
+        user.set_password('pw')
+        user.save()
+        self.client.force_login(user)
+        body = self.client.get(reverse('health')).json()
+        self.assertEqual(body['version'], 'v1.2.3')
+        self.assertEqual(body['build_tag'], 'v1.2.3-1-x-abc')
+        self.assertEqual(body['git_sha'], 'abc')
+
+
 class PublicLoginMethodFlagsTests(TestCase):
     """LoginPage.tsx renders from the public branding payload, so the flags
     have to be there and readable without a token."""

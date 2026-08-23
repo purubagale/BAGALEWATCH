@@ -85,15 +85,33 @@ def health(request):
         db_ok = False
         db_error = str(exc)
 
-    return Response({
+    payload = {
         'service': 'dt-watch-django',
         'status': 'ok' if db_ok else 'degraded',
         'database': 'ok' if db_ok else 'unreachable',
         'database_error': db_error,
-        'version': settings.APP_VERSION,
-        'build_tag': settings.BUILD_TAG,
-        'git_sha': settings.GIT_SHA,
-    }, status=200 if db_ok else 503)
+    }
+
+    # Build stamp only for AUTHENTICATED callers (2026-08-23 security review).
+    # This endpoint is AllowAny because docker-compose's healthcheck and uptime
+    # monitoring hit it without credentials, and it must stay that way. But an
+    # exact build tag plus git SHA tells an unauthenticated visitor precisely
+    # which commit is deployed, which is a free head start for anyone matching
+    # it against known issues — and this app is now served through a
+    # public-facing proxy. That is the same reasoning that put AboutPage behind
+    # ProtectedRoute, so leaving it public here would have contradicted it.
+    #
+    # `request.user` is populated for a bearer token even on an AllowAny view,
+    # because DRF still runs DEFAULT_AUTHENTICATION_CLASSES — so AboutPage's
+    # normal authenticated fetch gets the full payload with no second endpoint.
+    if request.user and request.user.is_authenticated:
+        payload.update({
+            'version': settings.APP_VERSION,
+            'build_tag': settings.BUILD_TAG,
+            'git_sha': settings.GIT_SHA,
+        })
+
+    return Response(payload, status=200 if db_ok else 503)
 
 
 # ── Auth ─────────────────────────────────────────────────────────────

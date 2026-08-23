@@ -14,9 +14,14 @@ export interface HealthInfo {
   status: string
   database: string
   database_error: string | null
-  version: string
-  build_tag: string
-  git_sha: string
+  // Present only for authenticated callers (2026-08-23 security review) —
+  // the endpoint is AllowAny for healthchecks, but an exact build tag plus
+  // git SHA is not something to hand an anonymous visitor. AboutPage is
+  // behind ProtectedRoute so it always gets these; anything unauthenticated
+  // reading /health/ must treat them as absent.
+  version?: string
+  build_tag?: string
+  git_sha?: string
 }
 
 export type PermissionValue = boolean | CrudPerm

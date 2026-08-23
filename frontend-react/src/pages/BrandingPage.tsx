@@ -47,7 +47,7 @@ export default function BrandingPage() {
   }
 
   const currentName = appName ?? branding?.app_name ?? ''
-  const currentLogoSrc = previewDataUrl ?? branding?.logo_url ?? '/nt-logo.png'
+  const currentLogoSrc = previewDataUrl ?? branding?.logo_url ?? '/nt-logo-gold.webp'
   const hasCustomLogo = !!branding?.logo_url
 
   const currentLoginSubtitle = loginSubtitle ?? branding?.login_subtitle ?? ''

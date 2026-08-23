@@ -625,16 +625,31 @@ textarea:focus {
   backdrop-filter: blur(4px);
 }
 
+/* Circular badge around the mark (2026-08-23, "circular gold logo will be
+   better ... earlier") — restores the round treatment this page had before
+   the dutychart restyle flattened it, now carrying the gold emblem, which
+   reads better than the blue square tile against both the gradient and the
+   dark blue sidebar. The badge is what makes a transparent-background emblem
+   read as a logo rather than as a floating graphic. */
 .login-logo-wrap {
   display: flex;
   justify-content: center;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 .login-logo {
-  width: 80px;
-  height: 80px;
+  width: 84px;
+  height: 84px;
+  box-sizing: border-box;
+  padding: 10px;
+  border-radius: 50%;
   object-fit: contain;
+  background: var(--brand-primary-soft);
+  border: 1px solid var(--border-subtle);
   filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.2));
+}
+:root[data-theme='light'] .login-logo {
+  background: rgba(var(--brand-primary-rgb), 0.08);
+  border-color: rgba(var(--brand-primary-rgb), 0.18);
 }
 
 .login-brand { text-align: center; }
@@ -2610,4 +2625,15 @@ textarea:focus {
   padding: 1px 4px;
   border-radius: 4px;
   background: var(--bg-hover);
+}
+
+
+/* Sidebar mark, rounded to match the login badge (2026-08-23). The
+   gold emblem is transparent-backed, so without a disc behind it the
+   glyph floats against the blue sidebar. */
+.app-sidebar-brand .app-logo {
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 3px;
+  box-sizing: border-box;
 }
