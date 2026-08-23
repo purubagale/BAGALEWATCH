@@ -33,3 +33,10 @@ Dockerfile text eol=lf
 # \r in a password or URL is invisible in logs and fails at connect time).
 docker-compose*.yml text eol=lf
 .env.example text eol=lf
+
+# Go rewrites go.mod/go.sum with LF whenever it touches them, so pinning
+# these avoids a spurious whole-file diff every time `go mod tidy` runs on
+# a Windows checkout. They were CRLF here; Go parses that fine, but the
+# churn is noise.
+go.mod text eol=lf
+go.sum text eol=lf
