@@ -13,6 +13,7 @@ interface AuthState {
   loading: boolean
   restoring: boolean
   login: (username: string, password: string) => Promise<void>
+  loginWithSsoCode: (code: string) => Promise<void>
   logout: () => void
 }
 
@@ -98,12 +99,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [user, resetIdleTimer])
 
-  const login = useCallback(async (username: string, password: string) => {
+  // Both sign-in paths end here (2026-08-23). /auth/sso/token/ deliberately
+  // returns the same payload shape /auth/login/ does, so establishing the
+  // session is byte-for-byte identical once the response is in hand — which
+  // is what keeps SSO from needing any session plumbing of its own.
+  const establishSession = useCallback(async (path: string, body: unknown) => {
     setLoading(true)
     try {
-      const data = await apiJson<Me & { access: string; refresh: string }>('/api/v2/auth/login/', {
+      const data = await apiJson<Me & { access: string; refresh: string }>(path, {
         method: 'POST',
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(body),
       })
       setTokens(data.access, data.refresh)
       const { access: _a, refresh: _r, ...me } = data
@@ -113,8 +118,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const login = useCallback(
+    (username: string, password: string) =>
+      establishSession('/api/v2/auth/login/', { username, password }),
+    [establishSession],
+  )
+
+  // Completes an SSO login: trades the one-time code the backend put in the
+  // /sso/callback URL for the app's own tokens. The code is single-use and
+  // very short-lived server-side, so this runs once on mount.
+  const loginWithSsoCode = useCallback(
+    (code: string) => establishSession('/api/v2/auth/sso/token/', { code }),
+    [establishSession],
+  )
+
   return (
-    <AuthContext.Provider value={{ user, loading, restoring, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, restoring, login, loginWithSsoCode, logout }}>
       {children}
     </AuthContext.Provider>
   )

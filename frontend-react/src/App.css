@@ -663,6 +663,43 @@ textarea:focus {
 .login-submit svg { width: 17px; height: 17px; }
 .login-submit:hover:not(:disabled) { background: var(--brand-primary-hover); }
 .login-submit:disabled { opacity: 0.5; cursor: default; }
+/* SSO sign-in (2026-08-23). Reuses .login-submit's pill shape so both
+   buttons read as one control set, but renders as an outlined secondary
+   action: password sign-in stays the primary affordance while local login
+   is still enabled. It is an <a>, not a <button>, because it has to be a
+   real navigation to follow the backend's 302 to Keycloak — hence the
+   text-decoration and box-sizing resets a button would not need. */
+.login-sso-btn {
+  background: transparent;
+  border: 1.5px solid var(--brand-primary);
+  color: var(--brand-primary);
+  text-decoration: none;
+  box-sizing: border-box;
+  padding: 11px 12px;
+}
+.login-sso-btn:hover {
+  background: var(--brand-primary);
+  color: var(--text-on-brand);
+}
+/* "or" separator with rules either side, drawn with pseudo-elements so the
+   markup stays a single element. */
+.login-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.login-or::before,
+.login-or::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+}
 .login-disclaimer {
   display: flex;
   align-items: center;
@@ -2386,3 +2423,19 @@ textarea:focus {
   padding: 3px;
 }
 .menu-icon-thumb { width: 16px; height: 16px; object-fit: contain; vertical-align: -3px; }
+/* SSO-managed marker on the Users page (2026-08-23). Marks a user whose
+   role comes from Keycloak and is re-applied on every login, so an admin
+   can see at a glance why that row's role is not editable. */
+.user-sso-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface-alt);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}

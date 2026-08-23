@@ -9,6 +9,7 @@ import MenuSectionGate from './components/MenuSectionGate'
 import { DASHBOARD_PATH, OPAQUE_PATHS, SITES_PATH } from './constants/opaqueRoutes'
 import DashboardPage from './pages/DashboardPage'
 import LoginPage from './pages/LoginPage'
+import SsoCallbackPage from './pages/SsoCallbackPage'
 import MenuSectionPage from './pages/MenuSectionPage'
 import SitesPage from './pages/SitesPage'
 import { findNodeByPath } from './utils/menuTree'
@@ -169,6 +170,11 @@ function App() {
       <Suspense fallback={<div className="page-status">Loading…</div>}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        {/* SSO landing route (2026-08-23). Public and eagerly imported,
+            like LoginPage: it is on the critical sign-in path, so a lazy
+            chunk fetch here would add a round trip before the one-time
+            code can be exchanged — and that code expires in ~60s. */}
+        <Route path="/sso/callback" element={<SsoCallbackPage />} />
         {/* Dashboard keeps its own opaque alias like every other
             top-level route (2026-08-08 follow-up: "for dashboard, sites
             topology... plain path is displayed, correct them also") but

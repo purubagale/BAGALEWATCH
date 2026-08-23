@@ -1,13 +1,34 @@
 import { useState, type FormEvent } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { ApiError } from '../api/client'
 import { useBranding } from '../api/queries'
 import { DASHBOARD_PATH } from '../constants/opaqueRoutes'
 
+/** Reasons the backend can bounce a failed SSO attempt back to /login.
+ *
+ * The server sends a coarse code rather than a message, deliberately: it must
+ * not reveal whether an account exists. Mapping happens here so the copy can
+ * be user-facing without the server leaking anything. Anything unrecognised
+ * falls through to a generic line rather than rendering a raw code. */
+const SSO_ERRORS: Record<string, string> = {
+  no_app_access:
+    'Your account is not authorised for DT-WATCH. Ask an administrator to add you to the DT-WATCH group.',
+  link_conflict:
+    'An account with your username already exists here and could not be verified as yours. Contact an administrator.',
+  inactive_user: 'This account is disabled. Contact an administrator.',
+  sso_unavailable: 'Single sign-on is not configured on this server.',
+  idp_error: 'Sign-in was cancelled or refused by the identity provider.',
+  idp_unreachable: 'Could not reach the identity provider. Try again shortly.',
+  bad_state: 'That sign-in attempt expired. Please try again.',
+  bad_login_code: 'That sign-in link has already been used. Please try again.',
+  invalid_id_token: 'The identity provider returned a token we could not verify.',
+}
+
 export default function LoginPage() {
   const { user, login, loading } = useAuth()
+  const [params] = useSearchParams()
   const { theme, toggleTheme } = useTheme()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -31,6 +52,18 @@ export default function LoginPage() {
   const buttonText = branding?.login_button_text || 'Sign in'
   const disclaimer =
     branding?.login_disclaimer || 'Internal system — Nepal Telecom 4G RAN O&M. All activities are monitored.'
+
+  // Which sign-in methods this server offers (2026-08-23). Both default to
+  // the pre-SSO behaviour while `branding` is still loading: no SSO button,
+  // password form shown. That way a slow or failed branding fetch degrades
+  // to exactly what this page did before SSO existed, rather than to a page
+  // with no way to sign in at all.
+  const ssoEnabled = branding?.sso_enabled === true
+  const localLoginEnabled = branding?.local_login_enabled !== false
+  const ssoErrorCode = params.get('sso_error')
+  const ssoError = ssoErrorCode
+    ? SSO_ERRORS[ssoErrorCode] || 'Single sign-on failed. Please try again.'
+    : null
 
   // Dashboard is the default landing page (2026-08-08) — matches
   // RootRedirect in App.tsx; was /sites before Dashboard existed. Points
@@ -102,6 +135,26 @@ export default function LoginPage() {
         </div>
         <h1>{brandName}</h1>
         <p className="login-subtitle">{loginSubtitle}</p>
+        {ssoError && <div className="login-error">{ssoError}</div>}
+        {ssoEnabled && (
+          <>
+            {/* A real link, not a fetch: this must be a top-level browser
+                navigation so it can follow the backend's 302 to Keycloak and
+                carry the state cookie. An XHR would be blocked by CORS at
+                the identity provider and could not show a login form. */}
+            <a className="login-submit login-sso-btn" href="/api/v2/auth/sso/login/">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="4" y="10" width="16" height="10" rx="2" />
+                <path d="M12 15v2" />
+                <path d="M7 10V7a5 5 0 0 1 10 0v3" />
+              </svg>
+              Sign in with NTC SSO
+            </a>
+            {localLoginEnabled && <div className="login-or">or</div>}
+          </>
+        )}
+        {localLoginEnabled && (
+          <>
         <label className="login-field">
           <span className="login-field-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -143,6 +196,13 @@ export default function LoginPage() {
           </svg>
           {loading ? 'Signing in…' : buttonText}
         </button>
+          </>
+        )}
+        {!localLoginEnabled && !ssoEnabled && (
+          <div className="login-error">
+            No sign-in method is enabled on this server. Contact an administrator.
+          </div>
+        )}
       </form>
       <div className="login-disclaimer">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

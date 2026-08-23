@@ -4,6 +4,9 @@
 export type Role = 'superadmin' | 'admin' | 'viewer'
 
 export type CrudPerm = { read?: boolean; write?: boolean; update?: boolean; delete?: boolean }
+/** How a user authenticates. `sso` means Keycloak owns their role and
+ * re-applies it on every login, so editing it here would not stick. */
+export type AuthSource = 'local' | 'sso'
 export type PermissionValue = boolean | CrudPerm
 export type PermissionMap = Record<string, PermissionValue>
 
@@ -16,6 +19,7 @@ export interface Me {
   is_active: boolean
   last_login: string | null
   date_joined: string
+  auth_source: AuthSource
   permissions: PermissionMap
 }
 
@@ -241,6 +245,7 @@ export interface AdminUser {
   is_active: boolean
   last_login: string | null
   date_joined: string
+  auth_source: AuthSource
 }
 
 export interface UserWrite {
@@ -862,6 +867,15 @@ export interface BrandingSettings {
   login_button_text: string
   // Bottom disclaimer pill (2026-08-11 follow-up), same convention.
   login_disclaimer: string
+  // Which sign-in methods this server offers (2026-08-23, Keycloak SSO).
+  // Read-only and server-derived, unlike every field above — they are not
+  // BrandingSettings columns, they are computed from KEYCLOAK_*/
+  // LOCAL_LOGIN_ENABLED. They ride along on this payload because it is
+  // already the one public, pre-token response LoginPage.tsx fetches, so
+  // adding them here avoided a second AllowAny endpoint. Both are plainly
+  // visible from the login form itself, so neither is sensitive.
+  sso_enabled: boolean
+  local_login_enabled: boolean
 }
 
 /** PUT /api/v2/branding/ body. All fields optional/partial: omit `app_name`

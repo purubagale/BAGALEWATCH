@@ -267,7 +267,15 @@ class BrandingSettingsSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'role', 'name', 'dept', 'is_active', 'last_login', 'date_joined']
+        # `auth_source` is exposed read-only (2026-08-23) so UsersPage can
+        # show an SSO-backed user's role as managed elsewhere. Without it an
+        # admin edits the role, Keycloak re-applies the mapped one at that
+        # person's next login, and the edit looks like a bug in this app.
+        # `sso_subject` is deliberately NOT exposed: it is an internal
+        # identity-provider identifier with no use in the UI.
+        fields = ['id', 'username', 'role', 'name', 'dept', 'is_active',
+                  'last_login', 'date_joined', 'auth_source']
+        read_only_fields = ['auth_source']
 
 
 class MeSerializer(UserSerializer):

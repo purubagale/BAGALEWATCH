@@ -17,11 +17,20 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
   const updateUser = useUpdateUser(u.id)
   const deleteUser = useDeleteUser()
 
+  // Keycloak owns an SSO user's role and re-applies it on every login
+  // (2026-08-23), so the role is shown but not editable here — otherwise an
+  // admin's change silently reverts next time that person signs in and looks
+  // like a bug in this app. Password is hidden for the same class of reason
+  // but a sharper one: setting a password on an SSO account would make it
+  // reachable through local login, quietly undoing the point of SSO.
+  const ssoManaged = u.auth_source === 'sso'
+
   async function save() {
     setError(null)
     try {
-      const patch: Partial<UserWrite> = { role, name, dept, is_active: isActive }
-      if (password) patch.password = password
+      const patch: Partial<UserWrite> = { name, dept, is_active: isActive }
+      if (!ssoManaged) patch.role = role
+      if (!ssoManaged && password) patch.password = password
       await updateUser.mutateAsync(patch)
       setPassword('')
       setEditing(false)
@@ -39,7 +48,10 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
     return (
       <tr>
         <td>{u.username}</td>
-        <td>{u.role}</td>
+        <td>
+          {u.role}
+          {ssoManaged && <span className="user-sso-tag" title="Role is managed by Keycloak SSO">SSO</span>}
+        </td>
         <td>{u.name}</td>
         <td>{u.dept}</td>
         <td>{u.is_active ? 'Active' : 'Disabled'}</td>
@@ -58,11 +70,17 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
     <tr>
       <td>{u.username}</td>
       <td>
-        <select value={role} onChange={(e) => setRole(e.target.value as Role)}>
-          <option value="viewer">viewer</option>
-          <option value="admin">admin</option>
-          <option value="superadmin">superadmin</option>
-        </select>
+        {ssoManaged ? (
+          <span title="Managed by Keycloak SSO — change the user's group in Keycloak instead">
+            {u.role} <span className="user-sso-tag">SSO</span>
+          </span>
+        ) : (
+          <select value={role} onChange={(e) => setRole(e.target.value as Role)}>
+            <option value="viewer">viewer</option>
+            <option value="admin">admin</option>
+            <option value="superadmin">superadmin</option>
+          </select>
+        )}
       </td>
       <td><input value={name} onChange={(e) => setName(e.target.value)} /></td>
       <td><input value={dept} onChange={(e) => setDept(e.target.value)} /></td>
@@ -72,10 +90,14 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
         </label>
       </td>
       <td>
-        <input
-          type="password" placeholder="New password (optional)"
-          value={password} onChange={(e) => setPassword(e.target.value)}
-        />
+        {ssoManaged ? (
+          <span aria-label="not applicable">—</span>
+        ) : (
+          <input
+            type="password" placeholder="New password (optional)"
+            value={password} onChange={(e) => setPassword(e.target.value)}
+          />
+        )}
       </td>
       <td className="admin-table-actions">
         {error && <div className="form-error form-error-inline">{error}</div>}
