@@ -1,0 +1,70 @@
+# dt-watch → remote Postgres override (2026-08-23).
+#
+# WHAT THIS IS FOR
+# The committed docker-compose.yml bundles its own `db` service so this
+# stack stays a self-contained "copy the folder, `docker compose up`"
+# deploy on a fresh server (see docs/SERVER_MIGRATION*.md). This machine
+# instead has a Postgres server of its own at the address in .env's
+# POSTGRES_HOST, so the bundled container is redundant here.
+#
+# WHY AN OVERRIDE IS NEEDED AT ALL — the trap this file exists to fix
+# Setting POSTGRES_HOST in .env alone does NOT work, and fails silently.
+# The base file hardcodes `POSTGRES_HOST: db` under django's and
+# go-worker's `environment:`, and in Compose `environment:` WINS over
+# `env_file:`. So .env's value is read for ${...} interpolation but never
+# reaches the app, both services connect to the bundled container, and
+# everything looks healthy while pointing at the wrong database. That is
+# exactly what happened here on 2026-08-23: a `docker compose up` created
+# a fresh local pgdata volume and migrated into it while .env had said
+# 172.16.62.126 the whole time. .env.example:41 warns about this in prose;
+# this file is the actual fix.
+#
+# HOW IT ACTIVATES
+# Same mechanism as docker-compose.shared-redis.yml. Either:
+#   1. Per command:  docker compose -f docker-compose.yml \
+#                      -f docker-compose.shared-redis.yml \
+#                      -f docker-compose.remote-db.yml up -d
+#   2. Permanently on this machine (preferred): append it to COMPOSE_FILE
+#      in .env. Because .env is gitignored, that choice stays local and a
+#      plain `docker compose up` here picks up all three files.
+#
+# ORDER MATTERS: this file must come AFTER docker-compose.shared-redis.yml
+# in COMPOSE_FILE. That file re-states a `depends_on` gate on `db`, so if
+# it were applied last it would re-add a dependency on a service this file
+# has already deleted — a hard config error, not a warning.
+#
+# MIGRATIONS: backend-django/entrypoint.sh runs `manage.py migrate` on
+# EVERY container start. With this file active, that runs against the
+# remote server. Intentional (it is how the schema gets there in the first
+# place) but worth knowing before the first `up` against a database that
+# already holds data.
+
+services:
+  # Drop the bundled Postgres entirely. `!reset` is the Compose YAML tag
+  # for deleting a key an earlier file set — the merge rules otherwise
+  # only add/replace, never remove — so this is the one way to drop a
+  # whole service rather than leaving a stopped duplicate behind.
+  db: !reset null
+
+  django:
+    # Both the base file and the shared-redis override gate django on
+    # `db` being healthy. That service no longer exists, and a depends_on
+    # naming a missing service is a hard config error, so the gate has to
+    # go entirely rather than be narrowed. Nothing is lost: a remote
+    # Postgres is not part of this compose project, so Compose could
+    # never have health-gated on it anyway. entrypoint.sh's `migrate` is
+    # the first thing to touch the database and it fails loudly if the
+    # server is unreachable.
+    depends_on: !reset null
+    environment:
+      # The whole point of this file. `:?` rather than a default, so a
+      # .env missing the value fails immediately and visibly instead of
+      # quietly falling back to a `db` host that no longer resolves.
+      POSTGRES_HOST: ${POSTGRES_HOST:?set POSTGRES_HOST in .env — this override exists to use it}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+
+  go-worker:
+    depends_on: !reset null
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST:?set POSTGRES_HOST in .env — this override exists to use it}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
