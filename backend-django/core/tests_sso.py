@@ -356,6 +356,21 @@ class ConfigurationTests(TestCase):
     def test_signing_algs_parses_a_list(self):
         self.assertEqual(cfg.signing_algs(), ['RS256', 'PS256'])
 
+    def test_redis_url_comes_from_settings_not_a_private_default(self):
+        """Regression (2026-08-23): settings.py used to read REDIS_URL inline
+        inside CACHES only, so `settings.REDIS_URL` did not exist and
+        sso_config fell through to its own 'redis://redis:6379/1' default.
+        Every SSO login then 500'd with a DNS failure, because the
+        shared-redis override deletes the bundled `redis` service. The two
+        must resolve to the same place."""
+        from django.conf import settings as dj
+        self.assertTrue(hasattr(dj, 'REDIS_URL'), 'settings.REDIS_URL must be defined')
+        self.assertEqual(cfg.redis_url(), dj.REDIS_URL)
+
+    @override_settings(REDIS_URL='redis://default:pw@shared-redis:6379/1')
+    def test_redis_url_honours_an_overridden_host(self):
+        self.assertEqual(cfg.redis_url(), 'redis://default:pw@shared-redis:6379/1')
+
 
 class LocalLoginToggleTests(TestCase):
     """The cutover switch. Local login must keep working by default and stop

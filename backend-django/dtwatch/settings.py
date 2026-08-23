@@ -194,6 +194,17 @@ else:
         }
     }
 
+# Redis connection URL, defined ONCE as a module-level setting (2026-08-23).
+# It used to be read inline via os.environ only inside CACHES below, which
+# meant `settings.REDIS_URL` did not exist — so core/sso_config.py's
+# redis_url() silently fell through to its own `redis://redis:6379/1`
+# default and every SSO login 500'd with "Temporary failure in name
+# resolution", because docker-compose.shared-redis.yml deletes the bundled
+# `redis` service and there is no such host. Anything needing Redis must read
+# this setting rather than re-deriving it from the environment, or the two
+# can disagree exactly like that again.
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/1')
+
 # ── Cache (2026-08-08, "100 concurrent users" scaling pass) ────────────
 # Redis-backed, not Django's LocMemCache default — LocMemCache is
 # PER-PROCESS, and gunicorn now runs multiple worker processes (see
@@ -220,7 +231,7 @@ else:
     CACHES = {
         'default': {
             'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-            'LOCATION': os.environ.get('REDIS_URL', 'redis://redis:6379/1'),
+            'LOCATION': REDIS_URL,
         }
     }
 
