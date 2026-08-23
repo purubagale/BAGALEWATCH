@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from . import sso
 from . import sso_config
 from .imageutils import DataUrlImageError, decode_data_url_image
 from .sector_expansion import sector_matches_mode, site_matches_sector_expansion
@@ -183,11 +184,24 @@ class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        # Phase 1 keeps this stateless — the client discards its in-memory
-        # tokens and the short (15 min) access-token lifetime naturally
-        # limits exposure. Server-side refresh-token revocation (the
-        # `rest_framework_simplejwt.token_blacklist` app) is a Phase 2
+        # DT-WATCH's own session stays stateless — the client discards its
+        # in-memory tokens and the short (15 min) access-token lifetime
+        # naturally limits exposure. Server-side refresh-token revocation
+        # (the `rest_framework_simplejwt.token_blacklist` app) is a Phase 2
         # hardening item to add if/when it's actually needed, not before.
+        #
+        # For an SSO login that is not enough on its own: ending only the
+        # DT-WATCH session leaves the Keycloak browser session alive, so
+        # "Sign in with NT SSO" walks straight back in with no prompt — on a
+        # shared workstation the next person lands in the previous user's
+        # account. Hand the SPA a Keycloak end-session URL to visit instead
+        # (RP-Initiated Logout), which is the only way to end that session
+        # from here. '' means there is nothing to end (local account, SSO
+        # off, or the retained ID token is gone) and the SPA just clears its
+        # own tokens, exactly as before.
+        logout_url = sso.end_session_url_for(request.user)
+        if logout_url:
+            return Response({'keycloak_logout_url': logout_url})
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -978,6 +992,12 @@ class BrandingSettingsView(APIView):
         # login form itself.
         data['sso_enabled'] = sso_config.is_configured()
         data['local_login_enabled'] = sso_config.local_login_enabled()
+        # Inactivity auto-logout, in minutes (2026-08-23, "autologout time
+        # should be configurable"). Rides the same public payload for the same
+        # reason as the flags above, and because AuthProvider — which owns the
+        # idle timer — needs it before any authenticated request has happened.
+        # 0 means auto-logout is off.
+        data['idle_timeout_minutes'] = getattr(settings, 'IDLE_TIMEOUT_MINUTES', 5)
         return Response(data)
 
     # Plain-text fields (2026-08-08 follow-up: "let superadmin to

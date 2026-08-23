@@ -884,6 +884,12 @@ export interface BrandingSettings {
   login_button_text: string
   // Bottom disclaimer pill (2026-08-11 follow-up), same convention.
   login_disclaimer: string
+  // Minutes of inactivity before the SPA signs itself out; 0 = never
+  // (2026-08-23). Server-provided rather than a build-time VITE_ var so it
+  // can be changed with an .env edit instead of an image rebuild. Optional
+  // here because an older backend simply won't send it, and AuthContext
+  // falls back to its own default.
+  idle_timeout_minutes?: number
   // Which sign-in methods this server offers (2026-08-23, Keycloak SSO).
   // Read-only and server-derived, unlike every field above — they are not
   // BrandingSettings columns, they are computed from KEYCLOAK_*/

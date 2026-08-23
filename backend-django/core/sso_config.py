@@ -172,6 +172,20 @@ def frontend_unauthorized_url() -> str:
     return _s('SSO_FRONTEND_UNAUTHORIZED_URL') or frontend_callback_url()
 
 
+def frontend_login_url() -> str:
+    """Where Keycloak sends the browser after ending the SSO session.
+
+    Keycloak validates this against the client's "Valid post logout redirect
+    URIs" and answers 400 `Invalid redirect uri` on a mismatch — a dead end
+    the user reaches only at logout, which is a bad place to discover a
+    config error. The live `dtwatch` client accepts
+    `https://dtwatch.ntc.net.np/login` exactly (verified 2026-08-23); the
+    bare origin `https://dtwatch.ntc.net.np/` is REJECTED. So this must stay
+    a full URL ending in the login path, and any new deployment hostname has
+    to be registered on the client before its logout will work."""
+    return _s('SSO_FRONTEND_LOGIN_URL') or frontend_unauthorized_url()
+
+
 # ── Redis-backed short-lived state ───────────────────────────────────────
 
 def redis_url() -> str:

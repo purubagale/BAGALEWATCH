@@ -394,6 +394,31 @@ def _env_flag(name, default):
 # SSO-only cutover; it is reversible and needs no code change or rebuild.
 LOCAL_LOGIN_ENABLED = _env_flag('LOCAL_LOGIN_ENABLED', True)
 
+
+# ── Client-side inactivity auto-logout ───────────────────────────────────
+# Minutes of no user activity before the SPA signs itself out. Read by the
+# frontend from the public branding payload rather than baked in at build
+# time with a VITE_ var, so changing it is an .env edit plus a backend
+# restart — no image rebuild, no redeploy of the frontend.
+#
+# 0 disables auto-logout entirely. A garbage value falls back to the default
+# rather than raising: this is a UX preference, and refusing to start the
+# whole backend over a typo in it would be the wrong trade.
+def _idle_timeout_minutes(default=5):
+    raw = os.environ.get('IDLE_TIMEOUT_MINUTES', '')
+    if not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    if value < 0:
+        return default
+    return value
+
+
+IDLE_TIMEOUT_MINUTES = _idle_timeout_minutes()
+
 KEYCLOAK_SSO_ENABLED = _env_flag('KEYCLOAK_SSO_ENABLED', False)
 KEYCLOAK_ISSUER = os.environ.get('KEYCLOAK_ISSUER', '')
 KEYCLOAK_CLIENT_ID = os.environ.get('KEYCLOAK_CLIENT_ID', '')

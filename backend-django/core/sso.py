@@ -390,10 +390,55 @@ def get_id_token(user_id: int):
     return _redis().get(f'{_IDTOKEN_PREFIX}{user_id}')
 
 
+def pop_id_token(user_id: int):
+    """Read-and-delete: the ID token has exactly one job, and once it has
+    been spent on an end-session URL, leaving it in Redis for the rest of its
+    12h TTL only widens the window in which a stale copy could be reused."""
+    return _redis().getdel(f'{_IDTOKEN_PREFIX}{user_id}')
+
+
+def end_session_url_for(user) -> str:
+    """The Keycloak logout URL for `user`, or '' when there is nothing to end.
+
+    Returns '' — never raises — for a local-password account, for an SSO
+    account whose retained ID token has expired or was already spent, and
+    when SSO is switched off entirely. Sign-out must always succeed locally
+    even when the Keycloak leg cannot happen, so every failure here is
+    silent by design and the caller simply falls back to a DT-WATCH-only
+    logout.
+
+    KNOWN LIMIT: the ID token is stored per USER, not per session, so the
+    same account signed in from two browsers keeps only the newer token —
+    logging out in the older browser ends the newer browser's Keycloak
+    session instead of its own. Fixing that needs the session id (`sid`)
+    plumbed through the login code and back from the SPA; both nt-pms and
+    dutychart share this wart."""
+    if not cfg.is_enabled():
+        return ''
+    if getattr(user, 'auth_source', '') != 'sso':
+        return ''
+    id_token = pop_id_token(user.pk)
+    if not id_token:
+        return ''
+    return build_end_session_url(id_token, cfg.frontend_login_url())
+
+
 def build_end_session_url(id_token: str, post_logout_redirect_uri: str) -> str:
     params = {
         'id_token_hint': id_token,
         'client_id': cfg.client_id(),
-        'post_logout_redirect_uri': post_logout_redirect_uri,
     }
+    # Keycloak requires an ABSOLUTE post-logout URI and validates it against
+    # the client's registered list, answering 400 `Invalid redirect uri` on a
+    # mismatch. The app's other redirect targets are happily relative
+    # ('/login' is the settings default, and works fine as a same-origin
+    # browser redirect), so a deployment that never set an absolute
+    # SSO_FRONTEND_LOGIN_URL would send one here and dead-end the user on a
+    # Keycloak error page — at sign-out, the worst moment to discover it.
+    #
+    # Omitting the parameter is the graceful degradation: Keycloak still ends
+    # the session and shows its own "You are logged out" page instead of an
+    # error. The session — the thing that actually matters — ends either way.
+    if post_logout_redirect_uri.startswith(('http://', 'https://')):
+        params['post_logout_redirect_uri'] = post_logout_redirect_uri
     return f'{cfg.end_session_endpoint()}?{urlencode(params)}'

@@ -345,7 +345,12 @@ class ConfigurationTests(TestCase):
     def test_missing_redirect_uri_is_not_configured(self):
         self.assertFalse(cfg.is_configured())
 
+    @override_settings(KEYCLOAK_SSO_ENABLED=False)
     def test_sso_login_returns_503_when_unconfigured(self):
+        # Pinned explicitly: this asserts the UNCONFIGURED path, and without
+        # the override it passed only while the surrounding environment
+        # happened to have SSO off — it started failing the moment the dev
+        # container got real Keycloak settings.
         self.assertEqual(self.client.get(reverse('auth-sso-login')).status_code, 503)
 
     @override_settings(KEYCLOAK_ROLE_GROUP_MAP='  a:superadmin , bad-entry ,b:admin ')
@@ -457,7 +462,10 @@ class PublicLoginMethodFlagsTests(TestCase):
     """LoginPage.tsx renders from the public branding payload, so the flags
     have to be there and readable without a token."""
 
+    @override_settings(KEYCLOAK_SSO_ENABLED=False)
     def test_flags_present_and_unauthenticated(self):
+        # Same reason as above: sso_enabled=False is only true of an
+        # environment with SSO off, so say so instead of inheriting it.
         resp = self.client.get(reverse('branding'))
         self.assertEqual(resp.status_code, 200)
         self.assertIn('sso_enabled', resp.json())
@@ -468,3 +476,87 @@ class PublicLoginMethodFlagsTests(TestCase):
     @override_settings(**SSO_SETTINGS)
     def test_sso_enabled_reported_when_configured(self):
         self.assertTrue(self.client.get(reverse('branding')).json()['sso_enabled'])
+
+
+@override_settings(**SSO_SETTINGS)
+class LogoutSsoTests(SSOTestBase):
+    """Signing out of the app must also end the Keycloak browser session.
+
+    Otherwise "Sign in with NT SSO" walks straight back in with no prompt,
+    which on a shared workstation means the next person lands in the previous
+    user's account (reported 2026-08-23: "signout from app logout sso is not
+    happening"). The machinery existed but nothing called it.
+    """
+
+    def _sso_user(self, username, id_token='the-id-token',
+                  auth_source=User.AUTH_SOURCE_SSO):
+        user = User.objects.create(username=username, role='viewer',
+                                   auth_source=auth_source)
+        user.set_password('pw')
+        user.save()
+        if id_token:
+            sso.store_id_token(user.pk, id_token)
+        self.client.force_login(user)
+        return user
+
+    def test_sso_user_gets_keycloak_logout_url(self):
+        self._sso_user('ssoer')
+
+        resp = self.client.post(reverse('auth-logout'))
+
+        self.assertEqual(resp.status_code, 200)
+        url = resp.json()['keycloak_logout_url']
+        self.assertIn('id_token_hint=the-id-token', url)
+        self.assertIn(f'client_id={CLIENT_ID}', url)
+        # The relative '/login' default is NOT sent: Keycloak validates
+        # post_logout_redirect_uri and 400s on anything not absolute and
+        # registered, which would dead-end the user at sign-out.
+        self.assertNotIn('post_logout_redirect_uri', url)
+
+    @override_settings(SSO_FRONTEND_LOGIN_URL='https://dtwatch.ntc.net.np/login')
+    def test_absolute_post_logout_url_is_sent(self):
+        """The live `dtwatch` client accepts this exact URL (verified against
+        Keycloak 2026-08-23) and rejects the bare origin."""
+        self._sso_user('ssoer_abs')
+
+        url = self.client.post(reverse('auth-logout')).json()['keycloak_logout_url']
+
+        self.assertIn(
+            'post_logout_redirect_uri=https%3A%2F%2Fdtwatch.ntc.net.np%2Flogin', url
+        )
+
+    def test_id_token_is_single_use(self):
+        self._sso_user('ssoer2', id_token='one-shot')
+
+        first = self.client.post(reverse('auth-logout'))
+        second = self.client.post(reverse('auth-logout'))
+
+        self.assertEqual(first.status_code, 200)
+        # Nothing left to build a URL from, so the second call degrades to a
+        # DT-WATCH-only logout rather than handing out a spent hint.
+        self.assertEqual(second.status_code, 204)
+
+    def test_local_user_logout_unchanged(self):
+        self._sso_user('localer', id_token='should-be-ignored',
+                       auth_source=User.AUTH_SOURCE_LOCAL)
+
+        resp = self.client.post(reverse('auth-logout'))
+
+        self.assertEqual(resp.status_code, 204)
+
+    def test_sso_user_without_retained_id_token(self):
+        """The ID token outlives nothing but its own TTL, so a long-lived
+        session can reach sign-out with no hint left. Logout must still work."""
+        self._sso_user('ssoer3', id_token=None)
+
+        resp = self.client.post(reverse('auth-logout'))
+
+        self.assertEqual(resp.status_code, 204)
+
+    def test_no_url_when_sso_disabled(self):
+        self._sso_user('ssoer4')
+
+        with override_settings(KEYCLOAK_SSO_ENABLED=False):
+            resp = self.client.post(reverse('auth-logout'))
+
+        self.assertEqual(resp.status_code, 204)

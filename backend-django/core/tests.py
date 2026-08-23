@@ -11,9 +11,11 @@ natural next addition once these run against a real database — see
 docs/RUNBOOK.md for the "what's verified vs not" status for this phase.
 """
 import hashlib
+import os
+from unittest import mock
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from core.hashers import LegacyBagalewatchPBKDF2Hasher, LegacyBagalewatchSha256Hasher
@@ -840,3 +842,47 @@ class DriveTestSessionEndpointTests(TestCase):
         resp = self.client.post('/api/v2/dt-sessions/', payload, format='json')
         self.assertEqual(resp.status_code, 201)
         self.assertEqual(DriveTestSample.objects.filter(session_id=resp.data['id']).count(), 0)
+
+
+class IdleTimeoutConfigTests(TestCase):
+    """The inactivity auto-logout is server-configured (2026-08-23,
+    "autologout time should be configurable") so it can be changed with an
+    .env edit and a backend restart instead of a frontend rebuild. It reaches
+    the SPA on the public /branding/ payload, because AuthProvider owns the
+    idle timer and needs the value before any authenticated request happens.
+    """
+
+    def test_branding_reports_the_configured_timeout(self):
+        with override_settings(IDLE_TIMEOUT_MINUTES=15):
+            body = self.client.get('/api/v2/branding/').json()
+        self.assertEqual(body['idle_timeout_minutes'], 15)
+
+    def test_zero_is_passed_through_as_disabled(self):
+        """0 means "never auto-logout" and must survive as 0 rather than being
+        treated as falsy and replaced by the default."""
+        with override_settings(IDLE_TIMEOUT_MINUTES=0):
+            body = self.client.get('/api/v2/branding/').json()
+        self.assertEqual(body['idle_timeout_minutes'], 0)
+
+    def test_value_is_public(self):
+        """Unauthenticated: the login page fetches this payload before any
+        token exists, and a UX timer is not sensitive."""
+        resp = self.client.get('/api/v2/branding/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('idle_timeout_minutes', resp.json())
+
+    def test_env_parsing_falls_back_instead_of_raising(self):
+        """A typo in the env var must not stop the backend booting — this is a
+        UX preference, not a security control."""
+        from dtwatch.settings import _idle_timeout_minutes
+
+        for raw, expected in (
+            ('', 5),         # unset
+            ('   ', 5),      # whitespace only
+            ('abc', 5),      # not a number
+            ('-3', 5),       # negative is meaningless
+            ('0', 0),        # explicit "never"
+            ('30', 30),      # ordinary value
+        ):
+            with mock.patch.dict(os.environ, {'IDLE_TIMEOUT_MINUTES': raw}):
+                self.assertEqual(_idle_timeout_minutes(), expected, f'raw={raw!r}')

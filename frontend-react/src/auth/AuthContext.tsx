@@ -1,12 +1,29 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { apiJson, clearTokens, getAccessToken, setOnAuthExpired, setTokens } from '../api/client'
+import { DJANGO_API_URL, apiJson, clearTokens, getAccessToken, setOnAuthExpired, setTokens } from '../api/client'
 import type { Me } from '../api/types'
+// Public, unauthenticated payload — already fetched by the login page, so
+// reusing it here costs no extra request in the common case. queries.ts does
+// not import from this module, so there is no cycle.
+import { useBranding } from '../api/queries'
 
-// Idle-timeout mirrors v1's client-side 5-minute inactivity logout
+// Fallback inactivity timeout, used until the server's value arrives and if
+// an older backend never sends one. Mirrors v1's client-side 5-minute logout
 // (SESSION_LIFETIME_SECS in bagalewatch_api.py) — a deliberate UX-parity
-// choice, not the JWT access-token lifetime (15 min, see settings.py),
-// which only bounds how long a stolen token stays valid.
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000
+// choice, not the JWT access-token lifetime (15 min, see settings.py), which
+// only bounds how long a stolen token stays valid.
+const DEFAULT_IDLE_TIMEOUT_MINUTES = 5
+
+// Bounds for the server-provided value (2026-08-23, "autologout time should
+// be configurable"). 0 is special-cased as "never" before this clamp; the
+// floor exists because a sub-minute timeout logs people out mid-sentence, and
+// the ceiling because a week-long idle session is not an idle session.
+const MIN_IDLE_TIMEOUT_MINUTES = 1
+const MAX_IDLE_TIMEOUT_MINUTES = 8 * 60
+
+// How long sign-out will wait on the backend before giving up and signing
+// out locally anyway. Short on purpose: someone who clicked Sign out must end
+// up signed out even if the API is wedged.
+const LOGOUT_CALL_TIMEOUT_MS = 3000
 
 interface AuthState {
   user: Me | null
@@ -28,10 +45,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // instant `user` is still null on the very first render after a refresh.
   const [restoring, setRestoring] = useState(() => !!getAccessToken())
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const loggingOut = useRef(false)
+  const { data: branding } = useBranding()
 
-  const logout = useCallback(() => {
-    clearTokens()
+  const logout = useCallback(async () => {
+    // Re-entrancy guard: the Sign out button, the idle timer and
+    // onAuthExpired all land here, and the await below leaves a window in
+    // which a second caller could fire a second logout.
+    if (loggingOut.current) return
+    loggingOut.current = true
     if (idleTimer.current) clearTimeout(idleTimer.current)
+
+    // For an SSO login, DT-WATCH's own tokens are only half the session. The
+    // Keycloak browser session outlives them, so the next "Sign in with NT
+    // SSO" walks straight back in with no prompt at all — on a shared
+    // workstation, into the previous user's account. Only Keycloak can end
+    // that session, via the end-session URL the backend hands back here
+    // (RP-Initiated Logout). No URL (local account, SSO off, ID token gone)
+    // means there is nothing to end and /login is the right target.
+    //
+    // Deliberately a raw fetch rather than apiFetch: on a 401 apiFetch
+    // attempts a silent refresh and then calls onAuthExpired() -> logout(),
+    // i.e. straight back into this function. Refreshing a session we are in
+    // the middle of ending is pointless regardless.
+    //
+    // If the token is already gone — the session-expiry path, where apiFetch
+    // has cleared it before calling onAuthExpired — there is nothing to
+    // authenticate the call with, so the Keycloak session cannot be ended
+    // from here and sign-out stays local.
+    let target = '/login'
+    const token = getAccessToken()
+    if (token) {
+      const ctl = new AbortController()
+      const bail = setTimeout(() => ctl.abort(), LOGOUT_CALL_TIMEOUT_MS)
+      try {
+        const res = await fetch(`${DJANGO_API_URL}/auth/logout/`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          signal: ctl.signal,
+        })
+        // 204 = nothing to end. A 200 body carries the Keycloak URL.
+        if (res.ok && res.status !== 204) {
+          const body = await res.json().catch(() => null)
+          if (body?.keycloak_logout_url) target = body.keycloak_logout_url as string
+        }
+      } catch {
+        // Timed out, offline, or the token was already dead — fall through
+        // to a local sign-out rather than trapping the user in a session
+        // they asked to leave.
+      } finally {
+        clearTimeout(bail)
+      }
+    }
+
+    clearTokens()
     // Hard navigation instead of just clearing React state in place
     // (2026-08-05 fix, user report: "when i logged out and logged in,
     // should be in refreshed state, not in previously closed state").
@@ -48,13 +115,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // guarantees a clean slate — and matches v1's own logout/idle-timeout
     // behavior (hard-reload), so this isn't a new UX pattern for this
     // codebase, just parity with the original.
-    window.location.href = '/login'
+    window.location.href = target
   }, [])
+
+  // Inactivity timeout, from the server (public branding payload) so it can
+  // be changed with an .env edit and a backend restart instead of a frontend
+  // rebuild. `null` = auto-logout disabled (IDLE_TIMEOUT_MINUTES=0).
+  const idleTimeoutMs = (() => {
+    const raw = branding?.idle_timeout_minutes
+    const minutes = typeof raw === 'number' && Number.isFinite(raw)
+      ? raw
+      : DEFAULT_IDLE_TIMEOUT_MINUTES
+    if (minutes === 0) return null
+    const clamped = Math.min(
+      Math.max(minutes, MIN_IDLE_TIMEOUT_MINUTES),
+      MAX_IDLE_TIMEOUT_MINUTES,
+    )
+    return clamped * 60 * 1000
+  })()
 
   const resetIdleTimer = useCallback(() => {
     if (idleTimer.current) clearTimeout(idleTimer.current)
-    idleTimer.current = setTimeout(logout, IDLE_TIMEOUT_MS)
-  }, [logout])
+    if (idleTimeoutMs === null) return
+    idleTimer.current = setTimeout(logout, idleTimeoutMs)
+  }, [logout, idleTimeoutMs])
+
+  // Re-arm when the server's value lands (the branding fetch resolves after
+  // the first render) or changes, so the new timeout takes effect without
+  // waiting for the user's next click.
+  useEffect(() => {
+    if (!user) return
+    resetIdleTimer()
+  }, [idleTimeoutMs, user, resetIdleTimer])
 
   useEffect(() => {
     setOnAuthExpired(() => logout())
