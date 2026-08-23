@@ -47,15 +47,23 @@ services:
   db: !reset null
 
   django:
-    # Both the base file and the shared-redis override gate django on
-    # `db` being healthy. That service no longer exists, and a depends_on
-    # naming a missing service is a hard config error, so the gate has to
-    # go entirely rather than be narrowed. Nothing is lost: a remote
-    # Postgres is not part of this compose project, so Compose could
-    # never have health-gated on it anyway. entrypoint.sh's `migrate` is
-    # the first thing to touch the database and it fails loudly if the
-    # server is unreachable.
-    depends_on: !reset null
+    # Remove ONLY the `db` gate, not the whole depends_on. `!reset` on a
+    # NESTED key drops just that key, which keeps this file composable both
+    # with and without the shared-redis override:
+    #   base + this                 -> {redis: healthy}   (staging)
+    #   base + shared-redis + this  -> {}                 (dev workstation)
+    # An earlier version reset the whole mapping and so also dropped the
+    # REDIS gate wherever a bundled redis existed. Django's healthcheck only
+    # hits /health/, which never touches Redis, so it would report healthy a
+    # moment before Redis was ready and an SSO login in that window would
+    # 500 while everything looked green.
+    #
+    # Nothing is lost on the db side: a remote Postgres is not part of this
+    # compose project, so Compose could never health-gate it. entrypoint.sh's
+    # `migrate` is the first thing to touch it and fails loudly if it is
+    # unreachable.
+    depends_on:
+      db: !reset null
     environment:
       # The whole point of this file. `:?` rather than a default, so a
       # .env missing the value fails immediately and visibly instead of
@@ -64,7 +72,8 @@ services:
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
 
   go-worker:
-    depends_on: !reset null
+    depends_on:
+      db: !reset null
     environment:
       POSTGRES_HOST: ${POSTGRES_HOST:?set POSTGRES_HOST in .env — this override exists to use it}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}

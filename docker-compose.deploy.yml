@@ -1,0 +1,44 @@
+# dt-watch → run pre-built Nexus images instead of building (2026-08-23).
+#
+# WHAT THIS IS FOR
+# docker-compose.yml declares `build:` for all four services, which is right
+# on a dev machine and wrong on a deploy target: `docker compose up` there
+# would compile the Go worker and run a Vite build from a source tree the
+# server has no reason to hold. This override swaps every `build:` for an
+# `image:` pulled from Nexus, so a deploy host needs only three files —
+# docker-compose.yml, this file, and .env.
+#
+# `build: !reset null` is required, not decorative. Compose MERGES rather than
+# replaces, so an `image:` alongside a surviving `build:` still builds locally
+# and then tags the result under that name — quietly ignoring the registry and
+# giving you a "successful deploy" of code the server compiled itself.
+#
+# HOW IT ACTIVATES
+# Append it to COMPOSE_FILE in .env, after any other override:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.remote-db.yml:docker-compose.deploy.yml
+#
+# IMAGE_TAG is deliberately `:?` with no default. Defaulting to `latest` would
+# let a redeploy silently pull something other than what was tested — and
+# build-push.sh does not even publish `latest` for prerelease versions or from
+# a non-main branch, so the default would often be stale or absent. Pin the
+# exact tag build-push.sh printed.
+#
+# The images are private: the host needs `docker login nexus.ntc.net.np` once
+# before the first pull.
+
+services:
+  django:
+    build: !reset null
+    image: ${REGISTRY:-nexus.ntc.net.np}/${PROJECT_NAME:-dtwatch}/django:${IMAGE_TAG:?set IMAGE_TAG in .env to the tag build-push.sh printed}
+
+  node-gateway:
+    build: !reset null
+    image: ${REGISTRY:-nexus.ntc.net.np}/${PROJECT_NAME:-dtwatch}/node-gateway:${IMAGE_TAG:?set IMAGE_TAG in .env}
+
+  go-worker:
+    build: !reset null
+    image: ${REGISTRY:-nexus.ntc.net.np}/${PROJECT_NAME:-dtwatch}/go-worker:${IMAGE_TAG:?set IMAGE_TAG in .env}
+
+  frontend:
+    build: !reset null
+    image: ${REGISTRY:-nexus.ntc.net.np}/${PROJECT_NAME:-dtwatch}/frontend:${IMAGE_TAG:?set IMAGE_TAG in .env}

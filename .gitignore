@@ -30,3 +30,9 @@ backend-django/media/*
 
 # graphify knowledge graph output — build artifact, rebuilt with `graphify extract`
 graphify-out/
+
+
+# Runtime data, bind-mounted into the containers (2026-08-23). Kept in the
+# project folder rather than a Docker named volume so it travels with the
+# directory when the team copies it, but must never be committed.
+/data/

@@ -52,7 +52,18 @@ services:
     # `ports: ["127.0.0.1:5432:5432"]` (loopback-only, never a bare
     # "5432:5432") for the duration of that session.
     volumes:
-      - bagalewatch_v2_pgdata:/var/lib/postgresql/data
+      # Bind mount under the project folder, not a named volume (2026-08-23,
+      # "any volume stored should be in dtwatch folder not inside docker"). A
+      # named volume lives in Docker's own storage, so backing it up or moving
+      # host means `docker volume export`/`import` or a throwaway container —
+      # whereas ./data comes along with the folder the team already copies.
+      # Same reasoning the `media` mount below was originally chosen for.
+      #
+      # OWNERSHIP: postgres:16-alpine runs as uid 999 and initdb chowns this
+      # directory on first start WHEN IT IS EMPTY, so leave it empty and let
+      # the image claim it. Pre-creating it with the wrong owner is what makes
+      # Postgres exit complaining about permissions.
+      - ./data/pgdata:/var/lib/postgresql/data
     healthcheck:
       # -d is required — without it, pg_isready falls back to libpq's
       # default of "a database named the same as the user"
@@ -72,6 +83,15 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # AOF persistence, in the project folder for the same reason as the
+    # Postgres mount above (2026-08-23). This service previously had NO volume
+    # at all, so its contents were lost on every restart. Survivable while
+    # Redis only held Django's cache, but it now also holds in-flight SSO
+    # transactions and one-time login codes — losing those mid-login turns a
+    # working sign-in into "that sign-in attempt expired".
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ./data/redis:/data
     # No `ports:` published either, same reasoning as `db` above — redis
     # here has no auth configured at all, so publishing 6379 would have
     # meant anyone on the LAN could read/write it with zero credentials.
@@ -117,14 +137,20 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      # Read-only bind mount so `docker compose exec django python
-      # manage.py seed_legacy_data /host-data/bagalewatch.db` can reach
-      # the real v1 data from inside the container. `:ro` is enforced by
-      # Docker itself at the mount level — on top of, not instead of,
-      # seed_legacy_data.py's own copy-first/immutable-read pattern. This
-      # is the only place in the v2 stack that ever references a v1 file;
-      # see docs/RUNBOOK.md's isolation guarantee section.
-      - ../bagalewatch.db:/host-data/bagalewatch.db:ro
+      # The v1 `../bagalewatch.db` read-only bind mount was REMOVED
+      # 2026-08-23 ("remove bagalewatch.db it is old one and dont have any
+      # data"). The source file no longer exists on any machine, and a bind
+      # mount whose source is missing makes Docker silently create an empty
+      # DIRECTORY at that path — so every fresh host grew a stray
+      # `bagalewatch.db/` folder next to the project, which then looks like
+      # a corrupt database to anyone who finds it.
+      #
+      # core/management/commands/seed_legacy_data.py and
+      # scripts/copy_and_inspect_legacy_db.py are deliberately kept: both
+      # take a path argument, so if a v1 database ever needs importing again
+      # you can `docker cp` it in or re-add a mount for that one run. There
+      # is simply no reason to mount a file that does not exist on every
+      # single container start.
       # Uploaded menu icons + branding logo (2026-08-08). MEDIA_ROOT is
       # /app/media inside the container (BASE_DIR/media, WORKDIR /app).
       # Without this, uploads only exist in the django container's
@@ -141,7 +167,7 @@ services:
       # to forget; a host folder just comes along for free with the rest
       # of the repo. Move backend-django/media/ with the rest of the
       # project when migrating machines and uploads survive automatically.
-      - ./backend-django/media:/app/media
+      - ./data/media:/app/media
     # No `ports:` published (2026-08-10, "hide/randomize ports — only the
     # main program on 5180 should be reachable by IP") — same reasoning
     # `db`/`redis` above already use. The `frontend` container's nginx
@@ -230,9 +256,8 @@ services:
     ports:
       - "5180:80"
 
-volumes:
-  bagalewatch_v2_pgdata:
-    # Named volume, entirely separate from anything the v1 system uses —
-    # v1 has no volumes at all, it's a single SQLite file on disk.
-    # (A second volume, dtwatch_pgadmin_data, lived here until
-    # 2026-08-21 when the pgadmin service was dropped — see RUNBOOK.)
+# No top-level `volumes:` block any more (2026-08-23). Every persistent path
+# is now a bind mount under ./data/, so it travels with the project folder
+# instead of living inside Docker's storage — see the `db` service comment.
+# ./data/ is gitignored; create it empty and let each image initialise its own
+# subdirectory.
