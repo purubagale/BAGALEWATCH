@@ -1,0 +1,35 @@
+# Line-ending policy.
+#
+# WHY THIS FILE EXISTS (2026-08-23)
+# On a Windows checkout with `core.autocrlf=true` — Git for Windows' own
+# default — Git rewrote backend-django/entrypoint.sh with CRLF endings.
+# That file is COPY'd into a Linux image and exec'd, so its shebang became
+# `#!/bin/sh\r`; the kernel then looked for an interpreter literally named
+# `/bin/sh\r`, didn't find one, and the container crash-looped with
+#
+#   exec ./entrypoint.sh: no such file or directory
+#
+# which names the script, not the interpreter, and so reads like a missing
+# COPY rather than a line-ending problem. It cost a debugging round-trip.
+# Django never started, so nginx in the `frontend` container couldn't
+# resolve the `django` upstream either and crash-looped on top of it — one
+# root cause, two red containers.
+#
+# Anything executed inside a container is pinned to LF here regardless of
+# the developer's platform or autocrlf setting. Leaving the rest of the
+# tree alone is deliberate: `text=auto` for everything would rewrite every
+# file in the repo for no benefit, and only these are read by a Linux
+# kernel or shell.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
+
+# nginx tolerates CRLF in most directives but not reliably inside
+# multi-line blocks, and this one is COPY'd into the frontend image.
+*.conf text eol=lf
+
+# docker-compose reads these on the host, but a CRLF value in an
+# environment string is carried verbatim into the container (a trailing
+# \r in a password or URL is invisible in logs and fails at connect time).
+docker-compose*.yml text eol=lf
+.env.example text eol=lf
