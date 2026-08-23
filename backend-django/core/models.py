@@ -38,6 +38,29 @@ class User(AbstractUser):
     name = models.CharField(max_length=150, blank=True)
     dept = models.CharField(max_length=100, blank=True)
 
+    # ── Keycloak SSO (2026-08-23) ───────────────────────────────────────
+    # `auth_source` exists so the UI can tell an admin that this user's role
+    # is managed by Keycloak and re-applied on every login — without it, an
+    # admin edits the role on the Users page and it silently reverts next
+    # time the person signs in, which looks like a bug in the app.
+    AUTH_SOURCE_LOCAL = 'local'
+    AUTH_SOURCE_SSO = 'sso'
+    AUTH_SOURCE_CHOICES = [
+        (AUTH_SOURCE_LOCAL, 'Local password'),
+        (AUTH_SOURCE_SSO, 'Keycloak SSO'),
+    ]
+    auth_source = models.CharField(
+        max_length=10, choices=AUTH_SOURCE_CHOICES, default=AUTH_SOURCE_LOCAL
+    )
+    # Keycloak's `sub` — the only identifier stable across username and email
+    # changes in the realm, so it is what an already-linked account is found
+    # by. `null=True` rather than blank='' because it is UNIQUE: Postgres (and
+    # SQLite) allow many NULLs under a unique constraint but only one '', so
+    # an empty-string default would let exactly one local user exist.
+    sso_subject = models.CharField(
+        max_length=255, null=True, blank=True, unique=True, default=None
+    )
+
     class Meta:
         db_table = 'v2_users'
 

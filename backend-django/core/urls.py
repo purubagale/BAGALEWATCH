@@ -2,7 +2,8 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import api_auth, backup, dashboard, drive_test, exports, kpi_trend, reports, rf_audit, site_import, views
+from . import (api_auth, backup, dashboard, drive_test, exports, kpi_trend,
+               reports, rf_audit, site_import, sso_views, views)
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
@@ -24,6 +25,13 @@ urlpatterns = [
     path('auth/logout/', views.LogoutView.as_view(), name='auth-logout'),
     path('auth/me/', views.MeView.as_view(), name='auth-me'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='auth-refresh'),
+
+    # Keycloak SSO (2026-08-23). Additive: /auth/login/ above is untouched,
+    # and `POST auth/sso/token/` returns the SAME payload shape it does, so
+    # the frontend's existing login path handles both identically.
+    path('auth/sso/login/', sso_views.SSOLoginView.as_view(), name='auth-sso-login'),
+    path('auth/sso/callback/', sso_views.SSOCallbackView.as_view(), name='auth-sso-callback'),
+    path('auth/sso/token/', sso_views.SSOTokenExchangeView.as_view(), name='auth-sso-token'),
 
     # Registered BEFORE the router's `sites/<pk>/` include below —
     # Django matches urlpatterns top-to-bottom, so this literal path must

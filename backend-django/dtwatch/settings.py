@@ -310,6 +310,76 @@ SPECTACULAR_SETTINGS = {
     'VERSION': '2.0.0-phase1',
 }
 
+# ── Keycloak SSO (2026-08-23) ───────────────────────────────────────────
+# See docs/superpowers/specs/2026-08-23-keycloak-sso-design.md. Read through
+# core/sso_config.py accessors, never imported directly, so tests can patch a
+# single function and every default lives in one place.
+#
+# Every value here is inert until KEYCLOAK_SSO_ENABLED is on AND the client
+# details are filled in — core/sso_config.is_configured() requires all of
+# them together, so a half-configured client shows no SSO button rather than
+# a button that fails after the user has already typed their password.
+
+
+def _env_flag(name, default):
+    """Parse a boolean env var, defaulting when unset or empty.
+
+    Anything unrecognised is False. That direction is deliberate for both
+    flags here: an unparseable KEYCLOAK_SSO_ENABLED leaves SSO off, and an
+    unparseable LOCAL_LOGIN_ENABLED closes local login rather than leaving a
+    password endpoint open by accident. Note this is more forgiving than
+    DEBUG's `== '1'` check above, which is left strict on purpose.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+# Local username/password login. Default ON, so adding SSO changes nothing
+# about how anyone signs in today. Setting LOCAL_LOGIN_ENABLED=0 is the
+# SSO-only cutover; it is reversible and needs no code change or rebuild.
+LOCAL_LOGIN_ENABLED = _env_flag('LOCAL_LOGIN_ENABLED', True)
+
+KEYCLOAK_SSO_ENABLED = _env_flag('KEYCLOAK_SSO_ENABLED', False)
+KEYCLOAK_ISSUER = os.environ.get('KEYCLOAK_ISSUER', '')
+KEYCLOAK_CLIENT_ID = os.environ.get('KEYCLOAK_CLIENT_ID', '')
+KEYCLOAK_CLIENT_SECRET = os.environ.get('KEYCLOAK_CLIENT_SECRET', '')
+# Must match a Redirect URI registered on the Keycloak client EXACTLY,
+# trailing slash included, or Keycloak rejects the authorize request before
+# the user sees a login form.
+KEYCLOAK_REDIRECT_URI = os.environ.get('KEYCLOAK_REDIRECT_URI', '')
+KEYCLOAK_SCOPES = os.environ.get('KEYCLOAK_SCOPES', 'openid profile email groups')
+KEYCLOAK_SIGNING_ALGS = os.environ.get('KEYCLOAK_SIGNING_ALGS', 'RS256')
+
+# Access gate: membership of this group is what entitles someone to DT-WATCH.
+# Kept separate from the role groups below because the shared realm groups
+# (platform-admins/developers/viewers) also drive Grafana, GitLab and
+# Rocket.Chat — using one of those as the gate would hand DT-WATCH to
+# everyone holding it.
+KEYCLOAK_GROUPS_CLAIM = os.environ.get('KEYCLOAK_GROUPS_CLAIM', 'groups')
+KEYCLOAK_REQUIRED_GROUP = os.environ.get('KEYCLOAK_REQUIRED_GROUP', 'dtwatch')
+KEYCLOAK_ROLE_GROUP_MAP = os.environ.get(
+    'KEYCLOAK_ROLE_GROUP_MAP',
+    'superadmin:superadmin,platform-admins:admin,viewers:viewer',
+)
+KEYCLOAK_DEFAULT_ROLE = os.environ.get('KEYCLOAK_DEFAULT_ROLE', 'viewer')
+
+# Where the backend sends the browser after a callback. Both point at SPA
+# routes; the SPA is served same-origin by nginx, so these are paths on the
+# same host in every deployment.
+SSO_FRONTEND_CALLBACK_URL = os.environ.get('SSO_FRONTEND_CALLBACK_URL', '/sso/callback')
+SSO_FRONTEND_UNAUTHORIZED_URL = os.environ.get('SSO_FRONTEND_UNAUTHORIZED_URL', '/login')
+
+SSO_STATE_TTL = int(os.environ.get('SSO_STATE_TTL', 600))
+SSO_LOGIN_CODE_TTL = int(os.environ.get('SSO_LOGIN_CODE_TTL', 60))
+SSO_ID_TOKEN_TTL = int(os.environ.get('SSO_ID_TOKEN_TTL', 12 * 3600))
+# Shorter than SIMPLE_JWT's 12h refresh, because DT-WATCH issues its own
+# tokens: a user disabled in Keycloak keeps valid DT-WATCH tokens until their
+# refresh expires. One hour bounds that without storing a Keycloak credential
+# at rest for every active session.
+SSO_REFRESH_TOKEN_LIFETIME = int(os.environ.get('SSO_REFRESH_TOKEN_LIFETIME', 3600))
+
 # ── Logging (2026-08-10, found while debugging a real "Import failed.
 # (HTTP 500)" report with no visible cause) ─────────────────────────────
 # Django's own default logging config only sends the 'django'/

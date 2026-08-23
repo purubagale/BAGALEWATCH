@@ -9,3 +9,9 @@ gunicorn==23.0.0
 openpyxl==3.1.5
 Pillow==11.0.0
 redis==5.0.8
+# Keycloak SSO (2026-08-23). PyJWT itself already ships via simplejwt, but
+# it cannot VERIFY an RS256 signature without cryptography, and the OIDC
+# token exchange is a plain server-to-server POST. Pinned to the same
+# versions pms/nt-pms already runs against this realm.
+cryptography==42.0.5
+requests==2.33.1

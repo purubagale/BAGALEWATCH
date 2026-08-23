@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from . import sso_config
 from .imageutils import DataUrlImageError, decode_data_url_image
 from .sector_expansion import sector_matches_mode, site_matches_sector_expansion
 from .models import (
@@ -118,6 +119,15 @@ class LoginView(APIView):
     LOCKOUT_SECONDS = 15 * 60
 
     def post(self, request):
+        # SSO-only cutover switch (2026-08-23). Checked before anything else,
+        # including the lockout counter, so a disabled password endpoint does
+        # no work and cannot be used to probe which usernames exist.
+        if not sso_config.local_login_enabled():
+            return Response(
+                {'detail': 'Password sign-in is disabled on this server. Please use single sign-on.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         username = request.data.get('username', '')
         password = request.data.get('password', '')
         cache_key = f'login_fail:{username.strip().lower()}'
@@ -935,7 +945,15 @@ class BrandingSettingsView(APIView):
 
     def get(self, request):
         obj = self.get_object()
-        return Response(BrandingSettingsSerializer(obj, context={'request': request}).data)
+        data = BrandingSettingsSerializer(obj, context={'request': request}).data
+        # Which sign-in methods to render (2026-08-23). This endpoint is
+        # already the one public, pre-token payload LoginPage.tsx fetches, so
+        # the flags ride along here rather than needing a second AllowAny
+        # endpoint. Neither is sensitive: both are plainly visible from the
+        # login form itself.
+        data['sso_enabled'] = sso_config.is_configured()
+        data['local_login_enabled'] = sso_config.local_login_enabled()
+        return Response(data)
 
     # Plain-text fields (2026-08-08 follow-up: "let superadmin to
     # customize the login interface texts also") — simple attribute
