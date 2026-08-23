@@ -62,9 +62,12 @@ export default function SsoCallbackPage() {
   if (error) {
     return (
       <div className="login-page">
-        <div className="login-badge">Sign-in failed</div>
         <div className="login-card">
-          <p className="login-subtitle">{error}</p>
+          <div className="login-logo-wrap">
+            <img src="/nt-logo.png" alt="" className="login-logo" />
+          </div>
+          <h1 className="login-heading">Sign-in failed</h1>
+          <div className="login-error">{error}</div>
           <button type="button" className="login-submit" onClick={() => navigate('/login', { replace: true })}>
             Back to sign in
           </button>
@@ -75,9 +78,12 @@ export default function SsoCallbackPage() {
 
   return (
     <div className="login-page">
-      <div className="login-badge">Signing in…</div>
       <div className="login-card">
-        <p className="login-subtitle">Completing single sign-on, please wait.</p>
+        <div className="login-logo-wrap">
+          <img src="/nt-logo.png" alt="" className="login-logo" />
+        </div>
+        <h1 className="login-heading">Signing in…</h1>
+        <p className="login-note">Completing single sign-on, please wait.</p>
       </div>
     </div>
   )

@@ -32,6 +32,7 @@ export default function LoginPage() {
   const { theme, toggleTheme } = useTheme()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Customizable branding (2026-08-08 follow-up) — BrandingSettingsView's
@@ -39,17 +40,21 @@ export default function LoginPage() {
   // this pre-login page can read it. Falls back to the stock Nepal
   // Telecom logo/app name when nothing's been customized yet.
   const { data: branding } = useBranding()
-  const brandLogoSrc = branding?.logo_url || '/ntc-logo.jpg'
+  // Default logo is now the shared Nepal Telecom tile (2026-08-23) — the same
+  // asset dutychart's login uses. This page was restyled to match that one,
+  // and a matching mark is most of why the two read as one system. A logo
+  // uploaded on the Branding page still overrides it.
+  const brandLogoSrc = branding?.logo_url || '/nt-logo.png'
   const brandName = branding?.app_name || 'DT-WATCH BTS'
   // Login-page text customization (2026-08-08 follow-up: "let superadmin
   // to customize the login interface texts also") — same fallback
   // convention as the logo/name above: an empty string from the server
   // means "not customized," so `||` falls through to the original
   // hardcoded copy.
-  const loginSubtitle = branding?.login_subtitle || 'Nepal Telecom · 4G RAN O&M — sign in'
+  const loginSubtitle = branding?.login_subtitle || 'Nepal Telecom · 4G RAN O&M'
   const usernameLabel = branding?.login_username_label || 'Username'
   const passwordLabel = branding?.login_password_label || 'Password'
-  const buttonText = branding?.login_button_text || 'Sign in'
+  const buttonText = branding?.login_button_text || 'Login'
   const disclaimer =
     branding?.login_disclaimer || 'Internal system — Nepal Telecom 4G RAN O&M. All activities are monitored.'
 
@@ -80,7 +85,11 @@ export default function LoginPage() {
       if (err instanceof ApiError && err.status === 401) {
         setError('Invalid username or password.')
       } else if (err instanceof ApiError && err.status === 403) {
-        setError('This account is disabled.')
+        // Covers both a disabled account and the SSO-only cutover
+        // (2026-08-23): with LOCAL_LOGIN_ENABLED=0 the server 403s this
+        // endpoint. The form is hidden in that case, so reaching here means
+        // a stale page was left open across the cutover.
+        setError('Password sign-in is unavailable for this account. Try single sign-on.')
       } else if (err instanceof ApiError && err.status === 429) {
         // Brute-force lockout (2026-08-08 security hardening) — matches
         // v1's 5-attempt/15-minute lockout, see LoginView's docstring on
@@ -102,18 +111,23 @@ export default function LoginPage() {
 
   return (
     <div className="login-page">
-      {/* Bright-card theme (2026-08-11, "login portal in this attached
-          [reference screenshot] seems bright and attractive, use this
-          theme") — dotted background + pill badge header + circular
-          avatar + pill inputs/button + bottom disclaimer bar, restyled
-          around this app's existing --brand-primary token (#0153A5, the
-          real NTC logo blue) rather than the reference's own color, so
-          it stays visually consistent with the rest of the app (topbar,
-          buttons, etc.) instead of introducing a second unrelated brand
-          color. Deliberately did NOT add a "Forgot Password?" link like
-          the reference has — this app has no password-reset flow (only
-          an admin-driven user management page), so a link with nothing
-          behind it would just be a dead end. */}
+      {/* Card layout matched to dutychart's login (2026-08-23, "put the UI
+          as dutychart") — logo tile, name + subtitle, hairline rule, "Login"
+          heading, plain 8px-radius fields, solid primary button, OR rule,
+          outlined SSO button. Replaces the 2026-08-11 bright-card treatment
+          (pill badge, circular avatar, pill inputs, icon-prefixed fields) so
+          the two internal apps read as one system.
+
+          Deliberately NOT carried over from that reference: "Remember me",
+          "Forgot Password?" and "Sign up". dt-watch has no password-reset
+          flow and no self-registration (accounts are admin-created or
+          JIT-created via SSO), and its tokens live in sessionStorage by a
+          deliberate choice in client.ts that Remember me would have to
+          reverse. Rendering them would be three controls that do nothing.
+
+          Unlike the reference, colors come from this app's theme tokens
+          rather than literal white/grays — dutychart's login is light-only,
+          this one has a working dark theme to preserve. */}
       <button
         type="button"
         className="theme-toggle-btn login-theme-toggle"
@@ -123,87 +137,95 @@ export default function LoginPage() {
       >
         {theme === 'dark' ? '☀️' : '🌙'}
       </button>
-      <div className="login-badge">{brandName} Login</div>
-      <form className="login-card" onSubmit={handleSubmit}>
-        {/* Real Nepal Telecom logo (2026-08-07 branding pass), now
-            customizable (2026-08-08 follow-up) — falls back to the
-            stock public/ntc-logo.jpg + app name when nothing's been
-            uploaded via the Branding settings page. Wrapped in a
-            circular soft-brand-color badge to match the reference. */}
-        <div className="login-avatar">
+
+      <div className="login-card">
+        <div className="login-logo-wrap">
           <img src={brandLogoSrc} alt={brandName} className="login-logo" />
         </div>
-        <h1>{brandName}</h1>
-        <p className="login-subtitle">{loginSubtitle}</p>
+        <div className="login-brand">
+          <div className="login-brand-name">{brandName}</div>
+          <div className="login-brand-sub">{loginSubtitle}</div>
+        </div>
+        <div className="login-rule" />
+        <h1 className="login-heading">Login</h1>
+
         {ssoError && <div className="login-error">{ssoError}</div>}
+
+        {localLoginEnabled && (
+          <form className="login-form" onSubmit={handleSubmit}>
+            <input
+              className="login-input"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoFocus
+              autoComplete="username"
+              placeholder={usernameLabel}
+              aria-label={usernameLabel}
+            />
+            <div className="login-input-wrap">
+              <input
+                className="login-input login-input-with-btn"
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                placeholder={passwordLabel}
+                aria-label={passwordLabel}
+              />
+              {/* tabIndex -1 so tabbing runs straight from the password field
+                  to the submit button rather than through a control that only
+                  changes how the field is displayed. */}
+              <button
+                type="button"
+                tabIndex={-1}
+                className="login-eye"
+                onClick={() => setShowPassword((v) => !v)}
+                title={showPassword ? 'Hide password' : 'Show password'}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                    <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+                    <path d="M1 1l22 22" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            {error && <div className="login-error">{error}</div>}
+            <button type="submit" disabled={loading || !username || !password} className="login-submit">
+              {loading ? 'Signing in…' : buttonText}
+            </button>
+          </form>
+        )}
+
         {ssoEnabled && (
           <>
+            {localLoginEnabled && <div className="login-or">or</div>}
             {/* A real link, not a fetch: this must be a top-level browser
                 navigation so it can follow the backend's 302 to Keycloak and
                 carry the state cookie. An XHR would be blocked by CORS at
                 the identity provider and could not show a login form. */}
-            <a className="login-submit login-sso-btn" href="/api/v2/auth/sso/login/">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="4" y="10" width="16" height="10" rx="2" />
-                <path d="M12 15v2" />
-                <path d="M7 10V7a5 5 0 0 1 10 0v3" />
-              </svg>
-              Sign in with NTC SSO
+            <a className="login-sso-btn" href="/api/v2/auth/sso/login/">
+              <img src="/nt-logo-gold.webp" alt="" className="login-sso-logo" />
+              Login with NT SSO
             </a>
-            {localLoginEnabled && <div className="login-or">or</div>}
           </>
         )}
-        {localLoginEnabled && (
-          <>
-        <label className="login-field">
-          <span className="login-field-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="8" r="4" />
-              <path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7" />
-            </svg>
-          </span>
-          <input
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            autoFocus
-            autoComplete="username"
-            placeholder={usernameLabel}
-            aria-label={usernameLabel}
-          />
-        </label>
-        <label className="login-field">
-          <span className="login-field-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="4" y="10" width="16" height="10" rx="2" />
-              <path d="M7 10V7a5 5 0 0 1 10 0v3" />
-            </svg>
-          </span>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            placeholder={passwordLabel}
-            aria-label={passwordLabel}
-          />
-        </label>
-        {error && <div className="login-error">{error}</div>}
-        <button type="submit" disabled={loading || !username || !password} className="login-submit">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
-            <path d="M10 17l5-5-5-5" />
-            <path d="M15 12H3" />
-          </svg>
-          {loading ? 'Signing in…' : buttonText}
-        </button>
-          </>
-        )}
+
         {!localLoginEnabled && !ssoEnabled && (
           <div className="login-error">
             No sign-in method is enabled on this server. Contact an administrator.
           </div>
         )}
-      </form>
+      </div>
+
       <div className="login-disclaimer">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M12 2l8 3v6c0 5-3.4 8.5-8 11-4.6-2.5-8-6-8-11V5l8-3z" />
