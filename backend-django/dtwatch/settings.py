@@ -72,6 +72,21 @@ if os.environ.get('HTTPS_ENABLED', '0') == '1':
     # Django were ever exposed directly, a client could forge the header and
     # defeat the redirect — which is why this must not be set unconditionally.
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    # The container healthcheck calls http://localhost:8000/api/v2/health/
+    # from INSIDE the container, with no proxy in front and therefore no
+    # X-Forwarded-Proto. Without this exemption SECURE_SSL_REDIRECT answers
+    # 301 to https://localhost:8000, where nothing is listening, so the
+    # probe fails and the container is marked unhealthy — meaning
+    # HTTPS_ENABLED=1 broke its own healthcheck. Seen on the staging host
+    # the first time HTTPS_ENABLED was turned on (2026-08-23).
+    #
+    # Exempting this one path is safe: it is a liveness probe that must be
+    # answerable over plain HTTP by design, Traefik already redirects
+    # external http->https at the entrypoint, and the endpoint no longer
+    # returns a build stamp to unauthenticated callers. The regex has no
+    # leading slash — Django matches SECURE_REDIRECT_EXEMPT against the
+    # path with the leading slash stripped.
+    SECURE_REDIRECT_EXEMPT = [r'^api/v2/health/$']
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_SSL_REDIRECT = True
