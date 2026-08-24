@@ -8,6 +8,9 @@ backend-django/db.sqlite3
 node_modules/
 frontend-react/dist/
 
+# macOS
+.DS_Store
+
 # Env files with real secrets — only .env.example is ever committed
 .env
 **/.env
