@@ -26,13 +26,27 @@ ALLOWED_HOSTS = [h.strip() for h in os.environ.get('ALLOWED_HOSTS', 'localhost,1
 # now chunks large sessions into DT_SAMPLES_BATCH_SIZE-sized POSTs (see
 # DriveTestSessionWriteSerializer's own comment in core/serializers.py and
 # DtUploadPage.tsx's saveSessionChunked()), so no single request should
-# ever need more than a few MB in practice — this is deliberately raised
-# well past that as defense-in-depth, not because any single request is
-# expected to need 20MB. The OTHER half of this same fix is
+# ever need more than a few MB in practice for THAT feature — this was
+# raised past that as defense-in-depth, not because DT uploads were
+# expected to need 20MB.
+#
+# Raised again 2026-08-20 (20MB -> 150MB): Backup/Restore's
+# `POST /api/v2/backup/restore/` (BackupPage.tsx's handleRestore, see
+# core/backup.py) sends the ENTIRE .netwatch export as one unchunked JSON
+# body — unlike DT sessions, there's no batching here, by design (a full
+# delete-and-replace restore isn't something that makes sense to apply
+# incrementally). Hit for real on a freshly migrated server restoring a
+# genuine production backup (4,966 sites / 50,592 sectors, each carrying
+# kpi_json/kpi_2g_json/kpi_3g_json) — comfortably past the old 20MB cap.
+# 150MB is generous headroom above that real file's size, not a number
+# tuned to it exactly; this dataset's size is expected to stay roughly
+# flat (site/sector count grows slowly, not the way DT session sample
+# counts can). The OTHER half of this same fix is
 # frontend-react/nginx.conf's `client_max_body_size`, which sits in front
 # of Django and rejects an oversized body before it ever reaches here —
-# both had to move together or one just replaces the other's error.
-DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
+# both must move together, raising one without the other just moves
+# which layer's error you see.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 150 * 1024 * 1024
 
 # ── Security hardening (2026-08-08, "secure the system for unauthorized
 # access and tampering" follow-up) ──────────────────────────────────────
