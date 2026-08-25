@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { apiErrorMessage } from '../api/client'
 import { useBranding, useUpdateBranding } from '../api/queries'
-import { useAuth } from '../auth/AuthContext'
+import { MAX_IDLE_TIMEOUT_MINUTES, MIN_IDLE_TIMEOUT_MINUTES, useAuth } from '../auth/AuthContext'
 
 // Customize the org-wide logo + app name (2026-08-08 follow-up: "add
 // feature to customize logo and name") — shown in the sidebar brand
@@ -35,6 +35,15 @@ export default function BrandingPage() {
   // Bottom disclaimer pill (2026-08-11 follow-up), same pattern.
   const [loginDisclaimer, setLoginDisclaimer] = useState<string | null>(null)
 
+  // Session (idle-logout) timeout, in minutes (2026-08-25 follow-up:
+  // "session time for logout is very low, add a feature to customize
+  // session time for logout"). Kept as a raw string, not a number, while
+  // being typed — an in-progress edit like "" or a leading-zero string
+  // would otherwise force a premature/confusing numeric coercion before the
+  // user finishes typing. null (not "") means "no local edit yet, show the
+  // server's current value" — same override pattern as appName etc. above.
+  const [idleTimeoutInput, setIdleTimeoutInput] = useState<string | null>(null)
+
   if (isLoading) return <div className="page-status">Loading branding settings…</div>
   if (error) return <div className="page-status page-status-error">Could not load branding settings.</div>
   if (!user) return null
@@ -55,6 +64,9 @@ export default function BrandingPage() {
   const currentLoginPasswordLabel = loginPasswordLabel ?? branding?.login_password_label ?? ''
   const currentLoginButtonText = loginButtonText ?? branding?.login_button_text ?? ''
   const currentLoginDisclaimer = loginDisclaimer ?? branding?.login_disclaimer ?? ''
+
+  const serverIdleTimeout = branding?.idle_timeout_minutes
+  const currentIdleTimeout = idleTimeoutInput ?? (serverIdleTimeout != null ? String(serverIdleTimeout) : '')
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     setSaveError(null)
@@ -126,6 +138,39 @@ export default function BrandingPage() {
       setSaveOk(true)
     } catch (err) {
       setSaveError(apiErrorMessage(err, 'Could not save the login page text.'))
+    }
+  }
+
+  async function handleSaveIdleTimeout() {
+    setSaveError(null)
+    setSaveOk(false)
+    const trimmed = currentIdleTimeout.trim()
+    if (trimmed === '') {
+      // Explicit reset to the server's env-var default — see
+      // BrandingSettingsWrite's own comment on why null (not omission) is
+      // what triggers this.
+      try {
+        await updateBranding.mutateAsync({ idle_timeout_minutes: null })
+        setIdleTimeoutInput(null)
+        setSaveOk(true)
+      } catch (err) {
+        setSaveError(apiErrorMessage(err, 'Could not reset the session timeout.'))
+      }
+      return
+    }
+    const minutes = Number(trimmed)
+    if (!Number.isInteger(minutes) || minutes < 0 || minutes > MAX_IDLE_TIMEOUT_MINUTES) {
+      setSaveError(
+        `Enter a whole number between 0 and ${MAX_IDLE_TIMEOUT_MINUTES} minutes (0 disables auto sign-out).`,
+      )
+      return
+    }
+    try {
+      await updateBranding.mutateAsync({ idle_timeout_minutes: minutes })
+      setIdleTimeoutInput(null)
+      setSaveOk(true)
+    } catch (err) {
+      setSaveError(apiErrorMessage(err, 'Could not save the session timeout.'))
     }
   }
 
@@ -248,6 +293,31 @@ export default function BrandingPage() {
         <div className="admin-page-actions">
           <button type="button" onClick={handleSaveLoginText} disabled={updateBranding.isPending}>
             {updateBranding.isPending ? 'Saving…' : 'Save login page text'}
+          </button>
+        </div>
+      </section>
+
+      <section className="branding-section">
+        <h2>Session timeout</h2>
+        <p className="muted">
+          Minutes of inactivity before everyone is automatically signed out. Enter 0 to turn auto sign-out off, or
+          clear this field entirely to fall back to the server's own env-var default instead of a saved override.
+          Currently in effect: {serverIdleTimeout ?? '…'} min. Applies to every user, on their next sign-in or once
+          their idle timer next resets.
+        </p>
+        <div className="branding-name-row">
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={MAX_IDLE_TIMEOUT_MINUTES}
+            step={1}
+            value={currentIdleTimeout}
+            onChange={(e) => setIdleTimeoutInput(e.target.value)}
+            placeholder={`e.g. ${MIN_IDLE_TIMEOUT_MINUTES * 3}`}
+          />
+          <button type="button" onClick={handleSaveIdleTimeout} disabled={updateBranding.isPending}>
+            {updateBranding.isPending ? 'Saving…' : 'Save session timeout'}
           </button>
         </div>
       </section>

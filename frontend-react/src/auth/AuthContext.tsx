@@ -17,8 +17,11 @@ const DEFAULT_IDLE_TIMEOUT_MINUTES = 5
 // be configurable"). 0 is special-cased as "never" before this clamp; the
 // floor exists because a sub-minute timeout logs people out mid-sentence, and
 // the ceiling because a week-long idle session is not an idle session.
-const MIN_IDLE_TIMEOUT_MINUTES = 1
-const MAX_IDLE_TIMEOUT_MINUTES = 8 * 60
+// Exported (2026-08-25) so BrandingPage.tsx's session-timeout input can reuse
+// the exact same bounds instead of duplicating the numbers — core/views.py's
+// MAX_IDLE_TIMEOUT_MINUTES mirrors this value too, see its own comment.
+export const MIN_IDLE_TIMEOUT_MINUTES = 1
+export const MAX_IDLE_TIMEOUT_MINUTES = 8 * 60
 
 // How long sign-out will wait on the backend before giving up and signing
 // out locally anyway. Short on purpose: someone who clicked Sign out must end

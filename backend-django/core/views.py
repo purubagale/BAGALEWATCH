@@ -945,6 +945,11 @@ class MenuTreeView(APIView):
 
 MAX_LOGO_BYTES = 5 * 1024 * 1024  # 5MB — generous for a logo, cheap to enforce before decoding
 
+# Ceiling for the idle-logout override (2026-08-25) — matches AuthContext.tsx's
+# own MAX_IDLE_TIMEOUT_MINUTES exactly. A week-long idle session isn't an idle
+# session; kept as a named constant so the two sides can't silently drift.
+MAX_IDLE_TIMEOUT_MINUTES = 8 * 60
+
 
 class BrandingSettingsView(APIView):
     """GET/PUT /api/v2/branding/ — the org-wide app name + logo shown in
@@ -993,11 +998,21 @@ class BrandingSettingsView(APIView):
         data['sso_enabled'] = sso_config.is_configured()
         data['local_login_enabled'] = sso_config.local_login_enabled()
         # Inactivity auto-logout, in minutes (2026-08-23, "autologout time
-        # should be configurable"). Rides the same public payload for the same
-        # reason as the flags above, and because AuthProvider — which owns the
-        # idle timer — needs it before any authenticated request has happened.
-        # 0 means auto-logout is off.
-        data['idle_timeout_minutes'] = getattr(settings, 'IDLE_TIMEOUT_MINUTES', 5)
+        # should be configurable"; 2026-08-25 follow-up, "session time for
+        # logout is very low, add a feature to customize session time for
+        # logout" — added the DB override below so this is actually
+        # changeable in-app, not just via env var + restart). Rides the same
+        # public payload for the same reason as the flags above, and because
+        # AuthProvider — which owns the idle timer — needs it before any
+        # authenticated request has happened. The DB value (superadmin-set,
+        # via PUT below) wins when present; NULL falls back to the env var,
+        # so an install that never touches this setting is unaffected. 0
+        # means auto-logout is off, at either layer.
+        data['idle_timeout_minutes'] = (
+            obj.idle_timeout_minutes
+            if obj.idle_timeout_minutes is not None
+            else getattr(settings, 'IDLE_TIMEOUT_MINUTES', 5)
+        )
         return Response(data)
 
     # Plain-text fields (2026-08-08 follow-up: "let superadmin to
@@ -1018,6 +1033,43 @@ class BrandingSettingsView(APIView):
             value = body.get(field)
             if value is not None:
                 setattr(obj, field, value)
+
+        # Idle-logout override (2026-08-25, "add a feature to customize
+        # session time for logout"). Distinct from the TEXT_FIELDS loop
+        # above because unlike blank text (which just means "unset"), 0 is
+        # a meaningful value here (auto-logout disabled) and must not be
+        # treated as falsy/absent. `in body` (not `body.get(...) is not
+        # None`) is what lets a client explicitly send null to reset back
+        # to the env-var default, same as leaving the field out entirely —
+        # both mean "no override" — while any integer (including 0) sets
+        # one. Only the ceiling (MAX_IDLE_TIMEOUT_MINUTES, mirroring
+        # AuthContext.tsx's own constant) is enforced server-side, not the
+        # 1-minute floor AuthContext.tsx clamps *non-zero* values to — 0 is
+        # a valid, meaningful value here (disables auto-logout, same as
+        # IDLE_TIMEOUT_MINUTES=0) and must stay reachable, so the only real
+        # invariant to enforce at this layer is "not negative, not absurd".
+        if 'idle_timeout_minutes' in body:
+            raw = body.get('idle_timeout_minutes')
+            if raw is None or raw == '':
+                obj.idle_timeout_minutes = None
+            else:
+                try:
+                    minutes = int(raw)
+                except (TypeError, ValueError):
+                    return Response(
+                        {'idle_timeout_minutes': ['Must be a whole number of minutes.']},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if minutes < 0 or minutes > MAX_IDLE_TIMEOUT_MINUTES:
+                    return Response(
+                        {
+                            'idle_timeout_minutes': [
+                                f'Must be between 0 and {MAX_IDLE_TIMEOUT_MINUTES} minutes (0 disables auto-logout).'
+                            ]
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                obj.idle_timeout_minutes = minutes
 
         # Explicit reset-to-default, checked BEFORE a new upload so a
         # single request can't sensibly do both — "remove_logo" wins if
@@ -1079,7 +1131,17 @@ class PermissionsMatrixView(APIView):
 
     def get(self, request):
         rows = MenuPermission.objects.exclude(role='superadmin')
-        out = {}
+        # Both role keys always present, even with zero rows for one of
+        # them (2026-08-25 live bug: a role with no MenuPermission rows at
+        # all — e.g. a fresh/partially-seeded install, or 'viewer' simply
+        # never having been saved yet — meant this dict silently omitted
+        # that key entirely. PermissionsPage.tsx indexes `draft[role][key]`
+        # unconditionally, so a missing role key crashed the whole page
+        # with "Cannot read properties of undefined (reading 'sites')" the
+        # instant it rendered. Pre-seeding both keys as {} makes "no rows
+        # yet" and "some rows" the same shape, not two different ones the
+        # client has to guess between.
+        out: dict = {'admin': {}, 'viewer': {}}
         for r in rows:
             role_out = out.setdefault(r.role, {})
             if r.menu_key in CRUD_MENUS:

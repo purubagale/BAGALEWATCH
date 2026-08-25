@@ -889,6 +889,11 @@ export interface BrandingSettings {
   // can be changed with an .env edit instead of an image rebuild. Optional
   // here because an older backend simply won't send it, and AuthContext
   // falls back to its own default.
+  //
+  // 2026-08-25: also superadmin-editable now, via the Branding page — see
+  // BrandingSettingsWrite below. This read value already reflects that
+  // override (the backend merges DB override + env fallback before
+  // sending), so no separate field is needed for "is this overridden".
   idle_timeout_minutes?: number
   // Which sign-in methods this server offers (2026-08-23, Keycloak SSO).
   // Read-only and server-derived, unlike every field above — they are not
@@ -916,6 +921,11 @@ export interface BrandingSettingsWrite {
   login_password_label?: string
   login_button_text?: string
   login_disclaimer?: string
+  // 2026-08-25: 0-480 sets an override (0 = disable auto-logout), null
+  // resets back to the server's IDLE_TIMEOUT_MINUTES env default. Omit to
+  // leave the current setting unchanged, same "omit means unchanged" rule
+  // as every other field here.
+  idle_timeout_minutes?: number | null
 }
 
 // ── External API keys (2026-08-12) ───────────────────────────────────────

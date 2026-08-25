@@ -2122,3 +2122,93 @@ other three images without that tag and the pull fails.
 - Multi-line remote commands: `scp` a script and run it. A `ssh host "…"`
   heredoc nests three shells' quoting and half of it silently executes
   locally instead.
+
+## Customizable session (idle-logout) timeout (2026-08-25)
+
+"session time for logout is very low, add a feature to customize session
+time for logout." Auto-logout minutes (`IDLE_TIMEOUT_MINUTES`, see
+settings.py) was env-var-only since 2026-08-23 — changing it meant an `.env`
+edit plus a backend restart, no in-app control. Added a nullable
+`BrandingSettings.idle_timeout_minutes` override (migration `0033`, NULL =
+"no override, use the env var", same convention as every other field on that
+singleton). `BrandingSettingsView.get()` now merges DB override over env
+fallback before sending; `.put()` validates 0–480 (0 = disabled, matches
+`IDLE_TIMEOUT_MINUTES`'s own convention) and accepts an explicit `null` to
+reset back to the env default, distinct from omitting the field entirely
+(which leaves the current value untouched).
+
+Frontend: new "Session timeout" section on the Branding admin page
+(superadmin-only, same gate as the rest of that page), reusing
+`AuthContext.tsx`'s own `MIN_/MAX_IDLE_TIMEOUT_MINUTES` (now exported) so the
+UI can't accept a value the client-side idle timer would silently reclamp.
+`AuthContext.tsx` itself needed no changes — it already read
+`branding.idle_timeout_minutes` generically, so the DB override just flows
+through the same field it always consumed.
+
+Sandbox was down all session (`VM service not running`), so this was written
+and reasoned through without a build check; the hand-written migration
+followed the same pattern `0026`/etc. used for the same reason (django has no
+source bind mount, so a container-generated migration wouldn't land on host
+disk). Confirmed working live afterward: `docker compose up -d --build django
+frontend` compiled clean (`tsc -b` passed), and `entrypoint.sh`'s own
+`migrate --noinput` on container start applied `0033` automatically —
+`showmigrations core` shows it `[X]`.
+
+## Permissions page crash on a role with zero MenuPermission rows (2026-08-25, live bug)
+
+Reported as: Permissions page loads fine locally, but on the live/staging
+deploy (`dtwatch.ntc.net.np`) it hit the app's ErrorBoundary — console showed
+`TypeError: Cannot read properties of undefined (reading 'sites')` three
+`Array.map()` frames deep in `PermissionsPage-*.js`. `'sites'` is the first
+`CRUD_MENU_KEYS` entry, which was the tell: `draft[role]` itself was
+`undefined`, not `draft[role]['sites']`.
+
+Root cause: `PermissionsMatrixView.get()` (core/views.py) built its response
+with `out.setdefault(r.role, {})` — a role only got a key in the returned
+dict if at least one `MenuPermission` row existed for it. The live server's
+`role_permissions` table had zero rows for one role (there is no seed
+migration for this table, unlike `MenuItem`'s `0010_seed_menuitem_defaults`
+— rows only exist once a superadmin has saved this page at least once), so
+the API returned e.g. `{"admin": {...}}` with no `"viewer"` key at all, and
+`PermissionsPage.tsx` indexed `draft[role][key]` unconditionally.
+
+Fixed at both ends: the view now always seeds `out = {'admin': {}, 'viewer':
+{}}` before populating from rows, so the response shape is stable regardless
+of how sparse the data is. `PermissionsPage.tsx` also got a `roleMatrix(d,
+role)` helper (`d[role] ?? {}`) used everywhere `draft[role]` was read or
+spread, as a second line of defense — same one-level-down reasoning the
+existing `asCrud()` helper already applies per menu-key. Not build-verified
+this session (sandbox down); low risk (an additive default + a null-coalesce
+wrapper around existing reads, no behavior change for the already-working
+case), but rebuild+redeploy before assuming the live crash is gone.
+
+## MenuPermission default seed, before the first live deploy (2026-08-25, same-day follow-up)
+
+"before going to live, update user permission with the latest updates also."
+Two checks, prompted directly by the crash above:
+
+1. **Does `PermissionsPage.tsx`'s hardcoded `CRUD_MENU_KEYS`/`SIMPLE_MENU_KEYS`
+   cover every currently permission-gated menu?** Checked against every
+   `access='permission'` `MenuItem` seed (`0010`, plus `0020`/`0028` which
+   inherit `rsrpmgr` from their parent) — yes, full coverage already, nothing
+   to add. `dynamicSimpleKeys` already picks up any future custom menu a
+   superadmin adds via Menu Admin, so this isn't expected to drift again on
+   its own.
+2. **Does `MenuPermission` have any default rows at all?** No — unlike
+   `MenuItem` (`0010_seed_menuitem_defaults`), this table has never had a
+   seed migration; every row up to now only ever came from a superadmin
+   manually saving the Permissions page. That's exactly how the live server
+   ended up with zero rows for a role (nobody had saved that page there
+   yet), and it means admin/viewer would see almost nothing gated by
+   permission until someone did.
+
+Added `0034_seed_menupermission_defaults.py` — backfills `(role, menu_key)`
+combos that have zero rows at all, using the exact `DEFAULT_PERMS` values
+from v1's `bagalewatch_api.py` (transcribed, not invented — `PermissionsMatrixView`'s
+own docstring already claims v1-contract parity). Mirrors v1's own backfill
+semantics precisely: per-combo, not per-table, so a partially-customized
+role's existing grants are never overwritten, only the genuinely-missing
+combos get a default. `'topology'` dropped from v1's list — that menu was
+retired 2026-08-05, folded into `'sites'`. Not build/run-verified this
+session (sandbox down) — run `docker compose exec django python manage.py
+migrate` for real, then reload the Permissions page, before deploying live.

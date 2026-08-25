@@ -253,7 +253,7 @@ class BrandingSettingsSerializer(serializers.ModelSerializer):
         fields = [
             'app_name', 'logo', 'logo_url',
             'login_subtitle', 'login_username_label', 'login_password_label', 'login_button_text',
-            'login_disclaimer',
+            'login_disclaimer', 'idle_timeout_minutes',
         ]
         extra_kwargs = {'logo': {'write_only': True, 'required': False}}
 

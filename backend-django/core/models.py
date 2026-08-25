@@ -798,6 +798,18 @@ class BrandingSettings(models.Model):
     # discourage someone pasting in a multi-paragraph notice that would
     # break the pill's single-line layout.
     login_disclaimer = models.CharField(max_length=200, blank=True, default='')
+    # Inactivity auto-logout override, in minutes (2026-08-25 follow-up:
+    # "session time for logout is very low, add a feature to customize
+    # session time for logout"). Until now IDLE_TIMEOUT_MINUTES only came
+    # from an env var (settings.py) — changing it meant an .env edit plus a
+    # backend restart, no in-app control at all. NULL (the default) means
+    # "no override, use the env var" — same blank/null-means-default
+    # convention as every other field on this model — so a fresh install or
+    # an install that never touches this setting behaves exactly as before.
+    # 0 means auto-logout is disabled entirely, matching IDLE_TIMEOUT_MINUTES's
+    # own 0-means-off convention. See BrandingSettingsView.get/put for how
+    # this is merged with the env value and validated.
+    idle_timeout_minutes = models.PositiveIntegerField(null=True, blank=True, default=None)
 
     class Meta:
         db_table = 'v2_branding_settings'

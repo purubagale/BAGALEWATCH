@@ -471,6 +471,19 @@ function hexToKmlColor(hex: string, alpha = 'ff'): string {
 // dot is actually clicked, it's just not permanently drawn on the map.
 // This rewrite matches that pattern instead of guessing at a fix a
 // second time.
+//
+// 2026-08-24: LabelStyle scale reverted from 0 to a small nonzero value,
+// per explicit user request. Reason: Google Earth has NO concept of a
+// hover-triggered balloon — <description> only ever opens on click, by
+// design of the app itself (confirmed against Google's own support docs,
+// not fixable from the KML side). The user wanted something closer to a
+// hover popup, and the closest KML can get is the short <name> (e.g.
+// "Ec/Io: -6.4 dB") rendering as a permanent on-map label instead of only
+// on click. This knowingly re-accepts the label-clutter tradeoff the
+// 2026-07-30 fix above deliberately avoided — the mitigating factor is
+// that <name> here is already short/rounded (unlike the original raw-float
+// bug), so it reads more like a compact per-dot readout than a wall of
+// digits, but a very dense route will still show many overlapping labels.
 function exportKml(
   sessions: DtSessionDetail[],
   metric: TaggedMetric,
@@ -543,7 +556,7 @@ function exportKml(
     .map(
       ([color, id]) =>
         `<Style id="${id}"><PolyStyle><color>${hexToKmlColor(color)}</color><fill>1</fill><outline>0</outline></PolyStyle>` +
-        `<LineStyle><width>0</width></LineStyle><LabelStyle><scale>0</scale></LabelStyle></Style>`,
+        `<LineStyle><width>0</width></LineStyle><LabelStyle><scale>0.6</scale></LabelStyle></Style>`,
     )
     .join('')
 

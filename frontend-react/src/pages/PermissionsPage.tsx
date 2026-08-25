@@ -49,6 +49,20 @@ function asCrud(v: PermissionValue | undefined): CrudPerm {
   return {}
 }
 
+// Defends against a role key being absent from the matrix entirely (2026-08-25
+// live bug: the backend used to omit a role from its response completely when
+// it had zero MenuPermission rows — e.g. 'viewer' never having been saved on
+// a given install — which crashed every `draft[role][key]` lookup below with
+// "Cannot read properties of undefined". The backend now always sends both
+// role keys, but this stays as a second line of defense: it costs nothing and
+// means a similarly-shaped gap (an older cached response, a future role, a
+// backend that regresses this again) degrades to "show empty" instead of a
+// full-page crash — same reasoning `asCrud()` above already applies one level
+// down, for an individual menu key rather than the whole role.
+function roleMatrix(d: PermissionsMatrix, role: 'admin' | 'viewer'): PermissionsMatrix['admin'] {
+  return d[role] ?? {}
+}
+
 export default function PermissionsPage() {
   const { user } = useAuth()
   const { data: matrix, isLoading, error } = usePermissionsMatrix()
@@ -94,15 +108,15 @@ export default function PermissionsPage() {
   }
 
   function setSimple(role: 'admin' | 'viewer', menuKey: string, value: boolean) {
-    setDraft((d) => (d ? { ...d, [role]: { ...d[role], [menuKey]: value } } : d))
+    setDraft((d) => (d ? { ...d, [role]: { ...roleMatrix(d, role), [menuKey]: value } } : d))
     setSaved(false)
   }
 
   function setCrud(role: 'admin' | 'viewer', menuKey: string, action: keyof CrudPerm, value: boolean) {
     setDraft((d) => {
       if (!d) return d
-      const current = asCrud(d[role][menuKey])
-      return { ...d, [role]: { ...d[role], [menuKey]: { ...current, [action]: value } } }
+      const current = asCrud(roleMatrix(d, role)[menuKey])
+      return { ...d, [role]: { ...roleMatrix(d, role), [menuKey]: { ...current, [action]: value } } }
     })
     setSaved(false)
   }
@@ -150,7 +164,7 @@ export default function PermissionsPage() {
                   <td key={`${role}-${action}`}>
                     <input
                       type="checkbox"
-                      checked={!!asCrud(draft[role][key])[action]}
+                      checked={!!asCrud(roleMatrix(draft, role)[key])[action]}
                       onChange={(e) => setCrud(role, key, action, e.target.checked)}
                     />
                   </td>
@@ -179,7 +193,7 @@ export default function PermissionsPage() {
                 <td key={role}>
                   <input
                     type="checkbox"
-                    checked={draft[role][key] === true}
+                    checked={roleMatrix(draft, role)[key] === true}
                     onChange={(e) => setSimple(role, key, e.target.checked)}
                   />
                 </td>

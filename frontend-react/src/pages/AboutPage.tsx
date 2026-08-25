@@ -40,7 +40,7 @@ export default function AboutPage() {
     <div className="admin-page about-page">
       <h1>About</h1>
       <p className="muted">
-        DT-WATCH BTS v2 — Nepal Telecom 4G RAN operations &amp; maintenance.
+        DT-WATCH BTS — RAN Operations &amp; Maintenance Management, Nepal Telecom
       </p>
 
       {mismatch && (
