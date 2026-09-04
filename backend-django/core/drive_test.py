@@ -14,40 +14,27 @@ matching how v1's own server side (`bagalewatch_api.py`'s `dt-sessions`
 resource) has zero parsing logic either; all of v1's parsing happens in
 the browser before the already-decoded session ever reaches the server.
 """
-import math
-
-from django.db.models import Count
+from django.contrib.gis.geos import Point
+from django.contrib.gis.measure import D
+from django.db.models import Avg, Count
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import DriveTestSample, DriveTestSession
+from .dt_serving_cell import attach_serving_cells
+from .models import DriveTestSample, DriveTestSession, Sector, Site
 from .serializers import (
     DT_SAMPLES_BATCH_SIZE,
-    DriveTestSampleSerializer,
     DriveTestSessionDetailSerializer,
     DriveTestSessionListSerializer,
     DriveTestSessionNearSerializer,
     DriveTestSessionWriteSerializer,
+    _bulk_insert_dt_samples,
+    _coerce_dt_sample,
     _nearby_site_ids,
 )
 from .views import IsAdminOrSuperadmin
-
-
-def _haversine_km(lat1, lng1, lat2, lng2):
-    """Plain great-circle distance, no external geo library — matches
-    v1's own `_rsrpHaversineKm` (bts_monitor.html) exactly, same formula
-    already ported client-side in lib/dtTemplateParser.ts's haversineKm.
-    Kept as a free function here (not a queryset annotation/RawSQL) since
-    Postgres has no PostGIS in this stack and the candidate set after the
-    bounding-box prefilter below is small enough for a Python loop."""
-    r = 6371.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lng2 - lng1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
 
 
 class DriveTestSessionViewSet(
@@ -113,21 +100,71 @@ class DriveTestSessionViewSet(
                 {'samples': [f'Max {DT_SAMPLES_BATCH_SIZE} samples per request — send the rest as further requests.']},
                 status=400,
             )
-        ser = DriveTestSampleSerializer(data=payload, many=True)
-        ser.is_valid(raise_exception=True)
-        rows = ser.validated_data
-        DriveTestSample.objects.bulk_create(
-            [DriveTestSample(session=session, **row) for row in rows],
-            batch_size=1000,
-        )
+        # Fast fixed-shape coercion instead of a DRF many=True validation
+        # pass, then a COPY-based bulk insert instead of a bulk_create of
+        # geography rows — together ~420ms+3100ms -> ~50ms+1000ms per
+        # 5000-row batch. See _coerce_dt_sample / _bulk_insert_dt_samples
+        # in serializers.py.
+        rows = [_coerce_dt_sample(r) for r in payload]
+        # Serving-cell -> site attribution for this batch's samples (same
+        # per-batch shape as _nearby_site_ids below). See
+        # core/dt_serving_cell.py.
+        attach_serving_cells(rows, session.tech or '4G')
+        _bulk_insert_dt_samples(session.id, rows)
         new_site_ids = _nearby_site_ids((row.get('lat'), row.get('lng')) for row in rows)
         meta = session.meta or {}
         if new_site_ids:
             meta['nearby_site_ids'] = sorted(set(meta.get('nearby_site_ids') or []) | set(new_site_ids))
         session.meta = meta
-        session.size_bytes = (session.size_bytes or 0) + sum(len(str(row)) for row in rows)
+        # O(1) size estimate — see the matching comment in
+        # DriveTestSessionWriteSerializer.create(); rows are a fixed shape.
+        per_sample = len(str(rows[0])) if rows else 0
+        session.size_bytes = (session.size_bytes or 0) + per_sample * len(rows)
         session.save(update_fields=['meta', 'size_bytes'])
         return Response({'appended': len(rows)}, status=201)
+
+    @action(detail=True, methods=['get'], url_path='serving-cells')
+    def serving_cells(self, request, pk=None):
+        """`GET /api/v2/dt-sessions/<id>/serving-cells/` — the distinct
+        serving cells this session's samples were attributed to (by
+        core/dt_serving_cell.py at upload time), each joined to its
+        Site's coordinates and the Sector's azimuth. Small (~8-20 rows);
+        the coverage map loads it once and, on hovering/selecting a plot
+        point, draws a connector to `site_lat/site_lng` and shows this
+        cell's name / sector / azimuth. Empty list when the session
+        predates the attribution feature or no site directory was loaded
+        when it was uploaded (re-upload or run
+        `manage.py backfill_dt_serving_cells` to populate)."""
+        session = self.get_object()
+        groups = list(
+            session.samples.exclude(serving_site_id__isnull=True)
+            .values('serving_site_id', 'serving_cell_name', 'serving_sector', 'serving_local_cell_id', 'pci')
+            .annotate(sample_count=Count('id'), mean_dist_km=Avg('serving_dist_km'))
+        )
+        site_ids = {g['serving_site_id'] for g in groups}
+        sites = {s.id: s for s in Site.objects.filter(id__in=site_ids)}
+        secs = {}
+        for sec in Sector.objects.filter(site_id__in=site_ids):
+            secs.setdefault((sec.site_id, sec.cell_name or ''), sec)
+        out = []
+        for g in groups:
+            site = sites.get(g['serving_site_id'])
+            sec = secs.get((g['serving_site_id'], g['serving_cell_name'] or ''))
+            out.append({
+                'pci': g['pci'],
+                'site_id': g['serving_site_id'],
+                'site_name': (site.name if site else None) or g['serving_site_id'],
+                'site_lat': site.lat if site else None,
+                'site_lng': site.lng if site else None,
+                'cell_name': g['serving_cell_name'],
+                'sector': g['serving_sector'],
+                'local_cell_id': g['serving_local_cell_id'],
+                'azimuth': sec.azimuth if sec else None,
+                'sample_count': g['sample_count'],
+                'mean_dist_km': round(g['mean_dist_km'], 2) if g['mean_dist_km'] is not None else None,
+            })
+        out.sort(key=lambda r: -r['sample_count'])
+        return Response(out)
 
     @action(detail=False, methods=['get'])
     def near(self, request):
@@ -166,24 +203,21 @@ class DriveTestSessionViewSet(
         tech_param = request.query_params.get('tech')
         tech_list = [t for t in tech_param.split(',') if t] if tech_param else None
 
-        # Bounding-box prefilter in the DB (cheap index range scan) before
-        # the exact haversine check in Python below — avoids pulling every
-        # sample in the whole table just to compute distance on each one.
-        lat_delta = radius_km / 111.0
-        lng_delta = radius_km / (111.0 * max(math.cos(math.radians(lat)), 0.01))
+        # 2026-08-25, PostGIS adoption: single indexed ST_DWithin query via
+        # the GiST index on DriveTestSample.location, replacing the old
+        # bounding-box prefilter + exact haversine check in Python. No
+        # separate "candidates" pass needed — the DB now does the exact
+        # distance check itself.
+        point = Point(lng, lat, srid=4326)
         candidates = DriveTestSample.objects.filter(
-            lat__gte=lat - lat_delta, lat__lte=lat + lat_delta,
-            lng__gte=lng - lng_delta, lng__lte=lng + lng_delta,
+            location__distance_lte=(point, D(km=radius_km))
         ).select_related('session')
         if tech_list:
             candidates = candidates.filter(session__tech__in=tech_list)
 
         by_session = {}
         for sample in candidates:
-            if sample.lat is None or sample.lng is None:
-                continue
-            if _haversine_km(lat, lng, sample.lat, sample.lng) <= radius_km:
-                by_session.setdefault(sample.session_id, []).append(sample)
+            by_session.setdefault(sample.session_id, []).append(sample)
 
         if not by_session:
             return Response([])

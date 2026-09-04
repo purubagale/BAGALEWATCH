@@ -1,7 +1,7 @@
 // Mirrors core/serializers.py — kept in one place so a field rename on
 // the Django side is a one-file fix here, not a hunt through components.
 
-export type Role = 'superadmin' | 'admin' | 'viewer'
+export type Role = 'superadmin' | 'admin' | 'viewer' | 'rescue_operator'
 
 export type CrudPerm = { read?: boolean; write?: boolean; update?: boolean; delete?: boolean }
 /** How a user authenticates. `sso` means Keycloak owns their role and
@@ -237,19 +237,28 @@ export interface BackupImportResult {
   restored: string[]
 }
 
-// Site/Sector import (2026-08-05) — see core/site_import.py's module
-// docstring. `kind: 'sites'` is pure add-only (existing sites are never
-// touched; `updated`/`sites_added` stay 0). `kind: 'sectors'` is a
-// 3-way contract per a same-day follow-up request: add a missing
-// sector, UPDATE an existing sector if the row's values genuinely
-// differ (else left alone, counted in `skipped`), and auto-create the
-// parent site (`sites_added`) from the row's own lat/lng if it doesn't
-// exist yet.
-export interface ImportSitesResult {
+// Sector import (2026-08-05, updated 2026-08-26) — see core/
+// site_import.py's module docstring. `kind: 'sectors'` is a 3-way
+// contract: add a missing sector, UPDATE an existing sector if the row's
+// values genuinely differ (else left alone, counted in `skipped`), and
+// (2026-08-26) SKIP a row whose site doesn't exist rather than
+// auto-creating it — site identity now comes only from the Live Site
+// Directory sync (core/live_sites.py), never from this upload.
+export interface SectorImportResult {
   added: number
   updated: number
   skipped: number
-  sites_added: number
+  errors: string[]
+}
+
+// KPI import (2026-08-26) — replaced the old identity-only `kind:
+// 'sites'` import, which is gone now that sites are Live Site Directory-
+// managed (see core/site_import.py's module docstring). Update-only,
+// matched by Site ID: a row naming a site that doesn't exist is reported
+// in `errors`, never used to create one.
+export interface KpiImportResult {
+  updated: number
+  skipped: number
   errors: string[]
 }
 
@@ -263,6 +272,12 @@ export interface AdminUser {
   last_login: string | null
   date_joined: string
   auth_source: AuthSource
+  // Operator-scoped data access (2026-09-02) — empty list means
+  // unrestricted (NTA/government/superadmin); a non-empty list of MNC
+  // codes (e.g. ["02"]) restricts telemetry/coverage/rescue-lookup
+  // results to those operators only. See User.operator_mncs' docstring
+  // (core/models.py) and core/telemetry.py's _scope_by_operator().
+  operator_mncs: string[]
 }
 
 export interface UserWrite {
@@ -272,6 +287,7 @@ export interface UserWrite {
   name: string
   dept: string
   is_active?: boolean
+  operator_mncs?: string[]
 }
 
 // ── Phase 3: reporting suite (read-only) ────────────────────────────────
@@ -522,13 +538,20 @@ export interface DtSample {
   sinr: number | null
   dl: number | null
   pci: number | null
-  serving_site_id: string | null
+  // Serving-cell attribution (dt_serving_cell.py). `serving_site_id` +
+  // `serving_dist_km` come back on the plot fetch and drive the coverage
+  // map's hover connector (see useDtServingCells / DtCoverageMap). The
+  // other three are stored but not in the lean plot serializer — the
+  // per-session /serving-cells/ lookup carries cell_name/sector/azimuth
+  // instead. Optional because a session uploaded before this feature (or
+  // with no site directory loaded) has them null/absent.
+  serving_site_id?: string | null
   serving_site_name: string | null
-  serving_sector: string | null
-  serving_cell_name: string | null
-  serving_local_cell_id: number | null
-  serving_dist_km: number | null
-  cell_role: DtCellRole
+  serving_sector?: string | null
+  serving_cell_name?: string | null
+  serving_local_cell_id?: number | null
+  serving_dist_km?: number | null
+  cell_role?: DtCellRole
   rx_qual: number | null
   bcch: number | null
   bsic: number | null
@@ -655,6 +678,24 @@ export interface DtSessionDetail extends DtSessionListItem {
   samples: DtSample[]
 }
 
+// GET /api/v2/dt-sessions/<id>/serving-cells/ — the distinct serving
+// cells this session's samples were attributed to, joined to Site coords
+// + Sector azimuth. Loaded once per session; the coverage map's hover
+// connector looks up a clicked sample's cell here by `site_id`.
+export interface DtServingCell {
+  pci: number | null
+  site_id: string
+  site_name: string
+  site_lat: number | null
+  site_lng: number | null
+  cell_name: string | null
+  sector: string | null
+  local_cell_id: number | null
+  azimuth: number | null
+  sample_count: number
+  mean_dist_km: number | null
+}
+
 export interface DtSessionCreate {
   name: string
   tech: DtTech
@@ -774,7 +815,11 @@ export interface SiteSearchResponse {
 // or not; the only server-side rule is "no cycles" (MenuItemSerializer).
 
 export type MenuLinkType = 'route' | 'external'
-export type MenuAccess = 'all' | 'permission' | 'admin' | 'superadmin'
+// 'rescue' (2026-09-03) -- role in (rescue_operator, superadmin), mirroring
+// core/rescue.py's IsRescueOperator exactly. See models.py's MenuItem
+// ACCESS_RESCUE comment for why this is its own tier rather than going
+// through 'permission'.
+export type MenuAccess = 'all' | 'permission' | 'admin' | 'superadmin' | 'rescue'
 
 export interface MenuItem {
   id: number
@@ -974,4 +1019,295 @@ export type ApiKeyUpdate = Partial<Pick<ApiKeyRow, 'name' | 'scopes' | 'is_activ
  * because it was never stored. */
 export interface ApiKeyCreateResponse extends ApiKeyRow {
   key: string
+}
+
+// ── Live Site Directory sync (2026-08-26) ────────────────────────────────
+// GET/POST /api/v2/sites/sync-live/. The API URL/key themselves are
+// .env-only and never appear here — `configured` is the only thing this
+// page can say about them (see core/live_sites.py's get_sync_status()).
+export interface LiveSiteSyncStatus {
+  configured: boolean
+  sync_interval_seconds: number
+  last_run_at: string | null
+  last_success_at: string | null
+  last_created: number | null
+  last_updated: number | null
+  last_warnings: string[]
+  last_error: string
+}
+
+/** POST response — same shape as a successful sync's effect on
+ * LiveSiteSyncStatus, but returned directly rather than requiring a
+ * second GET to see what the trigger just did. */
+export interface LiveSiteSyncResult {
+  created: number
+  updated: number
+  warnings: string[]
+}
+
+// ── Crowdsourced telemetry admin (2026-08-31) ───────────────────────────
+// Backs the two new sidebar pages. The ingest keys authenticate a
+// SEPARATE public surface at /api/telemetry/v1/ (not this JWT /api/v2/
+// one) — same relationship ApiKeyRow has to /api/external/v1/.
+
+export interface TelemetryIngestKeyRow {
+  id: number
+  name: string
+  key_prefix: string
+  is_active: boolean
+  rate_limit_per_min: number
+  created_at: string
+  last_used_at: string | null
+  expires_at: string | null
+}
+
+export interface TelemetryIngestKeyCreate {
+  name: string
+  rate_limit_per_min?: number
+  expires_at?: string | null
+}
+
+export type TelemetryIngestKeyUpdate = Partial<
+  Pick<TelemetryIngestKeyRow, 'name' | 'is_active' | 'rate_limit_per_min' | 'expires_at'>
+>
+
+/** The full `tel_…` key is returned ONLY from the create call and never
+ * again — mirrors ApiKeyCreateResponse. */
+export interface TelemetryIngestKeyCreateResponse extends TelemetryIngestKeyRow {
+  key: string
+}
+
+export interface TelemetryStats {
+  keys: { total: number; active: number }
+  batches: { count: number; sample_total: number; last_received_at: string | null }
+  samples: { last_24h: number; last_7d: number }
+  coverage_bins: number
+  by_network_7d: { network_type: string; samples: number }[]
+}
+
+export interface TelemetryCoverageBin {
+  lat: number | null
+  lng: number | null
+  geohash: string
+  network_type: string
+  region: string
+  sample_count: number
+  device_count: number | null
+  rsrp_mean: number | null
+  rsrp_p10: number | null
+  rsrp_min: number | null
+  rsrq_mean: number | null
+  sinr_mean: number | null
+  last_ts: string | null
+}
+
+export interface TelemetryCoverageResponse {
+  /** 'bins' = already-aggregated TelemetryCoverageBin rows; 'samples' =
+   * aggregated on the fly from recent raw TelemetrySample rows because no
+   * bin matched the filter yet (fresh deploy, retention not run). */
+  source: 'bins' | 'samples'
+  bins: TelemetryCoverageBin[]
+  truncated: boolean
+  networks: string[]
+  regions: string[]
+}
+
+export interface TelemetryCoverageParams {
+  network_type?: string
+  region?: string
+  days?: number
+  limit?: number
+}
+
+export interface TelemetryLiveSample {
+  device_id: string
+  ts: number
+  received_at: string
+  lat: number | null
+  lng: number | null
+  network_type: string
+  // Raw operator identifier (2026-09-02) -- bare MCC/MNC, same convention
+  // as UsersPage's operator_mncs column: no fabricated operator-name
+  // mapping, just the codes the sample actually carried.
+  mcc: string
+  mnc: string
+  rsrp_dbm: number | null
+  rsrq_db: number | null
+  sinr_db: number | null
+  // rssi_dbm (2026-09-03, "need to collect any 2g, 3g or 4g data") --
+  // GSM/UMTS (2G/3G) samples only ever populate this, never
+  // rsrp_dbm/rsrq_db/sinr_db (LTE/NR-only fields) -- see
+  // CellSampleCollector.kt's parseCellInfo() on the SDK side. Without this,
+  // a real 2G/3G reading had nowhere to display at all.
+  rssi_dbm: number | null
+  // rx_qual/rscp_dbm/ecio_db (2026-09-03, "for 2g, rx level and rx qual
+  // and for 3g rscp and ec/io") -- proper RAN-standard 2G/3G metrics:
+  // GSM RxQual class (0-7) and WCDMA RSCP/Ec-Io. rscp_dbm/ecio_db are
+  // only ever populated on Android 10+ devices (see
+  // CellSampleCollector.kt), null otherwise same as any unsupported field.
+  rx_qual: number | null
+  rscp_dbm: number | null
+  ecio_db: number | null
+  trigger_reason: string
+}
+
+export interface TelemetryLiveSamplesResponse {
+  samples: TelemetryLiveSample[]
+  count: number
+  window_minutes: number
+  devices: string[]
+}
+
+export interface TelemetryLiveSamplesParams {
+  minutes?: number
+  limit?: number
+  device_id?: string
+  // Optional area filter (2026-09-02) -- narrows both `samples` and
+  // `devices` in the response to within `radius_km` of (lat, lng), via
+  // core/telemetry_admin.py's TelemetryLiveSamplesView PostGIS filter.
+  // Powers TelemetryDriveTestSessionsPage's "search an area, enroll only
+  // the devices found there" flow. Pass all three together or none.
+  lat?: number
+  lng?: number
+  radius_km?: number
+}
+
+// Scoped drive-test sessions over live telemetry (2026-09-01) — see
+// core/telemetry_admin.py's TelemetryDriveTestSession* views and
+// core/models.py's TelemetryDriveTestSession docstring.
+export interface TelemetryDriveTestSession {
+  id: number
+  name: string
+  device_ids: string[]
+  area_min_lat: number | null
+  area_max_lat: number | null
+  area_min_lng: number | null
+  area_max_lng: number | null
+  // Optional per-session consent gate (2026-09-02) -- when true, the
+  // samples endpoint only returns data from devices that separately
+  // opted in via the SDK's setDriveTestConsent(). Set at creation only.
+  require_consent: boolean
+  status: 'active' | 'ended'
+  started_at: string
+  ended_at: string | null
+  created_by_name: string | null
+}
+
+export interface TelemetryDriveTestSessionCreateInput {
+  name: string
+  device_ids: string[]
+  area_min_lat?: number | null
+  area_max_lat?: number | null
+  area_min_lng?: number | null
+  area_max_lng?: number | null
+  require_consent?: boolean
+}
+
+export interface TelemetryDriveTestConsentSummary {
+  consented: number
+  pending: number
+}
+
+export interface TelemetryDriveTestSessionSamplesResponse {
+  session: TelemetryDriveTestSession
+  samples: TelemetryLiveSample[]
+  count: number
+  require_consent: boolean
+  consent_summary: TelemetryDriveTestConsentSummary | null
+}
+
+export interface TelemetryDriveTestSessionEndResponse extends TelemetryDriveTestSession {
+  // Present whenever `request_opt_out: true` was sent — how many of this
+  // session's enrolled devices got a TelemetryRemoteOptOutRequest left
+  // for them (core/telemetry_admin.py's TelemetryDriveTestSessionEndView).
+  // Each device applies it itself on its next upload, not immediately.
+  opt_out_requested_count?: number
+}
+
+// Superadmin-controlled rescue-consent policy (2026-09-02) — mirrors
+// core/rescue.py's RescueConsentPolicyView / core/models.py's
+// RescueConsentPolicy. 'mandatory' (default) requires each subscriber's
+// own opt-in for a rescue lookup to ever match; 'optional' is a
+// time-boxed emergency override a superadmin declares when the normal
+// in-app consent flow doesn't apply (e.g. a real carrier/government app
+// integration with no consent screen at all, during a disaster). See
+// RescueConsentPolicy's docstring for exactly what 'optional' does and
+// does not unlock -- it never creates a new phone-number link, only
+// relaxes enforcement on subscribers who already have one on file.
+export interface RescueConsentPolicy {
+  mode: 'mandatory' | 'optional'
+  reason: string
+  active_until: string | null
+  // The EFFECTIVE state after checking active_until -- an expired
+  // override still shows mode: "optional" until someone changes it, but
+  // is_optional_active: false. Always trust this over `mode` alone.
+  is_optional_active: boolean
+  updated_at?: string
+}
+
+export interface RescueConsentPolicyWrite {
+  mode: 'mandatory' | 'optional'
+  reason?: string
+  active_until?: string | null
+}
+
+// Rescue-location lookup (2026-09-03) -- mirrors core/rescue.py's
+// RescueLookupView exactly. Both params are required server-side: there
+// is no browse/list mode, only ever "this one number, for this stated
+// reason" (see that view's docstring on why case_reference exists and is
+// never validated against anything -- it just makes every audit-log row
+// say WHY, not only WHO/WHEN).
+export interface RescueLookupParams {
+  msisdn: string
+  case_reference: string
+}
+
+// `found: false` is the ONLY thing ever returned for a number that has no
+// matching, currently-in-scope SubscriberLastLocation row -- deliberately
+// identical whether that's because the number was never enrolled, consent
+// was withdrawn, or it belongs to a different operator than the caller is
+// scoped to (RescueLookupView never reveals which). No fields beyond
+// `found` exist in that case.
+export interface RescueLookupResult {
+  found: boolean
+  lat?: number | null
+  lng?: number | null
+  accuracy_m?: number | null
+  source?: string
+  last_seen_ts?: string
+}
+
+// Bulk rescue lookup (2026-09-04) -- mirrors core/rescue.py's
+// RescueBulkLookupView exactly. For a list of numbers obtained some OTHER
+// way (an HLR/VLR area extract run through the operator's own
+// core-network tooling -- see that view's docstring), checks each one
+// against this app's own enrolled-subscriber records at once. Same
+// found/not-found semantics as the single lookup above, per number.
+export interface RescueBulkLookupParams {
+  msisdns: string[]
+  case_reference: string
+}
+
+export interface RescueBulkLookupResultRow extends RescueLookupResult {
+  msisdn: string
+}
+
+export interface RescueBulkLookupResponse {
+  results: RescueBulkLookupResultRow[]
+  requested_count: number
+  invalid_count: number
+  found_count: number
+}
+
+// Superadmin-editable copy for the drive-test consent prompt (2026-09-02)
+// — mirrors core/consent.py's DriveTestConsentMessageAdminView /
+// core/models.py's DriveTestConsentConfig. Separate from
+// TelemetryDriveTestConsentSummary above, which is the subscriber's
+// ANSWER (accepted/pending counts) — this is the wording shown before
+// they answer. The SDK itself renders no consent UI; a host app that
+// wants this centrally-editable text fetches it itself (this project's
+// own demo app does) and is equally free to hardcode its own instead.
+export interface DriveTestConsentMessage {
+  message: string
+  updated_at?: string
 }

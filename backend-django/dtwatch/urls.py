@@ -25,6 +25,10 @@ urlpatterns = [
     # was chosen in the first place) — see core/external_api.py's module
     # docstring for the full feature scope.
     path('api/external/v1/', include('core.external_urls')),
+    # Crowdsourced network-telemetry ingestion (2026-08-30) — its own
+    # prefix and its own key mechanism (TelemetryIngestKey), isolated
+    # from both surfaces above. See core/telemetry.py.
+    path('api/telemetry/v1/', include('core.telemetry_urls')),
 ]
 
 # Uploaded branding logo + menu icons (2026-08-08) — CORRECTED same day
@@ -49,4 +53,14 @@ urlpatterns = [
 # pass if that matters; out of scope for this fix.
 urlpatterns += [
     re_path(r'^media/(?P<path>.*)$', serve_media, {'document_root': settings.MEDIA_ROOT}),
+    # Same DEBUG=False workaround as MEDIA_URL above, applied to STATIC_URL
+    # (2026-09-01 fix) -- Django admin's own CSS/JS come from
+    # django.contrib.staticfiles, which needs STATIC_ROOT populated via
+    # collectstatic and then actually served from somewhere; the built-in
+    # static() dev helper is a no-op under DEBUG=False exactly like it was
+    # for media, so this registers the same django.views.static.serve
+    # unconditionally. Dev-quality serving, fine at this app's scale --
+    # nginx's own /static/ proxy block (frontend-react/nginx.conf) forwards
+    # here rather than serving these files itself.
+    re_path(r'^static/(?P<path>.*)$', serve_media, {'document_root': settings.STATIC_ROOT}),
 ]

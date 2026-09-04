@@ -77,6 +77,36 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // server-side by migration 0030_seed_api_access_menuitem.py — keep
   // this in sync with that file, same convention as every other entry.
   '/api-access': '/n8w5qk',
+  // Live Site Directory sync status/manual-trigger page (2026-08-26) —
+  // seeded server-side by migration 0038_seed_live_site_sync_menuitem.py —
+  // keep this in sync with that file, same convention as every other entry.
+  '/live-site-sync': '/l9x4rq',
+  // Crowdsourced-telemetry pages (2026-08-31) — seeded server-side by
+  // migration 0041_seed_telemetry_menuitems.py — keep these in sync with
+  // that file, same convention as every other entry.
+  '/telemetry-coverage': '/t7m2kq',
+  '/telemetry-admin': '/t4v9cx',
+  // Live raw-sample dev/pilot-testing tool (added alongside the above) --
+  // deliberately has NO seeded MenuItem / migration entry (see
+  // TelemetryLiveSamplesPage.tsx's own comment for why), so there is
+  // nothing to "keep in sync" here the way every other entry's comment
+  // describes -- this row exists purely so withOpaqueSection's route
+  // registration for this path resolves to a real path instead of
+  // undefined.
+  '/telemetry-live-samples': '/z3q8mn',
+  // Scoped drive-test sessions over live telemetry (2026-09-01) — seeded
+  // server-side by migration 0044_seed_telemetry_dt_session_menuitem.py —
+  // keep this in sync with that file, same convention as every other
+  // entry. Unlike '/telemetry-live-samples' above, THIS one does get a
+  // seeded MenuItem: it's the consent-scoped, promotable replacement for
+  // that dev tool (see TelemetryDriveTestSession's docstring in
+  // core/models.py), not a superadmin-only debugging aid.
+  '/telemetry-dt-sessions': '/t6q9lp',
+  // Rescue-location lookup pages (2026-09-03) -- seeded server-side by
+  // migration 0049_rescue_menu_items.py -- keep these in sync with that
+  // file, same convention as every other entry.
+  '/rescue-lookup': '/r5t8mq',
+  '/rescue-policy': '/r2p6ky',
 }
 
 export const DASHBOARD_PATH = OPAQUE_PATHS['/dashboard']
@@ -109,3 +139,4 @@ export function canonicalSection(pathname: string): string {
   }
   return seg.slice(1)
 }
+

@@ -77,8 +77,27 @@ export default function PermissionsPage() {
   // SIMPLE_MENU_KEYS below are appended, so existing rows/labels for the
   // 6 original simple menus are untouched.
   const { data: menuItems } = useMenuItems()
+  // Bug found 2026-09-04 auditing this page for staleness: `known` used to
+  // seed from SIMPLE_MENU_KEYS only, not CRUD_MENU_KEYS. Four existing
+  // menu items (DT Data Manager, Thresholds, Tree, Backup) intentionally
+  // REUSE a CRUD_MENU_KEYS key as their own permission_key (matching v1's
+  // DEFAULT_PERMS design -- the same key gates both the simple nav-link
+  // visibility AND the granular per-action CRUD checkboxes above), so
+  // every one of them was leaking through as a spurious "new custom item"
+  // here too -- a second checkbox that reads/writes the exact same
+  // {role, menu_key, action:'read'} MenuPermission row as the CRUD
+  // table's own READ column for that key (see get_visible_menu_items() in
+  // views.py: visibility only ever checks the 'read' action, regardless
+  // of which table's checkbox last wrote it). Worse, for 'rsrpmgr' the
+  // label shown was whichever MenuItem the API happened to return FIRST
+  // with that key -- DT Data Manager's own children sort ahead of their
+  // parent by `order` (10/20/30/40 vs. 80), so the row rendered as
+  // "Upload" even though unchecking it actually hides the whole DT Data
+  // Manager section, not just the Upload page. Seeding `known` from both
+  // lists means this table now only ever shows a permission_key that
+  // ISN'T already covered by a CRUD row above.
   const dynamicSimpleKeys = useMemo<[string, string][]>(() => {
-    const known = new Set(SIMPLE_MENU_KEYS.map(([key]) => key))
+    const known = new Set([...SIMPLE_MENU_KEYS, ...CRUD_MENU_KEYS].map(([key]) => key))
     const extra: [string, string][] = []
     for (const item of menuItems ?? []) {
       if (item.access === 'permission' && item.permission_key && !known.has(item.permission_key)) {

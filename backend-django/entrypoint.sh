@@ -16,4 +16,13 @@
 # collision (by design — see seed_legacy_data.py's docstring).
 set -e
 python manage.py migrate --noinput
+# Idempotent same as migrate above (2026-09-01 fix) -- STATIC_ROOT lives in
+# the container's writable layer with no volume mount, so it does not
+# survive a rebuild any more than the schema would without the migrate
+# line above. Needed for Django admin's own CSS/JS to exist on disk at all
+# for dtwatch/urls.py's unconditional static-serve route to find; --noinput
+# skips the "overwrite?" prompt, --clear is deliberately omitted since a
+# stale extra file left over from a removed app is harmless here.
+python manage.py collectstatic --noinput
 exec "$@"
+

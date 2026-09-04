@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import { apiErrorMessage, apiJson } from '../api/client'
-import { DT_SESSION_GC_TIME, useDeleteDtSession, useDtSession, useDtSessions, useSites } from '../api/queries'
+import { DT_SESSION_GC_TIME, useDeleteDtSession, useDtServingCells, useDtSession, useDtSessions, useSites } from '../api/queries'
 import type { DtSessionDetail, DtSessionListItem } from '../api/types'
 import { isAllowed } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
@@ -84,6 +84,7 @@ export default function DtSessionHistoryPage() {
     })
   }, [sessions, historySearch, siteNameById])
   const { data: sessionDetail, isLoading: detailLoading } = useDtSession(selectedSessionId ?? undefined)
+  const { data: servingCells } = useDtServingCells(selectedSessionId ?? undefined)
   const deleteSession = useDeleteDtSession()
 
   // Session comparison (Phase 4d), ported from bts_monitor.html's
@@ -351,7 +352,7 @@ export default function DtSessionHistoryPage() {
                             <div className="report-card-label">Uploaded By</div>
                           </div>
                         </div>
-                        <DtCoverageMap samples={sessionDetail.samples} tech={sessionDetail.tech} />
+                        <DtCoverageMap samples={sessionDetail.samples} tech={sessionDetail.tech} servingCells={servingCells} />
                         <DtCallDownloadSummary
                           callSummary={sessionDetail.meta?.callSummary}
                           downloadSummary={sessionDetail.meta?.downloadSummary}

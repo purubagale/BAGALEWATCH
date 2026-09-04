@@ -31,6 +31,21 @@ services:
     build: !reset null
     image: ${REGISTRY:-nexus.ntc.net.np}/${PROJECT_NAME:-dtwatch}/django:${IMAGE_TAG:?set IMAGE_TAG in .env to the tag build-push.sh printed}
 
+  # site-sync (2026-08-26) has no `build:` of its own in docker-compose.yml
+  # to begin with (it points `image:` at whatever `django` builds to,
+  # rather than building a second identical image) — the base file's
+  # locally-built tag doesn't exist on a deploy host that only pulls from
+  # Nexus, so this override points it at the exact same Nexus django image
+  # the `django` service above uses, same as every other service here.
+  site-sync:
+    image: ${REGISTRY:-nexus.ntc.net.np}/${PROJECT_NAME:-dtwatch}/django:${IMAGE_TAG:?set IMAGE_TAG in .env to the tag build-push.sh printed}
+
+  # node-gateway and go-worker are behind the `future` Compose profile in
+  # the base file (2026-08-31) — they don't start on a plain deploy either.
+  # These override entries stay so that a `docker compose --profile future
+  # -f docker-compose.yml -f docker-compose.deploy.yml up -d` still pulls
+  # the Nexus images instead of trying to build locally, whenever those
+  # services are actually switched on.
   node-gateway:
     build: !reset null
     image: ${REGISTRY:-nexus.ntc.net.np}/${PROJECT_NAME:-dtwatch}/node-gateway:${IMAGE_TAG:?set IMAGE_TAG in .env}

@@ -4,7 +4,20 @@ import { useCreateUser, useDeleteUser, useUpdateUser, useUsers } from '../api/qu
 import type { AdminUser, Role, UserWrite } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 
-const emptyNewUser: UserWrite = { username: '', password: '', role: 'viewer', name: '', dept: '' }
+const emptyNewUser: UserWrite = { username: '', password: '', role: 'viewer', name: '', dept: '', operator_mncs: [] }
+
+// operator_mncs is edited here as a plain comma-separated string and
+// parsed to/from string[] at the boundary -- a JSON array input has no
+// real advantage for a handful of 2-3 digit MNC codes and would just
+// make the common case (leave blank for unrestricted NTA/government/
+// superadmin access) more fiddly to type. See AdminUser.operator_mncs'
+// doc comment (api/types.ts) for what an empty vs non-empty list means.
+function mncsToText(mncs: string[] | undefined): string {
+  return (mncs ?? []).join(', ')
+}
+function textToMncs(text: string): string[] {
+  return text.split(',').map((s) => s.trim()).filter(Boolean)
+}
 
 function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
   const [editing, setEditing] = useState(false)
@@ -13,6 +26,7 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
   const [dept, setDept] = useState(u.dept)
   const [isActive, setIsActive] = useState(u.is_active)
   const [password, setPassword] = useState('')
+  const [mncsText, setMncsText] = useState(mncsToText(u.operator_mncs))
   const [error, setError] = useState<string | null>(null)
   const updateUser = useUpdateUser(u.id)
   const deleteUser = useDeleteUser()
@@ -28,7 +42,7 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
   async function save() {
     setError(null)
     try {
-      const patch: Partial<UserWrite> = { name, dept, is_active: isActive }
+      const patch: Partial<UserWrite> = { name, dept, is_active: isActive, operator_mncs: textToMncs(mncsText) }
       if (!ssoManaged) patch.role = role
       if (!ssoManaged && password) patch.password = password
       await updateUser.mutateAsync(patch)
@@ -54,6 +68,7 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
         </td>
         <td>{u.name}</td>
         <td>{u.dept}</td>
+        <td>{u.operator_mncs?.length ? u.operator_mncs.join(', ') : <span className="muted">Unrestricted</span>}</td>
         <td>{u.is_active ? 'Active' : 'Disabled'}</td>
         <td>{u.last_login ? new Date(u.last_login).toLocaleString() : '—'}</td>
         {canWrite && (
@@ -79,11 +94,21 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
             <option value="viewer">viewer</option>
             <option value="admin">admin</option>
             <option value="superadmin">superadmin</option>
+            <option value="rescue_operator">rescue_operator</option>
           </select>
         )}
       </td>
       <td><input value={name} onChange={(e) => setName(e.target.value)} /></td>
       <td><input value={dept} onChange={(e) => setDept(e.target.value)} /></td>
+      <td>
+        <input
+          value={mncsText}
+          onChange={(e) => setMncsText(e.target.value)}
+          placeholder="Unrestricted"
+          title="Comma-separated MNC codes, e.g. 02, 03 -- leave blank for unrestricted (NTA/government/superadmin) access"
+          style={{ width: 100 }}
+        />
+      </td>
       <td>
         <label className="inline-checkbox">
           <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active
@@ -151,6 +176,7 @@ export default function UsersPage() {
             <th>Role</th>
             <th>Name</th>
             <th>Dept</th>
+            <th>Operator scope</th>
             <th>Status</th>
             <th>Last login</th>
             {canWrite && <th />}
@@ -186,6 +212,7 @@ export default function UsersPage() {
                 <option value="viewer">viewer</option>
                 <option value="admin">admin</option>
                 <option value="superadmin">superadmin</option>
+                <option value="rescue_operator">rescue_operator</option>
               </select>
             </label>
             <label>
@@ -195,6 +222,15 @@ export default function UsersPage() {
             <label>
               Dept
               <input value={newUser.dept} onChange={(e) => setNewUser({ ...newUser, dept: e.target.value })} />
+            </label>
+            <label>
+              Operator scope
+              <input
+                value={mncsToText(newUser.operator_mncs)}
+                onChange={(e) => setNewUser({ ...newUser, operator_mncs: textToMncs(e.target.value) })}
+                placeholder="Unrestricted (e.g. NTA/government)"
+                title="Comma-separated MNC codes, e.g. 02, 03 -- leave blank for unrestricted access"
+              />
             </label>
           </div>
           <div className="admin-page-actions">

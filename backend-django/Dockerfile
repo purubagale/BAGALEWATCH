@@ -5,8 +5,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# binutils/libproj-dev/gdal-bin added 2026-08-25 for GeoDjango (PostGIS
+# adoption) — Django's GEOS/GDAL/PROJ ctypes bindings need the actual shared
+# libraries at runtime, not a Python package (there's no geodjango pip dep).
+# This is Django's own documented Debian/Ubuntu GeoDjango package list.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc \
+    libpq-dev gcc binutils libproj-dev gdal-bin \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

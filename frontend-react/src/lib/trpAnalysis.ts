@@ -26,10 +26,14 @@
 //
 // v2 had NO .trp binary decoder at all before this — dtTemplateParser.ts
 // explicitly deferred it ("the single highest-risk item in the whole v2
-// migration"). This module is that decoder, scoped specifically to the
-// TRP File Analysis diagnostic feature (NOT wired into the DT session
-// upload path, which still only accepts the CSV/XLSX template — that
-// remains a separate, not-yet-done follow-up).
+// migration"). This module is that decoder. It was first built for the
+// read-only TRP File Analysis diagnostic page (TrpAnalysisPage.tsx); the
+// DT session upload path (DtUploadPage.tsx's .trp mode) was wired onto
+// the same trpaAnalyzeFile() on 2026-08-14, so both the diagnostic page
+// and the map-plotting session path now share this one decoder — see the
+// per-fix comments below for which behaviours are shared vs. scoped to
+// one caller (e.g. the serving-identity forward-fill here is relied on by
+// the session path's coverage-plot cell attribution).
 
 // ── Low-level primitives (v1 lines ~9184-9411) ──────────────────────────
 
@@ -288,8 +292,23 @@ interface RawSample {
   values: Record<string, number>
 }
 
+interface TrpScanEvent {
+  ts: number
+  type: string
+  fields: Record<string, string | number>
+}
+
 export interface TrpDataScanResult {
   samples: RawSample[]
+  /** Compound events decoded in the SAME record walk (2026-08-27: folded
+   * in from the former separate `trpScanEvents` pass — it walked this
+   * exact same buffer with the exact same record/field-3 structure, so
+   * running it as a second full pass roughly doubled the data.cdf decode
+   * cost, ~4.6s of a 30s parse on a real 90 MB 4G DL file). Empty unless
+   * the caller passes `eventOpts`. */
+  events: TrpScanEvent[]
+  /** Event count hit `eventOpts.maxEvents` and later events were dropped. */
+  eventsCapped: boolean
   /** True when the scan stopped before reaching the end of the buffer
    * because a record's length prefix couldn't be read, or a length-
    * prefixed record claimed to extend past the buffer's actual end —
@@ -312,12 +331,26 @@ export interface TrpDataScanResult {
  * the human-readable path string to key the returned sample's `values`
  * object by — only ids present in that map are extracted, so callers can
  * cheaply scope this to a curated field set or widen it to "every
- * declared id" for the raw-dump mode. */
-function trpScanDataRecords(buf: Uint8Array, wantedIds: Map<number, string>): TrpDataScanResult {
+ * declared id" for the raw-dump mode.
+ *
+ * When `eventOpts` is given, compound events (the `Call.` / `Data.` /
+ * `Location.` nested-pair records — see trpTryDecodeEventFields) are
+ * extracted in the same walk instead of a separate second pass over the
+ * buffer. Each field-3 sub-message is decoded exactly once and used for
+ * both the scalar `wantedIds` lookup and the event check. */
+function trpScanDataRecords(
+  buf: Uint8Array,
+  wantedIds: Map<number, string>,
+  eventOpts?: { declById: Map<number, TrpDecl>; maxEvents?: number },
+): TrpDataScanResult {
   const n = buf.length
   let pos = 0
   const samples: RawSample[] = []
+  const events: TrpScanEvent[] = []
+  let eventsCapped = false
   let truncated = false
+  const declById = eventOpts?.declById
+  const maxEvents = eventOpts?.maxEvents ?? 5000
   while (pos < n) {
     let reclen: number, pos2: number
     try {
@@ -346,8 +379,9 @@ function trpScanDataRecords(buf: Uint8Array, wantedIds: Map<number, string>): Tr
       pos = recEnd
       continue
     }
+    // Pass 1 — timestamp (field 1). Done first so the event push below
+    // always has `ts` regardless of field order in the record.
     let ts: number | null = null
-    const values: Record<string, number> = {}
     for (const [f, kind, v] of fields) {
       if (f === 1 && kind === 'len') {
         try {
@@ -359,25 +393,42 @@ function trpScanDataRecords(buf: Uint8Array, wantedIds: Map<number, string>): Tr
           // malformed timestamp sub-message — sample is dropped below
           // (ts stays null) rather than guessing.
         }
-      } else if (f === 3 && kind === 'len') {
-        try {
-          const pfields = trpDecodeFlat(v as Uint8Array, 0, (v as Uint8Array).length)
-          let pid: number | null = null
-          let val: number | null = null
-          for (const [pf, pk, pv] of pfields) {
-            if (pf === 1 && pk === 'v') pid = pv as number
-            else if (pf !== 1) val = pv as number
-          }
-          if (pid !== null && wantedIds.has(pid) && val !== null) values[wantedIds.get(pid) as string] = val
-        } catch {
-          // malformed parameter sub-message — skip just this one field.
+      }
+    }
+    // Pass 2 — parameters (field 3). One decode per sub-message, feeding
+    // both the curated scalar extraction and (when requested) the event
+    // extraction.
+    const values: Record<string, number> = {}
+    for (const [f, kind, v] of fields) {
+      if (f !== 3 || kind !== 'len') continue
+      try {
+        const pfields = trpDecodeFlat(v as Uint8Array, 0, (v as Uint8Array).length)
+        let pid: number | null = null
+        let val: number | Uint8Array | null = null
+        for (const [pf, pk, pv] of pfields) {
+          if (pf === 1 && pk === 'v') pid = pv as number
+          else if (pf !== 1) val = pv as number | Uint8Array
         }
+        if (pid === null || val === null) continue
+        if (wantedIds.has(pid)) values[wantedIds.get(pid) as string] = val as number
+        if (declById && ts !== null && val instanceof Uint8Array) {
+          const rootDecl = declById.get(pid)
+          if (rootDecl && !isExcludedEventPath(rootDecl.path)) {
+            const decoded = trpTryDecodeEventFields(val, declById)
+            if (decoded) {
+              if (events.length >= maxEvents) eventsCapped = true
+              else events.push({ ts, type: rootDecl.path, fields: decoded })
+            }
+          }
+        }
+      } catch {
+        // malformed parameter sub-message — skip just this one field.
       }
     }
     if (ts !== null && Object.keys(values).length) samples.push({ ts, values })
     pos = recEnd
   }
-  return { samples, truncated, bytesConsumed: pos, totalBytes: n }
+  return { samples, events, eventsCapped, truncated, bytesConsumed: pos, totalBytes: n }
 }
 
 interface GpsPoint {
@@ -543,6 +594,23 @@ const TRPA_TECH_FIELDS: Record<TrpaTech, TrpaTechConfig> = {
   },
 }
 
+/** Curated serving-cell keys (across all three techs' `serving`
+ * dictionaries above) that TEMS logs on-CHANGE rather than every sample —
+ * cell identity, physical-cell id, frequency/band, tracking area. These
+ * are safe to carry forward from their last logged value until the next
+ * change, so every RSRP/RSRQ/SINR row can be attributed to a serving
+ * cell. Anything NOT listed here (the periodic measurements themselves)
+ * is left exactly as logged — a stale measurement would be a wrong
+ * number. See the forward-fill pass in trpaAnalyzeFile. */
+const SERVING_FORWARD_FILL_KEYS = new Set<string>([
+  // 4G
+  'pci', 'band', 'earfcn', 'cellIdCell', 'cellIdEnb', 'cellIdComplete', 'tac',
+  // 3G (unverified, but same on-change semantics by convention)
+  'scramblingCode',
+  // 2G
+  'bcch', 'bsic', 'cellIdentity', 'lac', 'frequencyBand',
+])
+
 // ── Small numeric/formatting helpers (v1 lines ~10017-10047) ────────────
 
 function trpaHaversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -552,6 +620,23 @@ function trpaHaversineM(lat1: number, lon1: number, lat2: number, lon2: number):
   const dLon = toRad(lon2 - lon1)
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2
   return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+/** Loop-based min/max. `Math.min(...arr)` / `Math.max(...arr)` pass every
+ * element as a separate function argument and overflow the call stack
+ * once the array runs to a few hundred thousand entries — reachable here
+ * on a pooled multi-file `deltas` / `levelVals` (a batch of large 4G
+ * captures can produce millions of best-server comparisons). Assumes a
+ * non-empty array; every call site already guards on `.length`. */
+function trpaMin(arr: number[]): number {
+  let m = arr[0]
+  for (let i = 1; i < arr.length; i++) if (arr[i] < m) m = arr[i]
+  return m
+}
+function trpaMax(arr: number[]): number {
+  let m = arr[0]
+  for (let i = 1; i < arr.length; i++) if (arr[i] > m) m = arr[i]
+  return m
 }
 
 function trpaPercentile(vals: number[], p: number): number | null {
@@ -721,86 +806,6 @@ function isExcludedEventPath(path: string): boolean {
   return EXCLUDED_EVENT_PATH_PREFIXES.some((p) => path.startsWith(p))
 }
 
-/** Scans an inflated data.cdf part for compound events, independent of
- * (and in addition to) trpScanDataRecords' curated scalar extraction
- * above — see module comment. Walks the same record structure (field 1 =
- * timestamp sub-message, field 3 = repeated parameter entries) but
- * inspects EVERY parameter regardless of `wantedIds`, since event-root
- * declarations are never in the curated per-tech dictionaries.
- * Defensively capped at `maxEvents` (real files carry a handful to a few
- * dozen per file — see module comment's real examples — so this should
- * never actually trigger; it exists only as insurance against a
- * pathological file, matching this codebase's general defensiveness
- * convention). */
-function trpScanEvents(
-  buf: Uint8Array,
-  declById: Map<number, TrpDecl>,
-  maxEvents = 5000,
-): { events: { ts: number; type: string; fields: Record<string, string | number> }[]; capped: boolean } {
-  const n = buf.length
-  let pos = 0
-  const events: { ts: number; type: string; fields: Record<string, string | number> }[] = []
-  let capped = false
-  while (pos < n) {
-    let reclen: number, pos2: number
-    try {
-      ;[reclen, pos2] = trpReadVarint(buf, pos)
-    } catch {
-      break
-    }
-    const recStart = pos2
-    const recEnd = recStart + reclen
-    if (recEnd > n) break
-    let fields: FlatField[]
-    try {
-      fields = trpDecodeFlat(buf, recStart, recEnd)
-    } catch {
-      pos = recEnd
-      continue
-    }
-    let ts: number | null = null
-    for (const [f, kind, v] of fields) {
-      if (f === 1 && kind === 'len') {
-        try {
-          const hdr = trpDecodeFlat(v as Uint8Array, 0, (v as Uint8Array).length)
-          for (const [hf, hk, hv] of hdr) if (hf === 1 && hk === 'v') ts = hv as number
-        } catch {
-          // malformed timestamp sub-message — event(s) in this record are
-          // skipped below (ts stays null), same as trpScanDataRecords.
-        }
-      }
-    }
-    if (ts !== null) {
-      for (const [f, kind, v] of fields) {
-        if (f !== 3 || kind !== 'len') continue
-        try {
-          const pfields = trpDecodeFlat(v as Uint8Array, 0, (v as Uint8Array).length)
-          let pid: number | null = null
-          let val: number | Uint8Array | null = null
-          for (const [pf, pk, pv] of pfields) {
-            if (pf === 1 && pk === 'v') pid = pv as number
-            else if (pf !== 1) val = pv as number | Uint8Array
-          }
-          if (pid === null || val === null || !(val instanceof Uint8Array)) continue
-          const rootDecl = declById.get(pid)
-          if (!rootDecl || isExcludedEventPath(rootDecl.path)) continue
-          const decoded = trpTryDecodeEventFields(val, declById)
-          if (!decoded) continue
-          if (events.length >= maxEvents) {
-            capped = true
-            continue
-          }
-          events.push({ ts, type: rootDecl.path, fields: decoded })
-        } catch {
-          // malformed parameter sub-message — skip just this one field.
-        }
-      }
-    }
-    pos = recEnd
-  }
-  return { events, capped }
-}
-
 // ── Per-file analysis (v1 lines ~10055-10254) ────────────────────────────
 
 export type TrpaRow = { ts: number; isoTs: string; lat: number | null; lon: number | null } & Record<string, unknown>
@@ -959,33 +964,81 @@ export async function trpaAnalyzeFile(buffer: ArrayBuffer, fileName: string, opt
     const inflated = await trpInflateAppLayer(raw).catch(() => null)
     if (!inflated) continue
     const { decls: d, resyncCount } = trpScanDeclarations(inflated)
-    for (const tech of Object.keys(TRPA_TECH_FIELDS) as TrpaTech[]) {
-      const cfg = TRPA_TECH_FIELDS[tech]
-      if (!trpFindDecl(d, cfg.servingPrimary)) continue
-      const dataRawCandidate = await trpZipReadEntry(bytes, entries, `trp/providers/${provider}/cdf/data.cdf`).catch(() => null)
-      if (!dataRawCandidate) {
-        warnings.push(`Provider ${provider} declared ${tech} fields but its data.cdf was missing — tried the next provider.`)
-        continue
-      }
-      const dataInflatedCandidate = await trpInflateAppLayer(dataRawCandidate).catch(() => null)
-      if (!dataInflatedCandidate) {
-        warnings.push(`Provider ${provider} declared ${tech} fields but its data.cdf could not be decompressed — tried the next provider.`)
-        continue
-      }
-      chosenProvider = provider
-      chosenTech = tech
-      decls = d
-      dataInflated = dataInflatedCandidate
-      totalResyncCount = resyncCount
-      break outer
+    // Which techs does this provider declare a serving-cell primary for?
+    // Almost always exactly one. A CSFB voice capture is the exception —
+    // it declares BOTH an LTE and a GSM serving primary in the same
+    // provider, but typically carries real per-sample data for only one
+    // of them (the leg the call actually spent time on). v1's loop, and
+    // this port's first pass, always took the dictionary-order-first
+    // match (4G before 3G before 2G), so every such file was analyzed as
+    // 4G even when its LTE data.cdf series was empty and its GSM one was
+    // full (confirmed 2026-08-27 against real "2G Voice Only" captures:
+    // ~8 LTE sample records vs a complete GSM series). When more than one
+    // tech matches, read data.cdf once and pick the tech whose primary
+    // field actually has samples.
+    const matchingTechs = (Object.keys(TRPA_TECH_FIELDS) as TrpaTech[]).filter(
+      (t) => trpFindDecl(d, TRPA_TECH_FIELDS[t].servingPrimary),
+    )
+    if (!matchingTechs.length) continue
+    const dataRawCandidate = await trpZipReadEntry(bytes, entries, `trp/providers/${provider}/cdf/data.cdf`).catch(() => null)
+    if (!dataRawCandidate) {
+      warnings.push(`Provider ${provider} declared ${matchingTechs.join('/')} field(s) but its data.cdf was missing — tried the next provider.`)
+      continue
     }
+    const dataInflatedCandidate = await trpInflateAppLayer(dataRawCandidate).catch(() => null)
+    if (!dataInflatedCandidate) {
+      warnings.push(`Provider ${provider} declared ${matchingTechs.join('/')} field(s) but its data.cdf could not be decompressed — tried the next provider.`)
+      continue
+    }
+    let pickedTech = matchingTechs[0]
+    if (matchingTechs.length > 1) {
+      const counts = matchingTechs.map((t) => {
+        const primDecl = trpFindDecl(d, TRPA_TECH_FIELDS[t].servingPrimary)
+        const n = primDecl
+          ? trpScanDataRecords(dataInflatedCandidate, new Map([[primDecl.id, 'primary']])).samples.length
+          : 0
+        return { tech: t, n }
+      })
+      const firstChoice = counts[0]
+      const richest = counts.reduce((a, b) => (b.n > a.n ? b : a))
+      // Only override the dictionary-order default (4G before 3G before
+      // 2G) when that default carries essentially NO primary-field data
+      // of its own AND another declared tech has a real series — the
+      // CSFB-voice pattern, where a capture declares an LTE primary but
+      // the call spent its time on GSM (verified 2026-08-27: ~8 LTE
+      // sample records vs a full GSM series). A narrow margin is
+      // deliberately not enough to flip, so a genuine 4G capture that
+      // also logs a handful of idle-mode GSM measurements still analyzes
+      // as 4G.
+      if (richest.tech !== firstChoice.tech && firstChoice.n < 10 && richest.n >= 30) {
+        pickedTech = richest.tech
+        warnings.push(
+          `This capture declares both ${matchingTechs.join(' and ')} serving-cell fields; ${firstChoice.tech} carried no sample data, so it was analyzed as ${pickedTech}.`,
+        )
+      }
+    }
+    chosenProvider = provider
+    chosenTech = pickedTech
+    decls = d
+    dataInflated = dataInflatedCandidate
+    totalResyncCount = resyncCount
+    break outer
   }
   if (!chosenProvider || !chosenTech || !decls || !dataInflated) {
     const suffix = warnings.length ? ` (${warnings[warnings.length - 1]})` : ''
     throw new Error(`No recognized 4G/3G/2G serving-cell signal declaration with readable sample data found in this file.${suffix}`)
   }
-  if (totalResyncCount > 20) {
-    warnings.push(`Declaration scan needed ${totalResyncCount} byte-level resyncs — the declarations.cdf part may be partially corrupt; some fields could be missing.`)
+  // `resyncCount` scales with declarations.cdf size on genuine TEMS
+  // exports — a real 0x0a byte inside a numeric declaration field is
+  // common, so a byte-level scan hits many false record starts even on a
+  // perfectly intact part. Real, field-complete 4G captures verified here
+  // (2026-08-27) average ~1000 resyncs while still recovering every
+  // curated field. Only flag when resyncs *vastly* outnumber the
+  // declarations actually recovered — i.e. the scan is walking noise
+  // rather than structure — instead of a fixed low count that every real
+  // file trips.
+  if (decls.length > 0 && totalResyncCount > 500 && totalResyncCount > decls.length * 30) {
+    warnings.push(`Declaration scan needed ${totalResyncCount} byte-level resyncs against only ${decls.length} recovered declarations — the declarations.cdf part may be partially corrupt; some fields could be missing.`)
   }
 
   const cfg = TRPA_TECH_FIELDS[chosenTech]
@@ -1063,21 +1116,29 @@ export async function trpaAnalyzeFile(buffer: ArrayBuffer, fileName: string, opt
   // dataInflated was already read + decompressed during provider
   // selection above (so a bad data.cdf can trigger provider fallback
   // instead of failing the whole file) — no need to re-fetch it here.
-  const { samples, truncated: dataTruncated, bytesConsumed, totalBytes } = trpScanDataRecords(dataInflated, wantedAll)
+  //
+  // Compound-event extraction (2026-08-14) rides along in this same walk
+  // (2026-08-27: was a separate second full pass over `dataInflated` —
+  // identical record/field-3 structure, so it roughly doubled the
+  // data.cdf decode cost). It needs ALL of this provider's declared ids,
+  // not just the curated `wantedAll` set, since event-root declarations
+  // are never in a per-tech serving/neighbor dictionary — hence the
+  // separate `declById` map passed as `eventOpts`.
+  const declById = new Map<number, TrpDecl>()
+  for (const d of decls) declById.set(d.id, d)
+  const {
+    samples,
+    events: rawEvents,
+    eventsCapped,
+    truncated: dataTruncated,
+    bytesConsumed,
+    totalBytes,
+  } = trpScanDataRecords(dataInflated, wantedAll, { declById })
   if (dataTruncated) {
     const pct = totalBytes > 0 ? Math.round((bytesConsumed / totalBytes) * 100) : 0
     warnings.push(`Sample data (data.cdf) appears truncated — stopped after ${pct}% of the decompressed bytes; later samples in the drive are likely missing.`)
   }
 
-  // Compound-event extraction (2026-08-14) — independent pass over the
-  // SAME already-inflated dataInflated buffer (no extra decompression
-  // cost), using ALL of this provider's declared ids (not just the
-  // curated wantedAll set above) since event-root declarations were
-  // never added to any per-tech serving/neighbor dictionary. See
-  // trpScanEvents' own comment for why this can't reuse wantedAll.
-  const declById = new Map<number, TrpDecl>()
-  for (const d of decls) declById.set(d.id, d)
-  const { events: rawEvents, capped: eventsCapped } = trpScanEvents(dataInflated, declById)
   const events: TrpaEventRow[] = rawEvents
     .map((e) => {
       const gps = trpCorrelateGps(gpsPoints, e.ts)
@@ -1114,6 +1175,29 @@ export async function trpaAnalyzeFile(buffer: ArrayBuffer, fileName: string, opt
     rawSampleCap = Math.max(2000, Math.floor(rawCellBudget / Math.max(1, allPathsSet.size)))
   }
   let rawTruncated = false
+  // Reverse index path -> curated key(s), built ONCE. The per-sample loop
+  // below used to re-run Object.keys(fieldPaths.serving/neighbor) and a
+  // linear path-vs-path string scan for every declared path of every
+  // sample — O(samples x paths x keys) with a fresh array allocation per
+  // path (2026-08-27 profiling: this pivot loop alone was ~10s of a 30s
+  // parse on a real 90 MB / 212k-sample 4G DL file). A path maps to a
+  // list (not a scalar) only to stay byte-identical in the theoretical
+  // case of two curated keys resolving to the same declaration path;
+  // every real config has a 1:1 mapping so each list has length 1.
+  const servingKeysByPath = new Map<string, string[]>()
+  for (const key of Object.keys(fieldPaths.serving)) {
+    const p = fieldPaths.serving[key]
+    const arr = servingKeysByPath.get(p)
+    if (arr) arr.push(key)
+    else servingKeysByPath.set(p, [key])
+  }
+  const neighborKeysByPath = new Map<string, string[]>()
+  for (const key of Object.keys(fieldPaths.neighbor)) {
+    const p = fieldPaths.neighbor[key]
+    const arr = neighborKeysByPath.get(p)
+    if (arr) arr.push(key)
+    else neighborKeysByPath.set(p, [key])
+  }
   for (const s of samples) {
     const gps = trpCorrelateGps(gpsPoints, s.ts)
     const isoTs = new Date(Math.round(s.ts * 1000)).toISOString()
@@ -1125,8 +1209,10 @@ export async function trpaAnalyzeFile(buffer: ArrayBuffer, fileName: string, opt
     for (const path of Object.keys(s.values)) {
       const val = trpaFormatRawValue(s.values[path])
       if (extractRaw && rawVals) rawVals[path] = val
-      for (const key of Object.keys(fieldPaths.serving)) if (fieldPaths.serving[key] === path) srv[key] = val
-      for (const key of Object.keys(fieldPaths.neighbor)) if (fieldPaths.neighbor[key] === path) nbr[key] = val
+      const sk = servingKeysByPath.get(path)
+      if (sk) for (const key of sk) srv[key] = val
+      const nk = neighborKeysByPath.get(path)
+      if (nk) for (const key of nk) nbr[key] = val
     }
     if (Object.keys(srv).length) servingRows.push({ ts: s.ts, isoTs, lat, lon, ...srv })
     if (Object.keys(nbr).length) neighborRows.push({ ts: s.ts, isoTs, lat, lon, ...nbr })
@@ -1142,6 +1228,29 @@ export async function trpaAnalyzeFile(buffer: ArrayBuffer, fileName: string, opt
   servingRows.sort((a, b) => a.ts - b.ts)
   neighborRows.sort((a, b) => a.ts - b.ts)
   rawSamples.sort((a, b) => a.ts - b.ts)
+
+  // Forward-fill stable serving-cell identity/config fields (2026-08-27).
+  // TEMS logs Pci / Band / Earfcn / CellIdentity.* / Tac (and the GSM/UMTS
+  // equivalents) on-CHANGE only, so at native sample rate the vast
+  // majority of serving rows carry an RSRP/RSRQ/SINR reading but no cell
+  // identity at all — verified against a real 4G capture: ~20 logged Pci
+  // values against ~12,000 RSRP values in one file. Carrying the
+  // last-seen value forward lets every measurement row be attributed to a
+  // serving cell (coverage-by-PCI, per-sample cell id) and does NOT
+  // change distinctServingCellIds / servingCellIds, which still see the
+  // same distinct set. Deliberately NOT forward-filled: the periodic
+  // measurements themselves (rsrp/rsrq/sinr/rssi/pdsch*/cqi/…) — a stale
+  // RSRP would be a wrong number, whereas a stale Pci is correct until
+  // the next logged change. Curated identity keys only; auto-discovered
+  // fields are left as-logged.
+  const lastServingStable: Record<string, unknown> = {}
+  for (const row of servingRows) {
+    for (const key of Object.keys(fieldPaths.serving)) {
+      if (!SERVING_FORWARD_FILL_KEYS.has(key)) continue
+      if (row[key] != null) lastServingStable[key] = row[key]
+      else if (lastServingStable[key] != null) row[key] = lastServingStable[key]
+    }
+  }
   const rawPaths = extractRaw ? [...allPathsSet].sort() : []
   const rawPathLabels: Record<string, string> = {}
   if (extractRaw) for (const p of rawPaths) { const d = pathToDecl.get(p); if (d?.label) rawPathLabels[p] = d.label }
@@ -1194,7 +1303,7 @@ export async function trpaAnalyzeFile(buffer: ArrayBuffer, fileName: string, opt
   const neighborIdVals = new Set(neighborRows.filter((r) => r[cfg.neighborIdentityField] != null).map((r) => r[cfg.neighborIdentityField]))
   const deltas = bestServerRows.map((r) => r.delta as number)
   const within6 = deltas.filter((d) => d > 6).length
-  const maxAdv = deltas.length ? Math.max(...deltas) : null
+  const maxAdv = deltas.length ? trpaMax(deltas) : null
 
   let meanLat: number | null = null
   let meanLon: number | null = null
@@ -1226,8 +1335,8 @@ export async function trpaAnalyzeFile(buffer: ArrayBuffer, fileName: string, opt
     servingLevelSamples: levelVals.length,
     servingLevelMean: trpaRound(levelMean, 2),
     servingLevelP10: trpaRound(trpaPercentile(levelVals, 0.1), 2),
-    servingLevelMin: levelVals.length ? trpaRound(Math.min(...levelVals), 2) : null,
-    servingLevelMax: levelVals.length ? trpaRound(Math.max(...levelVals), 2) : null,
+    servingLevelMin: levelVals.length ? trpaRound(trpaMin(levelVals), 2) : null,
+    servingLevelMax: levelVals.length ? trpaRound(trpaMax(levelVals), 2) : null,
     servingQualityField: cfg.qualityField, servingQualityUnit: cfg.qualityUnit,
     servingQualitySamples: qualityVals.length,
     servingQualityMean: trpaRound(qualityVals.length ? qualityVals.reduce((a, b) => a + b, 0) / qualityVals.length : null, 2),
@@ -1328,7 +1437,7 @@ export function trpaCombineResults(perFileResults: TrpaFileResult[]): TrpaCombin
     const neighborIdVals = new Set(neighborOfTech.filter((r) => r[cfg.neighborIdentityField] != null).map((r) => r[cfg.neighborIdentityField]))
     const deltas = bestServerOfTech.map((r) => r.delta as number)
     const within6 = deltas.filter((d) => d > 6).length
-    const maxAdv = deltas.length ? Math.max(...deltas) : null
+    const maxAdv = deltas.length ? trpaMax(deltas) : null
     const levelMean = levelVals.length ? levelVals.reduce((a, b) => a + b, 0) / levelVals.length : null
     const siteClassification = classify(within6, neighborIdVals.size, maxAdv, levelMean, cfg.weakThreshold)
     byTech[tech] = {
@@ -1337,8 +1446,8 @@ export function trpaCombineResults(perFileResults: TrpaFileResult[]): TrpaCombin
       servingSamples: levelVals.length,
       levelMean: trpaRound(levelMean, 2),
       levelP10: trpaRound(trpaPercentile(levelVals, 0.1), 2),
-      levelMin: levelVals.length ? trpaRound(Math.min(...levelVals), 2) : null,
-      levelMax: levelVals.length ? trpaRound(Math.max(...levelVals), 2) : null,
+      levelMin: levelVals.length ? trpaRound(trpaMin(levelVals), 2) : null,
+      levelMax: levelVals.length ? trpaRound(trpaMax(levelVals), 2) : null,
       qualitySamples: qualityVals.length,
       qualityMean: trpaRound(qualityVals.length ? qualityVals.reduce((a, b) => a + b, 0) / qualityVals.length : null, 2),
       qualityP10: trpaRound(trpaPercentile(qualityVals, 0.1), 2),

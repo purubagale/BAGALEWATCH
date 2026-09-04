@@ -2,7 +2,7 @@ import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import { useEffect, useMemo, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import type { DtSample, DtTech } from '../api/types'
+import type { DtSample, DtServingCell, DtTech } from '../api/types'
 import { bandColor, subsampleForMap, type DtMetric } from '../lib/dtBands'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 import { useDtMetrics } from '../lib/useDtMetrics'
@@ -73,11 +73,67 @@ function FitToBounds({ bounds, onDone }: { bounds: L.LatLngBounds; onDone: () =>
   return null
 }
 
-function CoverageDots({ samples, metric }: { samples: DtSample[]; metric: DtMetric }) {
+function CoverageDots({
+  samples,
+  metric,
+  servingCells,
+}: {
+  samples: DtSample[]
+  metric: DtMetric
+  servingCells?: DtServingCell[]
+}) {
   const map = useMap()
 
   useEffect(() => {
     const layer = L.layerGroup()
+    // Separate group so the serving-site connector can be
+    // shown/cleared without rebuilding the ~15k dots.
+    const linkLayer = L.layerGroup().addTo(map)
+    let pinned = false
+
+    const cellBySite = new Map((servingCells ?? []).map((c) => [c.site_id, c]))
+
+    function clearLink() {
+      linkLayer.clearLayers()
+      map.closePopup()
+      pinned = false
+    }
+    function showLink(s: DtSample, openPopup: boolean) {
+      const cell = s.serving_site_id ? cellBySite.get(s.serving_site_id) : undefined
+      if (!cell || cell.site_lat == null || cell.site_lng == null) return
+      linkLayer.clearLayers()
+      L.polyline(
+        [
+          [s.lat as number, s.lng as number],
+          [cell.site_lat, cell.site_lng],
+        ],
+        { color: '#1d4ed8', weight: 2, dashArray: '5,4', opacity: 0.9 },
+      ).addTo(linkLayer)
+      L.circleMarker([cell.site_lat, cell.site_lng], {
+        radius: 7,
+        color: '#1d4ed8',
+        weight: 2,
+        fillColor: '#ffffff',
+        fillOpacity: 1,
+      })
+        .bindTooltip(cell.site_name, { direction: 'top' })
+        .addTo(linkLayer)
+      if (openPopup) {
+        const parts = [
+          `PCI ${s.pci ?? '—'}`,
+          cell.cell_name || cell.site_name,
+          cell.sector ? `Sector ${cell.sector}` : null,
+          s.serving_dist_km != null ? `${s.serving_dist_km.toFixed(2)} km` : null,
+          cell.azimuth != null ? `Az ${cell.azimuth}°` : null,
+        ].filter(Boolean)
+        L.popup({ offset: [0, -4] })
+          .setLatLng([s.lat as number, s.lng as number])
+          .setContent(`<b>${cell.site_name}</b><br>${parts.join(' · ')}`)
+          .openOn(map)
+        pinned = true
+      }
+    }
+
     const withGps = samples.filter((s) => s.lat != null && s.lng != null)
     for (const s of withGps) {
       const v = s[metric.key] as number | null
@@ -91,19 +147,42 @@ function CoverageDots({ samples, metric }: { samples: DtSample[]; metric: DtMetr
       })
       const valueText = v != null ? `${v}${metric.unit}` : 'No data'
       dot.bindTooltip(`${metric.label}: ${valueText}${s.serving_site_name ? ` — ${s.serving_site_name}` : ''}`)
+      if (s.serving_site_id && cellBySite.has(s.serving_site_id)) {
+        dot.on('mouseover', () => {
+          if (!pinned) showLink(s, false)
+        })
+        dot.on('mouseout', () => {
+          if (!pinned) linkLayer.clearLayers()
+        })
+        dot.on('click', (e) => {
+          L.DomEvent.stopPropagation(e)
+          showLink(s, true)
+        })
+      }
       layer.addLayer(dot)
     }
     layer.addTo(map)
+    map.on('click', clearLink)
 
     return () => {
+      map.off('click', clearLink)
       map.removeLayer(layer)
+      map.removeLayer(linkLayer)
     }
-  }, [samples, metric, map])
+  }, [samples, metric, map, servingCells])
 
   return null
 }
 
-export default function DtCoverageMap({ samples, tech }: { samples: DtSample[]; tech: DtTech }) {
+export default function DtCoverageMap({
+  samples,
+  tech,
+  servingCells,
+}: {
+  samples: DtSample[]
+  tech: DtTech
+  servingCells?: DtServingCell[]
+}) {
   const { metricsForTech } = useDtMetrics()
   const metrics = useMemo(() => metricsForTech(tech), [metricsForTech, tech])
   const [metricKey, setMetricKey] = useState(metrics[0].key)
@@ -158,7 +237,7 @@ export default function DtCoverageMap({ samples, tech }: { samples: DtSample[]; 
               attribution="&copy; OpenStreetMap contributors"
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
-            <CoverageDots samples={drawnSamples} metric={activeMetric} />
+            <CoverageDots samples={drawnSamples} metric={activeMetric} servingCells={servingCells} />
           </>
         )}
       </MapContainer>

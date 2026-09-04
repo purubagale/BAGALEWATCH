@@ -2,8 +2,9 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import (api_auth, backup, dashboard, drive_test, exports, kpi_trend,
-               reports, rf_audit, site_import, sso_views, views)
+from . import (api_auth, backup, consent, dashboard, drive_test, exports,
+               kpi_trend, reports, rescue, rf_audit, site_import, sso_views,
+               telemetry_admin, views)
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
@@ -17,6 +18,11 @@ router.register('menu-items', views.MenuItemViewSet, basename='menu-item')
 # /api/external/v1/ (core/external_urls.py) — this one is a normal
 # JWT-authenticated /api/v2/ admin resource, same as users/menu-items.
 router.register('api-keys', api_auth.ApiKeyViewSet, basename='api-key')
+# Superadmin-only CRUD for the crowdsourced-telemetry ingest credentials
+# (2026-08-31). The keys managed here authenticate the SEPARATE public
+# ingest surface at /api/telemetry/v1/ (core/telemetry_urls.py) — same
+# split as api-keys above vs /api/external/v1/. See core/telemetry_admin.py.
+router.register('telemetry/keys', telemetry_admin.TelemetryIngestKeyViewSet, basename='telemetry-key')
 
 urlpatterns = [
     path('health/', views.health, name='health'),
@@ -39,6 +45,11 @@ urlpatterns = [
     # treat "search" itself as a site ID lookup).
     path('sites/search/', views.SiteSearchView.as_view(), name='site-search'),
     path('sites/<str:site_id>/sectors/', views.SiteSectorListView.as_view(), name='site-sectors'),
+    # Manual "Sync now" for the Live Site Directory sync (2026-08-26) — see
+    # site_import.py's LiveSiteSyncView docstring. Registered before the
+    # router's `sites/<pk>/` include below for the same reason as
+    # sites/search/ above.
+    path('sites/sync-live/', site_import.LiveSiteSyncView.as_view(), name='sites-sync-live'),
 
     # Phase 2 — these match v1's actual /api/v1/thresholds, /tree, and
     # /permissions contracts (flat GET/PUT resources with their own
@@ -88,5 +99,37 @@ urlpatterns = [
     path('rf-audit/history/', rf_audit.AuditHistoryListView.as_view(), name='rf-audit-history'),
     path('rf-audit/history/<int:pk>/', rf_audit.AuditHistoryDetailView.as_view(), name='rf-audit-history-detail'),
 
+    # Crowdsourced-telemetry admin surface (2026-08-31) — overview numbers
+    # and coverage-map data for the two new sidebar pages. The ingest-key
+    # CRUD is router-registered above; these two are plain read endpoints.
+    # See core/telemetry_admin.py.
+    path('telemetry/stats/', telemetry_admin.TelemetryStatsView.as_view(), name='telemetry-stats'),
+    path('telemetry/coverage/', telemetry_admin.TelemetryCoverageView.as_view(), name='telemetry-coverage'),
+    path('telemetry/live-samples/', telemetry_admin.TelemetryLiveSamplesView.as_view(), name='telemetry-live-samples'),
+    # Scoped drive-test sessions over the live telemetry pipeline
+    # (2026-09-01) — see core/telemetry_admin.py's TelemetryDriveTestSession*
+    # views for why these replace TelemetryLiveSamplesView as the
+    # promotable, consent-scoped path.
+    path('telemetry/dt-sessions/', telemetry_admin.TelemetryDriveTestSessionListCreateView.as_view(), name='telemetry-dt-sessions'),
+    path('telemetry/dt-sessions/<int:pk>/', telemetry_admin.TelemetryDriveTestSessionDetailView.as_view(), name='telemetry-dt-session-detail'),
+    path('telemetry/dt-sessions/<int:pk>/end/', telemetry_admin.TelemetryDriveTestSessionEndView.as_view(), name='telemetry-dt-session-end'),
+    path('telemetry/dt-sessions/<int:pk>/samples/', telemetry_admin.TelemetryDriveTestSessionSamplesView.as_view(), name='telemetry-dt-session-samples'),
+
+    # Rescue-location lookup (2026-09-01) — IsRescueOperator-gated, every
+    # call audited. See core/rescue.py.
+    path('rescue/lookup/', rescue.RescueLookupView.as_view(), name='rescue-lookup'),
+    # Bulk counterpart (2026-09-04) -- checks a whole list of numbers (e.g.
+    # an HLR/VLR area extract obtained some other way) against this app's
+    # own enrolled-subscriber records in one request. See
+    # core/rescue.py's RescueBulkLookupView.
+    path('rescue/lookup/bulk/', rescue.RescueBulkLookupView.as_view(), name='rescue-lookup-bulk'),
+    # Superadmin-only mandatory/optional consent-policy control (2026-09-02)
+    # for the rescue lane — see core/rescue.py's RescueConsentPolicyView.
+    path('rescue/policy/', rescue.RescueConsentPolicyView.as_view(), name='rescue-consent-policy'),
+    # Superadmin-editable copy for the drive-test consent prompt
+    # (2026-09-02) — see core/consent.py's DriveTestConsentMessageAdminView.
+    path('telemetry/consent-message/', consent.DriveTestConsentMessageAdminView.as_view(), name='telemetry-consent-message'),
+
     path('', include(router.urls)),
 ]
+

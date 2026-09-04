@@ -1,11 +1,16 @@
+import io
 import math
 
 from django.contrib.auth import get_user_model, password_validation
+from django.contrib.gis.geos import MultiPoint, Point
+from django.contrib.gis.measure import D
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files.base import ContentFile
+from django.db import connection
 from django.utils import timezone
 from rest_framework import serializers
 
+from .dt_serving_cell import attach_serving_cells
 from .imageutils import DataUrlImageError, decode_data_url_image
 from .models import (
     AuditHistory,
@@ -274,7 +279,7 @@ class UserSerializer(serializers.ModelSerializer):
         # `sso_subject` is deliberately NOT exposed: it is an internal
         # identity-provider identifier with no use in the UI.
         fields = ['id', 'username', 'role', 'name', 'dept', 'is_active',
-                  'last_login', 'date_joined', 'auth_source']
+                  'last_login', 'date_joined', 'auth_source', 'operator_mncs']
         read_only_fields = ['auth_source']
 
 
@@ -316,7 +321,7 @@ class UserWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'password', 'role', 'name', 'dept', 'is_active']
+        fields = ['id', 'username', 'password', 'role', 'name', 'dept', 'is_active', 'operator_mncs']
 
     def validate(self, attrs):
         # Matches v1: username/password/role are required on create, but
@@ -400,12 +405,48 @@ class SiteWriteSerializer(serializers.ModelSerializer):
     tree/permissions, just scoped to one site instead of the whole tree.
     A PUT that omits an optional field clears it to null/blank, same as
     v1's site.get(key) defaulting to None for anything not in the body —
-    this is intentionally NOT a partial update."""
+    this is intentionally NOT a partial update.
+
+    Everything besides KPI/sector/type-tech-status data — this is what
+    AddSiteModal.tsx/SiteDetailPage.tsx's edit form actually manage."""
     sectors = SectorWriteSerializer(many=True, required=False)
+
+    # 2026-08-26 — see this method's own comment in update() below and
+    # LIVE_MANAGED_FIELDS' docstring for the full reasoning.
+    LIVE_MANAGED_FIELDS = (
+        'name', 'region', 'district', 'sitename1', 'palika', 'palika_type',
+        'ward_no', 'lat', 'lng', 'deployment_status', 'operational_technologies',
+    )
 
     class Meta:
         model = Site
-        fields = '__all__'
+        # Explicit list, NOT '__all__' (2026-08-26 — was '__all__' until
+        # this change). Two things dropped, both deliberate:
+        #  - `location`: the PostGIS point Site.save() auto-derives from
+        #    lat/lng (see models.py) — never a real input, and DRF's
+        #    ModelSerializer has no proper field type for GeoDjango's
+        #    PointField anyway (it silently falls back to a generic
+        #    ModelField, which is not something to actually rely on for
+        #    writes).
+        #  - `live_site_updated_at`/`live_last_updated_at`/`live_synced_at`/
+        #    `live_raw`: the Live Site Directory sync's own internal
+        #    bookkeeping (core/live_sites.py) — no manual write path should
+        #    ever set these directly.
+        # LIVE_MANAGED_FIELDS above (name/region/district/etc.) STAY listed
+        # here — AddSiteModal.tsx still needs them to create a genuinely
+        # new site — but are stripped out of validated_data in update()
+        # below, so editing an EXISTING site silently ignores them.
+        fields = [
+            'id', 'sectors', 'name', 'region', 'city', 'district', 'lat', 'lng',
+            'sitename1', 'palika', 'palika_type', 'ward_no', 'deployment_status',
+            'operational_technologies',
+            'type', 'tech', 'status', 'status_2g', 'status_3g', 'rssi', 'load',
+            'kpi_entered', 'kpi_entered_2g', 'kpi_entered_3g', 'kpi_date',
+            'rrc', 'erab', 'call_setup', 'call_drop', 'svc_drop', 'intra_ho', 'inter_ho',
+            'inter_rat', 'ip_thru', 'ip_thru_dl', 'ip_thru_ul', 'ip_lat', 'prb', 'prb_dl',
+            'prb_ul', 'bearer_util', 'lic_util', 'cell_avail', 'volte_setup', 'csfb',
+            'kpi_2g_json', 'kpi_3g_json', 'updated_at', 'updated_by',
+        ]
         extra_kwargs = {'updated_by': {'required': False}}
 
     def _replace_sectors(self, site, sectors_data):
@@ -429,6 +470,19 @@ class SiteWriteSerializer(serializers.ModelSerializer):
         # dropped rather than applied even if the client's PUT body
         # happens to include an 'id' field.
         validated_data.pop('id', None)
+        # 2026-08-26, confirmed via AskUserQuestion: "during site edit, no
+        # need to update for api retrieved data, allow other details if
+        # needed." Identity/location fields are the Live Site Directory
+        # sync's job now (core/live_sites.py) — a manual edit silently
+        # ignoring them (not erroring) matches this codebase's existing
+        # "a value the client didn't really mean to send never overwrites
+        # what's already stored" convention (see site_import.py's
+        # _apply_sectors docstring for the same rule elsewhere). Only
+        # applies here, in update() — create() is untouched, since
+        # AddSiteModal.tsx still needs to set these when adding a
+        # genuinely new site manually.
+        for field in self.LIVE_MANAGED_FIELDS:
+            validated_data.pop(field, None)
         validated_data['updated_at'] = timezone.now()
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
@@ -498,6 +552,180 @@ class DriveTestSampleSerializer(serializers.ModelSerializer):
         ]
 
 
+_DT_SAMPLE_FLOAT_FIELDS = (
+    'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'serving_dist_km', 'rx_qual', 'rscp', 'ecno',
+)
+_DT_SAMPLE_INT_FIELDS = ('pci', 'serving_local_cell_id', 'bcch', 'bsic', 'scrambling_code')
+# name -> (max_length, nullable) — mirrors the model's CharField columns.
+_DT_SAMPLE_STR_FIELDS = {
+    'ts': (32, False), 'date': (16, False),
+    'serving_site_id': (64, True), 'serving_site_name': (255, True),
+    'serving_sector': (20, True), 'serving_cell_name': (100, True),
+    'cell_role': (10, False),
+}
+# The only fields a malformed/absent value should 400 on (matching what
+# DRF's FloatField already did) — they are what a coverage plot needs.
+# Everything else becomes NULL rather than failing a 5000-row batch.
+_DT_SAMPLE_REQUIRED_NUMERIC = frozenset(('lat', 'lng', 'rsrp'))
+
+
+def _coerce_dt_sample(raw):
+    """Fast per-sample coercion for the two INTERNAL DT bulk-write paths
+    (DriveTestSessionWriteSerializer.create + DriveTestSessionViewSet.
+    samples). Replaces a ``DriveTestSampleSerializer(many=True).is_valid()``
+    pass measured at ~420 ms per 5000-sample batch — the dominant cost of
+    a session save, ~8x the ~50 ms this takes (DRF builds a child
+    serializer and runs every field validator per item; the bulk_create
+    itself is comparatively cheap). The sample shape is fixed and every
+    field is a plain float / int / short string, so a direct coercion
+    stores byte-identical values for the well-formed input the client
+    always sends.
+
+    Faithful to the model + the old serializer's effect: an unparseable
+    lat/lng/rsrp raises 400 exactly as DRF's FloatField did; a
+    missing/null one stays NULL (the columns are null=True); any other
+    bad/absent value becomes NULL rather than failing the whole batch;
+    strings are clamped to their column length; a blank cell_role
+    defaults to 'serving' (the model default). The public external API
+    (ExternalDtSessionCreateSerializer) deliberately keeps the full DRF
+    serializer — it is lower volume and wants the stricter contract.
+    """
+    if not isinstance(raw, dict):
+        raise serializers.ValidationError('Each sample must be a JSON object.')
+    out = {}
+    for f in _DT_SAMPLE_FLOAT_FIELDS:
+        v = raw.get(f)
+        if v is None or v == '':
+            out[f] = None
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            fv = None
+        if fv is None or not math.isfinite(fv):
+            if f in _DT_SAMPLE_REQUIRED_NUMERIC:
+                raise serializers.ValidationError(f'Sample field "{f}" is not a finite number: {v!r}')
+            out[f] = None
+        else:
+            out[f] = fv
+    for f in _DT_SAMPLE_INT_FIELDS:
+        v = raw.get(f)
+        if v is None or v == '':
+            out[f] = None
+            continue
+        try:
+            out[f] = int(float(v))
+        except (TypeError, ValueError):
+            out[f] = None
+    for f, (maxlen, nullable) in _DT_SAMPLE_STR_FIELDS.items():
+        v = raw.get(f)
+        if v is None or v == '':
+            out[f] = None if nullable else ''
+        else:
+            out[f] = str(v)[:maxlen]
+    if not out['cell_role']:
+        out['cell_role'] = 'serving'
+    return out
+
+
+# Every insertable column of v2_dt_samples, in a fixed order — `id` is the
+# serial PK (DB default), everything else is written from a coerced sample
+# dict (+ session_id + the derived location).
+_DT_COPY_COLUMNS = (
+    'session_id', 'ts', 'date', 'lat', 'lng', 'location',
+    'rsrp', 'rsrq', 'sinr', 'dl', 'pci',
+    'serving_site_id', 'serving_site_name', 'serving_sector', 'serving_cell_name',
+    'serving_local_cell_id', 'serving_dist_km', 'cell_role', 'rx_qual',
+    'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
+)
+_DT_COPY_SQL = (
+    'COPY v2_dt_samples (' + ', '.join(_DT_COPY_COLUMNS) + ') FROM STDIN WITH (FORMAT text)'
+)
+
+
+def _copy_field(v):
+    """One value for a Postgres text-format COPY stream: NULL as ``\\N``,
+    strings with the four text-format metacharacters escaped, numbers as
+    their plain repr (``_coerce_dt_sample`` has already ruled out NaN/inf
+    and non-finite values)."""
+    if v is None:
+        return r'\N'
+    if isinstance(v, str):
+        return (
+            v.replace('\\', '\\\\').replace('\t', '\\t').replace('\n', '\\n').replace('\r', '\\r')
+        )
+    return str(v)
+
+
+def _bulk_insert_dt_samples(session_id, rows):
+    """COPY-based bulk insert for coerced DT sample dicts. ~3x faster than
+    a ``bulk_create`` of the same geography rows (measured ~1.0s vs ~3.1s
+    per 5000) — and a session-wide upload is 10+ such batches, so the geo
+    INSERT was by far the dominant save cost. `rows` must already be
+    ``_coerce_dt_sample()`` output (fixed keys, plain scalars). `location`
+    is emitted as EWKT for PostGIS to parse directly — the same value
+    GeoSyncQuerySet.bulk_create would derive from lat/lng, so this write
+    path stays equivalent without going through that override."""
+    if not rows:
+        return
+    buf = io.StringIO()
+    for r in rows:
+        lat, lng = r['lat'], r['lng']
+        loc = f'SRID=4326;POINT({lng} {lat})' if (lat is not None and lng is not None) else None
+        buf.write('\t'.join((
+            str(session_id),
+            _copy_field(r['ts']), _copy_field(r['date']),
+            _copy_field(lat), _copy_field(lng), _copy_field(loc),
+            _copy_field(r['rsrp']), _copy_field(r['rsrq']), _copy_field(r['sinr']),
+            _copy_field(r['dl']), _copy_field(r['pci']),
+            _copy_field(r['serving_site_id']), _copy_field(r['serving_site_name']),
+            _copy_field(r['serving_sector']), _copy_field(r['serving_cell_name']),
+            _copy_field(r['serving_local_cell_id']), _copy_field(r['serving_dist_km']),
+            _copy_field(r['cell_role']), _copy_field(r['rx_qual']),
+            _copy_field(r['bcch']), _copy_field(r['bsic']),
+            _copy_field(r['rscp']), _copy_field(r['ecno']),
+            _copy_field(r['scrambling_code']),
+        )) + '\n')
+    buf.seek(0)
+    with connection.cursor() as cur:
+        cur.copy_expert(_DT_COPY_SQL, buf)
+
+
+class DriveTestSamplePlotSerializer(serializers.ModelSerializer):
+    """Read-only, lean projection of DriveTestSample for the session
+    detail / coverage-plot fetch — exactly the fields the coverage map,
+    Explore, Compare and the CSV/KML export actually read. Drops six
+    serving-cell columns (serving_site_id / serving_sector /
+    serving_cell_name / serving_local_cell_id / serving_dist_km +
+    cell_role) that BOTH upload paths (.trp and CSV/XLSX) always write as
+    null / 'serving' — v1's per-sample nearest-serving-cell matching was
+    never ported — and that nothing on the client reads. Shrinks the
+    GET /api/v2/dt-sessions/<id>/ body by ~6 columns x up-to-50k rows
+    with no visible change to any plot, tooltip or export.
+
+    `serving_site_name` IS kept: it's the one serving_* field the client
+    still references (an optional tooltip / CSV / KML suffix). It is null
+    for every session today, so keeping it changes nothing now, but a
+    future port of site matching then needs no serializer change.
+
+    The full DriveTestSampleSerializer above stays the WRITE contract
+    (create() + the /samples/ append action) so a future site-matching
+    port can populate those columns without a serializer change either.
+    """
+
+    class Meta:
+        model = DriveTestSample
+        fields = [
+            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci',
+            'serving_site_name', 'rx_qual', 'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
+            # serving-cell attribution (dt_serving_cell.py): serving_site_id
+            # keys the per-session /serving-cells/ lookup that the coverage
+            # map's hover connector reads; serving_dist_km is per-point so
+            # the popup shows THIS sample's distance to its serving site.
+            'serving_site_id', 'serving_dist_km',
+        ]
+
+
 class DriveTestSessionListSerializer(serializers.ModelSerializer):
     """Metadata only, matching v1's GET (list) contract exactly — session
     records/samples can run into the tens of thousands per session (see
@@ -520,11 +748,48 @@ class DriveTestSessionListSerializer(serializers.ModelSerializer):
         return obj.uploaded_by.name or obj.uploaded_by.username
 
 
+# Keep in sync with the frontend's dtBands.MAX_MAP_DOTS. Every DT map
+# (coverage / compare / explore) thins its point set to this many before
+# drawing, so returning more than this from the detail endpoint is pure
+# waste — serialized, transferred and parsed only to be dropped on arrival.
+DT_PLOT_MAX_POINTS = 15000
+
+
 class DriveTestSessionDetailSerializer(DriveTestSessionListSerializer):
-    samples = DriveTestSampleSerializer(many=True, read_only=True)
+    """`samples` is capped at DT_PLOT_MAX_POINTS with an even stride — the
+    same reduction the coverage map already does on the client, moved to
+    the server so a 50k+-row session isn't serialized and shipped in full
+    just to be thinned on arrival (measured on a real 50k session:
+    ~5.5s -> ~1.7s serialize, ~16 MB -> ~5 MB JSON). The stride matches
+    lib/dtBands.ts's subsampleForMap(), so the plotted point set is
+    equivalent and the client's own subsampleForMap() call becomes a
+    no-op. `?full=1` returns every stored sample (for a future full
+    export); the radius-filtered Explore endpoint (near()) is unchanged
+    and still returns its full in-radius density."""
+    samples = serializers.SerializerMethodField()
 
     class Meta(DriveTestSessionListSerializer.Meta):
         fields = DriveTestSessionListSerializer.Meta.fields + ['samples']
+
+    def get_samples(self, obj):
+        # `location` is not in DriveTestSamplePlotSerializer's fields — don't
+        # SELECT it (it's the widest column in the row).
+        qs = obj.samples.order_by('id').defer('location')
+        request = self.context.get('request')
+        # request.GET works whether `request` is a DRF Request or a plain
+        # Django one (DRF's Request delegates unknown attrs to it).
+        if request is not None and request.GET.get('full') in ('1', 'true'):
+            return DriveTestSamplePlotSerializer(qs, many=True).data
+        # One cheap pass for the ids, then fetch ONLY the strided subset —
+        # the DB does the row selection by pk, so Python never instantiates
+        # (or the ORM never GIS-parses) the 35k rows that get dropped.
+        pks = list(qs.values_list('pk', flat=True))
+        if len(pks) <= DT_PLOT_MAX_POINTS:
+            return DriveTestSamplePlotSerializer(qs, many=True).data
+        stride = len(pks) / DT_PLOT_MAX_POINTS
+        keep = {pks[int(i * stride)] for i in range(DT_PLOT_MAX_POINTS)}
+        subset = obj.samples.filter(pk__in=keep).order_by('id').defer('location')
+        return DriveTestSamplePlotSerializer(subset, many=True).data
 
 
 class DriveTestSessionNearSerializer(DriveTestSessionListSerializer):
@@ -538,28 +803,17 @@ class DriveTestSessionNearSerializer(DriveTestSessionListSerializer):
     matched session has thousands of points outside the radius; the
     shape is otherwise identical to DriveTestSessionDetailSerializer
     so the frontend can reuse the same `DtSessionDetail` type."""
-    samples = DriveTestSampleSerializer(many=True, read_only=True, source='filtered_samples')
+    samples = DriveTestSamplePlotSerializer(many=True, read_only=True, source='filtered_samples')
 
     class Meta(DriveTestSessionListSerializer.Meta):
         fields = DriveTestSessionListSerializer.Meta.fields + ['samples']
 
 
 # ~1km nearby-site tagging (2026-07-30 request) — "through this tag, it
-# will be easier for future search also". Kept as free functions here
-# (not in drive_test.py, even though drive_test.py already has an
-# identical _haversine_km for its near() endpoint) because drive_test.py
-# imports from this module — importing back the other way would be
-# circular. Same formula, duplicated deliberately.
+# will be easier for future search also". Kept as a free function here
+# (not in drive_test.py) because drive_test.py imports from this module —
+# importing back the other way would be circular.
 NEARBY_SITE_RADIUS_KM = 1.0
-
-
-def _haversine_km(lat1, lng1, lat2, lng2):
-    r = 6371.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lng2 - lng1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
 
 
 def _nearby_site_ids(sample_points, radius_km=NEARBY_SITE_RADIUS_KM):
@@ -571,11 +825,18 @@ def _nearby_site_ids(sample_points, radius_km=NEARBY_SITE_RADIUS_KM):
     backfill_nearby_sites management command for existing sessions.
 
     sample_points: iterable of (lat, lng) tuples (None-safe — filtered
-    below). Deduped to a coarse ~100m grid first: a session can have
-    tens of thousands of samples, and checking every candidate site
-    against every raw sample would be wasteful when all that's needed
-    is "is this site within radius of at least one point somewhere on
-    the route", not a distance for every sample.
+    below). Deduped to a coarse ~100m grid first: a session can have tens
+    of thousands of samples, and there's no need to ask PostGIS to
+    evaluate distance to the same route point a thousand times over.
+
+    2026-08-25, PostGIS adoption: this used to be a bounding-box prefilter
+    (Site.objects.filter(lat__gte=..., ...)) followed by an exact
+    haversine check in Python for every (candidate site, sample point)
+    pair. Now it's a single indexed `ST_DWithin(Site.location, route,
+    radius)` query — `route` is every deduped sample point collapsed into
+    one MultiPoint, so PostGIS itself finds every site within radius_km of
+    the NEAREST point in that cloud, in one query using the GiST index on
+    `location` instead of an unindexed Python distance loop.
     """
     points = {
         (round(lat, 3), round(lng, 3))
@@ -585,26 +846,17 @@ def _nearby_site_ids(sample_points, radius_km=NEARBY_SITE_RADIUS_KM):
     if not points:
         return []
 
-    lats = [p[0] for p in points]
-    lngs = [p[1] for p in points]
-    # Bounding-box prefilter (cheap index range scan), same pattern as
-    # drive_test.py's near() endpoint, sized to the whole point cloud's
-    # extent plus one radius on each side.
-    lat_delta = radius_km / 111.0
-    lng_delta = radius_km / (111.0 * max(min(math.cos(math.radians(lat)) for lat in lats), 0.01))
-    candidates = Site.objects.filter(
-        lat__isnull=False, lng__isnull=False,
-        lat__gte=min(lats) - lat_delta, lat__lte=max(lats) + lat_delta,
-        lng__gte=min(lngs) - lng_delta, lng__lte=max(lngs) + lng_delta,
-    ).only('id', 'lat', 'lng')
-
-    matched = []
-    for site in candidates:
-        for lat, lng in points:
-            if _haversine_km(lat, lng, site.lat, site.lng) <= radius_km:
-                matched.append(site.id)
-                break
-    return matched
+    route = MultiPoint(*(Point(lng, lat, srid=4326) for lat, lng in points), srid=4326)
+    # .order_by('id') — an unordered queryset's row order isn't guaranteed
+    # stable across runs, and backfill_nearby_sites.py compares this
+    # return value against a previously-stored list to decide "did
+    # anything change"; a deterministic order makes that comparison mean
+    # something instead of flapping on re-runs with no real change.
+    return list(
+        Site.objects.filter(location__distance_lte=(route, D(km=radius_km)))
+        .order_by('id')
+        .values_list('id', flat=True)
+    )
 
 
 # Max samples accepted in ONE request, for both create() (the `samples`
@@ -639,8 +891,15 @@ class DriveTestSessionWriteSerializer(serializers.ModelSerializer):
     `samples` here is capped at DT_SAMPLES_BATCH_SIZE (see that
     constant's own comment) — a session with more than that is expected
     to be created with 0 (or a small first batch of) samples, then filled
-    in via repeated calls to DriveTestSessionViewSet.samples()."""
-    samples = DriveTestSampleSerializer(many=True, write_only=True, required=False)
+    in via repeated calls to DriveTestSessionViewSet.samples().
+
+    `samples` is a plain ListField, NOT a nested DriveTestSampleSerializer:
+    per-item DRF validation of up to 5000 fixed-shape rows was the
+    dominant save cost (~420 ms/batch). Each row is coerced by
+    `_coerce_dt_sample()` in create() instead — see its docstring."""
+    samples = serializers.ListField(
+        child=serializers.DictField(), write_only=True, required=False
+    )
 
     class Meta:
         model = DriveTestSession
@@ -656,7 +915,12 @@ class DriveTestSessionWriteSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        samples_data = validated_data.pop('samples', [])
+        samples_data = [_coerce_dt_sample(s) for s in validated_data.pop('samples', [])]
+        # Serving-cell -> site attribution (v1's _rsrpMatchServingCell) —
+        # stamps serving_site_id/cell_name/sector/local_cell_id/dist_km
+        # onto each sample whose PCI (4G) / BCCH+BSIC (2G) / SC (3G)
+        # resolves to a Sector. No-op with no site directory imported.
+        attach_serving_cells(samples_data, validated_data.get('tech') or '4G')
         # Nearby-site tagging (~1km), computed server-side at save time so
         # it's always in sync with what was actually stored, not trusted
         # from the client. Stored inside the existing `meta` JSONField
@@ -669,10 +933,7 @@ class DriveTestSessionWriteSerializer(serializers.ModelSerializer):
         session = DriveTestSession.objects.create(
             uploaded_by=self.context['request'].user, meta=meta, **validated_data
         )
-        DriveTestSample.objects.bulk_create(
-            [DriveTestSample(session=session, **s) for s in samples_data],
-            batch_size=1000,
-        )
+        _bulk_insert_dt_samples(session.id, samples_data)
         # size_bytes is computed server-side, not trusted from the client
         # (v1's own field is a client-side IndexedDB-quota estimate that
         # means nothing once storage is Postgres) — see the model
@@ -683,7 +944,12 @@ class DriveTestSessionWriteSerializer(serializers.ModelSerializer):
         # out above (to inject nearby_site_ids) so it's added back in
         # here explicitly — otherwise this estimate would silently stop
         # counting it.
-        session.size_bytes = len(str(validated_data)) + len(str(meta)) + sum(len(str(s)) for s in samples_data)
+        # O(1) size estimate: every sample dict is the same fixed shape and
+        # near-identical length, so one representative row * count is within
+        # a rounding error of stringifying all of them — and doesn't walk
+        # up to 5000 dicts on every request just for a History-card number.
+        per_sample = len(str(samples_data[0])) if samples_data else 0
+        session.size_bytes = len(str(validated_data)) + len(str(meta)) + per_sample * len(samples_data)
         session.save(update_fields=['size_bytes'])
         return session
 

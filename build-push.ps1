@@ -1,12 +1,12 @@
-<#
+﻿<#
 .SYNOPSIS
-  build-push.ps1 — Windows-native port of build-push.sh. Builds, tags, and
+  build-push.ps1 - Windows-native port of build-push.sh. Builds, tags, and
   pushes the four DT-WATCH v2 images to Nexus.
 
 .DESCRIPTION
   Line-for-line behavioral port of build-push.sh (same positional args, same
   branch-derived version suffix, same immutable tag format, same registry
-  cache, same parallel builds, same env-var switches) — written so this can
+  cache, same parallel builds, same env-var switches) - written so this can
   run directly from Windows PowerShell without WSL or Git Bash. The .sh
   script is bash-only (arrays, [[ ]], trap-free `set -euo pipefail`) and
   isn't something PowerShell can just dot-source, hence a real port rather
@@ -15,13 +15,13 @@
   Known, deliberate differences from the bash version:
     - Architecture detection for the cross-build check uses
       `docker version --format '{{.Server.Arch}}'` (amd64/arm64) instead of
-      `uname -m` (x86_64/aarch64) — Windows has no `uname`; Docker's own
+      `uname -m` (x86_64/aarch64) - Windows has no `uname`; Docker's own
       reported server arch is the more direct signal anyway.
     - Nepal-time formatting uses .NET's "Nepal Standard Time" Windows time
       zone ID via [System.TimeZoneInfo], not `TZ=Asia/Kathmandu date`.
     - Parallel builds use one docker.exe process per component
       (Start-Process, waited on after all four are launched) instead of
-      bash job control (`&` + `wait`) — same "start all four, wait, then
+      bash job control (`&` + `wait`) - same "start all four, wait, then
       report" shape, different mechanism.
 
 .EXAMPLE
@@ -45,7 +45,7 @@
     [1] Version      - vX.Y.Z (interactive prompt when omitted)
     [2] Registry     - Nexus Docker registry (default: nexus.ntc.net.np)
     [3] ProjectName  - Project namespace (default: dtwatch)
-    [4] BumpType     - major, minor, or bugfix (default: bugfix) — only used
+    [4] BumpType     - major, minor, or bugfix (default: bugfix) - only used
                         to compute the suggested version in interactive mode
 
   Branch convention: the current git branch decides the version suffix.
@@ -62,12 +62,12 @@
   Tags pushed to Nexus:
     - Versioned:  <image>:$Version
     - Immutable:  <image>:$Version-$BuildNo-$NptTime-$GitSha (identical
-                  across all four — one build, one correlatable tag)
+                  across all four - one build, one correlatable tag)
     - Latest:     <image>:latest (skipped for prerelease versions, and when
                   $env:NO_LATEST = "1")
 
   Environment variables (same names as the bash version, still read via
-  $env:, not PowerShell parameters — this keeps `ONLY=frontend .\build-
+  $env:, not PowerShell parameters - this keeps `ONLY=frontend .\build-
   push.ps1 v1.0.0`-style one-liners working the same way as the bash
   version's env-var switches):
     PLATFORMS      target platform(s), default linux/amd64
@@ -94,7 +94,7 @@ function Exit-WithError {
     exit 1
 }
 
-# Registry credentials only — never blanket-load the whole .env into the
+# Registry credentials only - never blanket-load the whole .env into the
 # process environment. This stack's .env holds SECRET_KEY and the Postgres
 # password; reading only the two keys actually needed keeps them out of
 # every child `docker buildx build`'s environment. Mirrors build-push.sh's
@@ -129,7 +129,7 @@ if ([string]::IsNullOrEmpty($ProjectName)) { $ProjectName = $DefaultProjectName 
 $Platforms = $env:PLATFORMS
 if ([string]::IsNullOrEmpty($Platforms)) { $Platforms = $DefaultPlatforms }
 
-# dir:image pairs — the two differ for every component here (backend-django
+# dir:image pairs - the two differ for every component here (backend-django
 # -> django, frontend-react -> frontend), kept explicit rather than derived.
 $Components = @(
     [PSCustomObject]@{ Dir = 'backend-django'; Name = 'django' }
@@ -193,7 +193,7 @@ if ($CurrentBranch -eq 'main' -and $Version -like '*-dev') {
 } elseif ($CurrentBranch -ne 'main' -and $Version -notlike '*-dev') {
     $Version = "$Version-dev"
     $branchLabel = if ($CurrentBranch) { $CurrentBranch } else { 'unknown' }
-    Write-Host "Non-main branch ($branchLabel) — appending -dev: $Version"
+    Write-Host "Non-main branch ($branchLabel) - appending -dev: $Version"
 }
 
 if ($Version -notmatch '^(v|release\.)?[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9.]+)?$') {
@@ -201,7 +201,7 @@ if ($Version -notmatch '^(v|release\.)?[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-
 }
 
 # Git-tag real releases only (main). Dev builds stay fully traceable through
-# the immutable image tag, which embeds the commit sha — tagging every dev
+# the immutable image tag, which embeds the commit sha - tagging every dev
 # build would just clutter `git tag --list`. FORCE_GIT_TAG=1 overrides.
 if ($CurrentBranch -ne 'main' -and $env:FORCE_GIT_TAG -ne '1') {
     $branchLabel = if ($CurrentBranch) { $CurrentBranch } else { 'unknown' }
@@ -241,7 +241,7 @@ $BuildNo = $env:BUILD_NO
 if ([string]::IsNullOrEmpty($BuildNo)) {
     $BuildNo = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()
 }
-# Nepal Standard Time via the Windows tz database — no TZ env-var
+# Nepal Standard Time via the Windows tz database - no TZ env-var
 # conversion needed on this platform.
 $NptTime = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId(
     [DateTime]::UtcNow, 'Nepal Standard Time'
@@ -256,7 +256,7 @@ if ($Version -notmatch '-' -and $env:NO_LATEST -ne '1') {
 }
 
 # A named builder is required on the LXC hosts this project's CI/CD
-# convention targets (see build-push.sh's own comment) — harmless
+# convention targets (see build-push.sh's own comment) - harmless
 # everywhere else, including a plain Windows/Docker Desktop host.
 docker buildx create --name dtwatch-builder --use *> $null
 if ($LASTEXITCODE -ne 0) {
@@ -265,7 +265,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Cross-build check. Uses Docker's own reported server architecture rather
-# than `uname -m` (which doesn't exist on Windows) — see the port-notes
+# than `uname -m` (which doesn't exist on Windows) - see the port-notes
 # comment at the top of this file.
 $HostArch = (& docker version --format '{{.Server.Arch}}' 2>$null)
 switch ($HostArch) {
@@ -274,7 +274,7 @@ switch ($HostArch) {
     default { $NativePlatform = '' }
 }
 if ($Platforms -ne $NativePlatform) {
-    Write-Host "Cross-building ($Platforms on $HostArch) — installing binfmt emulators"
+    Write-Host "Cross-building ($Platforms on $HostArch) - installing binfmt emulators"
     docker run --privileged --rm tonistiigi/binfmt --install all
 }
 
@@ -339,7 +339,7 @@ foreach ($job in $Jobs) {
 if ($Failed) { exit 1 }
 
 Write-Host '============================================='
-Write-Host " Pushed to $Registry/$ProjectName:"
+Write-Host " Pushed to $Registry/$ProjectName`:"
 Write-Host "   :$Version"
 Write-Host "   :$ImmutableTag"
 if ($TagLatest) { Write-Host '   :latest' }

@@ -21,7 +21,19 @@
 
 services:
   db:
-    image: postgres:16-alpine
+    # postgis/postgis, not postgres:16-alpine (2026-08-25, PostGIS adoption).
+    # Debian-based (glibc) vs the prior Alpine (musl) image — deliberate,
+    # not an oversight: mixing libc families under an EXISTING ./data/pgdata
+    # bind mount risks silently corrupting collation-dependent indexes, a
+    # known Postgres Alpine<->Debian gotcha. Confirmed via AskUserQuestion:
+    # local ./data/pgdata gets wiped and reinitialized fresh on this switch
+    # (see docs/RUNBOOK.md's PostGIS entry for the reset steps) rather than
+    # dumped/restored, since this is dev data. A staging/prod adoption of
+    # this same image needs its own real pg_dump/restore pass — this compose
+    # file is shared with the ssw-prod deploy (see RUNBOOK.md), so treat
+    # that as a separate, deliberate migration, not something this switch
+    # does for you.
+    image: postgis/postgis:16-3.5
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-dtwatch_db}
@@ -103,6 +115,15 @@ services:
 
   django:
     build: ./backend-django
+    # Explicit, project-name-independent tag (2026-08-26) — added so
+    # `site-sync` below can reference this exact image without depending
+    # on Compose's auto-derived `<project>-django` name, which differs
+    # between environments (locally the project name is `bagalewatch-v2`
+    # from this folder's name; RUNBOOK.md's staging deploy runs the same
+    # compose file from `/data/dtwatch`, which would auto-derive
+    # `dtwatch-django` instead — a literal tag here means both
+    # environments agree on the same name).
+    image: dtwatch-backend-django
     restart: unless-stopped
     env_file:
       # Single root .env for the whole stack (2026-08-21 — "do i need .env in
@@ -183,7 +204,95 @@ services:
       timeout: 5s
       retries: 5
 
+  # Scheduled half of the Live Site Directory sync (2026-08-26) — the
+  # manual "Sync now" half is core/site_import.py's LiveSiteSyncView,
+  # called from the app itself. `image:` (not its own `build:`) points at
+  # the exact image `django` above builds — same code, just a different
+  # CMD — so this never gets its own separate image built/tagged; it
+  # reuses whatever `docker compose build django` already produced.
+  # Requires that image to already exist (i.e. `django` has been built at
+  # least once); entrypoint.sh's `migrate --noinput` runs here too before
+  # the loop starts, harmless if `django` already applied everything.
+  #
+  # Stays completely idle (loops, logs nothing alarming, never writes)
+  # until LIVE_SITE_API_URL is set in .env — see core/live_sites.py's
+  # module docstring. Safe to leave running with it unset.
+  site-sync:
+    image: dtwatch-backend-django
+    restart: unless-stopped
+    command: ["python", "manage.py", "sync_live_sites", "--loop"]
+    env_file:
+      - ./.env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      APP_VERSION: ${APP_VERSION:-dev}
+    depends_on:
+      db:
+        condition: service_healthy
+    # No `ports:` — this container makes outbound calls only (to Postgres
+    # and, once configured, the live Site Directory API), same reasoning
+    # as every other internal-only service above.
+
+  # Scheduled data-governance side of the crowdsourced-telemetry pipeline
+  # (2026-08-30). Reuses the `django` image (like `site-sync` above), just
+  # a different CMD: rolls monthly partitions of v2_telemetry_samples
+  # forward and enforces retention (aggregate expired partitions into
+  # coverage bins, then DROP them) every TELEMETRY_MAINTENANCE_INTERVAL_
+  # HOURS. The network-planning brief makes retention a hard requirement
+  # "enforced in the pipeline, not left to a policy someone has to
+  # remember to run" — this service IS that enforcement. Idle-safe: with
+  # no telemetry data it just ensures partitions exist and logs "kept N".
+  telemetry-maintenance:
+    image: dtwatch-backend-django
+    restart: unless-stopped
+    command: ["python", "manage.py", "telemetry_maintenance", "--loop"]
+    env_file:
+      - ./.env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      APP_VERSION: ${APP_VERSION:-dev}
+    depends_on:
+      db:
+        condition: service_healthy
+    # Outbound only (Postgres) — no `ports:`.
+
+  # Continuous coverage-bin rollup (2026-09-01) — deliberately a SEPARATE
+  # service/loop from telemetry-maintenance above, not an extra step
+  # folded into it, because the two run on very different cadences: this
+  # one needs to run every TELEMETRY_BIN_ROLL_INTERVAL_MINUTES (default
+  # 60) so the Coverage map reflects recent samples, while retention only
+  # needs to run roughly daily. See roll_telemetry_bins.py's module
+  # docstring for how the two stay coordinated (TelemetryRollState
+  # watermark) without double-counting. Idle-safe: with no new samples it
+  # just logs "nothing new yet" each pass.
+  telemetry-bin-roller:
+    image: dtwatch-backend-django
+    restart: unless-stopped
+    command: ["python", "manage.py", "roll_telemetry_bins", "--loop"]
+    env_file:
+      - ./.env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      APP_VERSION: ${APP_VERSION:-dev}
+    depends_on:
+      db:
+        condition: service_healthy
+    # Outbound only (Postgres) — no `ports:`.
+
   node-gateway:
+    # Parked behind a Compose profile (2026-08-31) to cut idle load — the
+    # gateway is still Phase-0-scope (health + a WS echo, no real event
+    # types) and nothing in the app calls it yet (no WebSocket code in
+    # frontend-react/src; VITE_NODE_GATEWAY_URL is blanked). It does NOT
+    # start on a plain `docker compose up`. Bring it back when real-time
+    # push work actually begins:
+    #   docker compose --profile future up -d node-gateway
+    # Everything else about the service (build context, deploy override in
+    # docker-compose.deploy.yml, build-push image target) is left intact.
+    profiles: ["future"]
     build: ./backend-node
     restart: unless-stopped
     env_file:
@@ -208,6 +317,15 @@ services:
       retries: 5
 
   go-worker:
+    # Parked behind a Compose profile (2026-08-31) to cut idle load — the
+    # worker is still Phase-0-scope (a /health route only, no Redis job
+    # consumer) and nothing enqueues to it (no queue push anywhere in
+    # backend-django/; TRP parsing still runs client-side). It does NOT
+    # start on a plain `docker compose up`. Bring it back when heavy
+    # server-side processing work actually begins:
+    #   docker compose --profile future up -d go-worker
+    # Build context, deploy override, and build-push target are untouched.
+    profiles: ["future"]
     build: ./backend-go
     restart: unless-stopped
     environment:
@@ -251,8 +369,10 @@ services:
         VITE_GIT_SHA: ${GIT_SHA:-}
     restart: unless-stopped
     depends_on:
+      # node-gateway dropped from here (2026-08-31) — it's now behind the
+      # `future` profile so it isn't running to depend on, and the SPA
+      # never calls it at runtime anyway (this was startup ordering only).
       - django
-      - node-gateway
     ports:
       - "5180:80"
 

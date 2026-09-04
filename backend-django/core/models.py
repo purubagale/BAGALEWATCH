@@ -14,7 +14,68 @@ values — Phase 1 only needs to read and display them.
 import uuid
 
 from django.contrib.auth.models import AbstractUser
+from django.contrib.gis.db.models import PointField
+from django.contrib.gis.geos import Point
 from django.db import models
+
+
+def _point_or_none(lat, lng):
+    """`Point(x, y)` is (lng, lat) — GEOS/PostGIS order longitude first,
+    the opposite of this codebase's own lat/lng field order everywhere
+    else, which is exactly the kind of swap that silently produces valid-
+    looking points in the ocean off West Africa. Centralized here so every
+    caller goes through one place instead of risking that swap per call
+    site."""
+    if lat is None or lng is None:
+        return None
+    return Point(float(lng), float(lat), srid=4326)
+
+
+class SignalFloatField(models.FloatField):
+    """A single-precision (`real`, 4 bytes) float column instead of
+    Django's default `double precision` (8 bytes). Used only for
+    DriveTestSample's RF signal readings (RSRP/RSRQ/SINR/RSCP/Ec-No/
+    RxQual/throughput/serving-distance) — the single largest table in the
+    app, and these values are modem-quantized to 1/16 dB or 0.5 dB, well
+    within `real`'s ~7 significant digits, so nothing a coverage plot or
+    its band thresholds can see changes. NOT used for lat/lng, which
+    genuinely need `double` for sub-metre GPS precision. Halving 8 of the
+    ~24 columns is ~30 bytes/row saved as sessions accumulate.
+
+    DRF's ModelSerializer maps this to `serializers.FloatField` via MRO
+    (it subclasses FloatField), so the API contract is unchanged."""
+
+    def db_type(self, connection):
+        return 'real'
+
+
+class GeoSyncQuerySet(models.QuerySet):
+    """Keeps `location` (a generated PostGIS point, see Site/
+    DriveTestSample below) in sync with the real lat/lng columns for
+    EVERY write path, not just `Model.save()`. Site and DriveTestSample
+    are both written almost exclusively via `bulk_create`/`bulk_update`
+    (site_import.py, seed_legacy_data.py, drive_test.py, serializers.py —
+    none of them call `.save()` per row, for the same throughput reasons
+    their own docstrings/comments already give), so a `save()` override
+    alone would never actually run for real traffic. Overriding at the
+    QuerySet level instead means every existing and future call site gets
+    `location` populated for free, with zero changes required at the call
+    site itself."""
+
+    def bulk_create(self, objs, *args, **kwargs):
+        objs = list(objs)
+        for obj in objs:
+            obj.location = _point_or_none(obj.lat, obj.lng)
+        return super().bulk_create(objs, *args, **kwargs)
+
+    def bulk_update(self, objs, fields, *args, **kwargs):
+        objs = list(objs)
+        fields = list(fields)
+        if ('lat' in fields or 'lng' in fields) and 'location' not in fields:
+            for obj in objs:
+                obj.location = _point_or_none(obj.lat, obj.lng)
+            fields.append('location')
+        return super().bulk_update(objs, fields, *args, **kwargs)
 
 
 class User(AbstractUser):
@@ -22,6 +83,11 @@ class User(AbstractUser):
         ('superadmin', 'Superadmin'),
         ('admin', 'Admin'),
         ('viewer', 'Viewer'),
+        # Rescue-location lookups only (core/rescue.py's IsRescueOperator) —
+        # deliberately NOT admin/superadmin-implied in the other direction;
+        # see IsRescueOperator's own comment for why superadmin is granted
+        # this too while admin/viewer are not.
+        ('rescue_operator', 'Rescue Operator'),
     ]
     # Overrides AbstractUser's default max_length=128. The legacy password
     # hashers' rewritten algorithm prefix ('bagalewatch_legacy_pbkdf2$...')
@@ -37,6 +103,22 @@ class User(AbstractUser):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='viewer')
     name = models.CharField(max_length=150, blank=True)
     dept = models.CharField(max_length=100, blank=True)
+
+    # ── Operator data-access scope (2026-09-02) ─────────────────────────
+    # Empty list (the default) = unrestricted: this account sees telemetry
+    # data from every mobile operator, matching a regulator/government
+    # (NTA) role or a superadmin. One or more MNC codes here restricts
+    # every scoped telemetry endpoint (see telemetry.py's
+    # `_scope_by_operator`) to samples/devices/coverage bins/rescue
+    # lookups reporting one of those MNCs — the right posture for a single
+    # telecom operator's own staff, who should never see another
+    # operator's subscriber data. MNC (not an operator-name FK) because
+    # it's exactly what the SDK already reports per sample (Sample.kt's
+    # `mnc`, stored on TelemetrySample) — no separate operator-identity
+    # mapping to keep in sync. A list rather than one value in case a
+    # single account should ever legitimately span more than one operator
+    # (e.g. a shared infrastructure company); the common case is one code.
+    operator_mncs = models.JSONField(default=list, blank=True)
 
     # ── Keycloak SSO (2026-08-23) ───────────────────────────────────────
     # `auth_source` exists so the UI can tell an admin that this user's role
@@ -81,6 +163,75 @@ class Site(models.Model):
     district = models.CharField(max_length=100, blank=True, default='', db_index=True)
     lat = models.FloatField(null=True, blank=True)
     lng = models.FloatField(null=True, blank=True)
+    # PostGIS point mirroring lat/lng, added 2026-08-25 for real spatial
+    # queries (nearest-site / within-radius) instead of the bounding-box +
+    # Python-haversine hack `_nearby_site_ids` (serializers.py) used to be
+    # stuck with. lat/lng REMAIN the source of truth and the fields every
+    # existing caller (frontend, serializers, CSV import/export) reads —
+    # `location` is kept in sync via GeoSyncQuerySet/save() below and
+    # exists purely for spatial `.filter()`/`.annotate()` lookups.
+    # `geography=True` so `__distance_lte`/`__dwithin` work in real meters
+    # over the whole country's extent without a manual degrees<->meters
+    # conversion; `spatial_index=True` is the field default but named here
+    # since the GiST index is the entire reason this field exists.
+    location = PointField(geography=True, srid=4326, null=True, blank=True, spatial_index=True)
+
+    # ── Live Site Directory sync (2026-08-26) ────────────────────────────
+    # An external API (not yet wired up — see core/live_sites.py's module
+    # docstring) is the authoritative source for a site's identity/
+    # location/on-air state, confirmed via AskUserQuestion: every sync
+    # OVERWRITES name/region/district/palika/ward_no/lat/lng/
+    # deployment_status/operational_technologies. Sector/KPI/DT data is a
+    # completely separate set of fields/models and none of this touches
+    # them — those stay manually uploaded exactly as today.
+    #
+    # `sitename1`/`sitename2` both exist in the source payload and are NOT
+    # reliably derivable from each other (seen identical in one real
+    # sample, one embedding the site ID as a prefix in another) — `name`
+    # above is populated from sitename2 (the clean human label, matching
+    # how `name` is used everywhere else in this app already), and
+    # `sitename1` is kept verbatim alongside it rather than guessed at or
+    # discarded.
+    sitename1 = models.CharField(max_length=255, blank=True, default='')
+    # palika = the municipality/rural municipality (Nepal's local-government
+    # tier below district) — genuinely new information this app had no
+    # column for before this API. `palika_type` distinguishes
+    # Municipality/Rural Municipality/Metropolitan City etc; kept as a
+    # plain string, not a choices= enum, since the source system's own
+    # vocabulary for this isn't something to hardcode a closed list for.
+    palika = models.CharField(max_length=150, blank=True, default='')
+    palika_type = models.CharField(max_length=50, blank=True, default='')
+    ward_no = models.IntegerField(null=True, blank=True)
+    # The source API's own "Operational"/"Planned"/etc — a SEPARATE concept
+    # from `status` below (which is this app's own KPI-health traffic light:
+    # ok/warn/crit/nodata, computed from uploaded KPI data). Naming this
+    # `deployment_status` rather than reusing/overloading `status` keeps
+    # "is this site built yet" and "is this site performing well" from
+    # colliding in one column.
+    deployment_status = models.CharField(max_length=30, blank=True, default='')
+    # List of {technology, raw_technology, on_air_date, raw_on_air_date}
+    # dicts, stored verbatim as JSON — same "normalize once the shape stops
+    # evolving" call already made for kpi_2g_json/kpi_3g_json/meta
+    # elsewhere in this schema, not a new pattern.
+    operational_technologies = models.JSONField(null=True, blank=True)
+    # The source system's own two timestamps, passed through as-is (NOT
+    # this app's `updated_at`/`updated_by` below, which track a manual
+    # admin edit in THIS app — a different event entirely). `live_synced_at`
+    # is this app's own bookkeeping: when WE last pulled this record, which
+    # is what lets an admin tell "synced 5 minutes ago" from "synced last
+    # month, API may be down" without needing separate monitoring.
+    live_site_updated_at = models.DateTimeField(null=True, blank=True)
+    live_last_updated_at = models.DateTimeField(null=True, blank=True)
+    live_synced_at = models.DateTimeField(null=True, blank=True)
+    # Full raw API record for this site, verbatim. Deliberately NOT trying
+    # to add a column for every field the source payload carries (e.g.
+    # province_nepali/district_nepali/palika_nepali) — this app renders no
+    # Nepali-language UI today, so dedicated columns for those would sit
+    # unused. Keeping the raw record means that data isn't thrown away and
+    # a future feature can read it straight out of here without another
+    # migration or another round of "did we capture that field."
+    live_raw = models.JSONField(null=True, blank=True)
+
     type = models.CharField(max_length=50, blank=True, default='')
     tech = models.CharField(max_length=50, blank=True, default='')
     status = models.CharField(max_length=20, blank=True, default='nodata')
@@ -130,11 +281,20 @@ class Site(models.Model):
         User, null=True, blank=True, on_delete=models.SET_NULL, related_name='updated_sites'
     )
 
+    objects = GeoSyncQuerySet.as_manager()
+
     class Meta:
         db_table = 'v2_sites'
         indexes = [
             models.Index(fields=['region', 'district']),
         ]
+
+    def save(self, *args, **kwargs):
+        # Covers the .save()/.create()/update_or_create() path — see
+        # GeoSyncQuerySet's docstring for why bulk_create/bulk_update need
+        # their own sync instead of relying on this alone.
+        self.location = _point_or_none(self.lat, self.lng)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f'{self.id} — {self.name}'
@@ -550,44 +710,49 @@ class DriveTestSample(models.Model):
     date = models.CharField(max_length=16, blank=True, default='')
     lat = models.FloatField(null=True, blank=True)
     lng = models.FloatField(null=True, blank=True)
-    rsrp = models.FloatField(null=True, blank=True)
-    rsrq = models.FloatField(null=True, blank=True)
-    sinr = models.FloatField(null=True, blank=True)
-    dl = models.FloatField(null=True, blank=True)
+    # Mirrors Site.location — see its comment for the full rationale. Same
+    # GeoSyncQuerySet keeps this synced from lat/lng on every bulk_create
+    # (this table's only real write path — see the Meta.indexes comment
+    # below on drive_test.py's near() and the perf history that motivated
+    # the lat/lng btree index in the first place).
+    location = PointField(geography=True, srid=4326, null=True, blank=True, spatial_index=True)
+    rsrp = SignalFloatField(null=True, blank=True)
+    rsrq = SignalFloatField(null=True, blank=True)
+    sinr = SignalFloatField(null=True, blank=True)
+    dl = SignalFloatField(null=True, blank=True)
     pci = models.IntegerField(null=True, blank=True)
     serving_site_id = models.CharField(max_length=64, blank=True, null=True)
     serving_site_name = models.CharField(max_length=255, blank=True, null=True)
     serving_sector = models.CharField(max_length=20, blank=True, null=True)
     serving_cell_name = models.CharField(max_length=100, blank=True, null=True)
     serving_local_cell_id = models.IntegerField(null=True, blank=True)
-    serving_dist_km = models.FloatField(null=True, blank=True)
+    serving_dist_km = SignalFloatField(null=True, blank=True)
     cell_role = models.CharField(max_length=10, choices=ROLE_CHOICES, blank=True, default='serving')
-    rx_qual = models.FloatField(null=True, blank=True)
+    rx_qual = SignalFloatField(null=True, blank=True)
     bcch = models.IntegerField(null=True, blank=True)
     bsic = models.IntegerField(null=True, blank=True)
-    rscp = models.FloatField(null=True, blank=True)
-    ecno = models.FloatField(null=True, blank=True)
+    rscp = SignalFloatField(null=True, blank=True)
+    ecno = SignalFloatField(null=True, blank=True)
     scrambling_code = models.IntegerField(null=True, blank=True)
+
+    objects = GeoSyncQuerySet.as_manager()
 
     class Meta:
         db_table = 'v2_dt_samples'
         indexes = [
             models.Index(fields=['session']),
             # 2026-08-10 perf audit finding — drive_test.py's `near` action
-            # (Explore by Coordinates) does a bounding-box prefilter on
-            # lat/lng "before the exact haversine check in Python", and
-            # that method's own docstring already claims it's a "cheap
-            # index range scan" — but no such index actually existed on
-            # this table, so every one of those searches was really doing
-            # a full sequential scan across every sample in every session
-            # ever uploaded (this table is the single biggest one in the
-            # app — a single upload batch can be 120,000+ rows). This
-            # index is what makes that docstring's claim true. Plain
-            # btree, not PostGIS (this stack deliberately has none, see
-            # _haversine_km's own docstring) — Postgres uses it to narrow
-            # to the lat range first, then filters the lng range and the
-            # exact haversine distance against that much smaller row set.
-            models.Index(fields=['lat', 'lng']),
+            # (Explore by Coordinates) used to do a bounding-box prefilter
+            # on plain lat/lng "before the exact haversine check in
+            # Python" (this table is the single biggest one in the app —
+            # a single upload batch can be 120,000+ rows). That was a
+            # btree index on (lat, lng) standing in for real spatial
+            # indexing, back when "this stack deliberately has [no]
+            # PostGIS" (see the removed _haversine_km's old docstring).
+            # 2026-08-25: PostGIS adoption replaced it — `near()` now
+            # queries `location` directly, which gets its own GiST index
+            # via `spatial_index=True` above, so this btree index is gone
+            # rather than left behind as unused dead weight.
         ]
 
     def __str__(self):
@@ -667,9 +832,10 @@ class MenuItem(models.Model):
     (read/write/update/delete) permission matrix that gates real data
     operations elsewhere (Sites/Tree/Thresholds/etc CRUD, see
     MenuPermission/CRUD_MENUS above) — a nav entry only ever needs a
-    yes/no "can this role see this link," never a full CRUD shape. The 4
-    ACCESS_CHOICES below are an exact enumeration of the 4 different
-    checks Layout.tsx used to hardcode per item:
+    yes/no "can this role see this link," never a full CRUD shape. The
+    first 4 ACCESS_CHOICES below are an exact enumeration of the 4
+    different checks Layout.tsx used to hardcode per item (a 5th,
+    ACCESS_RESCUE, was added later — see its own comment below):
       - ACCESS_ALL: unconditional (Sites Topology had no check at all)
       - ACCESS_PERMISSION: isAllowed(role, user.permissions[permission_key])
         — same MenuPermission-backed matrix every other simple menu key
@@ -699,11 +865,25 @@ class MenuItem(models.Model):
     ACCESS_PERMISSION = 'permission'
     ACCESS_ADMIN = 'admin'
     ACCESS_SUPERADMIN = 'superadmin'
+    # ACCESS_RESCUE (2026-09-03) -- a 5th tier for the Rescue Lookup menu
+    # item, mirroring core/rescue.py's IsRescueOperator permission class
+    # exactly (role in ('rescue_operator', 'superadmin')) rather than
+    # going through ACCESS_PERMISSION's generic default-deny matrix.
+    # ACCESS_PERMISSION was deliberately NOT used here: that path is
+    # granted per-role through PermissionsMatrixView/PermissionsPage.tsx,
+    # which today only ever edits the 'admin'/'viewer' rows (see that
+    # view's docstring) -- extending it to a 3rd editable role is a
+    # bigger, separate change. Access to this tier is instead granted the
+    # same way IsRescueOperator itself is: by a superadmin assigning a
+    # user the 'rescue_operator' role at all (UsersPage.tsx), which is
+    # already the "conscious grant" the rescue feature's own docs call for.
+    ACCESS_RESCUE = 'rescue'
     ACCESS_CHOICES = [
         (ACCESS_ALL, 'Any signed-in user'),
         (ACCESS_PERMISSION, 'Governed by Permissions matrix'),
         (ACCESS_ADMIN, 'Admin + superadmin only'),
         (ACCESS_SUPERADMIN, 'Superadmin only'),
+        (ACCESS_RESCUE, 'Rescue operator + superadmin only'),
     ]
     LINK_ROUTE = 'route'
     LINK_EXTERNAL = 'external'
@@ -717,7 +897,13 @@ class MenuItem(models.Model):
     # Internal route (e.g. '/sla') or a full external URL (e.g.
     # 'https://...') depending on link_type — validated in the serializer,
     # not here, so admin.py / shell usage isn't blocked by DRF-only checks.
-    path = models.CharField(max_length=300)
+    # unique=True (2026-08-?? via migration 0042_menuitem_path_unique) --
+    # restored here after this field drifted out of sync with that
+    # already-applied migration (found 2026-09-02 while checking for
+    # drift before deploying rescue-policy/remote-optout: without this,
+    # `makemigrations` would generate a migration that DROPS the unique
+    # constraint the DB already enforces, not adds one).
+    path = models.CharField(max_length=300, unique=True)
     parent = models.ForeignKey('self', null=True, blank=True, related_name='children', on_delete=models.CASCADE)
     order = models.IntegerField(default=0)
     access = models.CharField(max_length=12, choices=ACCESS_CHOICES, default=ACCESS_ALL)
@@ -822,6 +1008,47 @@ class BrandingSettings(models.Model):
         return self.app_name or '(default branding)'
 
 
+class LiveSiteSyncStatus(models.Model):
+    """Singleton row (id forced to 1, same convention as BrandingSettings
+    above) tracking the Live Site Directory sync's own run history — see
+    core/live_sites.py's module docstring for what the sync itself does.
+
+    Exists so the "Live Site Sync" admin page can show real status (last
+    run, last success, last result, last error) WITHOUT the API URL/key
+    themselves ever touching the database — those stay .env-only,
+    confirmed via AskUserQuestion 2026-08-26 as the deliberate middle
+    ground between "edit .env" and "store the credential in Postgres."
+
+    Updated by every sync_live_sites() call regardless of what triggered
+    it — the scheduled `site-sync` service's loop and the manual "Sync
+    now" endpoint both write here, so this is always the most recent
+    attempt from either source, not two separate histories."""
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    # Distinct from last_run_at so the page can show "last succeeded 3
+    # days ago" even while today's runs have all been failing — collapsing
+    # these into one field would hide exactly the information an admin
+    # needs to notice the API's been down for days.
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    last_created = models.PositiveIntegerField(null=True, blank=True)
+    last_updated = models.PositiveIntegerField(null=True, blank=True)
+    last_warnings = models.JSONField(null=True, blank=True)
+    # Blank (not null) on a clean run — cleared on every SUCCESSFUL sync,
+    # so a stale error from three attempts ago never lingers on-screen
+    # once the underlying problem is actually fixed.
+    last_error = models.TextField(blank=True, default='')
+
+    class Meta:
+        db_table = 'v2_live_site_sync_status'
+
+    def save(self, *args, **kwargs):
+        self.id = 1
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'Live Site Sync status (last run {self.last_run_at})'
+
+
 class DashboardCardConfig(models.Model):
     """Per-user saved layout for the new customizable Dashboard home page
     (2026-08-08: "dashboard display contents also should be customizable
@@ -913,3 +1140,641 @@ class ApiKey(models.Model):
 
     def __str__(self):
         return f'{self.name} ({self.key_prefix}…)'
+
+
+# ── Crowdsourced network telemetry (2026-08-30) ────────────────────────
+# The backend intake for the opt-in crowdsourced coverage pilot described
+# in samples/nepal_telecom_network_planning_brief_2.docx — the second of
+# the brief's "one platform, two intake paths" (the first being the .trp
+# drive-test manager above). The Android side is the provided
+# netplanning-telemetry-sdk; this is only the ingestion + storage +
+# retention half. See core/telemetry.py for the endpoint and the brief's
+# "Data governance" section for why retention is enforced in code here.
+
+
+class TelemetryIngestKey(models.Model):
+    """Auth credential for the telemetry ingestion endpoint. Deliberately
+    a SEPARATE store from ApiKey (the partner-integration external API) —
+    this is a high-volume, single-purpose, public-internet-facing ingest
+    with its own rate limit; keeping it isolated means a compromised or
+    throttled telemetry key can never touch the sites/DT data the ApiKey
+    scopes gate, and vice versa (explicit scoping decision, 2026-08-30).
+
+    Same one-way-hash posture as ApiKey / User.password: only a SHA-256
+    hash of the full key is stored, plus a non-secret prefix for lookup.
+    Full key (`tel_<hex>`) is shown once at creation and never again.
+    """
+
+    name = models.CharField(max_length=100)
+    key_prefix = models.CharField(max_length=16, unique=True, db_index=True)
+    key_hash = models.CharField(max_length=64)
+    is_active = models.BooleanField(default=True)
+    # Batches/minute this key may POST (the brief's "rate-limited"
+    # requirement). Enforced in core/telemetry.py against the Django cache.
+    rate_limit_per_min = models.PositiveIntegerField(default=600)
+    created_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='telemetry_keys_created'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'v2_telemetry_ingest_keys'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.name} ({self.key_prefix}…)'
+
+
+class TelemetryBatch(models.Model):
+    """One accepted upload batch, keyed by a content hash — the idempotency
+    ledger. The SDK's UploadWorker re-POSTs the exact same batch on any
+    non-2xx (WorkManager retry), so matching that with a batch-level hash
+    is both simpler and more correct than a per-sample unique constraint
+    (which a RANGE-partitioned samples table can't express without the
+    partition key, and that key — receipt time — differs on every retry).
+    A duplicate POST is answered 2xx with accepted=0 and never re-inserts.
+    Pruned alongside the samples."""
+
+    batch_hash = models.CharField(max_length=64, unique=True)
+    key_prefix = models.CharField(max_length=16, blank=True, default='')
+    device_count = models.PositiveIntegerField(default=0)
+    sample_count = models.PositiveIntegerField(default=0)
+    received_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'v2_telemetry_batches'
+        ordering = ['-received_at']
+
+    def __str__(self):
+        return f'{self.batch_hash[:12]}… ({self.sample_count} samples)'
+
+
+class TelemetrySample(models.Model):
+    """One crowdsourced network reading. Field set is exactly the SDK's
+    Sample.kt (samples/…/model/Sample.kt) plus server-derived `region` /
+    `received_at`. NOTHING that could resolve to a subscriber identity is
+    accepted or stored — `device_id` is the SDK's pseudonymous UUID, and
+    there is no IMEI / Android-ID / MSISDN column by design (the brief's
+    one hard privacy rule).
+
+    The DB table is RANGE-partitioned by `received_at` (monthly) — created
+    that way in migration 0040 via SeparateDatabaseAndState, since Django
+    can't emit `PARTITION BY`. Retention (prune_telemetry.py) aggregates
+    whole expired partitions into TelemetryCoverageBin and DROPs them —
+    instant, no VACUUM debt — the brief's "retention enforced
+    automatically in the pipeline, not left to a policy someone has to
+    remember to run"."""
+
+    NETWORK_TYPES = [
+        ('LTE', 'LTE'), ('NR', '5G NR'), ('UMTS', 'UMTS'), ('GSM', 'GSM'), ('UNKNOWN', 'Unknown'),
+    ]
+    TRIGGERS = [('periodic', 'Periodic'), ('handover', 'Handover'), ('manual', 'Manual')]
+
+    device_id = models.CharField(max_length=64, db_index=True)
+    ts = models.DateTimeField(db_index=True)              # device-reported time (from `ts` epoch ms)
+    received_at = models.DateTimeField(db_index=True)     # server receipt — the partition key
+
+    lat = models.FloatField(null=True, blank=True)
+    lng = models.FloatField(null=True, blank=True)        # SDK sends `lon`; stored `lng` for app consistency
+    location = PointField(geography=True, srid=4326, null=True, blank=True, spatial_index=True)
+    gps_accuracy_m = SignalFloatField(null=True, blank=True)
+
+    cell_id = models.BigIntegerField(null=True, blank=True)   # bigint: NR NCI is 36-bit
+    pci = models.IntegerField(null=True, blank=True)
+    tac = models.IntegerField(null=True, blank=True)
+    mcc = models.CharField(max_length=6, blank=True, default='')
+    mnc = models.CharField(max_length=6, blank=True, default='')
+    network_type = models.CharField(max_length=12, choices=NETWORK_TYPES, default='UNKNOWN')
+
+    rsrp_dbm = models.SmallIntegerField(null=True, blank=True)
+    rsrq_db = models.SmallIntegerField(null=True, blank=True)
+    rssi_dbm = models.SmallIntegerField(null=True, blank=True)   # GSM's "RxLevel" -- same dBm reading, different label
+    sinr_db = models.SmallIntegerField(null=True, blank=True)
+    # rx_qual/rscp_dbm/ecio_db (2026-09-03) -- proper RAN-standard metrics
+    # for 2G/3G, since RSRP/RSRQ/SINR are LTE/NR-only and RSSI alone isn't
+    # what a RAN engineer expects for those generations:
+    #   - rx_qual: GSM RxQual class (TS 45.008/27.007 8.5, 0-7). SDK's
+    #     CellSampleCollector.kt reads this from CellSignalStrengthGsm's
+    #     bit-error-rate field (its "unknown" sentinel is 99, already
+    #     filtered to null on-device).
+    #   - rscp_dbm / ecio_db: WCDMA RSCP and Ec/Io. Only ever populated on
+    #     devices running Android 10+ (API 29) -- the SDK sends null below
+    #     that, same as any other unsupported-on-this-device field.
+    rx_qual = models.SmallIntegerField(null=True, blank=True)
+    rscp_dbm = models.SmallIntegerField(null=True, blank=True)
+    ecio_db = models.SmallIntegerField(null=True, blank=True)
+    battery_pct = models.SmallIntegerField(null=True, blank=True)
+    trigger_reason = models.CharField(max_length=10, choices=TRIGGERS, default='periodic')
+
+    # Derived server-side (nearest Site.region) so coverage queries can
+    # filter/group by province without a spatial join every time; null
+    # until the site directory is populated, backfillable later.
+    region = models.CharField(max_length=100, blank=True, default='', db_index=True)
+
+    objects = GeoSyncQuerySet.as_manager()
+
+    class Meta:
+        db_table = 'v2_telemetry_samples'
+        indexes = [
+            models.Index(fields=['device_id', 'ts']),
+            models.Index(fields=['network_type']),
+        ]
+
+    def save(self, *args, **kwargs):
+        # .save()/.create() path — the high-volume ingest uses COPY
+        # (core/telemetry.py) which sets `location` in the stream itself,
+        # and GeoSyncQuerySet covers bulk_create/bulk_update; this is for
+        # everything else (tests, a backfill script, admin).
+        self.location = _point_or_none(self.lat, self.lng)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.device_id[:8]}… @ {self.ts:%Y-%m-%d %H:%M} ({self.network_type})'
+
+
+class TelemetryCoverageBin(models.Model):
+    """Aggregated coverage stats for a ~150 m geohash-7 cell, per network
+    type. Written by prune_telemetry.py when a raw-sample partition
+    expires: the raw {position, signal} points are rolled up here (mean /
+    p10 / min signal, sample & approx-device counts, time span) and then
+    dropped. Kept indefinitely — the brief's "aggregate coverage
+    statistics preferred over keeping every raw GPS point". Re-aggregation
+    weight-merges into the existing row (unique on geohash + network_type)."""
+
+    geohash = models.CharField(max_length=12, db_index=True)   # precision 7 ≈ 153 m
+    network_type = models.CharField(max_length=12, default='UNKNOWN')
+    # Added 2026-09-02 for operator-scoped coverage maps (User.operator_mncs).
+    # Blank ('') on every bin rolled up before this field existed — that
+    # historical data was merged across all operators together at
+    # aggregation time and the raw per-operator rows are gone (retention
+    # already dropped their partition), so it can never be split
+    # retroactively. Bins rolled up from now on carry the reporting
+    # devices' mnc (see prune_telemetry.py / roll_telemetry_bins.py), so a
+    # scoped user's Coverage map fills in with real per-operator data going
+    # forward; a blank-mnc historical bin simply won't match any scoped
+    # user's filter (an unrestricted/NTA account still sees it via
+    # TelemetryCoverageView's fallback network_type/region distincts).
+    mnc = models.CharField(max_length=6, blank=True, default='')
+    region = models.CharField(max_length=100, blank=True, default='', db_index=True)
+    center_lat = models.FloatField(null=True, blank=True)
+    center_lng = models.FloatField(null=True, blank=True)
+
+    sample_count = models.BigIntegerField(default=0)
+    device_count = models.PositiveIntegerField(default=0)     # approximate
+
+    rsrp_mean = SignalFloatField(null=True, blank=True)
+    rsrp_p10 = SignalFloatField(null=True, blank=True)
+    rsrp_min = models.SmallIntegerField(null=True, blank=True)
+    rsrq_mean = SignalFloatField(null=True, blank=True)
+    sinr_mean = SignalFloatField(null=True, blank=True)
+
+    first_ts = models.DateTimeField(null=True, blank=True)
+    last_ts = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_telemetry_coverage_bins'
+        constraints = [
+            # Widened 2026-09-02 to include mnc (was just geohash +
+            # network_type) — see the `mnc` field's comment above.
+            models.UniqueConstraint(fields=['geohash', 'network_type', 'mnc'], name='uniq_telemetry_bin_mnc'),
+        ]
+
+    def __str__(self):
+        return f'{self.geohash} {self.network_type} (n={self.sample_count})'
+
+
+# ── Rescue-location beacon (2026-09-01) ─────────────────────────────────
+# The backend half of samples/nepal_flood_location_beacon_proposal.docx's
+# Phase 1 opt-in beacon — a THIRD, deliberately separate lane alongside
+# the two above (uploaded .trp drive-test files; anonymous crowdsourced
+# coverage telemetry). This one links a phone number to a location, which
+# the other two are explicitly designed to never do — see
+# TelemetrySample's "no MSISDN column by design" and this section's
+# models for how that boundary is kept structural, not just documented.
+# See core/rescue.py for the enrollment/consent/lookup flow.
+
+
+class SubscriberLastLocation(models.Model):
+    """Opt-in "last known position" STATE for the rescue-location feature
+    — one upserted row per device, not a history log. This is the "for a
+    single user, store latest data only" half of the two-lane design (the
+    other half stays TelemetrySample's append-only, anonymous, aggregate-
+    then-drop pipeline for coverage/drive-test purposes). Bounded by
+    enrolled-device count rather than event count, so it stays a small,
+    cheap table even against millions of anonymous telemetry devices,
+    because enrollment here is a separate, explicit opt-in
+    (`rescue_consent`) from whatever consent gate the app uses for
+    anonymous coverage sharing.
+
+    `device_id` is the SAME salted hash `core.telemetry.hash_device_id()`
+    produces for TelemetrySample.device_id — stable per installation,
+    never reversible to the SDK's raw id. Linking a phone number here
+    never grants the ability to de-anonymize the crowdsourced coverage
+    stream; the (raw device_id -> msisdn) link only ever exists because
+    one device sent both values at enrollment time (core/rescue.py's
+    RescueEnrollView), over a channel entirely separate from the bulk
+    ingest endpoint.
+
+    Governance, per the proposal's non-negotiable list — enforced in
+    code, not left as a comment: never queried by anything except
+    core/rescue.py's RescueLookupView (IsRescueOperator, case-reference
+    required, every call written to RescueLocationAccessLog); never
+    joined against TelemetrySample; dropped entirely on consent
+    withdrawal (see core/rescue.py's RescueConsentView).
+    """
+
+    SOURCE_CHOICES = [
+        ('gps', 'GPS fix'),
+        ('network', 'Network-based location'),
+        ('cell', 'Serving-cell fallback (no fix)'),
+    ]
+
+    device_id = models.CharField(max_length=64, unique=True, db_index=True)
+    # Nullable until the subscriber separately supplies a phone number —
+    # enrollment (msisdn + consent) and location updates are two distinct
+    # moments (core/rescue.py), so a consented device can have a fresh
+    # position with no msisdn yet, but never an msisdn without consent.
+    msisdn = models.CharField(max_length=20, null=True, blank=True, db_index=True)
+
+    last_lat = models.FloatField(null=True, blank=True)
+    last_lng = models.FloatField(null=True, blank=True)
+    last_location = PointField(geography=True, srid=4326, null=True, blank=True, spatial_index=True)
+    last_accuracy_m = SignalFloatField(null=True, blank=True)
+    last_source = models.CharField(max_length=10, choices=SOURCE_CHOICES, default='gps')
+    last_seen_ts = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    # Populated from the same in-batch sample used for last_lat/last_lng
+    # (core/telemetry.py's _upsert_rescue_locations) — lets RescueLookupView
+    # apply the same operator scoping (User.operator_mncs) as every other
+    # telemetry endpoint, e.g. an NTC-scoped rescue operator only ever
+    # finds NTC subscribers by MSISDN, while an NTA/government account
+    # (empty operator_mncs) finds anyone regardless of operator.
+    last_mnc = models.CharField(max_length=6, blank=True, default='')
+    last_mcc = models.CharField(max_length=6, blank=True, default='')
+
+    # Separate from ordinary telemetry-sharing consent by design (the
+    # proposal's "opt-in by default, with a one-tap way to disable it" —
+    # for the beacon specifically). Only rows with this True are ever
+    # touched by the ingest pipeline's opportunistic upsert
+    # (core/telemetry.py's `_upsert_rescue_locations`) or returned by
+    # RescueLookupView.
+    rescue_consent = models.BooleanField(default=False)
+    rescue_consent_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        self.last_location = _point_or_none(self.last_lat, self.last_lng)
+        super().save(*args, **kwargs)
+
+    class Meta:
+        db_table = 'v2_subscriber_last_location'
+        indexes = [
+            # Explicit name restored (2026-09-02, same drift-check pass as
+            # MenuItem.path above) to match the name migration
+            # 0043_rescue_and_dt_sessions actually gave this index in the
+            # DB -- without it, `makemigrations` proposes a pointless
+            # RenameIndex to Django's auto-generated name instead of
+            # reporting "no changes."
+            models.Index(fields=['rescue_consent', 'last_seen_ts'], name='v2_sll_consent_seen_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.device_id[:8]}… ({self.msisdn or "no number"})'
+
+
+class RescueLocationAccessLog(models.Model):
+    """Audit trail — every RescueLookupView call, no exceptions, matching
+    the proposal's "named legal and institutional owner... accountable
+    for how the data is used." A lookup is logged whether or not it found
+    anything, so this table also answers "did anyone search for this
+    number" on its own, independent of SubscriberLastLocation's current
+    contents."""
+
+    looked_up_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='rescue_lookups'
+    )
+    msisdn_queried = models.CharField(max_length=20)
+    case_reference = models.CharField(max_length=100)
+    found = models.BooleanField(default=False)
+    # Which RescueConsentPolicy mode was in effect for this lookup
+    # (2026-09-02) — blank for every lookup logged before the policy
+    # existed (implicitly 'mandatory', the only mode that ever existed
+    # then). Lets an auditor later distinguish an ordinary lookup from one
+    # that only found its match because a superadmin had 'optional' mode
+    # active — see RescueConsentPolicy's docstring.
+    policy_mode = models.CharField(max_length=10, blank=True, default='')
+    queried_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'v2_rescue_access_log'
+        ordering = ['-queried_at']
+
+    def __str__(self):
+        return f'{self.looked_up_by} -> {self.msisdn_queried} ({self.case_reference})'
+
+
+# ── Superadmin-controlled rescue-consent policy (2026-09-02) ────────────
+# The flood-beacon proposal's ordinary posture is strict opt-in with
+# erase-on-withdrawal (RescueEnrollView's default behavior). But the real
+# integration this is headed for is a carrier/government app with NO
+# in-app consent screen at all -- the subscriber controls it via OS-level
+# app permissions, and during an actual disaster they may never have
+# taken any deliberate "I consent to rescue tracking" action. This gives
+# a superadmin a single, audited, time-boxed switch to relax that
+# requirement for the duration of a declared emergency, without ever
+# being able to fabricate a phone-number link that was never established
+# in the first place (see RescueConsentPolicy's docstring for the exact
+# boundary of what "optional" does and does not unlock).
+
+class RescueConsentPolicy(models.Model):
+    """Singleton (pk=1). Controls two things, both normally gated on
+    `rescue_consent=True`:
+
+      * core/telemetry.py's `_upsert_rescue_locations` — which enrolled
+        devices get their SubscriberLastLocation kept fresh from ongoing
+        telemetry uploads;
+      * core/rescue.py's `RescueLookupView` — which rows a lookup can
+        match.
+
+    'mandatory' (the default): both stay strictly `rescue_consent=True`
+    only, and RescueEnrollView's `consent: false` deletes the row
+    outright (erase-on-withdrawal) — the right posture for ordinary
+    operation (routine drive-test/coverage-style use of this lane).
+
+    'optional': an emergency override. Both checks above widen to "has a
+    known msisdn on file" regardless of `rescue_consent`, and
+    RescueEnrollView's `consent: false` becomes a SOFT withdrawal
+    (`rescue_consent` set False, but the msisdn/location kept, not
+    deleted) so a rescue operator can still find that subscriber while
+    optional mode is active. This can NEVER produce a phone-number match
+    for a device that has no SubscriberLastLocation row at all -- there
+    is still no path from an anonymous TelemetrySample to an msisdn (see
+    that model's "no MSISDN column by design"); optional mode only
+    changes how strictly an EXISTING enrollment record's consent flag is
+    enforced, it can never invent one.
+
+    `active_until` auto-expires the effective override (see
+    `is_optional_active`) even if nobody remembers to switch `mode` back
+    — the stored `mode` can still say 'optional' after expiry, but
+    enforcement treats it as mandatory again; the admin-facing API always
+    reports the effective `is_optional_active` rather than the raw mode
+    for exactly this reason. Every change is written to
+    RescueConsentPolicyChangeLog — see that model.
+    """
+    MODE_MANDATORY = 'mandatory'
+    MODE_OPTIONAL = 'optional'
+    MODE_CHOICES = [
+        (MODE_MANDATORY, 'Mandatory (default)'),
+        (MODE_OPTIONAL, 'Optional (emergency override)'),
+    ]
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    mode = models.CharField(max_length=10, choices=MODE_CHOICES, default=MODE_MANDATORY)
+    reason = models.CharField(max_length=255, blank=True, default='')
+    active_until = models.DateTimeField(null=True, blank=True)
+    changed_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_rescue_consent_policy'
+
+    def is_optional_active(self):
+        if self.mode != self.MODE_OPTIONAL:
+            return False
+        if self.active_until and timezone.now() > self.active_until:
+            return False
+        return True
+
+    def __str__(self):
+        return f'{self.mode} (until {self.active_until or "no expiry"})'
+
+
+class RescueConsentPolicyChangeLog(models.Model):
+    """Append-only audit trail for every RescueConsentPolicy change —
+    same "no silent capability change" posture as RescueLocationAccessLog
+    for lookups themselves. Never edited or deleted from the app (see
+    core/admin.py); this is the record of who declared/ended an
+    emergency override and why."""
+
+    changed_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    mode = models.CharField(max_length=10)
+    reason = models.CharField(max_length=255, blank=True, default='')
+    active_until = models.DateTimeField(null=True, blank=True)
+    changed_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'v2_rescue_consent_policy_log'
+        ordering = ['-changed_at']
+
+    def __str__(self):
+        return f'{self.changed_by} -> {self.mode} @ {self.changed_at}'
+
+
+# ── Continuous coverage-bin rollup (2026-09-01) ─────────────────────────
+
+class TelemetryRollState(models.Model):
+    """Singleton bookkeeping row (always pk=1) for
+    core/management/commands/roll_telemetry_bins.py's incremental
+    coverage-bin rollup — tracks the high-water mark of `received_at`
+    already merged into TelemetryCoverageBin, so the frequent incremental
+    roll and prune_telemetry.py's month-end aggregate-then-drop never
+    double-count the same raw rows. See roll_telemetry_bins.py's module
+    docstring for the full correctness argument. Created lazily on first
+    run (get_or_create), not via a data migration."""
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    last_rolled_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_telemetry_roll_state'
+
+    def __str__(self):
+        return f'watermark={self.last_rolled_at}'
+
+
+# ── Scoped drive-test sessions over live telemetry (2026-09-01) ─────────
+
+class TelemetryDriveTestSession(models.Model):
+    """A scoped, consent-based window over the crowdsourced telemetry
+    pipeline for real drive-test work — promotes the old superadmin-only
+    "Live Samples" dev tool (TelemetryLiveSamplesView) into a first-class
+    feature by making the scope explicit instead of implicit.
+
+    Deliberately NOT the same thing as DriveTestSession/DriveTestSample
+    higher up in this file (Phase 4a's uploaded-.trp-file manager) — this
+    scopes LIVE crowdsourced-SDK uploads to an engineer-run session
+    instead of a post-hoc file upload, and reusing that model would
+    overload a very different write path (bulk file import vs. filtering
+    the existing partitioned samples stream) for no benefit.
+
+    Holds no FK to TelemetrySample — that table is large and RANGE-
+    partitioned, so a session's samples are found by filtering it
+    dynamically (device_id IN device_ids AND ts within
+    [started_at, ended_at], optionally bounded by area), the same
+    dynamic-query approach TelemetryCoverageView/TelemetryLiveSamplesView
+    already use, not a join.
+
+    What makes this promotable out of "superadmin dev tool" status: every
+    device in `device_ids` is here because an engineer explicitly
+    enrolled it for THIS session (a company/tester phone, not an
+    anonymous member of the public crowdsourcing pool) — consent-scoped,
+    not "any recent sample from anyone," which is exactly the distinction
+    that kept the old endpoint dev-only in the first place.
+    """
+
+    STATUS_CHOICES = [('active', 'Active'), ('ended', 'Ended')]
+
+    name = models.CharField(max_length=255)
+    # Hashed device_id strings (core.telemetry.hash_device_id() output) —
+    # a plain JSONField list rather than a related table since this is
+    # always read/written whole, per session, and sessions have at most a
+    # handful of devices.
+    device_ids = models.JSONField(default=list)
+    # Optional bounding box — when set, the samples endpoint further
+    # filters to this area even for an enrolled device (e.g. a route
+    # confined to one valley). Null bounds = device+time scope only.
+    area_min_lat = models.FloatField(null=True, blank=True)
+    area_max_lat = models.FloatField(null=True, blank=True)
+    area_min_lng = models.FloatField(null=True, blank=True)
+    area_max_lng = models.FloatField(null=True, blank=True)
+
+    # Optional per-session gate (2026-09-02): when True, the samples
+    # endpoint only returns data from devices that have separately opted
+    # in via TelemetryDriveTestConsent. Set at creation — an admin's
+    # deliberate choice "before drive-test coverage initiation" — and not
+    # editable afterward through this API (no PATCH endpoint exists for
+    # sessions at all). See TelemetryDriveTestConsent below for why this is
+    # a distinct consent from rescue_consent and from the SDK's own
+    # always-on telemetry opt-in.
+    require_consent = models.BooleanField(default=False)
+
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active')
+    started_at = models.DateTimeField(auto_now_add=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='telemetry_dt_sessions'
+    )
+
+    class Meta:
+        db_table = 'v2_telemetry_dt_sessions'
+        ordering = ['-started_at']
+
+    def __str__(self):
+        return f'{self.name} ({self.status})'
+
+
+# ── Optional per-device drive-test consent (2026-09-02) ─────────────────
+# A FOURTH, purpose-limited consent lane, alongside rescue_consent
+# (SubscriberLastLocation) and the SDK's own always-on telemetry opt-in
+# (DeviceIdentity.optedIn on the client) — none of these imply each other.
+# This one gates whether a device's ALREADY-collected samples are
+# surfaced through a TelemetryDriveTestSession that an admin flagged
+# `require_consent=True` at creation; it never affects whether the
+# device's samples are ingested or stored at all — that stays controlled
+# purely by the device's own telemetry opt-in, same as always.
+#
+# One standing per-device flag, not a separate grant per session: "do you
+# consent to being included in consent-gated drive-test/coverage sessions
+# in general," matching how the feature was actually requested (a
+# device-level toggle, not a per-session prompt) and keeping the SDK-side
+# API (NetTelemetry.setDriveTestConsent) as simple as rescue enrollment.
+
+class TelemetryDriveTestConsent(models.Model):
+    """Set via the SDK's `setDriveTestConsent()` call
+    (core/consent.py's DriveTestConsentView) — the same ingest-key-
+    authenticated, device-initiated pattern as rescue-enroll.
+    `device_id` is the SAME salted hash `core.telemetry.hash_device_id()`
+    produces for TelemetrySample.device_id / SubscriberLastLocation.
+    device_id. Read ONLY by TelemetryDriveTestSessionSamplesView, and only
+    for a session that opted into this gate."""
+
+    device_id = models.CharField(max_length=64, unique=True, db_index=True)
+    consent = models.BooleanField(default=False)
+    consented_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_telemetry_dt_consent'
+
+    def __str__(self):
+        return f'{self.device_id[:8]}… consent={self.consent}'
+
+
+class DriveTestConsentConfig(models.Model):
+    """Singleton (pk=1, same get_or_create pattern as RescueConsentPolicy/
+    TelemetryRollState) holding the exact copy a host app can show a
+    subscriber before calling `setDriveTestConsent()`. This does NOT make
+    the SDK render any consent UI of its own — TelemetryConfig's docstring
+    is explicit that it never will, matching the real integration
+    scenario (a carrier/government app's OWN consent or permission
+    screen). This exists purely so a deployment that WANTS to display
+    fetched, centrally-editable copy (this project's own demo app does,
+    for exactly this reason) doesn't have to bake that wording into an
+    app build and ship a new release every time it changes. A deployment
+    is equally free to hardcode its own copy and never call the
+    device-facing GET endpoint at all.
+
+    No separate change-log model here (contrast RescueConsentPolicy,
+    which has RescueConsentPolicyChangeLog) — changing this affects only
+    display wording, never who can be found, what's collected, or any
+    other access/privacy consequence, so the heavier "no silent
+    capability change" audit trail elsewhere in this codebase doesn't
+    apply. `updated_by`/`updated_at` on the row itself is enough.
+    """
+    DEFAULT_MESSAGE = (
+        "This app would like to include your device's network-quality "
+        "readings in a drive-test coverage session. Nothing is shared "
+        "unless you agree, and you can withdraw your consent at any time."
+    )
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    message = models.TextField(default=DEFAULT_MESSAGE, blank=True)
+    updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_dt_consent_config'
+
+    def __str__(self):
+        return f'consent message ({len(self.message)} chars)'
+
+
+# ── Remote opt-out request (2026-09-02) ──────────────────────────────────
+# The general telemetry opt-in flag (the SDK's DeviceIdentity.optedIn)
+# lives in EncryptedSharedPreferences ON THE DEVICE — nothing server-side
+# can reach in and flip it directly. This is the "please opt out" REQUEST
+# a superadmin/admin can leave for one device; the device applies it to
+# itself, on its own next successful upload (see TelemetryIngestView's
+# `opt_out` response field and the SDK's UploadWorker, which calls
+# NetTelemetry.optOut() locally when it sees that flag). Most commonly
+# created from ending a TelemetryDriveTestSession ("End & opt out enrolled
+# devices" — core/telemetry_admin.py), but not tied to any one session.
+
+class TelemetryRemoteOptOutRequest(models.Model):
+    device_id = models.CharField(max_length=64, unique=True, db_index=True)
+    requested_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    requested_at = models.DateTimeField(auto_now_add=True)
+    reason = models.CharField(max_length=255, blank=True, default='')
+    # Set the moment the device's own next ingest upload reported the
+    # opt_out flag back — a one-shot instruction, not a standing rule, so
+    # a subscriber who opts back in later via optIn() isn't immediately
+    # re-opted-out by a stale request.
+    fulfilled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'v2_telemetry_remote_optout_request'
+
+    def __str__(self):
+        return f'{self.device_id[:8]}… {"fulfilled" if self.fulfilled_at else "pending"}'

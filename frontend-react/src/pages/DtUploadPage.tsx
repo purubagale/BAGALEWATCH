@@ -10,7 +10,7 @@ import { useAuth } from '../auth/AuthContext'
 import DtCallDownloadSummary from '../components/DtCallDownloadSummary'
 import DtCoverageMap from '../components/DtCoverageMap'
 import { DT_SESSION_HISTORY_PATH } from '../constants/opaqueRoutes'
-import { subsampleForMap } from '../lib/dtBands'
+import { MAX_MAP_DOTS, subsampleForMap } from '../lib/dtBands'
 import { computeSessionMeta, csvTextToRows, haversineKm, parseTemplateRows } from '../lib/dtTemplateParser'
 import { trpaAnalyzeFile, trpaSummarizeCallEvents, trpaSummarizeDownloadEvents, type TrpaEventRow, type TrpaRow } from '../lib/trpAnalysis'
 import { readXlsxRowsForTech } from '../lib/xlsxReader'
@@ -102,6 +102,79 @@ function int(v: unknown): number | null {
   return n != null ? Math.round(n) : null
 }
 
+// The INSTANTANEOUS measurement fields trpRowToDtSample reads per tech —
+// the ones that only make sense at the instant TEMS logged them and so
+// need same-instant stitching across TEMS's per-field-group record
+// splitting (see fillForwardTrpRows' comment). The cell identity/config
+// fields trpRowToDtSample ALSO reads (pci, bcch, bsic, scramblingCode,
+// band, earfcn, cellId*, tac) are deliberately NOT here: trpAnalysis.ts
+// now carries those forward itself, unbounded — correct, because unlike a
+// measurement a cell identity stays valid until the next logged change
+// (see SERVING_FORWARD_FILL_KEYS there). Listing them here too would just
+// be a redundant, 5s-capped second pass over values already filled.
+const TRP_FILL_FORWARD_FIELDS: Record<DtTech, string[]> = {
+  '4G': ['rsrp', 'rsrq', 'sinr', 'pdschThroughput'],
+  '3G': ['rscp', 'ecno'],
+  '2G': ['rssiFull', 'rssiSub', 'rxQualFull', 'rxQualSub'],
+}
+
+// 2026-08-26, real-file investigation ("plot displaying less plot points...
+// analyse with interval and sample"): decoded 28 real 2G .trp files and
+// found TEMS's raw data.cdf reports each field GROUP as its own separate
+// record, not one combined record per instant — a real consecutive
+// sequence looks like {bsic,cellIdentity,lac} @10:07:20, {bcch} @10:07:20,
+// {rssiFull,rssiSub,c1,c2} @10:07:21, {msPowerControlLevel,txPower}
+// @10:07:21, and so on. trpaAnalyzeFile (trpAnalysis.ts) correctly turns
+// EVERY one of those into its own TrpaRow — that engine is already
+// byte-exact verified against a reference workbook and stays untouched —
+// but trpRowToDtSample below requires the tech's primary signal field to
+// be present in that SAME row, so a row reporting only BSIC (no RSSI) was
+// silently dropped even though a genuine RSSI reading existed one second
+// away. Measured on the real files: 121,154 raw 2G rows decoded, 77,758
+// (64%) had no signal value in their own row — of those, 99.9% had a real
+// reading within ±2 seconds in a neighboring row. Not missing data, just
+// never stitched together.
+//
+// Fix: hold the last-seen value for each relevant field forward across a
+// bounded gap before mapping to DtSample — NOT inside trpaAnalyzeFile
+// itself, which TrpAnalysisPage's own already-verified summary statistics
+// also consume and which already handles this correctly for its purposes
+// (each stat filters for its own field independently, never needed every
+// field in the same row to begin with). This stays scoped to the DT
+// session/map-plotting path, the one place that actually needs a single
+// row carrying GPS + a signal reading together.
+//
+// 5s chosen with real headroom above the measured ±2s that already
+// recovers 99.9% of the gap — long enough to bridge TEMS's own per-field
+// reporting cadence, short enough that a genuine multi-second silence
+// (tunnel, radio outage) still shows as a gap rather than painting a
+// stale reading across it. The carried value's ORIGINAL observation time
+// is kept (not refreshed on each reuse), so a value can only be reused
+// within 5s of when it was actually measured, not indefinitely chained
+// through a string of short gaps.
+const TRP_FILL_FORWARD_GAP_SEC = 5
+
+function fillForwardTrpRows(rows: TrpaRow[], tech: DtTech): TrpaRow[] {
+  const fields = TRP_FILL_FORWARD_FIELDS[tech]
+  const carry: Record<string, { value: unknown; ts: number }> = {}
+  return rows.map((row) => {
+    let filled: TrpaRow | null = null
+    for (const field of fields) {
+      const own = row[field]
+      if (own != null) {
+        carry[field] = { value: own, ts: row.ts }
+        continue
+      }
+      const held = carry[field]
+      if (held && row.ts - held.ts <= TRP_FILL_FORWARD_GAP_SEC) {
+        if (!filled) filled = { ...row }
+        filled[field] = held.value
+      }
+    }
+    return filled ?? row
+  })
+}
+
 /** Maps one decoded TRP serving-cell sample (TrpaRow, keyed by trpAnalysis's
  * per-tech field dictionary) into the fixed DriveTestSample schema. `rsrp`
  * always carries the generic dBm-scale signal reading regardless of tech —
@@ -113,8 +186,11 @@ function int(v: unknown): number | null {
  * unlabeled noise on the coverage map, so this stays serving-only, matching
  * what the CSV/XLSX template path has always produced. Returns null for a
  * sample missing GPS, outside Nepal's bounds, or missing its primary
- * signal reading (same fail-open-per-record behavior v1's saveDtSession
- * uses, not a fail-the-whole-file error). */
+ * signal reading — callers should run fillForwardTrpRows over the row set
+ * FIRST (see its own comment for why), so "missing" here means genuinely
+ * absent within the fill-forward window, not just absent from this one
+ * raw record (same fail-open-per-record behavior v1's saveDtSession uses,
+ * not a fail-the-whole-file error). */
 function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
   const lat = row.lat
   const lng = row.lon
@@ -225,17 +301,27 @@ interface PendingTrpSession {
 // So decimateTrpRows() is gone; instead buildTrpSessions() below applies
 // a single group-level (per tech, AFTER concatenating every source file)
 // cap via the same evenly-strided subsampleForMap() the map already
-// uses, at a much more generous ceiling — see TRP_SAVE_SAMPLE_CAP. A
-// typical single- or few-file test (real samples measured so far top out
-// around 1,400 rows per ~40s file) now passes through with its FULL
-// decoded density, matching what the user wants ("clear plot"); only a
-// combined session actually crossing the cap gets thinned, and even then
-// down to a ceiling well above what the map itself would ever draw at
-// once. Deliberately still scoped to the DT session save path only — NOT
-// inside trpAnalysis.ts's shared engine, which the separate TRP File
-// Analysis diagnostic page (TrpAnalysisPage.tsx) also uses and still
-// wants every real decoded sample for its own deep per-file stats.
-const TRP_SAVE_SAMPLE_CAP = 50000
+// uses. A typical single- or few-file test (real samples measured so far
+// top out around 1,400 rows per ~40s file) passes through with its FULL
+// decoded density; only a combined multi-file session crossing the cap
+// gets thinned. Deliberately still scoped to the DT session save path
+// only — NOT inside trpAnalysis.ts's shared engine, which the separate
+// TRP File Analysis diagnostic page (TrpAnalysisPage.tsx) also uses and
+// still wants every real decoded sample for its own deep per-file stats.
+//
+// 2026-08-27: the cap was 50,000 (a deliberately generous "well above
+// what the map draws" ceiling). Lowered to MAX_MAP_DOTS — the exact
+// number the coverage map, Compare and Explore all thin to before
+// drawing — because storing 3.3x more than anything can display was the
+// biggest driver of DT table growth as sessions accumulate. Every
+// plotted metric (RSRP/RSRQ/SINR/RxQual) sits at ~100% per-sample
+// coverage after fillForwardTrpRows, so a 15k stored session draws an
+// identical-density coverage map to what a 50k one did (both end up as
+// 15k evenly-spaced points). The one visible trade: Explore-by-
+// coordinate has fewer raw points to filter by radius (~10m spacing
+// instead of ~3m) — still fine for RF coverage viz, and the source
+// .trp files remain the full-fidelity archive.
+const TRP_SAVE_SAMPLE_CAP = MAX_MAP_DOTS
 
 // Auto-detects which of the standard NTC drive-test types a session is,
 // from the SAME structural event evidence trpaSummarizeCallEvents/
@@ -288,15 +374,25 @@ function buildTrpSessions(
   for (const { fileName, tech, servingRows, events } of results) {
     // Full fidelity here — no per-file decimation. See TRP_SAVE_SAMPLE_CAP
     // comment above: any needed reduction happens once, below, at the
-    // combined-tech-group level.
-    const samples = servingRows
+    // combined-tech-group level. fillForwardTrpRows runs per FILE, before
+    // concatenating across files below — each file's own declared record
+    // stream is what's actually coherent to hold values forward within
+    // (see its own comment for why this recovers most of what used to be
+    // silently dropped here).
+    const samples = fillForwardTrpRows(servingRows, tech)
       .map((r) => trpRowToDtSample(r, tech))
       .filter((s): s is DtSample => s != null)
     if (!samples.length) continue
     const grp = byTech.get(tech) ?? { samples: [], files: [], events: [], rawDecodedCount: 0 }
-    grp.samples.push(...samples)
+    // `arr.push(...bigArray)` passes every element as its own call
+    // argument and overflows the stack once a single file's decoded set
+    // runs past ~100k rows — real NT 4G DL captures here hit 170k–212k
+    // serving rows in ONE file, so spreading the per-file samples/events
+    // into push() crashed buildTrpSessions before it could build the
+    // session at all. Append in a loop instead.
+    for (const s of samples) grp.samples.push(s)
     grp.files.push(fileName)
-    grp.events.push(...events)
+    for (const e of events) grp.events.push(e)
     grp.rawDecodedCount += servingRows.length
     byTech.set(tech, grp)
   }

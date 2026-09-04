@@ -39,3 +39,11 @@ graphify-out/
 # project folder rather than a Docker named volume so it travels with the
 # directory when the team copies it, but must never be committed.
 /data/
+
+# Local drive-test sample files (real NT network data, often large) —
+# handed over for parser development/verification, never committed.
+/samples/
+
+# Claude session scratch notes / tool output -- not part of the project.
+/memory/
+frontend-react/tsc-out.txt

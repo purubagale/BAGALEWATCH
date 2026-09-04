@@ -65,6 +65,24 @@ class IsSuperadminOnly(permissions.BasePermission):
         return bool(request.user and request.user.is_authenticated and request.user.role == 'superadmin')
 
 
+class IsRescueOperator(permissions.BasePermission):
+    """Gate for core/rescue.py's RescueLookupView — deliberately its own
+    tier, not folded into IsAdminOrSuperadmin. An ordinary O&M 'admin' has
+    no business looking up a subscriber's phone number by default; that
+    access has to be a conscious grant (setting a user's role to
+    'rescue_operator'), per the flood-beacon proposal's "access restricted
+    to verified rescue authorities under a defined legal process."
+    Superadmin is included so there is always at least one role that can
+    administer this without a separate bootstrapping step, matching how
+    IsSuperadminOnly-gated resources already work."""
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user and request.user.is_authenticated
+            and request.user.role in ('rescue_operator', 'superadmin')
+        )
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def health(request):
@@ -140,6 +158,18 @@ class LoginView(APIView):
     attempt isn't penalized by earlier typos once it succeeds."""
 
     permission_classes = [AllowAny]
+    # Never session-authenticate this endpoint (2026-09-01 fix). Without
+    # this, a client carrying a valid Django-admin sessionid cookie on
+    # this same origin gets session-authenticated here even though the
+    # view is AllowAny, which then triggers CSRF enforcement on the POST.
+    # The JWT-based SPA never sends a CSRF token, so that fails with its
+    # own 403 -- indistinguishable, from the frontend's point of view,
+    # from the real "local login disabled" 403 below, since it maps any
+    # 403 here to the same "try single sign-on" message regardless of
+    # cause. Symptom: login works in a fresh/incognito browser (no admin
+    # session cookie) but fails in a normal browser that's also logged
+    # into /admin/ -- until its cookies are cleared.
+    authentication_classes = []
 
     MAX_ATTEMPTS = 5
     LOCKOUT_SECONDS = 15 * 60
@@ -850,6 +880,11 @@ def get_visible_menu_items(user):
             return user.role == 'admin'
         if item.access == MenuItem.ACCESS_SUPERADMIN:
             return False  # superadmin already returned True above
+        if item.access == MenuItem.ACCESS_RESCUE:
+            # Mirrors core/rescue.py's IsRescueOperator exactly (superadmin
+            # already returned True above, so only rescue_operator is left
+            # to check here).
+            return user.role == 'rescue_operator'
         if item.access == MenuItem.ACCESS_PERMISSION:
             return bool(read_perms.get(item.permission_key))
         return False
@@ -1167,3 +1202,4 @@ class PermissionsMatrixView(APIView):
                             defaults={'allowed': bool(value)},
                         )
         return Response({'ok': True})
+

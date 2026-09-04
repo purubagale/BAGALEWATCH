@@ -151,9 +151,14 @@ function sectorIdLabel(sec: Sector | SectorWrite): string {
 }
 
 /** One [label / input-or-value] card, shared by the Site Identity grid
- * and every KPI tab — matches v1's `.f-group` (label above field). */
+ * and every KPI tab — matches v1's `.f-group` (label above field).
+ * `hint` (2026-08-26) is shown only in the readOnly+editing state — used
+ * by the Live Site Directory-managed identity fields below to explain
+ * WHY they're locked, not just that they are (see SITE_ID's own "Site
+ * ID" readOnly usage, which needed no explanation since a primary key
+ * being immutable is self-evident; these fields aren't). */
 function FieldCard({
-  label, editing, value, onChange, readOnly, type = 'text',
+  label, editing, value, onChange, readOnly, type = 'text', hint,
 }: {
   label: string
   editing: boolean
@@ -161,6 +166,7 @@ function FieldCard({
   onChange?: (v: string) => void
   readOnly?: boolean
   type?: 'text' | 'number'
+  hint?: string
 }) {
   return (
     <div className="site-form-group">
@@ -173,7 +179,10 @@ function FieldCard({
           onChange={(e) => onChange?.(e.target.value)}
         />
       ) : editing && readOnly ? (
-        <input type={type} value={value} readOnly />
+        <>
+          <input type={type} value={value} readOnly title={hint} />
+          {hint && <span className="muted" style={{ fontSize: 10, display: 'block', marginTop: 2 }}>{hint}</span>}
+        </>
       ) : (
         <span className="site-form-value">{value === '' ? '—' : value}</span>
       )}
@@ -478,14 +487,22 @@ export default function SiteDetailPage() {
         <FieldCard
           label="Site Name"
           editing={editing}
+          readOnly={editing}
+          hint="Synced from the Live Site Directory"
           value={identitySource.name ?? ''}
           onChange={(v) => setField('name', v)}
         />
       </div>
       <div className="site-form-row cols-3">
-        <FieldCard label="Region" editing={editing} value={identitySource.region ?? ''} onChange={(v) => setField('region', v)} />
+        <FieldCard
+          label="Region" editing={editing} readOnly={editing} hint="Synced from the Live Site Directory"
+          value={identitySource.region ?? ''} onChange={(v) => setField('region', v)}
+        />
         <FieldCard label="City" editing={editing} value={identitySource.city ?? ''} onChange={(v) => setField('city', v)} />
-        <FieldCard label="District" editing={editing} value={identitySource.district ?? ''} onChange={(v) => setField('district', v)} />
+        <FieldCard
+          label="District" editing={editing} readOnly={editing} hint="Synced from the Live Site Directory"
+          value={identitySource.district ?? ''} onChange={(v) => setField('district', v)}
+        />
       </div>
       <div className="site-form-row cols-3">
         <FieldCard label="Site Type" editing={editing} value={identitySource.type ?? ''} onChange={(v) => setField('type', v)} />
@@ -494,12 +511,12 @@ export default function SiteDetailPage() {
       </div>
       <div className="site-form-row cols-2">
         <FieldCard
-          label="Latitude" editing={editing} type="number"
+          label="Latitude" editing={editing} type="number" readOnly={editing} hint="Synced from the Live Site Directory"
           value={String((editing ? draft?.lat : site.lat) ?? '')}
           onChange={(v) => setNumberField('lat', v)}
         />
         <FieldCard
-          label="Longitude" editing={editing} type="number"
+          label="Longitude" editing={editing} type="number" readOnly={editing} hint="Synced from the Live Site Directory"
           value={String((editing ? draft?.lng : site.lng) ?? '')}
           onChange={(v) => setNumberField('lng', v)}
         />

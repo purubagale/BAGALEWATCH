@@ -15,11 +15,14 @@ import type {
   DashboardCardLayoutEntry,
   DtBandsMap,
   DtSample,
+  DtServingCell,
   DtSessionCreate,
   DtSessionDetail,
   DtSessionListItem,
   DtTech,
   KpiTrend,
+  LiveSiteSyncResult,
+  LiveSiteSyncStatus,
   MenuItem,
   MenuItemWrite,
   MenuTreeNode,
@@ -34,10 +37,24 @@ import type {
   SiteSearchResponse,
   SiteWrite,
   SlaReport,
+  TelemetryCoverageParams,
+  TelemetryCoverageResponse,
+  TelemetryIngestKeyCreate,
+  TelemetryIngestKeyCreateResponse,
+  TelemetryIngestKeyRow,
+  TelemetryIngestKeyUpdate,
+  TelemetryStats,
   ThresholdMap,
   TreeState,
   UserWrite,
   HealthInfo,
+  RescueConsentPolicy,
+  RescueConsentPolicyWrite,
+  RescueLookupParams,
+  RescueLookupResult,
+  RescueBulkLookupParams,
+  RescueBulkLookupResponse,
+  DriveTestConsentMessage,
 } from './types'
 
 export function useSites() {
@@ -261,6 +278,95 @@ export function useDeleteApiKey() {
   return useMutation({
     mutationFn: (keyId: number) => apiJson<void>(`/api/v2/api-keys/${keyId}/`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['api-keys'] }),
+  })
+}
+
+// ── Live Site Directory sync (2026-08-26) ────────────────────────────────
+// Status is polled while the page is open (see LiveSiteSyncPage.tsx) since
+// the scheduled `site-sync` service can update it at any time, not just in
+// response to this browser tab's own actions — a plain one-shot useQuery
+// would show a result that's already stale by the time an admin glances
+// back at an open tab.
+export function useLiveSiteSyncStatus() {
+  return useQuery({
+    queryKey: ['live-site-sync-status'],
+    queryFn: () => apiJson<LiveSiteSyncStatus>('/api/v2/sites/sync-live/'),
+    refetchInterval: 15_000,
+  })
+}
+
+export function useTriggerLiveSiteSync() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiJson<LiveSiteSyncResult>('/api/v2/sites/sync-live/', { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['live-site-sync-status'] }),
+  })
+}
+
+// ── Crowdsourced telemetry admin (2026-08-31) ───────────────────────────
+// Ingest-key CRUD + a stats overview + coverage-map data. The keys here
+// authenticate the SEPARATE /api/telemetry/v1/ ingest surface, exactly
+// like the API Access page's keys authenticate /api/external/v1/.
+
+export function useTelemetryKeys() {
+  return useQuery({
+    queryKey: ['telemetry-keys'],
+    queryFn: () => apiJson<TelemetryIngestKeyRow[]>('/api/v2/telemetry/keys/'),
+  })
+}
+
+export function useCreateTelemetryKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: TelemetryIngestKeyCreate) =>
+      apiJson<TelemetryIngestKeyCreateResponse>('/api/v2/telemetry/keys/', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['telemetry-keys'] }),
+  })
+}
+
+export function useUpdateTelemetryKey(keyId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: TelemetryIngestKeyUpdate) =>
+      apiJson<TelemetryIngestKeyRow>(`/api/v2/telemetry/keys/${keyId}/`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['telemetry-keys'] }),
+  })
+}
+
+export function useDeleteTelemetryKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (keyId: number) =>
+      apiJson<void>(`/api/v2/telemetry/keys/${keyId}/`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['telemetry-keys'] }),
+  })
+}
+
+export function useTelemetryStats() {
+  return useQuery({
+    queryKey: ['telemetry-stats'],
+    queryFn: () => apiJson<TelemetryStats>('/api/v2/telemetry/stats/'),
+    refetchInterval: 30_000,
+  })
+}
+
+export function useTelemetryCoverage(params: TelemetryCoverageParams) {
+  const qs = new URLSearchParams()
+  if (params.network_type) qs.set('network_type', params.network_type)
+  if (params.region) qs.set('region', params.region)
+  if (params.days != null) qs.set('days', String(params.days))
+  if (params.limit != null) qs.set('limit', String(params.limit))
+  const suffix = qs.toString() ? `?${qs}` : ''
+  return useQuery({
+    queryKey: ['telemetry-coverage', suffix],
+    queryFn: () => apiJson<TelemetryCoverageResponse>(`/api/v2/telemetry/coverage/${suffix}`),
+    staleTime: 60_000,
   })
 }
 
@@ -497,6 +603,18 @@ export function useDtSession(id: number | undefined) {
   })
 }
 
+// The ~8-20 distinct serving cells a session's samples were attributed
+// to (serving-cell -> site matching, dt_serving_cell.py). Small + static
+// per session, so a normal-lifetime cache; the coverage map reads it to
+// draw the hover connector from a plot point to its serving site.
+export function useDtServingCells(id: number | undefined) {
+  return useQuery({
+    queryKey: ['dt-serving-cells', id],
+    queryFn: () => apiJson<DtServingCell[]>(`/api/v2/dt-sessions/${id}/serving-cells/`),
+    enabled: id !== undefined,
+  })
+}
+
 export function useCreateDtSession() {
   const qc = useQueryClient()
   return useMutation({
@@ -578,5 +696,159 @@ export function useSiteSearch() {
       const suffix = qs.toString()
       return apiJson<SiteSearchResponse>(`/api/v2/sites/search/${suffix ? `?${suffix}` : ''}`)
     },
+  })
+}
+
+import type {
+  TelemetryDriveTestSession,
+  TelemetryDriveTestSessionCreateInput,
+  TelemetryDriveTestSessionEndResponse,
+  TelemetryDriveTestSessionSamplesResponse,
+  TelemetryLiveSamplesParams,
+  TelemetryLiveSamplesResponse,
+} from '../api/types'
+
+export function useTelemetryLiveSamples(params: TelemetryLiveSamplesParams) {
+  const qs = new URLSearchParams()
+  if (params.minutes != null) qs.set('minutes', String(params.minutes))
+  if (params.limit != null) qs.set('limit', String(params.limit))
+  if (params.device_id) qs.set('device_id', params.device_id)
+  // Area filter (2026-09-02) -- see TelemetryLiveSamplesParams's docstring.
+  if (params.lat != null) qs.set('lat', String(params.lat))
+  if (params.lng != null) qs.set('lng', String(params.lng))
+  if (params.radius_km != null) qs.set('radius_km', String(params.radius_km))
+  return useQuery({
+    queryKey: ['telemetry-live-samples', params],
+    queryFn: () => apiJson<TelemetryLiveSamplesResponse>(`/api/v2/telemetry/live-samples/?${qs}`),
+    refetchInterval: 10_000,
+  })
+}
+
+// Scoped drive-test sessions over live telemetry (2026-09-01) — see
+// core/telemetry_admin.py's TelemetryDriveTestSession* views.
+
+export function useTelemetryDtSessions() {
+  return useQuery({
+    queryKey: ['telemetry-dt-sessions'],
+    queryFn: () => apiJson<TelemetryDriveTestSession[]>('/api/v2/telemetry/dt-sessions/'),
+    refetchInterval: 15_000,
+  })
+}
+
+export function useCreateTelemetryDtSession() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: TelemetryDriveTestSessionCreateInput) =>
+      apiJson<TelemetryDriveTestSession>('/api/v2/telemetry/dt-sessions/', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['telemetry-dt-sessions'] }),
+  })
+}
+
+export function useEndTelemetryDtSession() {
+  const qc = useQueryClient()
+  return useMutation({
+    // requestOptOut (2026-09-02): when true, leaves a
+    // TelemetryRemoteOptOutRequest for every device enrolled in this
+    // session -- each device applies it on its own next upload (see
+    // TelemetryApi.kt/UploadWorker.kt on the SDK side), it is never
+    // immediate. Defaults to false so a plain "End" keeps prior behavior.
+    mutationFn: ({ id, requestOptOut }: { id: number; requestOptOut?: boolean }) =>
+      apiJson<TelemetryDriveTestSessionEndResponse>(`/api/v2/telemetry/dt-sessions/${id}/end/`, {
+        method: 'POST',
+        body: JSON.stringify({ request_opt_out: !!requestOptOut }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['telemetry-dt-sessions'] }),
+  })
+}
+
+// Superadmin-controlled rescue-consent policy (2026-09-02) -- see
+// core/rescue.py's RescueConsentPolicyView.
+export function useRescueConsentPolicy() {
+  return useQuery({
+    queryKey: ['rescue-consent-policy'],
+    queryFn: () => apiJson<RescueConsentPolicy>('/api/v2/rescue/policy/'),
+  })
+}
+
+export function useSetRescueConsentPolicy() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (policy: RescueConsentPolicyWrite) =>
+      apiJson<RescueConsentPolicy>('/api/v2/rescue/policy/', { method: 'POST', body: JSON.stringify(policy) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['rescue-consent-policy'] }),
+  })
+}
+
+// Rescue-location lookup (2026-09-03) -- a mutation rather than a query,
+// same reasoning as useSiteSearch above: this fires on demand (a Search
+// button), not automatically, and every call is server-side audited
+// (RescueLocationAccessLog) regardless of whether it matches, so it
+// should never accidentally re-fire from React Query's own caching/
+// refetch behavior the way a normal useQuery would.
+export function useRescueLookup() {
+  return useMutation({
+    mutationFn: (params: RescueLookupParams) => {
+      const qs = new URLSearchParams({ msisdn: params.msisdn, case_reference: params.case_reference })
+      return apiJson<RescueLookupResult>(`/api/v2/rescue/lookup/?${qs}`)
+    },
+  })
+}
+
+// Bulk rescue lookup (2026-09-04) -- checks a whole list of numbers at once
+// (e.g. an HLR/VLR area extract obtained some other way) against this app's
+// own enrolled-subscriber records. Same on-demand-mutation reasoning as
+// useRescueLookup above -- every number queried is audited server-side
+// (core/rescue.py's RescueBulkLookupView) regardless of match, so this must
+// never auto-refire from React Query's caching. POST + JSON body rather
+// than a query string, since the number list can run into the hundreds.
+export function useRescueBulkLookup() {
+  return useMutation({
+    mutationFn: (params: RescueBulkLookupParams) =>
+      apiJson<RescueBulkLookupResponse>('/api/v2/rescue/lookup/bulk/', {
+        method: 'POST',
+        body: JSON.stringify(params),
+      }),
+  })
+}
+
+// Superadmin-editable drive-test consent MESSAGE (2026-09-02) -- the
+// wording shown before a subscriber answers, not the answer itself. See
+// core/consent.py's DriveTestConsentMessageAdminView.
+export function useDriveTestConsentMessage() {
+  return useQuery({
+    queryKey: ['telemetry-consent-message'],
+    queryFn: () => apiJson<DriveTestConsentMessage>('/api/v2/telemetry/consent-message/'),
+  })
+}
+
+export function useSetDriveTestConsentMessage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (message: string) =>
+      apiJson<DriveTestConsentMessage>('/api/v2/telemetry/consent-message/', {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['telemetry-consent-message'] }),
+  })
+}
+
+export function useDeleteTelemetryDtSession() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => apiJson<void>(`/api/v2/telemetry/dt-sessions/${id}/`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['telemetry-dt-sessions'] }),
+  })
+}
+
+export function useTelemetryDtSessionSamples(id: number | null) {
+  return useQuery({
+    queryKey: ['telemetry-dt-session-samples', id],
+    queryFn: () => apiJson<TelemetryDriveTestSessionSamplesResponse>(`/api/v2/telemetry/dt-sessions/${id}/samples/`),
+    enabled: id != null,
+    refetchInterval: 10_000,
   })
 }

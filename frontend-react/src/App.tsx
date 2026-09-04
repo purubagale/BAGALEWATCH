@@ -71,6 +71,24 @@ const TrpAnalysisPage = lazy(() => import('./pages/TrpAnalysisPage'))
 // External data-exchange API key management (2026-08-12) — see
 // migration 0030_seed_api_access_menuitem.py and core/api_auth.py.
 const ApiAccessPage = lazy(() => import('./pages/ApiAccessPage'))
+// Live Site Directory sync status/manual-trigger page (2026-08-26) — see
+// migration 0038_seed_live_site_sync_menuitem.py and core/live_sites.py.
+const LiveSiteSyncPage = lazy(() => import('./pages/LiveSiteSyncPage'))
+// Crowdsourced-telemetry pages (2026-08-31) — see migration
+// 0041_seed_telemetry_menuitems.py and core/telemetry_admin.py.
+const TelemetryCoveragePage = lazy(() => import('./pages/TelemetryCoveragePage'))
+const TelemetryAdminPage = lazy(() => import('./pages/TelemetryAdminPage'))
+const TelemetryLiveSamplesPage = lazy(() => import('./pages/TelemetryLiveSamplesPage'))
+// Scoped drive-test sessions (2026-09-01) — see migration
+// 0044_seed_telemetry_dt_session_menuitem.py and core/telemetry_admin.py's
+// TelemetryDriveTestSession* views.
+const TelemetryDriveTestSessionsPage = lazy(() => import('./pages/TelemetryDriveTestSessionsPage'))
+// Rescue-location lookup pages (2026-09-03) -- see migration
+// 0049_rescue_menu_items.py and core/rescue.py's RescueLookupView /
+// RescueConsentPolicyView, which had no frontend page calling them at all
+// until now.
+const RescueLookupPage = lazy(() => import('./pages/RescueLookupPage'))
+const RescuePolicyPage = lazy(() => import('./pages/RescuePolicyPage'))
 
 // Reflects customized branding (2026-08-08 follow-up) into the two
 // things that live outside React's own render tree — the document
@@ -239,6 +257,13 @@ function App() {
         {withOpaqueSection('/dt-explore', <DtExplorePage />)}
         {withOpaqueSection('/trp-analysis', <TrpAnalysisPage />)}
         {withOpaqueSection('/api-access', <ApiAccessPage />)}
+        {withOpaqueSection('/live-site-sync', <LiveSiteSyncPage />)}
+        {withOpaqueSection('/telemetry-coverage', <TelemetryCoveragePage />)}
+        {withOpaqueSection('/telemetry-admin', <TelemetryAdminPage />)}
+        {withOpaqueSection('/telemetry-live-samples', <TelemetryLiveSamplesPage />)}
+        {withOpaqueSection('/telemetry-dt-sessions', <TelemetryDriveTestSessionsPage />)}
+        {withOpaqueSection('/rescue-lookup', <RescueLookupPage />)}
+        {withOpaqueSection('/rescue-policy', <RescuePolicyPage />)}
         {/* /topology retired 2026-08-05 — its "scope: all/region/district"
             concept was folded directly into the Sites map/tree (see
             SitesPage.tsx/SidebarTree.tsx), so a separate page/route is no
@@ -254,3 +279,4 @@ function App() {
 }
 
 export default App
+

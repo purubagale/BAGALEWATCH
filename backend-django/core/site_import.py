@@ -1,12 +1,22 @@
 """
 Site/Sector import from an uploaded Excel/CSV file (2026-08-05).
 
+**2026-08-26 — `kind='sites'` is gone, repurposed into `kind='kpi'`.**
+Site identity/location now comes from the Live Site Directory sync
+(core/live_sites.py), confirmed via AskUserQuestion: "no need to add
+site now, only need to add, update sector information, kpi during
+import." The original add-only site-identity import below (kept for
+history) no longer exists as a code path — see ImportSitesView's own
+docstring and `_apply_kpi()` for what replaced it, and `_apply_sectors()`
+for why a sector row naming a site that doesn't exist is now skipped
+rather than auto-creating one.
+
 Original request: "since i have not uploaded complete site, coordinate,
 sector details so i need feature to upload excel file such that, it
 checks the uploaded file and compare with the database data of site, if
 exist already then do nothing, if not exist then add data like in V1."
-For `kind='sites'` that's exactly what happens — pure add-only, an
-existing site's fields are NEVER touched.
+For the original `kind='sites'` that's exactly what happened — pure
+add-only, an existing site's fields were NEVER touched.
 
 Same-day follow-up specifically for `kind='sectors'`: "if site is
 already present in the system and only sector is missing, then add
@@ -79,10 +89,12 @@ additive-only, not destructive, so it doesn't need the extra
 superadmin-only caution BackupImportView's full-replace restore does.
 """
 from django.db import transaction
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .live_sites import get_sync_status, sync_live_sites
 from .models import Sector, Site
 from .views import IsAdminOrSuperadmin
 
@@ -117,6 +129,17 @@ SECTOR_FIELDS = [
 SECTOR_UPDATE_FIELDS = SECTOR_FIELDS + ['lat', 'lng']
 _INT_FIELDS = {'local_cell_id', 'pci'}
 _FLOAT_FIELDS = {'height', 'azimuth', 'mech_tilt', 'elec_tilt'}
+
+# 4G Site-level KPI columns this import updates (2026-08-26) — matches
+# exports.py's _build_site_kpi_workbook "KPI Data" sheet exactly, since
+# the natural round-trip is: export that template, fill in numbers,
+# re-upload here. See _apply_kpi()'s own docstring for why this replaced
+# the old identity-only 'sites' import kind.
+KPI_FIELDS = [
+    'rrc', 'erab', 'call_setup', 'call_drop', 'svc_drop', 'intra_ho', 'inter_ho',
+    'inter_rat', 'ip_thru', 'ip_lat', 'prb', 'bearer_util', 'lic_util', 'cell_avail',
+]
+KPI_UPDATE_FIELDS = KPI_FIELDS + ['kpi_entered', 'kpi_date']
 
 # Mirrors frontend/src/lib/sectorLocation.ts's SAME_LOCATION_EPSILON_DEG
 # exactly (~11m at Nepal's latitude) — keeps "is this sector's coordinate
@@ -162,9 +185,21 @@ def _sector_location_override(row, site_lat, site_lng):
 
 class ImportSitesView(APIView):
     """POST /api/v2/backup/import-sites/
-    body: {kind: 'sites', rows: [{id, name, region, district, city, lat, lng}, ...]}
+    body: {kind: 'kpi', rows: [{id, rrc, erab, call_setup, call_drop, svc_drop,
+             intra_ho, inter_ho, inter_rat, ip_thru, ip_lat, prb, bearer_util,
+             lic_util, cell_avail}, ...]}
        or {kind: 'sectors', tech: '4G'|'3G'|'2G' (optional), rows: [{site_id, cell_name,
              sector, tech, local_cell_id, lat, lng, height, azimuth, mech_tilt, elec_tilt, pci}, ...]}
+
+    **2026-08-26, "no need to add site now" — sites are Live Site
+    Directory-managed.** Confirmed via AskUserQuestion. Site identity/
+    location (id/name/region/district/palika/ward/lat-lng/deployment
+    status/operational technologies) now comes from core/live_sites.py's
+    sync, not from this endpoint or any upload. Two consequences, both
+    below: the old `kind='sites'` (add-only site identity import) is
+    GONE, repurposed into `kind='kpi'` (update-only KPI import — see
+    `_apply_kpi()`); and `kind='sectors'` no longer auto-creates a
+    missing parent Site — see `_apply_sectors()`'s own note.
 
     **Per-tech upload, 2026-08-09 follow-up** ("i have some seperate
     colums of sector information than 4g... allow seperate upload of
@@ -180,28 +215,26 @@ class ImportSitesView(APIView):
     (each row's own 'tech' field, or blank) for any caller still using
     the old single-sheet-with-a-Tech-column shape.
 
-    'sites': a row is skipped if a Site with that id already exists
-    (existing site's fields are NEVER touched — this is add-only, not an
-    upsert). Otherwise a new Site is created with whatever fields the row
-    provided (blank id rows were already filtered out client-side, but
-    re-checked here since this endpoint must not trust the client).
+    'kpi': update-only, matched by Site id — see `_apply_kpi()`.
 
     'sectors' — three-way logic, per explicit user request (2026-08-05
-    follow-up, more permissive than 'sites' above): (1) site exists,
-    sector missing -> add the sector. (2) site and sector both exist ->
-    compare every field the row provides against the stored sector; if
-    any differ, update just those fields; if none differ, do nothing (no
-    wasted write). (3) site itself doesn't exist yet -> auto-create a
-    minimal Site record from the row's own `lat`/`lng` before creating
-    the sector under it. A blank cell in the uploaded row is never
-    treated as "clear this field" during an update — only a genuinely
-    different, non-blank value triggers a change, so a partial re-export
-    can't silently wipe data the row simply didn't carry. The row's
-    `lat`/`lng` is ALSO compared against the resolved site's own location
-    (2026-08-09 follow-up) — a row whose coordinate genuinely differs
-    from its site gets that stored as the sector's own GPS override (see
-    `_sector_location_override()`); a row that just repeats the site's
-    location (the common case) leaves the sector's override untouched.
+    follow-up): (1) site exists, sector missing -> add the sector. (2)
+    site and sector both exist -> compare every field the row provides
+    against the stored sector; if any differ, update just those fields;
+    if none differ, do nothing (no wasted write). (3) site itself
+    doesn't exist yet -> the row is skipped and reported, NOT
+    auto-created (2026-08-26 — see this class's own note above; a
+    minimal auto-created Site used to be created here before the Live
+    Site Directory sync existed). A blank cell in the uploaded row is
+    never treated as "clear this field" during an update — only a
+    genuinely different, non-blank value triggers a change, so a partial
+    re-export can't silently wipe data the row simply didn't carry. The
+    row's `lat`/`lng` is ALSO compared against the resolved site's own
+    location (2026-08-09 follow-up) — a row whose coordinate genuinely
+    differs from its site gets that stored as the sector's own GPS
+    override (see `_sector_location_override()`); a row that just
+    repeats the site's location (the common case) leaves the sector's
+    override untouched.
 
     **"Which sector" matching, 2026-08-09 follow-up** ("siteid may be
     same but it can have 2g, 3g and 4g all in it. so manage accordingly.
@@ -239,8 +272,8 @@ class ImportSitesView(APIView):
         body = request.data or {}
         kind = body.get('kind')
         rows = body.get('rows')
-        if kind not in ('sites', 'sectors'):
-            return Response({'detail': 'kind must be "sites" or "sectors".'}, status=400)
+        if kind not in ('kpi', 'sectors'):
+            return Response({'detail': 'kind must be "kpi" or "sectors".'}, status=400)
         if not isinstance(rows, list):
             return Response({'detail': 'rows must be a list.'}, status=400)
 
@@ -253,20 +286,36 @@ class ImportSitesView(APIView):
                 tech = raw_tech
 
         with transaction.atomic():
-            if kind == 'sites':
-                result = self._apply_sites(rows)
+            if kind == 'kpi':
+                result = self._apply_kpi(rows)
             else:
                 result = self._apply_sectors(rows, tech=tech)
 
         return Response(result)
 
     @staticmethod
-    def _apply_sites(rows):
-        existing_ids = set(Site.objects.values_list('id', flat=True))
-        seen_in_batch = set()
-        to_create = []
+    def _apply_kpi(rows):
+        """Update-only, matched by Site `id` — never creates a Site (see
+        this class's own 2026-08-26 note: site identity/existence is the
+        Live Site Directory sync's job now, not this endpoint's). A row
+        whose `id` doesn't match an existing site is reported in `errors`,
+        not silently dropped and not auto-created.
+
+        Same "blank cell never clears a value" rule as `_apply_sectors` —
+        only a row field that's actually present and non-null overwrites
+        the stored value. `kpi_entered`/`kpi_date` are set only when at
+        least one real KPI field on the row actually changed something,
+        so a row that's a no-op re-upload doesn't bump `kpi_date` for no
+        reason."""
+        ids = [(row or {}).get('id') for row in rows]
+        ids = [i.strip() for i in ids if isinstance(i, str) and i.strip()]
+        sites_by_id = {s.id: s for s in Site.objects.filter(id__in=ids)}
+
+        to_update = []
         errors = []
         skipped = 0
+        seen = set()
+        today = timezone.now().date().isoformat()
 
         for i, row in enumerate(rows):
             row = row or {}
@@ -274,30 +323,42 @@ class ImportSitesView(APIView):
             if not site_id:
                 errors.append(f'Row {i + 1}: missing Site ID, skipped.')
                 continue
-            if site_id in existing_ids or site_id in seen_in_batch:
-                skipped += 1
+            if site_id in seen:
                 continue
-            lat, lng = row.get('lat'), row.get('lng')
+            site = sites_by_id.get(site_id)
+            if site is None:
+                errors.append(
+                    f'Row {i + 1} ({site_id}): site not found — sites are managed by the Live Site '
+                    'Directory sync, not this upload. Skipped.'
+                )
+                continue
+            seen.add(site_id)
+
+            changed = False
             try:
-                lat_val = float(lat) if lat not in (None, '') else None
-                lng_val = float(lng) if lng not in (None, '') else None
+                for field in KPI_FIELDS:
+                    raw_val = row.get(field)
+                    if raw_val in (None, ''):
+                        continue
+                    new_val = float(raw_val)
+                    if getattr(site, field) != new_val:
+                        setattr(site, field, new_val)
+                        changed = True
             except (TypeError, ValueError):
-                errors.append(f'Row {i + 1} ({site_id}): invalid latitude/longitude, skipped.')
+                errors.append(f'Row {i + 1} ({site_id}): invalid numeric KPI value, skipped.')
                 continue
-            to_create.append(Site(
-                id=site_id,
-                name=(row.get('name') or '').strip(),
-                region=(row.get('region') or '').strip(),
-                district=(row.get('district') or '').strip(),
-                city=(row.get('city') or '').strip(),
-                lat=lat_val, lng=lng_val,
-            ))
-            seen_in_batch.add(site_id)
 
-        if to_create:
-            Site.objects.bulk_create(to_create, batch_size=1000)
+            if changed:
+                site.kpi_entered = True
+                site.kpi_date = today
+                to_update.append(site)
+            else:
+                skipped += 1
 
-        return {'added': len(to_create), 'updated': 0, 'skipped': skipped, 'sites_added': 0, 'errors': errors}
+        if to_update:
+            Site.objects.bulk_update(to_update, KPI_UPDATE_FIELDS, batch_size=1000)
+
+        return {'updated': len(to_update), 'skipped': skipped, 'errors': errors}
 
     @staticmethod
     def _apply_sectors(rows, tech=None):
@@ -313,7 +374,6 @@ class ImportSitesView(APIView):
         for sec in Sector.objects.all():
             sectors_by_pair.setdefault((sec.site_id, sec.cell_name), []).append(sec)
 
-        sites_to_create: dict[str, Site] = {}
         sectors_to_create: list[Sector] = []
         sectors_to_update: dict[int, Sector] = {}
         errors = []
@@ -346,17 +406,6 @@ class ImportSitesView(APIView):
                     return c
             return None
 
-        def resolved_site_coords(site_id):
-            """The site's OWN lat/lng — from the newly-created record this
-            batch is about to insert if this is the first row to name a
-            missing site, otherwise from the already-existing row. Used
-            purely as the reference point _sector_location_override()
-            compares each row's coordinate against — never mutated."""
-            if site_id in sites_to_create:
-                s = sites_to_create[site_id]
-                return s.lat, s.lng
-            return sites_by_id.get(site_id, (None, None))
-
         for i, row in enumerate(rows):
             row = row or {}
             # Per-tech upload (2026-08-09, "allow seperate upload of
@@ -373,19 +422,17 @@ class ImportSitesView(APIView):
                 errors.append(f'Row {i + 1}: missing Site ID or Cell Name, skipped.')
                 continue
 
-            if site_id not in sites_by_id and site_id not in sites_to_create:
-                lat, lng = row.get('lat'), row.get('lng')
-                try:
-                    lat_val = float(lat) if lat not in (None, '') else None
-                    lng_val = float(lng) if lng not in (None, '') else None
-                except (TypeError, ValueError):
-                    errors.append(
-                        f'Row {i + 1} ({cell_name}): site "{site_id}" not found and its lat/long are invalid — could not create it.'
-                    )
-                    continue
-                sites_to_create[site_id] = Site(id=site_id, lat=lat_val, lng=lng_val)
+            # 2026-08-26 — a missing site is skipped and reported, NOT
+            # auto-created (see this class's own docstring note). Site
+            # existence is the Live Site Directory sync's job now.
+            if site_id not in sites_by_id:
+                errors.append(
+                    f'Row {i + 1} ({cell_name}): site "{site_id}" not found — sites are managed by the '
+                    'Live Site Directory sync, not this upload. Skipped.'
+                )
+                continue
 
-            site_lat, site_lng = resolved_site_coords(site_id)
+            site_lat, site_lng = sites_by_id.get(site_id, (None, None))
             # None unless this row's own coordinate is a genuine, different
             # location from the site (2026-08-09, "when i upload the sector
             # data, also import each sector lat long also and store") — see
@@ -450,8 +497,6 @@ class ImportSitesView(APIView):
             # batch; any changes were already folded into that same
             # in-memory object above, nothing further to queue.
 
-        if sites_to_create:
-            Site.objects.bulk_create(list(sites_to_create.values()), batch_size=1000)
         if sectors_to_create:
             Sector.objects.bulk_create(sectors_to_create, batch_size=1000)
         if sectors_to_update:
@@ -459,7 +504,7 @@ class ImportSitesView(APIView):
 
         return {
             'added': len(sectors_to_create), 'updated': len(sectors_to_update),
-            'skipped': skipped, 'sites_added': len(sites_to_create), 'errors': errors,
+            'skipped': skipped, 'errors': errors,
         }
 
 
@@ -532,3 +577,37 @@ class BackfillSiteLocationView(APIView):
             Site.objects.bulk_update(to_update, ['district', 'region'], batch_size=1000)
 
         return Response({'updated': len(to_update), 'skipped': skipped})
+
+
+class LiveSiteSyncView(APIView):
+    """/api/v2/sites/sync-live/ — the Live Site Directory sync's "middle
+    ground" admin surface (2026-08-26, confirmed via AskUserQuestion): the
+    API URL/key stay .env-only (never stored in Postgres), but an admin
+    still gets real visibility and control from within the app instead of
+    needing shell access to the server.
+
+    GET returns current status (configured?, last run/success time, last
+    result, last error) — see core/live_sites.py's get_sync_status().
+    POST triggers an immediate sync — the manual counterpart to
+    docker-compose.yml's `site-sync` service, which calls the exact same
+    core/live_sites.py::sync_live_sites() on a timer, so an admin isn't
+    stuck waiting for the next scheduled pull after fixing something at
+    the source. See that module's docstring for what gets overwritten
+    (name/region/district/palika/ward/lat-lng/deployment_status/
+    operational_technologies) and what never does (Sector/KPI/DT data).
+
+    502, not 500, on a failed pull — LIVE_SITE_API_URL being unset or the
+    upstream API being unreachable is an expected, actionable state (fix
+    config / check the source is up), not a bug in this app."""
+
+    permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
+
+    def get(self, request):
+        return Response(get_sync_status())
+
+    def post(self, request):
+        try:
+            result = sync_live_sites()
+        except Exception as exc:  # noqa: BLE001 — surfaced to the caller as a 502, not a 500 traceback
+            return Response({'detail': str(exc)}, status=502)
+        return Response(result)

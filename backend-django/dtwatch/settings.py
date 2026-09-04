@@ -134,6 +134,12 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    # GeoDjango (2026-08-25, PostGIS adoption). Needed for the GIS model
+    # fields/managers/lookups (PointField, ST_DWithin-backed __distance_lte
+    # etc.) used by Site.location / DriveTestSample.location below — pulls
+    # in no extra pip dependency, just Django's own ctypes bindings to the
+    # GEOS/GDAL/PROJ shared libs the Dockerfile now installs.
+    'django.contrib.gis',
     'rest_framework',
     'corsheaders',
     'drf_spectacular',
@@ -193,6 +199,14 @@ WSGI_APPLICATION = 'dtwatch.wsgi.application'
 # is never related to the v1 system in any way. Real deployments (via
 # docker-compose) always use Postgres.
 if os.environ.get('DJANGO_DB_ENGINE') == 'sqlite':
+    # NOTE (2026-08-25, PostGIS adoption): this throwaway sqlite path stays
+    # on the plain (non-spatial) sqlite3 backend on purpose — the GIS
+    # variant needs the SpatiaLite native extension, which isn't something
+    # to assume is present on whatever host runs an isolated smoke test.
+    # `manage.py check` / non-GIS migrations still work here; applying the
+    # migration that adds Site.location/DriveTestSample.location does NOT —
+    # verify GIS-touching changes against the real docker-compose Postgres
+    # (now postgis/postgis) instead.
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
@@ -202,7 +216,13 @@ if os.environ.get('DJANGO_DB_ENGINE') == 'sqlite':
 else:
     DATABASES = {
         'default': {
-            'ENGINE': 'django.db.backends.postgresql',
+            # postgis, not plain postgresql (2026-08-25) — same connection
+            # params/behavior for every non-spatial query, but required for
+            # the GIS fields/lookups below. docker-compose.yml's `db` image
+            # is postgis/postgis so `CREATE EXTENSION postgis` is available;
+            # Django's postgis backend runs it automatically on first
+            # migrate against a DB role with the needed privilege.
+            'ENGINE': 'django.contrib.gis.db.backends.postgis',
             'NAME': os.environ.get('POSTGRES_DB', 'dtwatch_db'),
             'USER': os.environ.get('POSTGRES_USER', 'dtwatch_user'),
             'PASSWORD': os.environ.get('POSTGRES_PASSWORD', ''),
@@ -297,6 +317,7 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Uploaded branding logo (2026-08-08, v2-only — v1 has no equivalent file
@@ -478,6 +499,56 @@ SSO_ID_TOKEN_TTL = int(os.environ.get('SSO_ID_TOKEN_TTL', 12 * 3600))
 # at rest for every active session.
 SSO_REFRESH_TOKEN_LIFETIME = int(os.environ.get('SSO_REFRESH_TOKEN_LIFETIME', 3600))
 
+# ── Live Site Directory sync (2026-08-26) ────────────────────────────────
+# An external API is the authoritative source for site identity/location/
+# on-air status (see core/live_sites.py's module docstring) — Sector/KPI/DT
+# data stays manually uploaded, untouched by this. Endpoint/auth aren't
+# finalized yet (blank default, same "dark until configured" pattern as
+# KEYCLOAK_SSO_ENABLED above), so core/live_sites.py raises a clear error
+# rather than silently doing nothing when a sync is attempted with this
+# unset.
+LIVE_SITE_API_URL = os.environ.get('LIVE_SITE_API_URL', '')
+LIVE_SITE_API_KEY = os.environ.get('LIVE_SITE_API_KEY', '')
+# How often the site-sync compose service pulls automatically (seconds).
+# Only read by that service's own loop (manage.py sync_live_sites --loop),
+# not by the manual/admin-triggered sync endpoint.
+LIVE_SITE_SYNC_INTERVAL_SECONDS = int(os.environ.get('LIVE_SITE_SYNC_INTERVAL_SECONDS', 900))
+
+# Crowdsourced-telemetry raw-sample retention (2026-08-30). After this
+# many days a monthly partition of v2_telemetry_samples is aggregated
+# into TelemetryCoverageBin and dropped — see prune_telemetry.py and the
+# network-planning brief's "Data governance" section (retention is a hard
+# requirement, enforced in the pipeline, not a policy run by hand). The
+# `telemetry-maintenance` compose service runs the prune + partition-roll
+# on a daily loop so nothing here depends on someone remembering to.
+TELEMETRY_RETENTION_DAYS = int(os.environ.get('TELEMETRY_RETENTION_DAYS', 90))
+TELEMETRY_MAINTENANCE_INTERVAL_HOURS = int(os.environ.get('TELEMETRY_MAINTENANCE_INTERVAL_HOURS', 24))
+
+# Continuous coverage-bin rollup (2026-09-01, `telemetry-bin-roller`
+# compose service, core/management/commands/roll_telemetry_bins.py) — runs
+# far more often than the daily retention pass above so the Coverage map
+# reflects samples from the last hour, not just whatever has already aged
+# past TELEMETRY_RETENTION_DAYS. TELEMETRY_BIN_ROLL_LAG_MINUTES is a
+# safety gap behind "now" so an in-flight COPY insert (core/telemetry.py)
+# always lands before its window is considered closed — see that
+# command's module docstring for the full watermark reasoning.
+TELEMETRY_BIN_ROLL_INTERVAL_MINUTES = int(os.environ.get('TELEMETRY_BIN_ROLL_INTERVAL_MINUTES', 60))
+TELEMETRY_BIN_ROLL_LAG_MINUTES = int(os.environ.get('TELEMETRY_BIN_ROLL_LAG_MINUTES', 5))
+
+# Salt for the one-way hash the telemetry endpoint applies to every
+# inbound `device_id` before storing it (core/telemetry.py's
+# hash_device_id). The SDK already sends a pseudonymous UUID; hashing on
+# top means that even a misconfigured client that put an MSISDN / IMEI in
+# that field cannot land a recoverable subscriber identifier in the store
+# — "never derive subscriber identity from it", enforced rather than
+# trusted. Defaults to a value derived from SECRET_KEY so it is stable
+# per deployment with zero extra config; set TELEMETRY_DEVICE_ID_SALT
+# explicitly to rotate it (which intentionally makes old and new samples
+# from the same device stop correlating).
+TELEMETRY_DEVICE_ID_SALT = os.environ.get(
+    'TELEMETRY_DEVICE_ID_SALT', 'telemetry-device::' + SECRET_KEY
+)
+
 # ── Logging (2026-08-10, found while debugging a real "Import failed.
 # (HTTP 500)" report with no visible cause) ─────────────────────────────
 # Django's own default logging config only sends the 'django'/
@@ -527,3 +598,4 @@ LOGGING = {
         },
     },
 }
+

@@ -3,11 +3,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { ApiError, apiErrorMessage, apiFetch, apiJson } from '../api/client'
 import { useBackupSummary, useSites } from '../api/queries'
 import { isAllowed } from '../api/types'
-import type { BackupExportPayload, BackupImportResult, BackupRestoreFlags, ImportSitesResult } from '../api/types'
+import type { BackupExportPayload, BackupImportResult, BackupRestoreFlags, KpiImportResult, SectorImportResult } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { csvTextToRows } from '../lib/dtTemplateParser'
 import { readXlsxRows } from '../lib/xlsxReader'
-import { parseSectorRows, parseSiteRows, type ParsedSectorRow, type ParsedSiteRow } from '../lib/siteImportParser'
+import { parseKpiRows, parseSectorRows, type ParsedKpiRow, type ParsedSectorRow } from '../lib/siteImportParser'
 import { resolveDistrictBackfill, type DistrictBackfillResult } from '../lib/districtBackfill'
 
 /** Backup & Restore — Complete Project (2026-08-05), ported from v1's
@@ -88,7 +88,7 @@ function SectorImportSlot({ tech, label }: { tech: SectorImportTech; label: stri
   const [fileName, setFileName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<ImportSitesResult | null>(null)
+  const [result, setResult] = useState<SectorImportResult | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function handleFile(file: File) {
@@ -112,7 +112,7 @@ function SectorImportSlot({ tech, label }: { tech: SectorImportTech; label: stri
     setBusy(true)
     setError(null)
     try {
-      const res = await apiJson<ImportSitesResult>('/api/v2/backup/import-sites/', {
+      const res = await apiJson<SectorImportResult>('/api/v2/backup/import-sites/', {
         method: 'POST',
         body: JSON.stringify({ kind: 'sectors', tech, rows }),
       })
@@ -133,8 +133,9 @@ function SectorImportSlot({ tech, label }: { tech: SectorImportTech; label: stri
       <div className="backup-card-title" style={{ fontSize: 11, marginBottom: 6 }}>{label} (add + update)</div>
       <div className="muted" style={{ fontSize: 9, marginBottom: 8 }}>
         Missing sectors are added as {tech}. An existing sector is updated only if the row's values genuinely
-        differ, otherwise left alone. If a site doesn't exist yet, it's created too — using the Lat/Long columns
-        in this file. Column headers are matched flexibly, so this doesn't need to match any particular template.
+        differ, otherwise left alone. A row for a site that doesn't exist yet is skipped and reported — sites are
+        managed by the Live Site Directory sync, not this upload. Column headers are matched flexibly, so this
+        doesn't need to match any particular template.
       </div>
       <div
         className="dt-drop-zone"
@@ -166,9 +167,8 @@ function SectorImportSlot({ tech, label }: { tech: SectorImportTech; label: stri
       {error && <div className="form-error">{error}</div>}
       {result && (
         <div className="form-success">
-          Added {result.added} sector{result.added === 1 ? '' : 's'}
-          {result.sites_added > 0 && ` (${result.sites_added} new site${result.sites_added === 1 ? '' : 's'} created)`},
-          updated {result.updated}, left unchanged {result.skipped}.
+          Added {result.added} sector{result.added === 1 ? '' : 's'}, updated {result.updated}, left unchanged{' '}
+          {result.skipped}.
           {result.errors.length > 0 && (
             <div style={{ marginTop: 4, color: '#eab308' }}>{result.errors.slice(0, 5).join(' ')}</div>
           )}
@@ -228,19 +228,23 @@ export default function BackupPage() {
   const [restoreResult, setRestoreResult] = useState<string[] | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Add-only Site/Sector import (2026-08-05) — see
-  // core/site_import.py's module docstring. Originally two independent
-  // upload slots (Site Details / Sector Data), mirroring the export
-  // cards above. Sector Data became THREE slots, one per tech, on
+  // Site/Sector import (2026-08-05, repurposed 2026-08-26) — see
+  // core/site_import.py's module docstring. Originally an add-only Site
+  // Details slot (identity: name/region/district/lat/lng); site identity
+  // now comes only from the Live Site Directory sync (core/live_sites.py),
+  // confirmed via AskUserQuestion: "no need to add site now, only need to
+  // add, update sector information, kpi during import." This slot is now
+  // an update-only KPI upload instead — matches existing sites by ID,
+  // never creates one. Sector Data became THREE slots, one per tech, on
   // 2026-08-09 ("allow seperate upload of sector data for 4g, 3g and
-  // 2g") — see SectorImportSlot below; Site Details is still the one
-  // shared slot here since it has no tech concept of its own.
-  const [siteRows, setSiteRows] = useState<ParsedSiteRow[] | null>(null)
-  const [siteFileName, setSiteFileName] = useState('')
-  const [siteImportError, setSiteImportError] = useState<string | null>(null)
-  const [siteImportBusy, setSiteImportBusy] = useState(false)
-  const [siteImportResult, setSiteImportResult] = useState<ImportSitesResult | null>(null)
-  const siteFileInputRef = useRef<HTMLInputElement>(null)
+  // 2g") — see SectorImportSlot below; KPI is still the one shared slot
+  // here since it has no tech concept of its own.
+  const [kpiRows, setKpiRows] = useState<ParsedKpiRow[] | null>(null)
+  const [kpiFileName, setKpiFileName] = useState('')
+  const [kpiImportError, setKpiImportError] = useState<string | null>(null)
+  const [kpiImportBusy, setKpiImportBusy] = useState(false)
+  const [kpiImportResult, setKpiImportResult] = useState<KpiImportResult | null>(null)
+  const kpiFileInputRef = useRef<HTMLInputElement>(null)
 
   // Sector Data import state lives in SectorImportSlot now (2026-08-09,
   // "allow seperate upload of sector data for 4g, 3g and 2g") — one
@@ -292,20 +296,6 @@ export default function BackupPage() {
     () => Array.from(new Set((sites ?? []).map((s) => s.district).filter(Boolean))).sort(),
     [sites],
   )
-  // Client-side "will add N new, skip M existing" preview for the site
-  // import — computed against whatever site list is already loaded
-  // (useSites(), cached ~60s). This is a PREVIEW only; the actual
-  // decision is re-checked against the live database server-side
-  // (core/site_import.py) before anything is written, so a slightly
-  // stale cache here can't cause a wrong skip/add outcome, only a
-  // slightly-off preview count.
-  const existingSiteIds = useMemo(() => new Set((sites ?? []).map((s) => s.id)), [sites])
-  const siteImportPreview = useMemo(() => {
-    if (!siteRows) return null
-    const newCount = siteRows.filter((r) => !existingSiteIds.has(r.id)).length
-    return { newCount, existingCount: siteRows.length - newCount }
-  }, [siteRows, existingSiteIds])
-
   if (!user) return null
 
   const canWrite = isAllowed(user.role, user.permissions.backup, 'write')
@@ -413,41 +403,41 @@ export default function BackupPage() {
     }
   }
 
-  async function handleSiteFile(file: File) {
-    setSiteImportError(null)
-    setSiteImportResult(null)
+  async function handleKpiFile(file: File) {
+    setKpiImportError(null)
+    setKpiImportResult(null)
     try {
-      const rows = await readFileRows(file, 'site')
-      const records = parseSiteRows(rows)
+      const rows = await readFileRows(file, 'kpi')
+      const records = parseKpiRows(rows)
       if (!records.length) throw new Error('No rows with a Site ID were found in this file.')
-      setSiteRows(records)
-      setSiteFileName(file.name)
+      setKpiRows(records)
+      setKpiFileName(file.name)
     } catch (err) {
-      setSiteRows(null)
-      setSiteFileName('')
-      setSiteImportError(err instanceof Error ? err.message : 'Could not parse this file.')
+      setKpiRows(null)
+      setKpiFileName('')
+      setKpiImportError(err instanceof Error ? err.message : 'Could not parse this file.')
     }
   }
 
-  async function confirmSiteImport() {
-    if (!siteRows) return
-    setSiteImportBusy(true)
-    setSiteImportError(null)
+  async function confirmKpiImport() {
+    if (!kpiRows) return
+    setKpiImportBusy(true)
+    setKpiImportError(null)
     try {
-      const result = await apiJson<ImportSitesResult>('/api/v2/backup/import-sites/', {
+      const result = await apiJson<KpiImportResult>('/api/v2/backup/import-sites/', {
         method: 'POST',
-        body: JSON.stringify({ kind: 'sites', rows: siteRows }),
+        body: JSON.stringify({ kind: 'kpi', rows: kpiRows }),
       })
-      setSiteImportResult(result)
-      setSiteRows(null)
-      setSiteFileName('')
-      if (siteFileInputRef.current) siteFileInputRef.current.value = ''
+      setKpiImportResult(result)
+      setKpiRows(null)
+      setKpiFileName('')
+      if (kpiFileInputRef.current) kpiFileInputRef.current.value = ''
       qc.invalidateQueries({ queryKey: ['sites'] })
       qc.invalidateQueries({ queryKey: ['backup-summary'] })
     } catch (err) {
-      setSiteImportError(apiErrorMessage(err, 'Import failed.'))
+      setKpiImportError(apiErrorMessage(err, 'Import failed.'))
     } finally {
-      setSiteImportBusy(false)
+      setKpiImportBusy(false)
     }
   }
 
@@ -626,21 +616,26 @@ export default function BackupPage() {
         </div>
       </div>
 
-      {/* ── Site/Sector import ── */}
+      {/* ── KPI/Sector import ── */}
       {canWrite && (
         <div className="backup-card">
-          <div className="backup-card-title">📥 Import Sites & Sectors</div>
+          <div className="backup-card-title">📥 Import KPI & Sectors</div>
           <div className="muted" style={{ fontSize: 11, marginBottom: 12 }}>
             Upload an Excel or CSV file — column names are matched flexibly, so this doesn't have to be exactly
-            this page's own "Site Details" export. Sector Data has a separate upload for each technology (2026-08-09
-            follow-up) since real 4G/3G/2G source files commonly use different column layouts — pick the slot that
-            matches the file's own technology below.
+            this page's own export templates. Site identity/location (name, province, district, palika, ward,
+            lat/long, deployment status, on-air technologies) is managed by the Live Site Directory sync now, not
+            by upload — this section only adds/updates KPI values and sector information for sites that already
+            exist. Sector Data has a separate upload for each technology (2026-08-09 follow-up) since real
+            4G/3G/2G source files commonly use different column layouts — pick the slot that matches the file's
+            own technology below.
           </div>
           <div className="backup-import-grid">
             <div className="backup-import-col">
-              <div className="backup-card-title" style={{ fontSize: 11, marginBottom: 6 }}>Site Details (add-only)</div>
+              <div className="backup-card-title" style={{ fontSize: 11, marginBottom: 6 }}>📈 Site KPI (update-only)</div>
               <div className="muted" style={{ fontSize: 9, marginBottom: 8 }}>
-                A Site ID already in the system is left completely untouched — only missing sites are added.
+                Matches an existing site by Site ID and updates its 4G KPI values. A row for a Site ID that doesn't
+                exist is reported, not created — export "Site + KPI Data" above, fill in the "KPI Data" sheet, and
+                re-upload it here.
               </div>
               <div
                 className="dt-drop-zone"
@@ -653,51 +648,52 @@ export default function BackupPage() {
                   e.preventDefault()
                   e.currentTarget.classList.remove('drag-over')
                   const f = e.dataTransfer.files[0]
-                  if (f) handleSiteFile(f)
+                  if (f) handleKpiFile(f)
                 }}
-                onClick={() => siteFileInputRef.current?.click()}
+                onClick={() => kpiFileInputRef.current?.click()}
               >
-                {siteFileName ? <span>{siteFileName}</span> : <span>Drop a Site Details .xlsx/.csv here, or click to browse</span>}
+                {kpiFileName ? <span>{kpiFileName}</span> : <span>Drop a Site + KPI Data .xlsx/.csv here, or click to browse</span>}
                 <input
-                  ref={siteFileInputRef}
+                  ref={kpiFileInputRef}
                   type="file"
                   accept=".xlsx,.xls,.csv"
                   style={{ display: 'none' }}
                   onChange={(e) => {
                     const f = e.target.files?.[0]
-                    if (f) handleSiteFile(f)
+                    if (f) handleKpiFile(f)
                   }}
                 />
               </div>
-              {siteImportError && <div className="form-error">{siteImportError}</div>}
-              {siteImportResult && (
+              {kpiImportError && <div className="form-error">{kpiImportError}</div>}
+              {kpiImportResult && (
                 <div className="form-success">
-                  Added {siteImportResult.added}, skipped {siteImportResult.skipped} (already existed).
-                  {siteImportResult.errors.length > 0 && (
-                    <div style={{ marginTop: 4, color: '#eab308' }}>{siteImportResult.errors.slice(0, 5).join(' ')}</div>
+                  Updated {kpiImportResult.updated}, left unchanged {kpiImportResult.skipped}.
+                  {kpiImportResult.errors.length > 0 && (
+                    <div style={{ marginTop: 4, color: '#eab308' }}>{kpiImportResult.errors.slice(0, 5).join(' ')}</div>
                   )}
                 </div>
               )}
-              {siteRows && siteImportPreview && (
+              {kpiRows && (
                 <div style={{ marginTop: 10 }}>
                   <div className="backup-summary-list" style={{ marginTop: 0 }}>
-                    <div>Rows parsed: <strong>{siteRows.length}</strong></div>
-                    <div>Will add: <strong style={{ color: '#4ade80' }}>{siteImportPreview.newCount}</strong></div>
-                    <div>Will skip (already exist): <strong>{siteImportPreview.existingCount}</strong></div>
+                    <div>Rows parsed: <strong>{kpiRows.length}</strong></div>
+                    <div className="muted" style={{ fontSize: 10 }}>
+                      Which sites actually exist (and so get updated) is determined on the server.
+                    </div>
                   </div>
                   <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
                     <button
                       className="btn-secondary btn-small"
                       onClick={() => {
-                        setSiteRows(null)
-                        setSiteFileName('')
-                        if (siteFileInputRef.current) siteFileInputRef.current.value = ''
+                        setKpiRows(null)
+                        setKpiFileName('')
+                        if (kpiFileInputRef.current) kpiFileInputRef.current.value = ''
                       }}
                     >
                       Cancel
                     </button>
-                    <button className="btn-primary btn-small" onClick={confirmSiteImport} disabled={siteImportBusy || siteImportPreview.newCount === 0}>
-                      {siteImportBusy ? 'Importing…' : `Add ${siteImportPreview.newCount} new site${siteImportPreview.newCount === 1 ? '' : 's'}`}
+                    <button className="btn-primary btn-small" onClick={confirmKpiImport} disabled={kpiImportBusy}>
+                      {kpiImportBusy ? 'Importing…' : `Import ${kpiRows.length} KPI row${kpiRows.length === 1 ? '' : 's'}`}
                     </button>
                   </div>
                 </div>

@@ -98,6 +98,17 @@ below: django/node-gateway/go-worker no longer publish host ports, so
 - Django health (direct, container-internal): `docker compose exec django curl http://localhost:8000/api/v2/health/`
 - Node gateway health (direct, container-internal): `docker compose exec node-gateway wget -qO- http://localhost:8090/health`
 - Go worker health (direct, container-internal): `docker compose exec go-worker wget -qO- http://localhost:8070/health`
+
+  > **2026-08-31 — `node-gateway` and `go-worker` are parked behind the
+  > `future` Compose profile** to cut idle load. Neither still does
+  > anything but serve `/health` (no real event types, no Redis job
+  > consumer) and nothing in the app calls either one yet. A plain
+  > `docker compose up` no longer starts them, so the two health checks
+  > above only apply after you switch them back on with
+  > `docker compose --profile future up -d node-gateway go-worker`.
+  > Everything needed to bring them back — build contexts, the
+  > `docker-compose.deploy.yml` image overrides, and `build-push`'s image
+  > targets — is left in place untouched.
 - React shell: open `http://localhost:5180` — it calls the health endpoints
   through the same nginx proxy and shows green/red status dots for each.
 

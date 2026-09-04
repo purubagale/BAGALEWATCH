@@ -46,6 +46,12 @@ const KNOWN_ROUTES: { path: string; label: string }[] = [
   { path: '/c4h9lt', label: 'Menu Admin' },
   { path: '/j6r3fp', label: 'Branding' },
   { path: '/n8w5qk', label: 'API Access' },
+  { path: '/l9x4rq', label: 'Live Site Sync' },
+  { path: '/t7m2kq', label: 'Telemetry Coverage' },
+  { path: '/t4v9cx', label: 'Telemetry Admin' },
+  { path: '/t6q9lp', label: 'Telemetry Drive Test' },
+  { path: '/r5t8mq', label: 'Rescue Lookup' },
+  { path: '/r2p6ky', label: 'Rescue Policy' },
 ]
 
 // Generates a random opaque-looking route token in the same style as the
@@ -73,6 +79,7 @@ const ACCESS_OPTIONS: [MenuAccess, string][] = [
   ['permission', 'Governed by Permissions matrix'],
   ['admin', 'Admin + superadmin only'],
   ['superadmin', 'Superadmin only'],
+  ['rescue', 'Rescue operator + superadmin only'],
 ]
 
 const emptyDraft: MenuItemWrite = {

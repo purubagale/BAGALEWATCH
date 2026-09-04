@@ -9,14 +9,22 @@
 // dtTemplateParser.ts's findCol — lowercased, punctuation/spaces
 // stripped, so "Site ID", "SiteID", "Site-ID" all match), and the
 // expected headers deliberately match this app's own Excel EXPORT
-// columns exactly (BackupPage.tsx's "Site Details"/"Sector Data"
+// columns exactly (BackupPage.tsx's "Site + KPI Data"/"Sector Data"
 // downloads) — the natural round-trip is: export a template, fill in
 // what's missing, re-upload it here.
 //
 // This module only PARSES rows client-side into plain objects; the
-// actual "does this ID already exist, skip if so" decision is made
-// server-side (core/site_import.py) against the real database, not
-// against whatever site list happens to be cached in the browser.
+// actual DB decision is made server-side (core/site_import.py) against
+// the real database, not against whatever's cached in the browser.
+//
+// 2026-08-26 — parseSiteRows/ParsedSiteRow (site identity: name/region/
+// district/lat/lng) is GONE, replaced by parseKpiRows/ParsedKpiRow below.
+// Site identity now comes only from the Live Site Directory sync
+// (core/live_sites.py), confirmed via AskUserQuestion: "no need to add
+// site now, only need to add, update sector information, kpi during
+// import." parseSectorRows/ParsedSectorRow is unchanged in shape, but
+// core/site_import.py no longer auto-creates a missing site from a
+// sector row's lat/lng — see that module's docstring.
 
 const normalize = (s: unknown) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
 
@@ -49,14 +57,29 @@ function int(row: string[], i: number): number | null {
   return Number.isFinite(v) ? v : null
 }
 
-export interface ParsedSiteRow {
+// KPI Data row (2026-08-26) — replaced ParsedSiteRow/parseSiteRows.
+// Site identity (name/region/district/lat/lng/etc.) now comes only from
+// the Live Site Directory sync (core/live_sites.py), never from an
+// upload — this shape only carries Site ID (to match an EXISTING site)
+// plus the 4G KPI columns, matching exports.py's _build_site_kpi_workbook
+// "KPI Data" sheet exactly, since the natural round-trip is: export that
+// template, fill in numbers, re-upload here.
+export interface ParsedKpiRow {
   id: string
-  name: string
-  region: string
-  district: string
-  city: string
-  lat: number | null
-  lng: number | null
+  rrc: number | null
+  erab: number | null
+  call_setup: number | null
+  call_drop: number | null
+  svc_drop: number | null
+  intra_ho: number | null
+  inter_ho: number | null
+  inter_rat: number | null
+  ip_thru: number | null
+  ip_lat: number | null
+  prb: number | null
+  bearer_util: number | null
+  lic_util: number | null
+  cell_avail: number | null
 }
 
 export interface ParsedSectorRow {
@@ -85,10 +108,12 @@ export interface ParsedSectorRow {
   mech_tilt: number | null
   elec_tilt: number | null
   pci: number | null
-  // Carried through 2026-08-05 for the "site not present yet" case — a
-  // re-uploaded sector row has everything needed to auto-create a
-  // minimal site record (id + coordinates) if that site doesn't exist in
-  // the system yet. See core/site_import.py's ImportSitesView.
+  // Originally (2026-08-05) also carried through for the "site not
+  // present yet" case, to auto-create a minimal site record from a
+  // sector row's own coordinates — that no longer happens (2026-08-26,
+  // see core/site_import.py's ImportSitesView docstring): a row naming a
+  // site that doesn't exist is now skipped and reported instead. Still
+  // used for the sector's OWN location override, though — see below.
   //
   // 2026-08-09 follow-up ("when i upload the sector data, also import
   // each sector lat long also and store"): this is no longer necessarily
@@ -115,28 +140,39 @@ export interface ParsedSectorRow {
   site_existence: string
 }
 
-/** Parses "Site Details"-shaped rows: Site ID, Site Name, Region, City,
- * Province / District, Latitude, Longitude[, Sector Count (ignored —
- * derived, not stored)]. Header row (rows[0]) is required. Throws if no
- * Site ID column can be found at all — same fail-fast contract as
- * dtTemplateParser's parseTemplateRows (no silent partial parse of a
- * file that clearly isn't the expected shape). Rows with a blank Site ID
- * are skipped silently (blank spacer rows are common in hand-edited
- * spreadsheets), not counted as errors. */
-export function parseSiteRows(rows: string[][]): ParsedSiteRow[] {
+/** Parses "KPI Data"-shaped rows (2026-08-26): Site ID plus the 4G KPI
+ * columns from exports.py's _build_site_kpi_workbook "KPI Data" sheet —
+ * RRC/E-RAB/Call Setup/Call Drop/Svc Drop/Intra-HO/Inter-Freq HO/
+ * Inter-RAT/IP Throughput/IP Latency/PRB Utilization/Bearer Util/License
+ * Util/Cell Avail. Header row (rows[0]) is required. Throws if no Site ID
+ * column can be found at all — same fail-fast contract as
+ * dtTemplateParser's parseTemplateRows. Rows with a blank Site ID are
+ * skipped silently (blank spacer rows are common in hand-edited
+ * spreadsheets), not counted as errors. A blank KPI cell parses to
+ * `null`, NOT 0 — core/site_import.py's `_apply_kpi` treats null as
+ * "no value on this row", never as "clear this field". */
+export function parseKpiRows(rows: string[][]): ParsedKpiRow[] {
   if (!rows || rows.length < 2) return []
   const header = rows[0].map(normalize)
   const iId = findCol(header, 'siteid', 'id')
-  const iName = findCol(header, 'sitename', 'name')
-  const iRegion = findCol(header, 'region')
-  const iDistrict = findCol(header, 'provincedistrict', 'district', 'province')
-  const iCity = findCol(header, 'city')
-  const iLat = findCol(header, 'latitude', 'lat')
-  const iLng = findCol(header, 'longitude', 'long', 'lng', 'lon')
+  const iRrc = findCol(header, 'rrcsetupsr', 'rrc')
+  const iErab = findCol(header, 'erabsetupsr', 'erab')
+  const iCallSetup = findCol(header, 'callsetupsr', 'callsetup')
+  const iCallDrop = findCol(header, 'calldroprate', 'calldrop')
+  const iSvcDrop = findCol(header, 'svcdroprate', 'svcdrop', 'servicedrop')
+  const iIntraHo = findCol(header, 'intrahosr', 'intraho')
+  const iInterHo = findCol(header, 'interfreqhosr', 'interho', 'interfreqho')
+  const iInterRat = findCol(header, 'interratHosr', 'interrat', 'interrathosr')
+  const iIpThru = findCol(header, 'ipthroughput', 'ipthru', 'throughput')
+  const iIpLat = findCol(header, 'iplatency', 'iplat', 'latency')
+  const iPrb = findCol(header, 'prbutilization', 'prb')
+  const iBearerUtil = findCol(header, 'bearerutil', 'beareutilization')
+  const iLicUtil = findCol(header, 'licenseutil', 'licutil', 'licenseutilization')
+  const iCellAvail = findCol(header, 'cellavail', 'cellavailability')
 
   if (iId < 0) throw new Error('Could not find a "Site ID" column in this file.')
 
-  const records: ParsedSiteRow[] = []
+  const records: ParsedKpiRow[] = []
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r]
     if (!row || !row.length) continue
@@ -144,12 +180,20 @@ export function parseSiteRows(rows: string[][]): ParsedSiteRow[] {
     if (!id) continue
     records.push({
       id,
-      name: cell(row, iName),
-      region: cell(row, iRegion),
-      district: cell(row, iDistrict),
-      city: cell(row, iCity),
-      lat: num(row, iLat),
-      lng: num(row, iLng),
+      rrc: num(row, iRrc),
+      erab: num(row, iErab),
+      call_setup: num(row, iCallSetup),
+      call_drop: num(row, iCallDrop),
+      svc_drop: num(row, iSvcDrop),
+      intra_ho: num(row, iIntraHo),
+      inter_ho: num(row, iInterHo),
+      inter_rat: num(row, iInterRat),
+      ip_thru: num(row, iIpThru),
+      ip_lat: num(row, iIpLat),
+      prb: num(row, iPrb),
+      bearer_util: num(row, iBearerUtil),
+      lic_util: num(row, iLicUtil),
+      cell_avail: num(row, iCellAvail),
     })
   }
   return records
