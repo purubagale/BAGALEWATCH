@@ -3,8 +3,18 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import { apiErrorMessage, apiJson } from '../api/client'
-import { DT_SESSION_GC_TIME, useDeleteDtSession, useDtServingCells, useDtSession, useDtSessions, useSites } from '../api/queries'
-import type { DtSessionDetail, DtSessionListItem } from '../api/types'
+import {
+  DT_SESSION_GC_TIME,
+  useDeleteDtSession,
+  useDeleteDtSessionAttachment,
+  useDtServingCells,
+  useDtSession,
+  useDtSessions,
+  useSites,
+  useUpdateDtSessionRemarks,
+  useUploadDtSessionAttachments,
+} from '../api/queries'
+import type { DtSessionDetail } from '../api/types'
 import { isAllowed } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import DtCompareMap, { MAX_COMPARE } from '../components/DtCompareMap'
@@ -66,10 +76,6 @@ export default function DtSessionHistoryPage() {
     return map
   }, [sites])
 
-  function nearbySiteLabels(s: DtSessionListItem): string[] {
-    return (s.meta?.nearby_site_ids ?? []).map((id) => siteNameById.get(id) ?? id)
-  }
-
   // Client-side filter — session lists are small (tens to low hundreds),
   // so no backend query param needed. Matches session name OR any tagged
   // nearby site's id/name, per the user's explicit ask that the ~1km tag
@@ -86,6 +92,30 @@ export default function DtSessionHistoryPage() {
   const { data: sessionDetail, isLoading: detailLoading } = useDtSession(selectedSessionId ?? undefined)
   const { data: servingCells } = useDtServingCells(selectedSessionId ?? undefined)
   const deleteSession = useDeleteDtSession()
+
+  // Remarks + attachments (2026-09-07: "add a provision of attaching
+  // multiple files related to the saved session in dt session history
+  // and also add provision to provide remarks/comments on the session
+  // if needed"). Same admin/superadmin write tier as delete (both are
+  // IsAdminOrSuperadmin on the backend) — canDelete is reused below
+  // rather than adding a second identical permission check.
+  const [remarksDraft, setRemarksDraft] = useState('')
+  const [editingRemarks, setEditingRemarks] = useState(false)
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null)
+  const updateRemarks = useUpdateDtSessionRemarks(selectedSessionId ?? undefined)
+  const uploadAttachments = useUploadDtSessionAttachments(selectedSessionId ?? undefined)
+  const deleteAttachment = useDeleteDtSessionAttachment(selectedSessionId ?? undefined)
+
+  // Reset the draft/edit state whenever the selected session changes (or
+  // its remarks are refetched) rather than leaving a stale draft from a
+  // previously-viewed session sitting in the textarea.
+  useEffect(() => {
+    setRemarksDraft(sessionDetail?.remarks ?? '')
+    setEditingRemarks(false)
+    setAttachmentError(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSessionId, sessionDetail?.remarks])
 
   // Session comparison (Phase 4d), ported from bts_monitor.html's
   // rsrpOpenCompare() — checkbox 2+ sessions, fetch each one's full
@@ -223,8 +253,8 @@ export default function DtSessionHistoryPage() {
                   <th>Name</th>
                   <th>Tech</th>
                   <th>Date</th>
-                  <th>Pts</th>
-                  <th>Nearby Sites</th>
+                  <th>Remarks</th>
+                  <th>Attachments</th>
                   <th></th>
                 </tr>
               </thead>
@@ -259,17 +289,10 @@ export default function DtSessionHistoryPage() {
                     </td>
                     <td>{s.tech}</td>
                     <td>{s.date ?? '—'}</td>
-                    <td>{s.sample_count}</td>
-                    <td className="dt-nearby-sites-cell">
-                      {(() => {
-                        const labels = nearbySiteLabels(s)
-                        if (s.meta?.nearby_site_ids === undefined) return <span title="Saved before this feature — run the backfill_nearby_sites command to tag it.">—</span>
-                        if (!labels.length) return <span>none</span>
-                        const shown = labels.slice(0, 2).join(', ')
-                        const extra = labels.length > 2 ? ` +${labels.length - 2}` : ''
-                        return <span title={labels.join(', ')}>{shown}{extra}</span>
-                      })()}
+                    <td className="dt-remarks-cell" title={s.remarks || undefined}>
+                      {s.remarks ? (s.remarks.length > 40 ? `${s.remarks.slice(0, 40)}…` : s.remarks) : <span className="muted">—</span>}
                     </td>
+                    <td>{s.attachment_count > 0 ? `📎 ${s.attachment_count}` : <span className="muted">—</span>}</td>
                     <td className="admin-table-actions">
                       {canDelete && (
                         <button
@@ -357,6 +380,131 @@ export default function DtSessionHistoryPage() {
                           callSummary={sessionDetail.meta?.callSummary}
                           downloadSummary={sessionDetail.meta?.downloadSummary}
                         />
+
+                        {/* Remarks (2026-09-07) — a single free-text field,
+                            not a comment thread ("if needed" in the
+                            request), editable in place. Read-only text for
+                            anyone without write access, matching how the
+                            rest of this page gates destructive/edit
+                            actions on canDelete. */}
+                        <div className="dt-session-remarks">
+                          <div className="dt-session-remarks-header">
+                            <h3>Remarks</h3>
+                            {canDelete && !editingRemarks && (
+                              <button type="button" className="btn-secondary btn-small" onClick={() => setEditingRemarks(true)}>
+                                {sessionDetail.remarks ? 'Edit' : 'Add remarks'}
+                              </button>
+                            )}
+                          </div>
+                          {editingRemarks ? (
+                            <div>
+                              <textarea
+                                className="dt-session-remarks-textarea"
+                                value={remarksDraft}
+                                onChange={(e) => setRemarksDraft(e.target.value)}
+                                rows={3}
+                                placeholder="Notes about this session…"
+                              />
+                              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                                <button
+                                  type="button"
+                                  className="btn-primary btn-small"
+                                  disabled={updateRemarks.isPending}
+                                  onClick={() => updateRemarks.mutate(remarksDraft, { onSuccess: () => setEditingRemarks(false) })}
+                                >
+                                  {updateRemarks.isPending ? 'Saving…' : 'Save'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-secondary btn-small"
+                                  onClick={() => {
+                                    setRemarksDraft(sessionDetail.remarks ?? '')
+                                    setEditingRemarks(false)
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                              {updateRemarks.isError && (
+                                <div className="page-status page-status-error">{apiErrorMessage(updateRemarks.error, 'Could not save remarks.')}</div>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="muted" style={{ whiteSpace: 'pre-wrap' }}>
+                              {sessionDetail.remarks || 'No remarks yet.'}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Attachments (2026-09-07) — arbitrary supporting
+                            files, NOT the original .trp/.gpx (those are
+                            parsed client-side and never uploaded at all).
+                            Upload accepts multiple files at once via the
+                            native file picker's `multiple` attribute. */}
+                        <div className="dt-session-attachments">
+                          <div className="dt-session-remarks-header">
+                            <h3>Attachments</h3>
+                            {canDelete && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn-secondary btn-small"
+                                  disabled={uploadAttachments.isPending}
+                                  onClick={() => attachmentInputRef.current?.click()}
+                                >
+                                  {uploadAttachments.isPending ? 'Uploading…' : '+ Add files'}
+                                </button>
+                                <input
+                                  ref={attachmentInputRef}
+                                  type="file"
+                                  multiple
+                                  style={{ display: 'none' }}
+                                  onChange={(e) => {
+                                    const files = e.target.files ? Array.from(e.target.files) : []
+                                    e.target.value = '' // allow re-selecting the same file(s) later
+                                    if (!files.length) return
+                                    setAttachmentError(null)
+                                    uploadAttachments.mutate(files, {
+                                      onError: (err) => setAttachmentError(apiErrorMessage(err, 'Could not upload file(s).')),
+                                    })
+                                  }}
+                                />
+                              </>
+                            )}
+                          </div>
+                          {attachmentError && <div className="page-status page-status-error">{attachmentError}</div>}
+                          {!sessionDetail.attachments.length ? (
+                            <p className="muted">No files attached.</p>
+                          ) : (
+                            <ul className="dt-session-attachments-list">
+                              {sessionDetail.attachments.map((a) => (
+                                <li key={a.id}>
+                                  {a.url ? (
+                                    <a href={a.url} target="_blank" rel="noreferrer">{a.original_filename || `Attachment ${a.id}`}</a>
+                                  ) : (
+                                    <span>{a.original_filename || `Attachment ${a.id}`}</span>
+                                  )}
+                                  {a.size_bytes != null && <span className="muted"> ({(a.size_bytes / 1024).toFixed(0)} KB)</span>}
+                                  {a.uploaded_by_name && <span className="muted"> — uploaded by {a.uploaded_by_name}</span>}
+                                  {canDelete && (
+                                    <button
+                                      type="button"
+                                      className="btn-danger btn-small"
+                                      style={{ marginLeft: 8 }}
+                                      onClick={() => {
+                                        if (confirm(`Remove "${a.original_filename}"? This cannot be undone.`)) {
+                                          deleteAttachment.mutate(a.id)
+                                        }
+                                      }}
+                                    >
+                                      Remove
+                                    </button>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>

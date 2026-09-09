@@ -5,7 +5,7 @@ from django.db import connection, transaction
 from django.db.models import Count, Exists, OuterRef, Q
 
 from django.core.files.base import ContentFile
-from rest_framework import permissions, status, viewsets
+from rest_framework import pagination, permissions, status, viewsets
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -244,6 +244,19 @@ class MeView(APIView):
 
 # ── Sites (Phase 2: full CRUD) ──────────────────────────────────────────
 
+class SitePagination(pagination.PageNumberPagination):
+    """Opt-in only — see SiteViewSet.paginate_queryset() below. The Sites
+    page's new Table view (2026-09-07 rebuild) needs real server-side
+    paging over ~4,900 rows; the existing Map view/sidebar (useSites())
+    needs the full flat array it's always gotten (MapView's clustering,
+    CSV/xlsx export, and anything else already built against "one request,
+    every site" would silently see only page_size rows if this applied
+    unconditionally)."""
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 500
+
+
 class SiteViewSet(viewsets.ModelViewSet):
     """Read: any authenticated role (list/map/detail). Write (create/
     update/delete): superadmin or admin, matching v1's
@@ -252,6 +265,18 @@ class SiteViewSet(viewsets.ModelViewSet):
     from the payload (see SiteWriteSerializer) — same "send your complete
     current state" contract v1 uses, not a partial patch."""
     queryset = Site.objects.all().order_by('region', 'district', 'name')
+    pagination_class = SitePagination
+
+    def paginate_queryset(self, queryset):
+        # Only paginate when the caller actually asks for a page — see
+        # SitePagination's docstring. Without this, setting
+        # pagination_class at all makes DRF paginate every list() call
+        # unconditionally, which would truncate every existing flat-array
+        # caller to page_size rows the moment this shipped.
+        params = self.request.query_params
+        if 'page' not in params and self.pagination_class.page_size_query_param not in params:
+            return None
+        return super().paginate_queryset(queryset)
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
@@ -279,6 +304,52 @@ class SiteViewSet(viewsets.ModelViewSet):
             qs = qs.filter(
                 Q(id__icontains=search) | Q(name__icontains=search) | Q(district__icontains=search)
             )
+        # Deployment/on-air status (2026-09-07, Sites page Table/Map
+        # rebuild) — exact match against Site.deployment_status, the live
+        # Site Directory sync's own field (see live_sites.py), NOT this
+        # app's separate KPI-health `status` (ok/warn/crit/nodata). Kept
+        # exact rather than icontains: the frontend derives its dropdown
+        # options from the real distinct values already loaded via
+        # useSites() (same "never drift from what's actually in the
+        # database" convention SiteSearchView's own docstring documents),
+        # so whatever a caller sends here is a value that's already known
+        # to appear verbatim on some site.
+        deployment_status = params.get('status')
+        if deployment_status:
+            qs = qs.filter(deployment_status=deployment_status)
+        # Technology (2026-09-07) — one or more `technology=` params,
+        # OR'd together, each matched the SAME way SiteSearchView's own
+        # `tech` filter already does: Site.tech OR any sector's Sector.tech
+        # (2G/3G values on this real dataset live almost entirely on
+        # sector rows — see that view's docstring). Repeatable query param
+        # (?technology=2G&technology=4G) rather than a comma-joined string,
+        # matching DRF/browsable-API convention for a multi-value filter.
+        technologies = params.getlist('technology')
+        if technologies:
+            tech_q = Q()
+            for t in technologies:
+                t = t.strip()
+                if not t:
+                    continue
+                # Bug fixed 2026-09-08 ("if i select single or multiple
+                # field in technology, it is giving wrong result") --
+                # SiteListSerializer.get_techs() (what actually populates
+                # the Technology column/pills the user picks from) unions
+                # THREE sources: Site.tech, Sector.tech, AND
+                # Site.operational_technologies (the Live Site Directory
+                # sync's own source, populated for nearly every site right
+                # after the 2026-09-07 reset, before any Sector Data
+                # import). This filter only checked the first two, so
+                # picking "2G" matched only the small legacy subset with
+                # Sector rows and silently excluded the sync-only sites
+                # the column itself was showing a "2G" badge for.
+                tech_q |= (
+                    Q(tech__icontains=t)
+                    | Q(operational_technologies__contains=[t.upper()])
+                    | Exists(Sector.objects.filter(site_id=OuterRef('pk'), tech__icontains=t))
+                )
+            if tech_q:
+                qs = qs.filter(tech_q)
         return qs
 
     @staticmethod
@@ -486,8 +557,13 @@ class SiteSearchView(APIView):
         # Data imports), so Site.tech alone would never surface them.
         tech = (request.query_params.get('tech') or '').strip()
         if tech:
+            # See SiteViewSet.get_queryset()'s technology filter (2026-09-08
+            # fix) for why operational_technologies has to be checked here
+            # too -- same three-source union SiteListSerializer.get_techs()
+            # uses to populate the tech data this filter is meant to match.
             qs = qs.filter(
                 Q(tech__icontains=tech)
+                | Q(operational_technologies__contains=[tech.upper()])
                 | Exists(Sector.objects.filter(site_id=OuterRef('pk'), tech__icontains=tech))
             )
 

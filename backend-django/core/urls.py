@@ -45,11 +45,26 @@ urlpatterns = [
     # treat "search" itself as a site ID lookup).
     path('sites/search/', views.SiteSearchView.as_view(), name='site-search'),
     path('sites/<str:site_id>/sectors/', views.SiteSectorListView.as_view(), name='site-sectors'),
-    # Manual "Sync now" for the Live Site Directory sync (2026-08-26) — see
-    # site_import.py's LiveSiteSyncView docstring. Registered before the
+    # Live Site Directory multi-source sync admin (2026-09-08 — see
+    # LiveSiteSource's docstring in core/models.py). Registered before the
     # router's `sites/<pk>/` include below for the same reason as
-    # sites/search/ above.
-    path('sites/sync-live/', site_import.LiveSiteSyncView.as_view(), name='sites-sync-live'),
+    # sites/search/ above: `sites/sync-live/...` must win over the
+    # router's dynamic `sites/<pk>/` pattern. The nested `/sources/...`
+    # paths are naturally safe from that same collision on their own
+    # (DRF's default pk-capture regex excludes '/'), but are kept
+    # alongside the others here for readability.
+    path(
+        'sites/sync-live/sources/', site_import.LiveSiteSourceListView.as_view(),
+        name='sites-sync-live-sources',
+    ),
+    path(
+        'sites/sync-live/sources/<int:pk>/', site_import.LiveSiteSourceDetailView.as_view(),
+        name='sites-sync-live-source-detail',
+    ),
+    path(
+        'sites/sync-live/sources/<int:pk>/sync/', site_import.LiveSiteSourceSyncView.as_view(),
+        name='sites-sync-live-source-sync',
+    ),
 
     # Phase 2 — these match v1's actual /api/v1/thresholds, /tree, and
     # /permissions contracts (flat GET/PUT resources with their own
@@ -129,6 +144,16 @@ urlpatterns = [
     # Superadmin-editable copy for the drive-test consent prompt
     # (2026-09-02) — see core/consent.py's DriveTestConsentMessageAdminView.
     path('telemetry/consent-message/', consent.DriveTestConsentMessageAdminView.as_view(), name='telemetry-consent-message'),
+
+    # Flat (not router-nested) delete endpoint for one DT session
+    # attachment (2026-09-07) — see DriveTestSessionAttachmentDetailView's
+    # own docstring in drive_test.py for why this isn't a second @action
+    # on DriveTestSessionViewSet.
+    path(
+        'dt-sessions/<int:session_id>/attachments/<int:attachment_id>/',
+        drive_test.DriveTestSessionAttachmentDetailView.as_view(),
+        name='dt-session-attachment-detail',
+    ),
 
     path('', include(router.urls)),
 ]

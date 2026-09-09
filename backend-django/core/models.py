@@ -680,6 +680,16 @@ class DriveTestSession(models.Model):
     # IndexedDB quota bookkeeping — meaningless once storage is Postgres,
     # kept only for the History UI's existing "session size" display).
     size_bytes = models.BigIntegerField(null=True, blank=True)
+    # Free-text notes on the session (2026-09-07 request: "add...
+    # provision to provide remarks/comments on the session if needed").
+    # A single optional field, not a threaded comment log -- "if needed"
+    # in the request, and every other DT session field is written once
+    # at upload time then left alone (samples/meta are purely additive,
+    # never edited) -- editable via DriveTestSessionViewSet.remarks()
+    # rather than a general update/PATCH, matching that same
+    # everything-else-is-immutable design (see this viewset's own
+    # docstring for why v2 deliberately has no update/partial_update).
+    remarks = models.TextField(blank=True, default='')
 
     class Meta:
         db_table = 'v2_dt_sessions'
@@ -690,6 +700,54 @@ class DriveTestSession(models.Model):
 
     def __str__(self):
         return f'{self.name or self.id} ({self.date})'
+
+
+def dt_session_attachment_upload_path(instance, filename):
+    # UUID-prefixed, not the filename alone -- same per-item-random-name
+    # convention as menu_icon_upload_path above, needed here because a
+    # session can carry MANY attachments (unlike branding_logo's fixed
+    # singleton path) and two attachments on the same session can easily
+    # share an original filename (e.g. two people each uploading their
+    # own "photo.jpg").
+    safe_name = (filename or 'file').replace('/', '_').replace('\\', '_')
+    return f'dt_session_attachments/{instance.session_id}/{uuid.uuid4().hex}_{safe_name}'
+
+
+class DriveTestSessionAttachment(models.Model):
+    """Arbitrary supporting files attached to a DriveTestSession
+    (2026-09-07 request: "add a provision of attaching multiple files
+    related to the saved session in dt session history"). Deliberately
+    generic -- this is NOT the original .trp/.gpx source file (those are
+    parsed client-side and never reach the server at all, see
+    DriveTestSession's own docstring above); it's for whatever
+    supporting material someone wants to keep alongside a session
+    afterward -- a report, a field photo, an annotated screenshot,
+    anything. Multiple per session, freely added/removed via
+    DriveTestSessionViewSet's `attachments` action and
+    DriveTestSessionAttachmentDetailView, independent of the session's
+    own deliberately-immutable samples/meta.
+    """
+    session = models.ForeignKey(DriveTestSession, on_delete=models.CASCADE, related_name='attachments')
+    file = models.FileField(upload_to=dt_session_attachment_upload_path, max_length=500)
+    # Kept separately from `file.name` (which carries the UUID-prefixed
+    # storage path) so the UI can show/download under the name the user
+    # actually recognizes.
+    original_filename = models.CharField(max_length=255, blank=True, default='')
+    size_bytes = models.BigIntegerField(null=True, blank=True)
+    uploaded_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='dt_session_attachments'
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_dt_session_attachments'
+        ordering = ['-uploaded_at']
+        indexes = [
+            models.Index(fields=['session']),
+        ]
+
+    def __str__(self):
+        return self.original_filename or self.file.name
 
 
 class DriveTestSample(models.Model):
@@ -1049,6 +1107,158 @@ class LiveSiteSyncStatus(models.Model):
         return f'Live Site Sync status (last run {self.last_run_at})'
 
 
+class LiveSiteSyncConfig(models.Model):
+    """Singleton row (id forced to 1, same convention as LiveSiteSyncStatus
+    above) holding the Live Site Directory API's URL/token, editable from
+    the Live Site Sync admin page (2026-09-07).
+
+    REVERSES a deliberate 2026-08-26 decision (see LiveSiteSyncStatus's own
+    docstring) to keep this credential .env-only so it would never touch
+    Postgres -- the project owner explicitly asked for an in-app
+    configuration UI once a real source (NetBox) was chosen, trading that
+    isolation for not needing shell/deploy access to point this at a new
+    URL or rotate a token. `api_key` is stored in PLAINTEXT, not hashed --
+    unlike TelemetryIngestKey/ApiKey (which verify an INCOMING request and
+    only ever need a one-way comparison), this credential is used
+    OUTBOUND by core.live_sites.fetch_live_sites() to authenticate TO the
+    external API, so the plaintext must be recoverable. Never serialized
+    back to the frontend in full -- see site_import.py's
+    LiveSiteSyncConfigView, which returns only a masked tail.
+
+    Settings-based configuration (LIVE_SITE_API_URL/LIVE_SITE_API_KEY env
+    vars) still works and is checked as a FALLBACK when this row is empty
+    -- see fetch_live_sites()'s resolution order -- so an existing
+    docker-compose/.env-only setup is not broken by this table's
+    existence; this row simply takes precedence once someone fills it in
+    here.
+    """
+    AUTH_SCHEME_CHOICES = [
+        ('Bearer', 'Bearer <token>'),
+        ('Token', 'Token <token> (NetBox)'),
+    ]
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    api_url = models.CharField(max_length=500, blank=True, default='')
+    api_key = models.CharField(max_length=500, blank=True, default='')
+    # NetBox requires `Authorization: Token <key>`; the original .env-only
+    # design assumed `Bearer <key>` (see fetch_live_sites()'s history) --
+    # kept configurable rather than hardcoded to either, since a future
+    # second source could need yet another scheme.
+    auth_scheme = models.CharField(max_length=10, choices=AUTH_SCHEME_CHOICES, default='Bearer')
+    updated_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_live_site_sync_config'
+
+    def save(self, *args, **kwargs):
+        self.id = 1
+        super().save(*args, **kwargs)
+
+    def masked_key(self):
+        """Last 4 chars only, for display -- never the full key. Matches
+        the "don't even show it to a superadmin who already has it"
+        posture the rest of this app's credential UIs (ingest keys) use,
+        even though this one, unlike those, technically COULD be shown
+        in full since it's stored reversibly."""
+        if not self.api_key:
+            return ''
+        return f'{"•" * max(len(self.api_key) - 4, 0)}{self.api_key[-4:]}'
+
+    def __str__(self):
+        return f'Live Site Sync config ({self.api_url or "not set"})'
+
+
+class LiveSiteSource(models.Model):
+    """A configured Live Site Directory API connection (2026-09-08, "add
+    feature of multiple source api connection in import api access page
+    along with their separate automatic sync time set option and manual
+    sinc") -- replaces the old LiveSiteSyncConfig/LiveSiteSyncStatus
+    singleton pair now that there can be more than one. Both models above
+    are left in place (a migration copies whatever was configured there
+    into the first row here, so an existing single-source setup loses
+    nothing) but nothing new reads or writes them -- see
+    00XX_live_site_source.py's data migration.
+
+    Config AND status live on the SAME row here, unlike the old Config/
+    Status split across two separate singleton tables -- there's no
+    longer a single shared "the" status once there's more than one
+    source, so each row just carries its own run history alongside its
+    own credentials.
+
+    Every enabled source is synced independently on its OWN
+    `sync_interval_minutes` by the same `site-sync` background service
+    (core/management/commands/sync_live_sites.py's --loop), which now
+    polls all enabled sources on a short fixed tick and syncs whichever
+    ones are actually due -- confirmed via AskUserQuestion (2026-09-08)
+    as simpler and more reliable than a true clock-time scheduler, and
+    matching how the single-source version already worked (sleep, sync,
+    repeat) just generalized to N independent sleep timers instead of
+    one shared timer.
+
+    All sources are merged into the SAME `Site` table by site id
+    (confirmed via AskUserQuestion 2026-09-08) rather than tagging each
+    Site with which source it came from -- appropriate because this
+    deployment's site id scheme (CDR/EDR/WDR/MWDR/FWDR/KTM region
+    prefixes) is already how non-overlapping ranges are expected to be
+    split across sources/regions/departments. A site id genuinely
+    claimed by two different sources still can't silently clobber either
+    one blindly -- see _do_sync()'s existing dedup-by-first-seen handling
+    in build_live_site_map(), unchanged by this feature and applied the
+    same way regardless of how many sources fed into the combined record
+    list a sync run is working from.
+    """
+    AUTH_SCHEME_CHOICES = LiveSiteSyncConfig.AUTH_SCHEME_CHOICES
+
+    name = models.CharField(max_length=100)
+    api_url = models.CharField(max_length=500, blank=True, default='')
+    # Stored in PLAINTEXT -- see LiveSiteSyncConfig's docstring above for
+    # why (used OUTBOUND to authenticate TO the external API, so it must
+    # be recoverable, unlike an incoming-request credential that only
+    # ever needs a one-way comparison).
+    api_key = models.CharField(max_length=500, blank=True, default='')
+    auth_scheme = models.CharField(max_length=10, choices=AUTH_SCHEME_CHOICES, default='Token')
+    # Minutes, not seconds -- an admin-facing schedule reads far more
+    # naturally as "every 60 minutes" than "every 3600 seconds", and the
+    # old single global LIVE_SITE_SYNC_INTERVAL_SECONDS setting is only
+    # ever used now as this field's default via the data migration.
+    sync_interval_minutes = models.PositiveIntegerField(default=60)
+    # A source can be paused without deleting it (and losing its
+    # credentials/history) -- the --loop command simply skips any
+    # disabled source every tick.
+    enabled = models.BooleanField(default=True)
+    updated_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # Per-source status -- was LiveSiteSyncStatus's singleton row before
+    # this existed; same fields, same meaning, just one set per source
+    # instead of one shared set for the whole app.
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    last_created = models.PositiveIntegerField(null=True, blank=True)
+    last_updated = models.PositiveIntegerField(null=True, blank=True)
+    last_warnings = models.JSONField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default='')
+
+    class Meta:
+        db_table = 'v2_live_site_sources'
+        ordering = ['id']
+
+    def masked_key(self):
+        """Same masking convention as LiveSiteSyncConfig.masked_key()."""
+        if not self.api_key:
+            return ''
+        return f'{"•" * max(len(self.api_key) - 4, 0)}{self.api_key[-4:]}'
+
+    def __str__(self):
+        return self.name or f'Live Site source #{self.pk}'
+
+
 class DashboardCardConfig(models.Model):
     """Per-user saved layout for the new customizable Dashboard home page
     (2026-08-08: "dashboard display contents also should be customizable
@@ -1398,6 +1608,22 @@ class SubscriberLastLocation(models.Model):
     # moments (core/rescue.py), so a consented device can have a fresh
     # position with no msisdn yet, but never an msisdn without consent.
     msisdn = models.CharField(max_length=20, null=True, blank=True, db_index=True)
+
+    # Network-side identifier, deliberately separate from msisdn's
+    # "device told us this at enrollment" provenance -- this one can only
+    # ever come from Nepal Telecom's own subscriber database (an HLR/HSS/
+    # VLR-style msisdn->imsi resolution) or a future carrier-privileged
+    # SDK build that can read it on-device (Android blocks
+    # TelephonyManager.getSubscriberId() for ordinary apps since API 29 --
+    # see core/subscriber_network_resolver.py's docstring for the full
+    # two-track rationale). Populated by RescueEnrollView calling
+    # core.subscriber_network_resolver.resolve_subscriber_network_info(),
+    # which is a stub returning nothing as of 2026-09-05 pending that
+    # network access -- so this column exists and is wired in ready to
+    # populate, without anything else in this model or in rescue.py
+    # needing to change once it does. Never populated by, or required
+    # from, the general-public app build.
+    imsi = models.CharField(max_length=20, null=True, blank=True, db_index=True)
 
     last_lat = models.FloatField(null=True, blank=True)
     last_lng = models.FloatField(null=True, blank=True)

@@ -16,16 +16,19 @@ the browser before the already-decoded session ever reaches the server.
 """
 from django.contrib.gis.geos import Point
 from django.contrib.gis.measure import D
-from django.db.models import Avg, Count
+from django.db.models import Avg, Count, OuterRef, Subquery
+from django.db.models.functions import Coalesce
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from .dt_serving_cell import attach_serving_cells
-from .models import DriveTestSample, DriveTestSession, Sector, Site
+from .models import DriveTestSample, DriveTestSession, DriveTestSessionAttachment, Sector, Site
 from .serializers import (
     DT_SAMPLES_BATCH_SIZE,
+    DriveTestSessionAttachmentSerializer,
     DriveTestSessionDetailSerializer,
     DriveTestSessionListSerializer,
     DriveTestSessionNearSerializer,
@@ -35,6 +38,30 @@ from .serializers import (
     _nearby_site_ids,
 )
 from .views import IsAdminOrSuperadmin
+
+
+def _attachment_count_expr():
+    """Returns an annotation expression for how many
+    DriveTestSessionAttachment rows a session has, safe to combine with
+    a `sample_count=Count('samples')` annotation on the SAME queryset
+    (2026-09-07, for the History table's new Attachments column).
+
+    Deliberately a correlated Subquery, NOT a second
+    `Count('attachments')` -- two Count()s over two DIFFERENT reverse
+    relations in one queryset join both tables onto the session row, and
+    the resulting cross-join multiplies both counts by each other's row
+    count (a session with 5,000 samples and 2 attachments would report
+    sample_count=10,000, not 5,000). A correlated subquery counts each
+    relation in its own isolated query per row, so sample_count keeps
+    its original single-join behavior completely unaffected. Used by
+    both DriveTestSessionViewSet.queryset and near() below, which builds
+    its own separate queryset rather than reusing self.queryset.
+    """
+    counts = (
+        DriveTestSessionAttachment.objects.filter(session=OuterRef('pk'))
+        .values('session').annotate(c=Count('id')).values('c')
+    )
+    return Coalesce(Subquery(counts), 0)
 
 
 class DriveTestSessionViewSet(
@@ -57,7 +84,9 @@ class DriveTestSessionViewSet(
     `_require_auth(roles=('superadmin', 'admin'))` on both POST and
     DELETE of `/dt-sessions`.
     """
-    queryset = DriveTestSession.objects.all().annotate(sample_count=Count('samples'))
+    queryset = DriveTestSession.objects.all().annotate(
+        sample_count=Count('samples'), attachment_count=_attachment_count_expr()
+    )
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
@@ -67,8 +96,16 @@ class DriveTestSessionViewSet(
         return DriveTestSessionListSerializer
 
     def get_permissions(self):
-        if self.action in ('create', 'destroy', 'samples'):
+        if self.action in ('create', 'destroy', 'samples', 'remarks'):
             return [IsAuthenticated(), IsAdminOrSuperadmin()]
+        if self.action == 'attachments':
+            # GET (list) is read-only, same tier as retrieve/list below;
+            # POST (upload) needs the admin/superadmin write tier, same
+            # as every other action that changes a session. Checked
+            # again per-request in attachments() itself since a single
+            # DRF @action can't declare different permissions per HTTP
+            # method here.
+            return [IsAuthenticated()]
         return [IsAuthenticated()]
 
     @action(detail=True, methods=['post'])
@@ -122,6 +159,67 @@ class DriveTestSessionViewSet(
         session.size_bytes = (session.size_bytes or 0) + per_sample * len(rows)
         session.save(update_fields=['meta', 'size_bytes'])
         return Response({'appended': len(rows)}, status=201)
+
+    @action(detail=True, methods=['patch'])
+    def remarks(self, request, pk=None):
+        """`PATCH /api/v2/dt-sessions/<id>/remarks/` — the one field on an
+        otherwise-immutable session that's actually meant to be edited
+        after the fact (2026-09-07 request: "add... provision to provide
+        remarks/comments on the session if needed"). Deliberately its
+        own tiny action rather than a general update/partial_update on
+        the viewset -- see the viewset's own docstring for why v2 has no
+        such general update path; this opens exactly one field, nothing
+        else about a saved session becomes editable.
+        """
+        session = self.get_object()
+        remarks = request.data.get('remarks')
+        if remarks is None or not isinstance(remarks, str):
+            return Response({'remarks': ['This field is required and must be a string.']}, status=400)
+        session.remarks = remarks
+        session.save(update_fields=['remarks'])
+        return Response({'remarks': session.remarks})
+
+    @action(detail=True, methods=['get', 'post'], url_path='attachments')
+    def attachments(self, request, pk=None):
+        """`GET /api/v2/dt-sessions/<id>/attachments/` — list this
+        session's attachments (also included inline in the detail
+        serializer; this exists so the frontend can refresh just the
+        attachment list after an upload/delete without re-fetching the
+        whole session, which can carry tens of thousands of samples).
+
+        `POST /api/v2/dt-sessions/<id>/attachments/` — uploads one or
+        more files (multipart form, field name `files`, repeated for
+        multiple -- 2026-09-07 request: "attaching multiple files
+        related to the saved session"). Admin/superadmin only, checked
+        here rather than in get_permissions() since GET on this same
+        action is open to any authenticated role (see get_permissions()'s
+        own comment). No file-type restriction -- this is generic
+        supporting material (see DriveTestSessionAttachment's docstring
+        in models.py), not a parsed input format this app validates.
+        """
+        session = self.get_object()
+        if request.method == 'GET':
+            qs = session.attachments.all()
+            return Response(DriveTestSessionAttachmentSerializer(qs, many=True, context={'request': request}).data)
+
+        if not (request.user.is_authenticated and request.user.role in ('superadmin', 'admin')):
+            return Response({'detail': 'Not permitted.'}, status=403)
+
+        files = request.FILES.getlist('files') or request.FILES.getlist('file')
+        if not files:
+            return Response({'files': ['At least one file is required (field name "files").']}, status=400)
+
+        created = []
+        for f in files:
+            attachment = DriveTestSessionAttachment.objects.create(
+                session=session, file=f, original_filename=f.name,
+                size_bytes=f.size, uploaded_by=request.user,
+            )
+            created.append(attachment)
+        return Response(
+            DriveTestSessionAttachmentSerializer(created, many=True, context={'request': request}).data,
+            status=201,
+        )
 
     @action(detail=True, methods=['get'], url_path='serving-cells')
     def serving_cells(self, request, pk=None):
@@ -223,10 +321,35 @@ class DriveTestSessionViewSet(
             return Response([])
 
         sessions = list(
-            DriveTestSession.objects.filter(id__in=by_session.keys()).annotate(sample_count=Count('samples'))
+            DriveTestSession.objects.filter(id__in=by_session.keys())
+            .annotate(sample_count=Count('samples'), attachment_count=_attachment_count_expr())
         )
         for session in sessions:
             session.filtered_samples = by_session[session.id]
         sessions.sort(key=lambda s: (s.date or '', s.saved_at), reverse=True)
 
         return Response(DriveTestSessionNearSerializer(sessions, many=True, context={'request': request}).data)
+
+
+class DriveTestSessionAttachmentDetailView(APIView):
+    """`DELETE /api/v2/dt-sessions/<session_id>/attachments/<attachment_id>/`
+    — removes one attachment (and its stored file). A flat URL rather
+    than a second nested @action on the viewset (DRF's router doesn't
+    cleanly support a detail action with its OWN extra path segment
+    beyond the session pk without a manual regex url_path, and an
+    attachment id is already globally unique on its own) -- registered
+    directly in urls.py alongside this viewset's router registration.
+
+    Admin/superadmin only, matching every other action that changes a
+    session (create/destroy/samples/remarks/attachments-upload above).
+    """
+    permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
+
+    def delete(self, request, session_id, attachment_id):
+        try:
+            attachment = DriveTestSessionAttachment.objects.get(pk=attachment_id, session_id=session_id)
+        except DriveTestSessionAttachment.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=404)
+        attachment.file.delete(save=False)
+        attachment.delete()
+        return Response(status=204)

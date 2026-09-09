@@ -89,6 +89,20 @@ _SECTOR_FIELDS = [
     'lat', 'lng', 'carrier', 'site_band', 'cell_active_status', 'site_existence',
 ]
 
+# Site identity/location fields the Live Site Directory sync now owns
+# outright (see Site's own docstring in models.py, 2026-08-26) — a
+# `.netwatch` restore must never write these, even for a site it's
+# otherwise updating, or it reintroduces exactly the stale-data problem
+# this whole rewrite (2026-09-07) exists to prevent.
+_LIVE_SYNC_OWNED_SITE_FIELDS = {'name', 'region', 'district', 'lat', 'lng'}
+# Everything BackupImportView is still allowed to write on restore for
+# an EXISTING site: _SITE_FIELDS minus the live-sync-owned columns above
+# and minus 'id' (the lookup key, never something to "update"). This is
+# exactly the KPI/status data the Live Site Directory sync explicitly
+# never touches (see Site's docstring: "Sector/KPI/DT data is a
+# completely separate set of fields... none of this touches them").
+_SITE_RESTORE_FIELDS = [f for f in _SITE_FIELDS if f not in _LIVE_SYNC_OWNED_SITE_FIELDS and f != 'id']
+
 
 def _tree_payload():
     """Mirrors TreeView.get() exactly (core/views.py)."""
@@ -187,6 +201,33 @@ class BackupImportView(APIView):
     in a mixed old/new state); a real transactional DB lets v2 do
     strictly better here rather than just matching v1.
 
+    **`sites` is NO LONGER delete-and-replace (2026-09-07).** It used to
+    be: wipe every Site and Sector, then bulk-recreate everything from
+    the backup file — exactly like every other section here still
+    works. That's precisely how an old `.netwatch` backup (predating
+    the Live Site Directory sync, 2026-08-26) silently reintroduced
+    stale site identity/location after a live sync had already
+    populated the real thing: restoring `sites` would delete the
+    live-synced Site table and replace it wholesale with the backup's
+    old snapshot. Requested explicitly after that exact scenario played
+    out for real (~4,966 Excel-imported sites reappearing after a
+    restore, with no `live_synced_at` ever set on any of them).
+
+    Site identity/location (name/region/district/palika/ward_no/lat/
+    lng/deployment_status/operational_technologies) is Live Site
+    Directory-owned now (see Site's docstring in models.py) — a
+    `.netwatch` restore must never touch it and must never create or
+    delete a Site row. So `sites` now: for each backup row whose `id`
+    matches an EXISTING Site, updates only the manually-managed fields
+    _SITE_FIELDS always covered beyond identity (KPI/status columns —
+    see `_SITE_RESTORE_FIELDS` below); a row whose id has no match is
+    skipped, not created. Sectors get the same treatment, matched by
+    (site, cell_name, tech) like `_apply_sectors()`'s "which sector"
+    disambiguation in site_import.py — update-or-create for a matching
+    site, skipped for a site with no match, and nothing pre-existing is
+    ever deleted. `tree`/`thresholds`/`dt_bands` are unrelated to site
+    identity and are unchanged, still full delete-and-replace.
+
     Superadmin only — the single most destructive action in this app."""
 
     permission_classes = [IsAuthenticated, IsSuperadminOnly]
@@ -201,40 +242,75 @@ class BackupImportView(APIView):
         restored = []
         with transaction.atomic():
             if restore.get('sites') and isinstance(data.get('sites'), list):
-                Sector.objects.all().delete()
-                Site.objects.all().delete()
-                # Bulk, not per-row (2026-08-10 perf audit finding) — this
-                # used to be one Site.objects.create() + one
-                # Sector.objects.create() per sector, individually, which
-                # on a real ~4,700-site backup with a handful of sectors
-                # each meant roughly 15,000-20,000 separate INSERT round
-                # trips inside a single transaction. Restore is rare and
-                # admin-only, but it's exactly the moment someone needs
-                # the app back FAST (usually because something just went
-                # wrong) — a restore that takes minutes instead of seconds
-                # is a bad experience at the worst possible time. Site's
-                # PK is the caller-supplied `id` string (not an
-                # auto-increment column), so every Site() instance already
-                # has its real PK before insert — bulk_create works
-                # cleanly here with no two-pass "insert then refetch PKs"
-                # dance.
-                sites_to_create = []
-                sectors_to_create = []
-                for row in data['sites']:
-                    row = row or {}
-                    sectors = row.get('sectors') or []
-                    site_fields = {k: v for k, v in row.items() if k in _SITE_FIELDS}
-                    if not site_fields.get('id'):
+                # Matched-update-only, NOT delete-and-replace (2026-09-07
+                # rewrite — see this view's docstring for the full "why").
+                # Site existence and identity/location are Live Site
+                # Directory-owned now: this branch never deletes a Site,
+                # never creates one, and never writes
+                # _LIVE_SYNC_OWNED_SITE_FIELDS — it only refreshes the
+                # manually-managed KPI/status columns on sites that
+                # already exist. Bulk, not per-row (2026-08-10 perf audit
+                # finding still applies) — row processing is pure Python,
+                # then one bulk_update/bulk_create per model.
+                site_rows = {row.get('id'): row for row in data['sites'] if row and row.get('id')}
+                existing_sites = {s.id: s for s in Site.objects.filter(id__in=site_rows.keys())}
+                skipped_site_ids = [sid for sid in site_rows if sid not in existing_sites]
+
+                sites_to_update = []
+                for site_id, row in site_rows.items():
+                    site = existing_sites.get(site_id)
+                    if site is None:
                         continue
-                    sites_to_create.append(Site(**site_fields))
-                    for sec in sectors:
-                        sec_fields = {k: v for k, v in (sec or {}).items() if k in _SECTOR_FIELDS}
-                        sectors_to_create.append(Sector(site_id=site_fields['id'], **sec_fields))
-                if sites_to_create:
-                    Site.objects.bulk_create(sites_to_create, batch_size=1000)
+                    changed = False
+                    for field in _SITE_RESTORE_FIELDS:
+                        if field in row and getattr(site, field) != row[field]:
+                            setattr(site, field, row[field])
+                            changed = True
+                    if changed:
+                        sites_to_update.append(site)
+                if sites_to_update:
+                    Site.objects.bulk_update(sites_to_update, _SITE_RESTORE_FIELDS, batch_size=1000)
+
+                # Sectors: matched by (site, cell_name, tech) -- the same
+                # "which sector" disambiguation key _apply_sectors()/
+                # _pick_target() use in site_import.py, so a restore can't
+                # duplicate a sector that upload logic would have matched.
+                # A sector whose site has no match is skipped, never used
+                # to imply a site (matches kind='sectors' Excel import's
+                # own rule); nothing pre-existing is ever deleted.
+                existing_sectors = {
+                    (sec.site_id, sec.cell_name, sec.tech): sec
+                    for sec in Sector.objects.filter(site_id__in=existing_sites.keys())
+                }
+                sectors_to_create = []
+                sectors_to_update = []
+                for site_id, row in site_rows.items():
+                    if site_id not in existing_sites:
+                        continue
+                    for sec_row in (row.get('sectors') or []):
+                        sec_fields = {k: v for k, v in (sec_row or {}).items() if k in _SECTOR_FIELDS}
+                        key = (site_id, sec_fields.get('cell_name', ''), sec_fields.get('tech', ''))
+                        sector = existing_sectors.get(key)
+                        if sector is None:
+                            sectors_to_create.append(Sector(site_id=site_id, **sec_fields))
+                        else:
+                            changed = False
+                            for field, value in sec_fields.items():
+                                if getattr(sector, field) != value:
+                                    setattr(sector, field, value)
+                                    changed = True
+                            if changed:
+                                sectors_to_update.append(sector)
                 if sectors_to_create:
                     Sector.objects.bulk_create(sectors_to_create, batch_size=1000)
-                restored.append(f"{len(sites_to_create)} sites")
+                if sectors_to_update:
+                    Sector.objects.bulk_update(sectors_to_update, _SECTOR_FIELDS, batch_size=1000)
+
+                restored.append(
+                    f"{len(sites_to_update)} site(s) updated, {len(skipped_site_ids)} site(s) skipped "
+                    f"(no matching Live Site Directory site), {len(sectors_to_create)} sector(s) added, "
+                    f"{len(sectors_to_update)} sector(s) updated"
+                )
 
             if restore.get('tree') and isinstance(data.get('tree'), dict):
                 tree = data['tree']

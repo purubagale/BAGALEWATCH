@@ -475,6 +475,15 @@ textarea:focus {
 }
 .app-breadcrumb-sep { color: var(--text-dim); }
 .app-breadcrumb-current { color: var(--text-primary); font-weight: 600; }
+/* Every ancestor crumb except the current page is a real link now
+   (2026-09-04, "make it clickable to go in parent path... now it is
+   possible only after going to side menu only") — no underline at rest
+   so the bar still reads as plain breadcrumb text, but a hover/focus
+   state makes it discoverable as clickable. `inherit` on color/font
+   undoes the browser's default blue-link/underline <a> styling, same
+   convention as .app-sidebar-link uses for its own NavLinks. */
+.app-breadcrumb-link { color: inherit; font: inherit; text-decoration: none; cursor: pointer; }
+.app-breadcrumb-link:hover, .app-breadcrumb-link:focus-visible { color: var(--text-primary); text-decoration: underline; }
 
 .app-topbar-actions {
   display: flex;
@@ -966,17 +975,26 @@ textarea:focus {
    whole point of this feature is to add scope filtering without
    affecting how the map itself is laid out or themed. */
 .sites-scope-status {
+  /* Moved to bottom-right (2026-09-08) -- this and .sites-map-filter-panel
+     were BOTH anchored at top:12/left:12, invisibly stacked on top of each
+     other (and Leaflet's default top-left zoom control) only because both
+     had accidentally-transparent backgrounds hiding the collision; making
+     them opaque without moving one would just stack two solid boxes on
+     top of each other instead of fixing anything. Bottom-right is the one
+     corner nothing else in this map view claims (top-left: zoom control +
+     Scope panel, top-right: Streets/Satellite + Add Site, bottom-left:
+     .site-quickview when a site is selected). */
   position: absolute;
-  top: 12px;
-  left: 12px;
+  bottom: 16px;
+  right: 16px;
   z-index: 1000;
-  background: var(--bg-surface)ee;
+  background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 10px;
   font-size: 12px;
   color: var(--text-tertiary);
-  max-width: calc(100% - 160px);
+  max-width: calc(100% - 32px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -990,7 +1008,7 @@ textarea:focus {
   position: absolute;
   bottom: 16px;
   left: 16px;
-  background: var(--bg-surface)ee;
+  background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px 14px;
@@ -2165,6 +2183,40 @@ textarea:focus {
   font-size: 12px;
 }
 .dt-nearby-sites-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-tertiary); }
+.dt-remarks-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-secondary); }
+
+/* Session Remarks + Attachments (2026-09-07) — small note/file panels
+   under a session's map, styled like a plain content card rather than
+   the heavier .report-card grid tiles above them. */
+.dt-session-remarks, .dt-session-attachments {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.dt-session-remarks-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.dt-session-remarks-header h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.dt-session-remarks-textarea {
+  display: block;
+  width: 100%;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 8px 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+  resize: vertical;
+}
+.dt-session-attachments-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.dt-session-attachments-list li { font-size: 12px; color: var(--text-secondary); }
+.dt-session-attachments-list a { color: var(--brand-primary); text-decoration: none; }
+.dt-session-attachments-list a:hover { text-decoration: underline; }
 
 /* Session History drag-resize divider + collapsed-panel tab (2026-07-30) */
 .dt-history-resize-handle {
@@ -2647,3 +2699,455 @@ textarea:focus {
   padding: 3px;
   box-sizing: border-box;
 }
+
+/* ── Sites page v2 (Table/Map toggle rebuild, 2026-09-07) ────────────
+   Rebuilds SitesPage.tsx's look after the "Namaste Mobile Sites"
+   reference GUI (Table/Map toggle, cascading region→district filters,
+   a technology multi-select, a floating map filter panel) while
+   keeping every existing Add/Relocate/Delete/sector-pin capability
+   (2026-09-07 AskUserQuestion: "keep all of it, adapted into the new
+   layout"). Built entirely from this app's own tokens/plain-CSS
+   conventions -- the reference's Tailwind/shadcn stack was not
+   ported, only its UX shape. `.sites-page-v2`/`.sites-map-wrap-v2`
+   are added onto the pre-existing `.sites-page`/`.sites-map-wrap`
+   classes above (kept for their layout/positioning base) rather than
+   duplicating them, so this page no longer uses `.sites-sidebar`/
+   `.tree-*` at all -- those rules above are now dead for this page
+   but are left in place since nothing else referenced them either
+   way and removing them isn't this change's job. */
+.sites-page-v2 {
+  flex-direction: column;
+  overflow: hidden;
+}
+.sites-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sites-page-title {
+  font-size: 16px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sites-view-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.sites-view-toggle button {
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  padding: 6px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sites-view-toggle button + button { border-left: 1px solid var(--border); }
+.sites-view-toggle button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sites-view-toggle button.active { background: var(--brand-primary); color: var(--text-on-brand); }
+
+/* Filter bar above the Table view; the Map view gets the same controls
+   inside the floating .sites-map-filter-panel further down, both driven
+   by SitesPage.tsx's one shared `filters` state. */
+.sites-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface-alt);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  flex-shrink: 0;
+}
+.sites-filter-bar select {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.sites-tech-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.sites-tech-pill {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-tertiary);
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sites-tech-pill:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sites-tech-pill.active { background: var(--brand-primary); border-color: var(--brand-primary); color: var(--text-on-brand); }
+.sites-active-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.sites-active-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.sites-active-toggle-track {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 18px;
+  background: var(--border);
+  border-radius: 999px;
+  transition: background-color 0.15s ease;
+  flex-shrink: 0;
+}
+.sites-active-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--bg-surface);
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+  box-shadow: var(--shadow-sm);
+}
+.sites-active-toggle input:checked + .sites-active-toggle-track { background: var(--brand-primary); }
+.sites-active-toggle input:checked + .sites-active-toggle-track .sites-active-toggle-thumb { transform: translateX(16px); }
+.sites-active-toggle input:focus-visible + .sites-active-toggle-track { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
+
+.sites-search-form { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.sites-search-form input {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  padding: 6px 10px;
+  font-size: 12px;
+  min-width: 200px;
+}
+
+/* Table view */
+.sites-table-wrap { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px; }
+.sites-table-name { font-weight: 600; }
+.sites-table-id { font-size: 11px; color: var(--text-dim); }
+.sites-table-coords { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-tertiary); white-space: nowrap; }
+.sites-table-sn { color: var(--text-dim); font-size: 12px; width: 1%; white-space: nowrap; }
+.sites-tech-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 7px;
+  margin: 0 4px 4px 0;
+  color: var(--text-tertiary);
+}
+.sites-status-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--brand-primary-soft);
+  border-radius: 4px;
+  padding: 2px 8px;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+/* 2026-09-08 -- rebuilt as a "count on the left, numbered pages on the
+   right" bar (matching the reference) rendered by SitesPage.tsx's
+   renderTablePagination(), used both above and below the table
+   (.sites-table-pagination-top/-bottom add just a divider line on
+   whichever side faces the table, so the two copies read as bookends
+   rather than two identical floating rows). */
+.sites-table-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+.sites-table-pagination-top { border-bottom: 1px solid var(--border); margin-bottom: 10px; }
+.sites-table-pagination-bottom { border-top: 1px solid var(--border); margin-top: 4px; }
+.sites-table-pagination-pages { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.sites-table-pagination-page {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-app);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sites-table-pagination-page:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sites-table-pagination-page.active { background: var(--brand-primary); border-color: var(--brand-primary); color: var(--text-on-brand); cursor: default; }
+.sites-table-pagination-ellipsis { padding: 0 2px; color: var(--text-dim); }
+
+/* Map view -- .sites-map-wrap-v2 layers onto the existing .sites-map-wrap
+   (flex:1; position:relative) purely to host the new floating panel; the
+   map itself, .sites-scope-status, .sites-map-toolbar and .site-quickview
+   are all unchanged from before this rebuild. */
+.sites-map-filter-panel {
+  /* top nudged from 12px to 76px (2026-09-08) -- clears Leaflet's default
+     top-left zoom control (~10px/10px, ~52px tall), which this panel's
+     250px width used to start almost exactly on top of; harmless while
+     the panel was invisible (the background-syntax bug above), impossible
+     to miss once it's opaque. */
+  position: absolute;
+  top: 76px;
+  left: 12px;
+  z-index: 1000;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 12px 14px;
+  width: 250px;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 92px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sites-map-filter-panel select,
+.sites-map-filter-panel input {
+  width: 100%;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.sites-map-filter-panel .sites-tech-pills { gap: 5px; }
+.sites-map-filter-panel-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.sites-map-filter-panel-count {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+/* SearchableSelect (2026-09-08, "add search option also in filter in
+   map") -- Region/District's stand-in for a plain <select> inside the
+   Scope panel. Sized/colored to match the plain <select>s it sits next
+   to (same pill radius via the shared rule below) so the two don't look
+   like different components. */
+.searchable-select { position: relative; width: 100%; }
+.searchable-select-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-primary);
+  padding: 6px 10px;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.searchable-select-trigger:hover { background: var(--bg-hover); }
+.searchable-select-placeholder { color: var(--text-tertiary); }
+.searchable-select-caret { color: var(--text-tertiary); font-size: 10px; flex-shrink: 0; }
+.searchable-select-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 1001;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.searchable-select-search {
+  width: 100%;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.searchable-select-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.searchable-select-option {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.searchable-select-option:hover { background: var(--bg-hover); }
+.searchable-select-option.active { background: var(--brand-primary-soft); font-weight: 600; }
+.searchable-select-empty { padding: 8px; font-size: 12px; color: var(--text-dim); text-align: center; }
+
+/* Marker hover tooltip / click popup content (2026-09-08, "use on hover
+   and on click display as attached") -- Leaflet's own .leaflet-tooltip/
+   .leaflet-popup-content-wrapper already supply an opaque card with a
+   pointer/tail and a close button (popup only), from leaflet.css; these
+   rules only style the inner content div MapView.tsx's
+   buildMarkerPopupHtml() builds, matching the reference's title/id/tech/
+   meta/coordinates hierarchy. */
+.sites-marker-tooltip, .leaflet-popup-content { white-space: normal; }
+/* Permanent "Show name" label (2026-09-08) -- plain text next to the
+   marker, not the rich hover card, matching the reference's simple
+   pill-style label. `::before` is Leaflet's own arrow/pointer triangle
+   (leaflet.css draws one per direction, e.g. .leaflet-tooltip-right); the
+   reference's labels don't have one, so it's hidden here. */
+.sites-marker-name-label {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+.sites-marker-name-label::before { display: none; }
+.sites-marker-popup { min-width: 170px; }
+.sites-marker-popup-title { font-weight: 700; font-size: 13px; color: var(--text-primary); margin-bottom: 2px; }
+.sites-marker-popup-id { font-size: 11px; font-weight: 600; color: var(--brand-primary); margin-bottom: 2px; }
+.sites-marker-popup-tech { font-size: 11px; font-weight: 600; color: var(--status-success-text-subtle); margin-bottom: 4px; }
+.sites-marker-popup-meta { font-size: 11px; color: var(--text-tertiary); margin-bottom: 2px; }
+.sites-marker-popup-coords { font-size: 11px; font-family: ui-monospace, monospace; color: var(--text-dim); }
+
+/* ── Sites page v2 — GUI quality pass (2026-09-07) ────────────────────
+   Closes the visual gap against the reference GUI's polish: colored
+   technology/status badges (reusing this app's own --tech-* / --status-*
+   tokens, not new colors), a brand-colored table header scoped to just
+   this page's table (deliberately NOT touching the shared .admin-table
+   used by every other admin page), a proper two-button Streets/
+   Satellite segment to replace the old single self-relabeling button,
+   and a few rounder/pill-shaped touches on the existing filter controls. */
+
+/* Technology badges — same palette as .sector-tech-badge/.tree-tech-badge
+   elsewhere in the app (see that token block's comment in :root), so a
+   2G/3G/4G chip means the same color everywhere in dtwatch. */
+.sites-tech-badge.tech-2g { color: var(--tech-2g); background: var(--tech-2g-bg); border-color: var(--tech-2g-border); }
+.sites-tech-badge.tech-3g { color: var(--tech-3g); background: var(--tech-3g-bg); border-color: var(--tech-3g-border); }
+.sites-tech-badge.tech-4g { color: var(--tech-4g); background: var(--tech-4g-bg); border-color: var(--tech-4g-border); }
+
+/* Deployment-status badges — the app's existing --status-* semantic
+   palette (pass/warn/fail), not a new color scheme. */
+.sites-status-badge.status-active {
+  background: var(--status-success-bg-subtle);
+  color: var(--status-success-text-subtle);
+  border: 1px solid var(--status-success-border);
+}
+.sites-status-badge.status-planned {
+  background: var(--status-warning-bg);
+  color: var(--status-warning);
+  border: 1px solid transparent;
+}
+.sites-status-badge.status-other {
+  background: var(--bg-surface);
+  color: var(--text-tertiary);
+  border: 1px solid var(--border);
+}
+
+/* Table header — brand-colored, scoped to THIS page's table only. The
+   shared .admin-table (Users/Permissions/reports/etc elsewhere in the
+   app) is deliberately left exactly as-is; this selector only reaches
+   the table inside .sites-table-wrap. */
+.sites-table-wrap .admin-table thead th {
+  background: var(--brand-primary);
+  color: var(--text-on-brand);
+  border-color: var(--brand-primary-hover);
+}
+/* Rounded header top corners (2026-09-08, "top round display for table
+   header") -- radius + overflow:hidden on the <table> itself rather than
+   on individual <th> cells, since border-collapse:collapse can clip a
+   per-cell border-radius unevenly at the shared border; this clips
+   cleanly regardless. Top-only, matching the filter bar's own top-round
+   treatment above it (two stacked rounded-top "cards" rather than one
+   traveling all the way around the bottom, which nothing else here
+   rounds). */
+.sites-table-wrap .admin-table {
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  overflow: hidden;
+}
+/* Row hover highlight (2026-09-08, "change color for rows hovered") --
+   this page's rows were plain <tr>s with no .admin-table-row-clickable
+   class (that class/its :hover rule is opt-in, used by other tables
+   whose rows navigate on click -- Advanced Site Search etc.), so hovering
+   a site row did nothing at all. Scoped to just this table, same as the
+   header color above, rather than changing the shared .admin-table's
+   default (nothing) for every other admin page. */
+.sites-table-wrap .admin-table tbody tr:hover { background: var(--bg-hover); }
+
+/* Rounder, more pill-like touches on the existing filter controls to
+   match the reference's softer look. */
+.sites-view-toggle { border-radius: 999px; }
+.sites-view-toggle button:first-child { border-top-left-radius: 999px; border-bottom-left-radius: 999px; }
+.sites-view-toggle button:last-child { border-top-right-radius: 999px; border-bottom-right-radius: 999px; }
+.sites-filter-bar select,
+.sites-map-filter-panel select { border-radius: 999px; }
+.sites-tech-pill { padding: 5px 14px; }
+
+/* Streets/Satellite segmented control (2026-09-07) — replaces the old
+   single button that relabeled itself; floats over the map inside
+   .sites-map-toolbar the same way .map-add-toggle already does, so it
+   needs its own opaque surface rather than relying on .btn-secondary's
+   transparent background. */
+.sites-layer-toggle {
+  display: flex;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+.sites-layer-toggle button {
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sites-layer-toggle button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sites-layer-toggle button.active { background: var(--brand-primary); color: var(--text-on-brand); }

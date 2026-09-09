@@ -154,7 +154,15 @@ export async function apiFetch(path: string, init: RequestInit = {}, _retried = 
   const hadToken = !!accessToken
   const headers = new Headers(init.headers)
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
-  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  // FormData bodies (2026-09-07, first use: DT session attachment
+  // upload) must NOT get a manually-set Content-Type -- the browser sets
+  // its own `multipart/form-data; boundary=...` when it serializes a
+  // FormData body, and a fetch() call can't supply that boundary value
+  // itself. Every other caller in this app sends a plain object body,
+  // which still gets 'application/json' exactly as before.
+  if (init.body && !headers.has('Content-Type') && !(init.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json')
+  }
 
   const res = await fetch(`${DJANGO_API_URL}${path}`, { ...init, headers })
 

@@ -63,6 +63,7 @@ from .models import (
     RescueLocationAccessLog,
     SubscriberLastLocation,
 )
+from .subscriber_network_resolver import resolve_subscriber_network_info
 from .telemetry import _key_from_request, _resolve_key, _scope_by_operator, hash_device_id
 from .views import IsRescueOperator, IsSuperadminOnly
 
@@ -131,9 +132,17 @@ class RescueEnrollView(APIView):
 
         obj, _created = SubscriberLastLocation.objects.get_or_create(device_id=device_id)
         obj.msisdn = msisdn
+        # Network-side enrichment, not a requirement -- see
+        # subscriber_network_resolver's docstring. A stub today (always
+        # {}), so `imsi` stays whatever it already was (None on a first
+        # enroll) until real network access exists; never blocks or slows
+        # down enrollment either way.
+        network_info = resolve_subscriber_network_info(msisdn)
+        if network_info.get('imsi'):
+            obj.imsi = network_info['imsi']
         obj.rescue_consent = True
         obj.rescue_consent_at = timezone.now()
-        obj.save(update_fields=['msisdn', 'rescue_consent', 'rescue_consent_at', 'updated_at'])
+        obj.save(update_fields=['msisdn', 'imsi', 'rescue_consent', 'rescue_consent_at', 'updated_at'])
         return Response({'enrolled': True})
 
 
@@ -213,6 +222,11 @@ class RescueLookupView(APIView):
             'accuracy_m': match.last_accuracy_m,
             'source': match.last_source,
             'last_seen_ts': match.last_seen_ts,
+            # None on every row today (see SubscriberLastLocation.imsi's
+            # comment) -- included now so the frontend/operator tooling
+            # has nothing left to change the day a resolver actually
+            # populates it.
+            'imsi': match.imsi,
         })
 
 
@@ -308,6 +322,7 @@ class RescueBulkLookupView(APIView):
                     'lat': match.last_lat, 'lng': match.last_lng,
                     'accuracy_m': match.last_accuracy_m, 'source': match.last_source,
                     'last_seen_ts': match.last_seen_ts,
+                    'imsi': match.imsi,  # see RescueLookupView's response -- same field, same stub state
                 })
             else:
                 results.append({'msisdn': msisdn, 'found': False})

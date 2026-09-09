@@ -62,6 +62,38 @@ export interface SiteListItem {
   // uppercased (e.g. ['2G', '3G', '4G']); empty array if neither the
   // site nor any of its sectors has a tech recorded.
   techs: string[]
+  // Live Site Directory fields (2026-08-26 sync, exposed here 2026-09-07
+  // for the Sites page Table/Map rebuild) — palika/ward_no are Nepal's
+  // local-government tier below district; deployment_status is the
+  // source system's own on-air/planned/etc state, a SEPARATE concept
+  // from `status` above (this app's own KPI-health traffic light).
+  palika: string
+  ward_no: number | null
+  deployment_status: string
+}
+
+// GET /api/v2/sites/?page=&page_size=&region=&district=&status=&technology=
+// (2026-09-07) — DRF's stock PageNumberPagination envelope. Only returned
+// when the caller passes `page` or `page_size` (see SiteViewSet.
+// paginate_queryset()'s docstring) — omit both and /sites/ still returns
+// the plain SiteListItem[] useSites() has always expected.
+export interface SitesPageResponse {
+  count: number
+  next: string | null
+  previous: string | null
+  results: SiteListItem[]
+}
+
+export interface SitesPageParams {
+  page?: number
+  page_size?: number
+  region?: string
+  district?: string
+  /** Site.deployment_status, exact match — see SiteViewSet.get_queryset(). */
+  status?: string
+  /** One or more technology values, OR'd together server-side. */
+  technology?: string[]
+  q?: string
 }
 
 export interface Sector {
@@ -672,10 +704,25 @@ export interface DtSessionListItem {
   meta: DtSessionMeta | null
   size_bytes: number | null
   sample_count: number
+  remarks: string
+  attachment_count: number
+}
+
+// GET .../dt-sessions/<id>/attachments/ item shape, and the nested
+// `attachments` array on DtSessionDetail (2026-09-07 — "add a provision
+// of attaching multiple files related to the saved session").
+export interface DtSessionAttachment {
+  id: number
+  original_filename: string
+  url: string | null
+  size_bytes: number | null
+  uploaded_by_name: string | null
+  uploaded_at: string
 }
 
 export interface DtSessionDetail extends DtSessionListItem {
   samples: DtSample[]
+  attachments: DtSessionAttachment[]
 }
 
 // GET /api/v2/dt-sessions/<id>/serving-cells/ — the distinct serving
@@ -1021,28 +1068,59 @@ export interface ApiKeyCreateResponse extends ApiKeyRow {
   key: string
 }
 
-// ── Live Site Directory sync (2026-08-26) ────────────────────────────────
-// GET/POST /api/v2/sites/sync-live/. The API URL/key themselves are
-// .env-only and never appear here — `configured` is the only thing this
-// page can say about them (see core/live_sites.py's get_sync_status()).
-export interface LiveSiteSyncStatus {
-  configured: boolean
-  sync_interval_seconds: number
+// ── Live Site Directory sync (2026-08-26, multi-source since 2026-09-08) ──
+// GET/POST /api/v2/sites/sync-live/sources/, GET/PATCH/DELETE
+// /api/v2/sites/sync-live/sources/<id>/, POST .../sources/<id>/sync/ — see
+// LiveSiteSource's docstring (core/models.py) for the multi-source design:
+// each row is its own connection (URL/credentials/auth scheme), its own
+// schedule (sync_interval_minutes), and its own run history, all synced
+// independently by the same site-sync container; every source is merged
+// into the same Site table by site id. `api_key` itself is NEVER present
+// in this shape — only whether one is set and its masked tail — so this
+// response is safe to keep in a React Query cache without leaking the
+// real secret.
+export interface LiveSiteSource {
+  id: number
+  name: string
+  api_url: string
+  auth_scheme: 'Bearer' | 'Token'
+  sync_interval_minutes: number
+  enabled: boolean
+  api_key_set: boolean
+  api_key_masked: string
+  created_at: string
+  updated_at: string
+  updated_by_name: string | null
   last_run_at: string | null
   last_success_at: string | null
   last_created: number | null
   last_updated: number | null
-  last_warnings: string[]
+  last_warnings: string[] | null
   last_error: string
 }
 
-/** POST response — same shape as a successful sync's effect on
- * LiveSiteSyncStatus, but returned directly rather than requiring a
- * second GET to see what the trigger just did. */
-export interface LiveSiteSyncResult {
+/** POST (create) / PATCH (edit) body. `api_key` is optional on an edit —
+ * omit it (or send '') to keep whatever key is already stored, see
+ * LiveSiteSourceDetailView's docstring — but is the only way to set one
+ * in the first place on create, since there's nothing to fall back to. */
+export interface LiveSiteSourceInput {
+  name?: string
+  api_url?: string
+  auth_scheme?: 'Bearer' | 'Token'
+  sync_interval_minutes?: number
+  enabled?: boolean
+  api_key?: string
+}
+
+/** POST .../sources/<id>/sync/ response — the sync result plus the
+ * source row it just updated, so the page can show the new status
+ * without a second round-trip. */
+export interface LiveSiteSourceSyncResult {
   created: number
   updated: number
+  unchanged?: number
   warnings: string[]
+  source: LiveSiteSource
 }
 
 // ── Crowdsourced telemetry admin (2026-08-31) ───────────────────────────

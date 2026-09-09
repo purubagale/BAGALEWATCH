@@ -511,8 +511,14 @@ LIVE_SITE_API_URL = os.environ.get('LIVE_SITE_API_URL', '')
 LIVE_SITE_API_KEY = os.environ.get('LIVE_SITE_API_KEY', '')
 # How often the site-sync compose service pulls automatically (seconds).
 # Only read by that service's own loop (manage.py sync_live_sites --loop),
-# not by the manual/admin-triggered sync endpoint.
-LIVE_SITE_SYNC_INTERVAL_SECONDS = int(os.environ.get('LIVE_SITE_SYNC_INTERVAL_SECONDS', 900))
+# not by the manual/admin-triggered sync endpoint. Default raised
+# 900 -> 86400 (15 min -> 24h) on 2026-09-07 once the real source became
+# NetBox inventory data: site identity/location/on-air-tech barely
+# changes day to day, so polling every 15 minutes was pure overhead --
+# _do_sync() also now skips writing any site whose data hasn't actually
+# changed since the last pull, so an unnecessarily-frequent interval no
+# longer even costs a DB write, just a wasted round trip to NetBox.
+LIVE_SITE_SYNC_INTERVAL_SECONDS = int(os.environ.get('LIVE_SITE_SYNC_INTERVAL_SECONDS', 86400))
 
 # Crowdsourced-telemetry raw-sample retention (2026-08-30). After this
 # many days a monthly partition of v2_telemetry_samples is aggregated

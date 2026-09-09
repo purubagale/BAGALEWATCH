@@ -17,7 +17,9 @@ from .models import (
     BrandingSettings,
     DriveTestSample,
     DriveTestSession,
+    DriveTestSessionAttachment,
     KpiThreshold,
+    LiveSiteSource,
     MenuItem,
     MenuPermission,
     Sector,
@@ -83,12 +85,34 @@ class SiteListSerializer(serializers.ModelSerializer):
             'id', 'name', 'region', 'city', 'district', 'lat', 'lng',
             'type', 'tech', 'status', 'status_2g', 'status_3g', 'kpi_entered',
             'techs',
+            # Live Site Directory fields (2026-09-07, Sites page Table/Map
+            # rebuild) — palika/ward_no/deployment_status were already on
+            # Site (core/live_sites.py's 2026-08-26 sync) but never
+            # exposed on this list/map serializer since nothing rendered
+            # them until now. deployment_status is the source system's
+            # on-air/planned/etc state — a SEPARATE concept from `status`
+            # above (this app's own KPI-health traffic light).
+            'palika', 'ward_no', 'deployment_status',
         ]
 
     def get_techs(self, obj):
         techs = set()
         if obj.tech:
             techs.add(obj.tech.strip().upper())
+        # Live Site Directory sync (2026-09-07 reset) writes per-site radio
+        # technology onto Site.operational_technologies (from NetBox Device
+        # records -- see live_sites.py's _netbox_operational_technologies_by_site()
+        # docstring), which is a SEPARATE source from Site.tech/Sector.tech
+        # below (those come from the Excel Sector Data import, empty right
+        # after a fresh live-sync reset). Bug found 2026-09-08 ("i cant see
+        # technology data and its filter" -- Technology column showed "--"
+        # for every site right after the reset): this method never read
+        # operational_technologies at all, so a freshly-synced site with no
+        # sector import yet had genuinely no source left to report a tech
+        # from, even though the live sync had already stored it.
+        for t in (obj.operational_technologies or []):
+            if t:
+                techs.add(str(t).strip().upper())
         for t in self.context.get('techs_by_site', {}).get(obj.id, ()):
             if t:
                 techs.add(t)
@@ -267,6 +291,55 @@ class BrandingSettingsSerializer(serializers.ModelSerializer):
             return None
         request = self.context.get('request')
         return request.build_absolute_uri(obj.logo.url) if request else obj.logo.url
+
+
+class LiveSiteSourceSerializer(serializers.ModelSerializer):
+    """Read/summary shape for a configured Live Site Directory connection
+    (2026-09-08 multi-source feature) — used for both the list/detail GET
+    responses and to shape the Response body after create/update/sync, so
+    every LiveSiteSourceListView/DetailView/SyncView endpoint returns the
+    exact same row shape.
+
+    `api_key` itself is NEVER a field here — same "don't even round-trip
+    it to the frontend" posture LiveSiteSyncConfigView already used for
+    the old singleton config, just generalized to N rows. Only
+    `api_key_set`/`api_key_masked` are exposed, matching
+    LiveSiteSource.masked_key(). Writing `api_key` (create/update) is
+    handled by hand in the view, not through this serializer — see
+    LiveSiteSourceListView/LiveSiteSourceDetailView in site_import.py —
+    because "blank/omitted means keep the existing stored key" isn't a
+    plain field-level validation rule a ModelSerializer expresses
+    cleanly, and the old config view already established that exact
+    convention by hand."""
+    api_key_set = serializers.SerializerMethodField()
+    api_key_masked = serializers.SerializerMethodField()
+    updated_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LiveSiteSource
+        fields = [
+            'id', 'name', 'api_url', 'auth_scheme', 'sync_interval_minutes', 'enabled',
+            'api_key_set', 'api_key_masked',
+            'created_at', 'updated_at', 'updated_by_name',
+            'last_run_at', 'last_success_at', 'last_created', 'last_updated',
+            'last_warnings', 'last_error',
+        ]
+        read_only_fields = [
+            'id', 'created_at', 'updated_at',
+            'last_run_at', 'last_success_at', 'last_created', 'last_updated',
+            'last_warnings', 'last_error',
+        ]
+
+    def get_api_key_set(self, obj):
+        return bool(obj.api_key)
+
+    def get_api_key_masked(self, obj):
+        return obj.masked_key()
+
+    def get_updated_by_name(self, obj):
+        if not obj.updated_by_id:
+            return None
+        return obj.updated_by.name or obj.updated_by.username
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -734,12 +807,16 @@ class DriveTestSessionListSerializer(serializers.ModelSerializer):
     opened (DriveTestSessionDetailSerializer)."""
     uploaded_by_name = serializers.SerializerMethodField()
     sample_count = serializers.IntegerField(read_only=True)  # annotated in the view's queryset
+    # attachment_count (2026-09-07, History table column) — also
+    # annotated in the view's queryset (a Subquery, not a second Count(),
+    # see drive_test.py's _attachment_count_expr() docstring for why).
+    attachment_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = DriveTestSession
         fields = [
             'id', 'name', 'tech', 'date', 'uploaded_date', 'saved_at',
-            'uploaded_by_name', 'meta', 'size_bytes', 'sample_count',
+            'uploaded_by_name', 'meta', 'size_bytes', 'sample_count', 'remarks', 'attachment_count',
         ]
 
     def get_uploaded_by_name(self, obj):
@@ -755,6 +832,34 @@ class DriveTestSessionListSerializer(serializers.ModelSerializer):
 DT_PLOT_MAX_POINTS = 15000
 
 
+class DriveTestSessionAttachmentSerializer(serializers.ModelSerializer):
+    """Read shape for one DriveTestSessionAttachment -- nested (read-only)
+    inside DriveTestSessionDetailSerializer, and reused as-is for the
+    `attachments` upload/list action's response. `url` is built from
+    `request` in context so it's an absolute URL the frontend can use
+    directly (matches how MEDIA_URL-backed fields are already surfaced
+    elsewhere in this app, e.g. BrandingSettings.logo)."""
+    url = serializers.SerializerMethodField()
+    uploaded_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DriveTestSessionAttachment
+        fields = ['id', 'original_filename', 'url', 'size_bytes', 'uploaded_by_name', 'uploaded_at']
+
+    def get_url(self, obj):
+        request = self.context.get('request')
+        try:
+            url = obj.file.url
+        except ValueError:
+            return None
+        return request.build_absolute_uri(url) if request is not None else url
+
+    def get_uploaded_by_name(self, obj):
+        if not obj.uploaded_by_id:
+            return None
+        return obj.uploaded_by.name or obj.uploaded_by.username
+
+
 class DriveTestSessionDetailSerializer(DriveTestSessionListSerializer):
     """`samples` is capped at DT_PLOT_MAX_POINTS with an even stride — the
     same reduction the coverage map already does on the client, moved to
@@ -767,9 +872,17 @@ class DriveTestSessionDetailSerializer(DriveTestSessionListSerializer):
     export); the radius-filtered Explore endpoint (near()) is unchanged
     and still returns its full in-radius density."""
     samples = serializers.SerializerMethodField()
+    attachments = serializers.SerializerMethodField()
 
     class Meta(DriveTestSessionListSerializer.Meta):
-        fields = DriveTestSessionListSerializer.Meta.fields + ['samples']
+        fields = DriveTestSessionListSerializer.Meta.fields + ['samples', 'attachments']
+
+    def get_attachments(self, obj):
+        # Small (a handful of files per session, not tens of thousands
+        # like samples) -- no pagination/thinning needed, unlike
+        # get_samples() below.
+        qs = obj.attachments.all()
+        return DriveTestSessionAttachmentSerializer(qs, many=True, context=self.context).data
 
     def get_samples(self, obj):
         # `location` is not in DriveTestSamplePlotSerializer's fields — don't
@@ -903,7 +1016,7 @@ class DriveTestSessionWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DriveTestSession
-        fields = ['id', 'name', 'tech', 'date', 'uploaded_date', 'meta', 'samples']
+        fields = ['id', 'name', 'tech', 'date', 'uploaded_date', 'meta', 'samples', 'remarks']
         read_only_fields = ['id']
 
     def validate_samples(self, value):

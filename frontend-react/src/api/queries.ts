@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiJson } from './client'
 import type {
   AdminUser,
@@ -17,12 +17,14 @@ import type {
   DtSample,
   DtServingCell,
   DtSessionCreate,
+  DtSessionAttachment,
   DtSessionDetail,
   DtSessionListItem,
   DtTech,
   KpiTrend,
-  LiveSiteSyncResult,
-  LiveSiteSyncStatus,
+  LiveSiteSource,
+  LiveSiteSourceInput,
+  LiveSiteSourceSyncResult,
   MenuItem,
   MenuItemWrite,
   MenuTreeNode,
@@ -33,6 +35,8 @@ import type {
   ScatterData,
   SiteDetail,
   SiteListItem,
+  SitesPageParams,
+  SitesPageResponse,
   SiteSearchParams,
   SiteSearchResponse,
   SiteWrite,
@@ -62,6 +66,34 @@ export function useSites() {
     queryKey: ['sites'],
     queryFn: () => apiJson<SiteListItem[]>('/api/v2/sites/'),
     staleTime: 60_000,
+  })
+}
+
+// Server-paged/filtered counterpart to useSites() above (2026-09-07,
+// Sites page Table view) — same /api/v2/sites/ endpoint, but with `page`/
+// `page_size` present so SiteViewSet.paginate_queryset() actually
+// paginates (see that method's docstring); useSites() itself is
+// untouched and keeps getting the full flat array for the Map view/
+// clustering, exactly as before this existed.
+export function useSitesPage(params: SitesPageParams, enabled = true) {
+  const qs = new URLSearchParams()
+  qs.set('page', String(params.page ?? 1))
+  qs.set('page_size', String(params.page_size ?? 20))
+  if (params.region) qs.set('region', params.region)
+  if (params.district) qs.set('district', params.district)
+  if (params.status) qs.set('status', params.status)
+  if (params.q) qs.set('q', params.q)
+  for (const t of params.technology ?? []) qs.append('technology', t)
+  return useQuery({
+    queryKey: ['sites-page', params],
+    queryFn: () => apiJson<SitesPageResponse>(`/api/v2/sites/?${qs.toString()}`),
+    placeholderData: (prev) => prev,
+    // Opt-out for a caller that only shows this data conditionally
+    // (SitesPage.tsx's Table/Map toggle, 2026-09-07) — without this, the
+    // hook still fires and keeps refetching in the background for every
+    // session sitting on the Map view, which is most of them (Map was
+    // the only view before this existed).
+    enabled,
   })
 }
 
@@ -281,25 +313,63 @@ export function useDeleteApiKey() {
   })
 }
 
-// ── Live Site Directory sync (2026-08-26) ────────────────────────────────
-// Status is polled while the page is open (see LiveSiteSyncPage.tsx) since
-// the scheduled `site-sync` service can update it at any time, not just in
-// response to this browser tab's own actions — a plain one-shot useQuery
-// would show a result that's already stale by the time an admin glances
-// back at an open tab.
-export function useLiveSiteSyncStatus() {
+// ── Live Site Directory sync (2026-08-26, multi-source since 2026-09-08) ──
+// Sources list is polled while the page is open (see LiveSiteSyncPage.tsx)
+// since the scheduled `site-sync` container can advance any ENABLED
+// source's own status at any time, not just in response to this browser
+// tab's own actions — a plain one-shot useQuery would show a result
+// that's already stale by the time an admin glances back at an open tab.
+export function useLiveSiteSources() {
   return useQuery({
-    queryKey: ['live-site-sync-status'],
-    queryFn: () => apiJson<LiveSiteSyncStatus>('/api/v2/sites/sync-live/'),
+    queryKey: ['live-site-sources'],
+    queryFn: () => apiJson<LiveSiteSource[]>('/api/v2/sites/sync-live/sources/'),
     refetchInterval: 15_000,
   })
 }
 
-export function useTriggerLiveSiteSync() {
+export function useCreateLiveSiteSource() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: () => apiJson<LiveSiteSyncResult>('/api/v2/sites/sync-live/', { method: 'POST' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['live-site-sync-status'] }),
+    mutationFn: (input: LiveSiteSourceInput) =>
+      apiJson<LiveSiteSource>('/api/v2/sites/sync-live/sources/', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['live-site-sources'] }),
+  })
+}
+
+export function useUpdateLiveSiteSource(sourceId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: LiveSiteSourceInput) =>
+      apiJson<LiveSiteSource>(`/api/v2/sites/sync-live/sources/${sourceId}/`, {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['live-site-sources'] }),
+  })
+}
+
+export function useDeleteLiveSiteSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (sourceId: number) =>
+      apiJson<void>(`/api/v2/sites/sync-live/sources/${sourceId}/`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['live-site-sources'] }),
+  })
+}
+
+// Per-source manual "Sync now" — the admin-triggered counterpart to the
+// site-sync container's own per-source schedule. Invalidates the list so
+// the row's just-updated status (last run/result/warnings) shows without
+// waiting for the next 15s poll.
+export function useSyncLiveSiteSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (sourceId: number) =>
+      apiJson<LiveSiteSourceSyncResult>(`/api/v2/sites/sync-live/sources/${sourceId}/sync/`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['live-site-sources'] }),
   })
 }
 
@@ -615,6 +685,25 @@ export function useDtServingCells(id: number | undefined) {
   })
 }
 
+// Explore-by-coordinate (2026-09-04, "the plot and serving site connector
+// at hover and click... it is missing till now") -- Explore can show
+// SEVERAL nearby sessions on one map at once, unlike the single-session
+// coverage map above, so it needs the /serving-cells/ lookup for each of
+// them rather than just one id. `useQueries` fires one request per id in
+// parallel with its own ['dt-serving-cells', id] key -- deliberately the
+// SAME key useDtServingCells above uses, so a session's serving-cell list
+// is cached once and shared between Explore and the coverage map/Compare,
+// not re-fetched per view. Each session's list is small (~8-20 rows), so
+// firing one request per nearby session is cheap even at a dozen sessions.
+export function useDtServingCellsForSessions(ids: number[]) {
+  return useQueries({
+    queries: ids.map((id) => ({
+      queryKey: ['dt-serving-cells', id],
+      queryFn: () => apiJson<DtServingCell[]>(`/api/v2/dt-sessions/${id}/serving-cells/`),
+    })),
+  })
+}
+
 export function useCreateDtSession() {
   const qc = useQueryClient()
   return useMutation({
@@ -629,6 +718,53 @@ export function useDeleteDtSession() {
   return useMutation({
     mutationFn: (id: number) => apiJson<void>(`/api/v2/dt-sessions/${id}/`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dt-sessions'] }),
+  })
+}
+
+// The one editable field on an otherwise-immutable session (2026-09-07,
+// "provision to provide remarks/comments on the session if needed") —
+// see DriveTestSessionViewSet.remarks()'s own docstring for why this is
+// its own tiny endpoint rather than a general PATCH on the session.
+export function useUpdateDtSessionRemarks(sessionId: number | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (remarks: string) =>
+      apiJson<{ remarks: string }>(`/api/v2/dt-sessions/${sessionId}/remarks/`, {
+        method: 'PATCH',
+        body: JSON.stringify({ remarks }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dt-session', sessionId] })
+      qc.invalidateQueries({ queryKey: ['dt-sessions'] })
+    },
+  })
+}
+
+// Multiple-file upload (2026-09-07, "attaching multiple files related
+// to the saved session") — FormData, not JSON, since these are
+// arbitrary binary files; see client.ts's apiFetch for the matching
+// Content-Type fix this needed (first FormData use in this app).
+export function useUploadDtSessionAttachments(sessionId: number | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (files: File[]) => {
+      const form = new FormData()
+      for (const file of files) form.append('files', file)
+      return apiJson<DtSessionAttachment[]>(`/api/v2/dt-sessions/${sessionId}/attachments/`, {
+        method: 'POST',
+        body: form,
+      })
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dt-session', sessionId] }),
+  })
+}
+
+export function useDeleteDtSessionAttachment(sessionId: number | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (attachmentId: number) =>
+      apiJson<void>(`/api/v2/dt-sessions/${sessionId}/attachments/${attachmentId}/`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dt-session', sessionId] }),
   })
 }
 

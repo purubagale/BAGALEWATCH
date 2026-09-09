@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { useDtSessionsNear, useSites } from '../api/queries'
-import type { DtSessionDetail, DtTech, SiteListItem } from '../api/types'
+import { useDtServingCellsForSessions, useDtSessionsNear, useSites } from '../api/queries'
+import type { DtSample, DtServingCell, DtSessionDetail, DtTech, SiteListItem } from '../api/types'
 import { ALL_TECHS, bandColor, subsampleForMap, type TaggedMetric } from '../lib/dtBands'
 import { useDtMetrics } from '../lib/useDtMetrics'
 import { haversineKm } from '../lib/dtTemplateParser'
@@ -322,11 +322,82 @@ function NearSitesLayer({ sites, onSelect }: { sites: { s: SiteListItem; d: numb
 // 50km), so a wide-radius search that happens to sweep across a long
 // `.trp`-derived session's route can still return a very large sample
 // set. Same subsampleForMap() treatment as the other two map components.
-function NearSamplesLayer({ sessions, metric }: { sessions: DtSessionDetail[]; metric: TaggedMetric }) {
+//
+// Hover/click serving-site connector (2026-09-04, "we have talked
+// previously about the plot and serving site connector at hover and
+// click in explore... it is missing till now") — ported from
+// DtCoverageMap.tsx's CoverageDots, which already has this for the
+// single-session coverage map. Same `linkLayer`/`pinned`/`showLink`/
+// `clearLink` shape: hovering a dot draws a dashed line + highlighted
+// marker to its serving site (cleared on mouseout unless pinned);
+// clicking pins it and opens a popup with the cell detail, same as
+// Coverage; clicking anywhere else on the map (`map.on('click', ...)`)
+// unpins it. `servingCells` is the merged serving-cell list for every
+// session currently plotted (see useDtServingCellsForSessions) — Explore
+// can show several sessions at once, unlike Coverage's single session,
+// so `cellBySite` here is built across all of them. Same simplification
+// CoverageDots already has: keyed by site_id alone, so a site served by
+// more than one distinct cell across the plotted sessions only ever
+// shows the last one encountered — acceptable for a "which site was
+// this near" connector, not a precise per-cell diagram.
+function NearSamplesLayer({
+  sessions, metric, servingCells,
+}: {
+  sessions: DtSessionDetail[]
+  metric: TaggedMetric
+  servingCells: DtServingCell[]
+}) {
   const map = useMap()
 
   useEffect(() => {
     const layer = L.layerGroup()
+    const linkLayer = L.layerGroup().addTo(map)
+    let pinned = false
+
+    const cellBySite = new Map(servingCells.map((c) => [c.site_id, c]))
+
+    function clearLink() {
+      linkLayer.clearLayers()
+      map.closePopup()
+      pinned = false
+    }
+    function showLink(session: DtSessionDetail, sample: DtSample, openPopup: boolean) {
+      const cell = sample.serving_site_id ? cellBySite.get(sample.serving_site_id) : undefined
+      if (!cell || cell.site_lat == null || cell.site_lng == null) return
+      linkLayer.clearLayers()
+      L.polyline(
+        [
+          [sample.lat as number, sample.lng as number],
+          [cell.site_lat, cell.site_lng],
+        ],
+        { color: '#1d4ed8', weight: 2, dashArray: '5,4', opacity: 0.9 },
+      ).addTo(linkLayer)
+      L.circleMarker([cell.site_lat, cell.site_lng], {
+        radius: 7,
+        color: '#1d4ed8',
+        weight: 2,
+        fillColor: '#ffffff',
+        fillOpacity: 1,
+      })
+        .bindTooltip(cell.site_name, { direction: 'top' })
+        .addTo(linkLayer)
+      if (openPopup) {
+        const parts = [
+          `${session.name} (${session.tech})`,
+          `PCI ${sample.pci ?? '—'}`,
+          cell.cell_name || cell.site_name,
+          cell.sector ? `Sector ${cell.sector}` : null,
+          sample.serving_dist_km != null ? `${sample.serving_dist_km.toFixed(2)} km` : null,
+          cell.azimuth != null ? `Az ${cell.azimuth}°` : null,
+        ].filter(Boolean)
+        L.popup({ offset: [0, -4] })
+          .setLatLng([sample.lat as number, sample.lng as number])
+          .setContent(`<b>${cell.site_name}</b><br>${parts.join(' · ')}`)
+          .openOn(map)
+        pinned = true
+      }
+    }
+
     for (const session of sessions) {
       if (session.tech !== metric.tech) continue
       const withVal = session.samples.filter((sample) => sample.lat != null && sample.lng != null && sample[metric.key] != null)
@@ -334,7 +405,7 @@ function NearSamplesLayer({ sessions, metric }: { sessions: DtSessionDetail[]; m
       for (const sample of drawn) {
         const v = sample[metric.key] as number
         const color = bandColor(metric.bands, v)
-        L.circleMarker([sample.lat as number, sample.lng as number], {
+        const dot = L.circleMarker([sample.lat as number, sample.lng as number], {
           radius: 3,
           color,
           fillColor: color,
@@ -346,14 +417,30 @@ function NearSamplesLayer({ sessions, metric }: { sessions: DtSessionDetail[]; m
               (sample.serving_site_name ? `<br>${sample.serving_site_name}` : ''),
             { sticky: true, direction: 'top', offset: [0, -4] },
           )
-          .addTo(layer)
+        if (sample.serving_site_id && cellBySite.has(sample.serving_site_id)) {
+          dot.on('mouseover', () => {
+            if (!pinned) showLink(session, sample, false)
+          })
+          dot.on('mouseout', () => {
+            if (!pinned) linkLayer.clearLayers()
+          })
+          dot.on('click', (e) => {
+            L.DomEvent.stopPropagation(e)
+            showLink(session, sample, true)
+          })
+        }
+        dot.addTo(layer)
       }
     }
     layer.addTo(map)
+    map.on('click', clearLink)
+
     return () => {
+      map.off('click', clearLink)
       map.removeLayer(layer)
+      map.removeLayer(linkLayer)
     }
-  }, [map, sessions, metric])
+  }, [map, sessions, metric, servingCells])
 
   return null
 }
@@ -674,6 +761,21 @@ export default function DtExploreTab() {
   }, [visibleMetrics, metricTag])
   const metric = visibleMetrics.find((m) => m.tag === metricTag) ?? visibleMetrics[0] ?? allMetrics[0]
 
+  // Serving-site hover/click connector (2026-09-04) — one /serving-cells/
+  // fetch per session currently plotted (see useDtServingCellsForSessions'
+  // own comment for why one-per-session rather than a single call), merged
+  // into the flat list NearSamplesLayer needs. Fetches for every near
+  // session regardless of the active tech tab, not just `metric.tech` —
+  // small per-session payloads, and it means switching tech tabs never
+  // re-fetches something already cached from a moment ago.
+  const nearSessionIds = useMemo(() => nearSessions.map((s) => s.id), [nearSessions])
+  const servingCellQueries = useDtServingCellsForSessions(nearSessionIds)
+  // Not wrapped in useMemo: `servingCellQueries` is a fresh array every
+  // render (useQueries' own contract), so memoizing on it would never
+  // actually skip work — flattening a dozen small (~8-20 row) arrays is
+  // cheap enough to just do plainly.
+  const servingCells = servingCellQueries.flatMap((q) => q.data ?? [])
+
   const nearSites = useMemo(() => {
     if (!point || !sites) return []
     const withCoords = sites.filter((s) => s.lat != null && s.lng != null)
@@ -842,7 +944,7 @@ export default function DtExploreTab() {
               />
               <SearchAreaLayer point={pointTuple as LatLng} radiusKm={radiusKm} shape={shape} label={pointLabel} />
               <NearSitesLayer sites={nearSites} onSelect={setSelectedSite} />
-              <NearSamplesLayer sessions={nearSessions} metric={metric} />
+              <NearSamplesLayer sessions={nearSessions} metric={metric} servingCells={servingCells} />
               <FullscreenSync isFullscreen={isFullscreen} bounds={currentBounds} />
               <InvalidateOnResize />
             </MapContainer>

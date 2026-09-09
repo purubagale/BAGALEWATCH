@@ -146,15 +146,30 @@ function SelectedSectorPins({ site, sectors }: { site: SiteListItem | undefined;
 // scope change — re-selecting a site within the same scope, or an
 // unrelated parent re-render, must not fight the user's own pan/zoom by
 // refitting on every render.
+// Generous superset of NEPAL_BOUNDS (not the same box) used ONLY to
+// decide which sites are plausible enough to steer the auto-fit zoom —
+// real Nepal sites near the border can fall slightly outside
+// NEPAL_BOUNDS' tight box, so this is padded well beyond it, not equal
+// to it. A site failing even THIS check is not "near Nepal but a bit
+// off," it's a garbage coordinate (2026-09-07: a fresh Live Site
+// Directory sync produced at least one site plotted in Central Africa —
+// "KTM427_COW3" — which blew FitToScope's bounds out to cover Nepal
+// through the Arabian Sea to Africa, zooming every OTHER site out to a
+// single "5294" cluster blob). The bad site still renders as a normal
+// marker wherever its real (wrong) coordinate is -- this only stops one
+// bad row from wrecking the initial view for everyone.
+const PLAUSIBLE_NEPAL_AREA_BOUNDS = L.latLngBounds([20, 75], [35, 95])
+
 function FitToScope({ sites, scopeKey }: { sites: SiteListItem[]; scopeKey: string }) {
   const map = useMap()
   useEffect(() => {
     const withCoords = sites.filter((s) => s.lat != null && s.lng != null)
-    if (!withCoords.length) {
+    const plausible = withCoords.filter((s) => PLAUSIBLE_NEPAL_AREA_BOUNDS.contains([s.lat as number, s.lng as number]))
+    if (!plausible.length) {
       map.fitBounds(NEPAL_BOUNDS, { animate: false })
       return
     }
-    const bounds = L.latLngBounds(withCoords.map((s) => [s.lat as number, s.lng as number] as [number, number]))
+    const bounds = L.latLngBounds(plausible.map((s) => [s.lat as number, s.lng as number] as [number, number]))
     map.fitBounds(bounds, { padding: [32, 32], maxZoom: 15, animate: false })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey, map])
@@ -190,16 +205,49 @@ function FlyToSelected({ site }: { site: SiteListItem | undefined }) {
  * tuning v1 already relies on for ~4,700 sites (see CLAUDE.md's
  * "MarkerCluster" decision), just built by hand instead of through an
  * unmaintained wrapper. */
+// Site names/ids ultimately come from an Excel import or NetBox, not
+// typed by a developer -- escaped before going into marker HTML so a
+// stray "<" or "&" in real data can't break the popup markup (or, in a
+// browser context, become a script injection point).
+function escapeMarkerHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+// Rich hover tooltip / click popup content (2026-09-08, "use on hover
+// and on click display as attached" -- reference showed a card with the
+// site name, id, tech list, region/district and coordinates instead of
+// this map's previous name-only tooltip and no popup at all). Same
+// content for both: Leaflet's bindTooltip already dismisses itself on
+// mouseout and bindPopup already opens on click and stays until the
+// close button/an outside click dismisses it, so one HTML builder covers
+// both without duplicating the markup.
+function buildMarkerPopupHtml(s: SiteListItem): string {
+  const techLine = s.techs.length ? s.techs.join(' / ') : '—'
+  const regionDistrict = [s.region, s.district].filter(Boolean).join(' · ')
+  const coords = s.lat != null && s.lng != null ? `${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}` : '—'
+  return `
+    <div class="sites-marker-popup">
+      <div class="sites-marker-popup-title">${escapeMarkerHtml(s.name || s.id)}</div>
+      <div class="sites-marker-popup-id">Site ID: ${escapeMarkerHtml(s.id)}</div>
+      <div class="sites-marker-popup-tech">Tech: ${escapeMarkerHtml(techLine)}</div>
+      ${regionDistrict ? `<div class="sites-marker-popup-meta">${escapeMarkerHtml(regionDistrict)}</div>` : ''}
+      <div class="sites-marker-popup-coords">${coords}</div>
+    </div>
+  `
+}
+
 function ClusteredMarkers({
   sites,
   onSelect,
   canRelocate,
   onRelocateRequest,
+  showNames,
 }: {
   sites: SiteListItem[]
   onSelect: (id: string) => void
   canRelocate: boolean
   onRelocateRequest?: (site: SiteListItem, oldLat: number, oldLng: number, newLat: number, newLng: number) => void
+  showNames: boolean
 }) {
   const map = useMap()
 
@@ -211,8 +259,46 @@ function ClusteredMarkers({
     const withCoords = sites.filter((s) => s.lat != null && s.lng != null)
     for (const s of withCoords) {
       const marker = L.marker([s.lat as number, s.lng as number], { icon: defaultIcon, draggable: canRelocate })
-      marker.bindTooltip(s.name || s.id)
-      marker.on('click', () => onSelect(s.id))
+      const popupHtml = buildMarkerPopupHtml(s)
+      // Bug fixed 2026-09-08 ("on hover and on click just previously used
+      // feature is removed") -- a Leaflet marker only has ONE tooltip
+      // slot, and the "Show name" permanent label was bound there, which
+      // silently replaced the hover-preview card (also bound as a
+      // tooltip) the moment Show Name was switched on. Hover is now
+      // driven off the POPUP directly (mouseover/mouseout), completely
+      // independent of whatever the tooltip is doing, so it works the
+      // same whether Show Name is on or off. `pinned` keeps a popup you
+      // actually clicked open even if the mouse drifts off afterward --
+      // without it, moving off the marker post-click would immediately
+      // mouseout-close the very popup the click just opened.
+      marker.bindPopup(popupHtml, {
+        className: 'sites-marker-popup-wrap',
+        closeButton: true,
+        maxWidth: 260,
+        autoPan: false,
+      })
+      let pinned = false
+      marker.on('mouseover', () => {
+        if (!pinned) marker.openPopup()
+      })
+      marker.on('mouseout', () => {
+        if (!pinned) marker.closePopup()
+      })
+      marker.on('popupclose', () => {
+        pinned = false
+      })
+      marker.on('click', () => {
+        pinned = true
+        onSelect(s.id)
+      })
+      if (showNames) {
+        marker.bindTooltip(escapeMarkerHtml(s.name || s.id), {
+          permanent: true,
+          direction: 'right',
+          offset: [10, 0],
+          className: 'sites-marker-name-label',
+        })
+      }
       if (canRelocate && onRelocateRequest) {
         // Drag-to-relocate, confirm-before-save (2026-07-30, confirmed
         // via AskUserQuestion). Snap back to the original position
@@ -237,7 +323,7 @@ function ClusteredMarkers({
     return () => {
       map.removeLayer(cluster)
     }
-  }, [sites, map, onSelect, canRelocate, onRelocateRequest])
+  }, [sites, map, onSelect, canRelocate, onRelocateRequest, showNames])
 
   return null
 }
@@ -253,6 +339,7 @@ export default function MapView({
   canRelocate = false,
   onRelocateRequest,
   mapLayer = 'street',
+  showNames = false,
 }: {
   sites: SiteListItem[]
   /** Stable identity for the current scope ('all' | 'prov-X' | 'dist-X-Y'
@@ -287,6 +374,12 @@ export default function MapView({
    * 'street' so every existing/future caller that doesn't pass this still
    * renders exactly as before. */
   mapLayer?: 'street' | 'satellite'
+  /** "Show name" toggle (2026-09-08) -- SitesPage.tsx's Scope panel owns
+   * the checkbox state, same ownership pattern as mapLayer above; permanent
+   * name labels next to every marker instead of hover-only. Defaults to
+   * false so DtCoverageMap.tsx/SiteLocationMiniMap.tsx (this component's
+   * other two callers) are unaffected. */
+  showNames?: boolean
 }) {
   return (
     // `key={mapLayer}` forces a full MapContainer remount on toggle,
@@ -302,7 +395,7 @@ export default function MapView({
         subdomains={mapLayer === 'street' ? 'abc' : '0123'}
         maxZoom={20}
       />
-      <ClusteredMarkers sites={sites} onSelect={onSelect} canRelocate={canRelocate} onRelocateRequest={onRelocateRequest} />
+      <ClusteredMarkers sites={sites} onSelect={onSelect} canRelocate={canRelocate} onRelocateRequest={onRelocateRequest} showNames={showNames} />
       {scopeKey && <FitToScope sites={sites} scopeKey={scopeKey} />}
       <SelectedHighlight site={selected} />
       <SelectedSectorPins site={selected} sectors={selectedSectors ?? []} />

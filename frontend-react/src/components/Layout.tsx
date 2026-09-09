@@ -361,18 +361,45 @@ export default function Layout({ children }: { children: ReactNode }) {
           <header className="app-topbar">
             <div className="app-breadcrumb">
               {breadcrumb.length === 0 && <span className="app-breadcrumb-current">{brandName}</span>}
-              {breadcrumb.map((node, i) => (
-                <span key={node.id}>
-                  {i > 0 && <span className="app-breadcrumb-sep"> › </span>}
-                  <span className={i === breadcrumb.length - 1 ? 'app-breadcrumb-current' : undefined}>
+              {breadcrumb.map((node, i) => {
+                const isCurrent = i === breadcrumb.length - 1
+                const inner = (
+                  <>
                     {node.icon_image_url ? (
                       <img src={node.icon_image_url} alt="" className="app-breadcrumb-icon-img" />
                     ) : (
                       node.icon
                     )} {node.label}
+                  </>
+                )
+                return (
+                  <span key={node.id}>
+                    {i > 0 && <span className="app-breadcrumb-sep"> › </span>}
+                    {/* Every crumb except the current page navigates to that
+                        ancestor's own path (2026-09-04, "make it clickable to
+                        go in parent path... now it is possible only after
+                        going to side menu only") -- for a parent WITH
+                        children (e.g. DT Data Manager) that path is exactly
+                        what MenuSectionGate already renders as its
+                        auto-generated section listing, so this lands on the
+                        same page the sidebar link would. An external-link
+                        ancestor (link_type='external', theoretically
+                        possible per findBreadcrumbTrail's own comment even
+                        though none exist today) can't be a router Link since
+                        its `path` is a full URL, not a pathname -- falls
+                        back to plain non-navigating text instead of an <a
+                        target="_blank"> so clicking a breadcrumb crumb never
+                        unexpectedly leaves the app in a new tab. */}
+                    {!isCurrent && node.link_type !== 'external' ? (
+                      <Link to={node.path} className="app-breadcrumb-link">
+                        {inner}
+                      </Link>
+                    ) : (
+                      <span className={isCurrent ? 'app-breadcrumb-current' : undefined}>{inner}</span>
+                    )}
                   </span>
-                </span>
-              ))}
+                )
+              })}
             </div>
             <div className="app-topbar-actions">
               <button type="button" onClick={() => setSearchOpen(true)} title="Advanced Site Search">

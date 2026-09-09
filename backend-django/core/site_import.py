@@ -94,9 +94,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .live_sites import get_sync_status, sync_live_sites
-from .models import Sector, Site
-from .views import IsAdminOrSuperadmin
+from .live_sites import sync_live_sites
+from .models import LiveSiteSource, Sector, Site
+from .serializers import LiveSiteSourceSerializer
+from .views import IsAdminOrSuperadmin, IsSuperadminOnly
 
 SECTOR_FIELDS = [
     'sector', 'tech', 'local_cell_id', 'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'pci',
@@ -579,35 +580,167 @@ class BackfillSiteLocationView(APIView):
         return Response({'updated': len(to_update), 'skipped': skipped})
 
 
-class LiveSiteSyncView(APIView):
-    """/api/v2/sites/sync-live/ — the Live Site Directory sync's "middle
-    ground" admin surface (2026-08-26, confirmed via AskUserQuestion): the
-    API URL/key stay .env-only (never stored in Postgres), but an admin
-    still gets real visibility and control from within the app instead of
-    needing shell access to the server.
+class LiveSiteSourceListView(APIView):
+    """`/api/v2/sites/sync-live/sources/` — list/create Live Site
+    Directory connections (2026-09-08, "add feature of multiple source
+    api connection ... along with their separate automatic sync time set
+    option and manual sinc") — replaces the single-source
+    LiveSiteSyncView/LiveSiteSyncConfigView pair (see git history for
+    that shape) now that there can be more than one configured source.
+    Each source gets its own URL/credentials/auth scheme/interval/
+    enabled flag and its own run history — see LiveSiteSource's docstring
+    (core/models.py) for the full multi-source design (independent
+    per-source scheduling, all sources merged into the same Site table).
 
-    GET returns current status (configured?, last run/success time, last
-    result, last error) — see core/live_sites.py's get_sync_status().
-    POST triggers an immediate sync — the manual counterpart to
-    docker-compose.yml's `site-sync` service, which calls the exact same
-    core/live_sites.py::sync_live_sites() on a timer, so an admin isn't
-    stuck waiting for the next scheduled pull after fixing something at
-    the source. See that module's docstring for what gets overwritten
-    (name/region/district/palika/ward/lat-lng/deployment_status/
-    operational_technologies) and what never does (Sector/KPI/DT data).
+    GET (IsAdminOrSuperadmin, same tier the old status read used) — every
+    configured source.
 
-    502, not 500, on a failed pull — LIVE_SITE_API_URL being unset or the
-    upstream API being unreachable is an expected, actionable state (fix
-    config / check the source is up), not a bug in this app."""
+    POST (IsSuperadminOnly — same "credential write is a bigger blast
+    radius than a read" tier LiveSiteSyncConfigView used one tier up from
+    IsAdminOrSuperadmin) creates a new source."""
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [IsAuthenticated(), IsSuperadminOnly()]
+        return [IsAuthenticated(), IsAdminOrSuperadmin()]
+
+    def get(self, request):
+        sources = LiveSiteSource.objects.all()
+        return Response(LiveSiteSourceSerializer(sources, many=True).data)
+
+    def post(self, request):
+        name = str(request.data.get('name') or '').strip()
+        if not name:
+            return Response({'detail': 'name is required.'}, status=400)
+        auth_scheme = request.data.get('auth_scheme') or 'Token'
+        valid_schemes = dict(LiveSiteSource.AUTH_SCHEME_CHOICES)
+        if auth_scheme not in valid_schemes:
+            return Response(
+                {'detail': f'auth_scheme must be one of {list(valid_schemes)}'}, status=400,
+            )
+        raw_interval = request.data.get('sync_interval_minutes')
+        try:
+            interval = int(raw_interval) if raw_interval not in (None, '') else 60
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'sync_interval_minutes must be a whole number of minutes.'}, status=400,
+            )
+        if interval < 1:
+            return Response({'detail': 'sync_interval_minutes must be at least 1.'}, status=400)
+        source = LiveSiteSource.objects.create(
+            name=name,
+            api_url=str(request.data.get('api_url') or '').strip(),
+            api_key=str(request.data.get('api_key') or '').strip(),
+            auth_scheme=auth_scheme,
+            sync_interval_minutes=interval,
+            enabled=bool(request.data.get('enabled', True)),
+            updated_by=request.user,
+        )
+        return Response(LiveSiteSourceSerializer(source).data, status=201)
+
+
+class LiveSiteSourceDetailView(APIView):
+    """`/api/v2/sites/sync-live/sources/<pk>/` — edit or remove one
+    configured source. GET uses the same read tier as the list view;
+    PATCH/DELETE are superadmin-only, matching LiveSiteSourceListView's
+    POST (any write that can change or remove a stored credential is the
+    higher tier).
+
+    PATCH's `api_key` is OPTIONAL exactly like the old
+    LiveSiteSyncConfigView's POST: omitting it (or sending it blank)
+    leaves whatever key is already stored untouched, so editing just the
+    interval or pausing a source doesn't force re-pasting its token. Only
+    fields actually present in the request body are touched — this is a
+    partial update, not a full replace."""
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [IsAuthenticated(), IsAdminOrSuperadmin()]
+        return [IsAuthenticated(), IsSuperadminOnly()]
+
+    def _get_source(self, pk):
+        return LiveSiteSource.objects.filter(pk=pk).first()
+
+    def get(self, request, pk):
+        source = self._get_source(pk)
+        if source is None:
+            return Response({'detail': 'Source not found.'}, status=404)
+        return Response(LiveSiteSourceSerializer(source).data)
+
+    def patch(self, request, pk):
+        source = self._get_source(pk)
+        if source is None:
+            return Response({'detail': 'Source not found.'}, status=404)
+        data = request.data
+
+        if 'name' in data:
+            name = str(data.get('name') or '').strip()
+            if not name:
+                return Response({'detail': 'name cannot be blank.'}, status=400)
+            source.name = name
+        if 'api_url' in data:
+            source.api_url = str(data.get('api_url') or '').strip()
+        if data.get('auth_scheme'):
+            valid_schemes = dict(LiveSiteSource.AUTH_SCHEME_CHOICES)
+            if data['auth_scheme'] not in valid_schemes:
+                return Response(
+                    {'detail': f'auth_scheme must be one of {list(valid_schemes)}'}, status=400,
+                )
+            source.auth_scheme = data['auth_scheme']
+        if 'sync_interval_minutes' in data:
+            try:
+                interval = int(data.get('sync_interval_minutes'))
+            except (TypeError, ValueError):
+                return Response(
+                    {'detail': 'sync_interval_minutes must be a whole number of minutes.'}, status=400,
+                )
+            if interval < 1:
+                return Response({'detail': 'sync_interval_minutes must be at least 1.'}, status=400)
+            source.sync_interval_minutes = interval
+        if 'enabled' in data:
+            source.enabled = bool(data.get('enabled'))
+        api_key = data.get('api_key')
+        if api_key:  # blank/omitted -> keep the existing stored key, see docstring
+            source.api_key = str(api_key).strip()
+
+        source.updated_by = request.user
+        source.save()
+        return Response(LiveSiteSourceSerializer(source).data)
+
+    def delete(self, request, pk):
+        source = self._get_source(pk)
+        if source is None:
+            return Response({'detail': 'Source not found.'}, status=404)
+        source.delete()
+        return Response(status=204)
+
+
+class LiveSiteSourceSyncView(APIView):
+    """`POST /api/v2/sites/sync-live/sources/<pk>/sync/` — manual "Sync
+    now" for exactly ONE source, the per-source counterpart to the old
+    LiveSiteSyncView's POST (the scheduled counterpart is the same
+    `site-sync` container, which now polls every ENABLED source on its
+    own `sync_interval_minutes` — see sync_live_sites.py's --loop).
+
+    IsAdminOrSuperadmin, not superadmin-only — triggering a sync with a
+    source's ALREADY-STORED credentials is the same "manual trigger"
+    tier LiveSiteSyncView used, not a credential write.
+
+    502, not 500, on a failed pull — same reasoning LiveSiteSyncView's
+    docstring gave: an unreachable/misconfigured source is an expected,
+    actionable state (fix config / check the source is up), not a bug in
+    this app."""
 
     permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
 
-    def get(self, request):
-        return Response(get_sync_status())
-
-    def post(self, request):
+    def post(self, request, pk):
+        source = LiveSiteSource.objects.filter(pk=pk).first()
+        if source is None:
+            return Response({'detail': 'Source not found.'}, status=404)
+        if not source.api_url:
+            return Response({'detail': f'"{source.name}" has no API URL configured.'}, status=400)
         try:
-            result = sync_live_sites()
+            result = sync_live_sites(source=source)
         except Exception as exc:  # noqa: BLE001 — surfaced to the caller as a 502, not a 500 traceback
             return Response({'detail': str(exc)}, status=502)
-        return Response(result)
+        return Response({**result, 'source': LiveSiteSourceSerializer(source).data})
