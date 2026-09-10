@@ -2352,6 +2352,11 @@ textarea:focus {
   padding: 16px;
   margin-bottom: 14px;
 }
+/* Reset Site Data for Live Sync (2026-09-10) -- same danger tokens
+   .btn-danger already uses, just a subtle border tint on the whole
+   card so the single most destructive action on this page reads as
+   visually distinct before you even reach its button. */
+.backup-card-danger { border-color: var(--status-danger-border); }
 .backup-card-hdr { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .backup-card-title { font-size: 13px; font-weight: 700; color: var(--text-primary); }
 .backup-summary-list {
@@ -2790,6 +2795,14 @@ textarea:focus {
 }
 .sites-tech-pill:hover { background: var(--bg-hover); color: var(--text-primary); }
 .sites-tech-pill.active { background: var(--brand-primary); border-color: var(--brand-primary); color: var(--text-on-brand); }
+/* "X only" pills (2026-09-10) — a thin vertical rule separates them from
+   the regular multi-select pills (different filter mode, see
+   TechnologyFilterPills' own comment in SitesPage.tsx), and a dashed
+   border keeps them visually distinct even before either row is
+   selected. */
+.sites-tech-pill-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 2px; }
+.sites-tech-pill-only { border-style: dashed; }
+.sites-tech-pill-only.active { border-style: solid; }
 .sites-active-toggle {
   display: flex;
   align-items: center;

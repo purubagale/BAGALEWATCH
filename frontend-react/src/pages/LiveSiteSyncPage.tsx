@@ -184,7 +184,17 @@ function SourceRow({ source }: { source: LiveSiteSource }) {
   const [values, setValues] = useState<SourceFormValues>(() => formFromSource(source))
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [syncMessage, setSyncMessage] = useState<{ created: number; updated: number } | null>(null)
+  // Tracks "a sync we started is still running" purely client-side --
+  // see LiveSiteSourceSyncStartResponse's docstring for why this button
+  // no longer gets an immediate created/updated result: a real sync
+  // against a large source can take well over a minute, so the request
+  // only starts it and returns right away. `pendingSince` is the click
+  // time (Date.now()); as long as source.last_run_at (refreshed by the
+  // list's own 15s poll) hasn't advanced PAST that moment yet, the run
+  // we kicked off hasn't landed -- once it has (success or failure),
+  // this clears itself with no timer or extra state to reset.
+  const [pendingSince, setPendingSince] = useState<number | null>(null)
+  const syncing = pendingSince !== null && (!source.last_run_at || new Date(source.last_run_at).getTime() < pendingSince)
   const updateSource = useUpdateLiveSiteSource(source.id)
   const deleteSource = useDeleteLiveSiteSource()
   const syncSource = useSyncLiveSiteSource()
@@ -221,12 +231,11 @@ function SourceRow({ source }: { source: LiveSiteSource }) {
 
   async function sync() {
     setError(null)
-    setSyncMessage(null)
     try {
-      const result = await syncSource.mutateAsync(source.id)
-      setSyncMessage({ created: result.created, updated: result.updated })
+      await syncSource.mutateAsync(source.id)
+      setPendingSince(Date.now())
     } catch (err) {
-      setError(apiErrorMessage(err, 'Sync failed.'))
+      setError(apiErrorMessage(err, 'Could not start sync.'))
     }
   }
 
@@ -270,7 +279,9 @@ function SourceRow({ source }: { source: LiveSiteSource }) {
           </label>
         </td>
         <td>
-          {source.last_error ? (
+          {syncing ? (
+            <span className="muted">Syncing…</span>
+          ) : source.last_error ? (
             <span style={{ color: 'var(--status-error, #dc2626)' }}>Failed</span>
           ) : source.last_success_at ? (
             <span style={{ color: 'var(--status-ok, #16a34a)' }}>OK</span>
@@ -284,10 +295,10 @@ function SourceRow({ source }: { source: LiveSiteSource }) {
         </td>
         <td>{lastResult}{warningCount > 0 && ` (${warningCount} warning${warningCount === 1 ? '' : 's'})`}</td>
         <td className="admin-table-actions">
-          {syncMessage && <div className="form-error form-error-inline" style={{ marginBottom: 4 }}>Synced: {syncMessage.created} created, {syncMessage.updated} updated.</div>}
+          {syncing && <div className="form-error form-error-inline" style={{ marginBottom: 4 }}>Sync started — this can take a minute or more for a large source; status updates automatically.</div>}
           {error && <div className="form-error form-error-inline">{error}</div>}
-          <button className="btn-secondary btn-small" onClick={sync} disabled={syncSource.isPending || !source.api_url}>
-            {syncSource.isPending ? 'Syncing…' : 'Sync now'}
+          <button className="btn-secondary btn-small" onClick={sync} disabled={syncSource.isPending || syncing || !source.api_url}>
+            {syncSource.isPending || syncing ? 'Syncing…' : 'Sync now'}
           </button>
           <button className="btn-secondary btn-small" onClick={startEdit}>Edit</button>
           <button className="btn-danger btn-small" onClick={remove} disabled={deleteSource.isPending}>Delete</button>

@@ -48,11 +48,26 @@ type Filters = {
   region: string
   district: string
   status: string
+  // AND semantics since 2026-09-10 ("if i select 2g and 3g, display as
+  // 2g and 3g not 2g or 3g") — a site must have ALL of these, not just
+  // one. Mutually exclusive with technologyOnly below (picking either
+  // kind of pill clears the other, see toggleTechnology()/
+  // toggleTechnologyOnly()).
   technology: string[]
+  // The "X only" pills (2026-09-10, extended same day to allow more than
+  // one: "allow multiple selection for 2g only, 3g only and 4g only. if
+  // selected 2g only and 4g only, then displays the site that have 2g
+  // and 4g only") — a site's FULL tech set must equal EXACTLY this set,
+  // no more and no fewer. {'2G'} matches only a 2G-only site; {'2G','4G'}
+  // matches only a site with 2G+4G and nothing else (not 2G alone, not
+  // 2G+3G+4G).
+  technologyOnly: string[]
   search: string
 }
 
-const EMPTY_FILTERS: Filters = { region: '', district: '', status: '', technology: [], search: '' }
+const EMPTY_FILTERS: Filters = {
+  region: '', district: '', status: '', technology: [], technologyOnly: [], search: '',
+}
 
 function distinctSorted(values: (string | null | undefined)[]): string[] {
   return Array.from(new Set(values.map((v) => (v || '').trim()).filter(Boolean))).sort()
@@ -119,6 +134,54 @@ function statusBadgeClass(status: string): string {
   return 'status-other'
 }
 
+// Shared by both the Table filter bar and the Map filter panel below
+// (2026-09-10) — one definition so the two can't drift out of sync the
+// way, e.g., the district widget already has (SearchableSelect in one,
+// a plain <select> in the other). First row is the existing multi-select
+// (AND semantics — see the Filters type's comment); second row is the
+// new "X only" pills, each an exact-match toggle. The two rows are
+// visually separated but share one aria-label group since they're both
+// "technology," just two different ways to narrow by it.
+function TechnologyFilterPills({
+  options,
+  filters,
+  toggleTechnology,
+  toggleTechnologyOnly,
+}: {
+  options: string[]
+  filters: Filters
+  toggleTechnology: (t: string) => void
+  toggleTechnologyOnly: (t: string) => void
+}) {
+  return (
+    <div className="sites-tech-pills" role="group" aria-label="Technology">
+      {options.map((t) => (
+        <button
+          key={t}
+          type="button"
+          className={`sites-tech-pill${filters.technology.includes(t) ? ' active' : ''}`}
+          onClick={() => toggleTechnology(t)}
+          title={`Sites with ${t} (can combine with other technologies selected here)`}
+        >
+          {t}
+        </button>
+      ))}
+      {options.length > 0 && <span className="sites-tech-pill-sep" aria-hidden="true" />}
+      {options.map((t) => (
+        <button
+          key={`${t}-only`}
+          type="button"
+          className={`sites-tech-pill sites-tech-pill-only${filters.technologyOnly.includes(t) ? ' active' : ''}`}
+          onClick={() => toggleTechnologyOnly(t)}
+          title={`Sites whose technology is exactly ${t} — select more "only" pills to match an exact mix instead (e.g. 2G only + 4G only = sites with exactly 2G and 4G, no 3G)`}
+        >
+          {t} only
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function SitesPage() {
   const { data: sites, isLoading, error } = useSites()
   const { selectedSiteId, selectSite } = useTreeStore()
@@ -156,7 +219,31 @@ export default function SitesPage() {
   function toggleTechnology(t: string) {
     setFilters((f) => ({
       ...f,
+      // Switching back to the regular multi-select clears any "X only"
+      // selection — the two are different filter modes, not combinable
+      // (see the Filters type's own comment on technologyOnly).
+      technologyOnly: [],
       technology: f.technology.includes(t) ? f.technology.filter((x) => x !== t) : [...f.technology, t],
+    }))
+    setTablePage(1)
+  }
+  // "2G only"/"3G only"/"4G only" pills (2026-09-10, extended same day to
+  // "allow multiple selection for 2g only, 3g only and 4g only. if
+  // selected 2g only and 4g only, then displays the site that have 2g
+  // and 4g only") — each pill toggles membership in technologyOnly the
+  // same way toggleTechnology() toggles membership in technology; the
+  // difference is entirely in how the SET is matched afterward (exact
+  // equality vs. superset — see filteredSites below and
+  // SiteViewSet.get_queryset()). Picking any "only" pill clears the
+  // regular multi-select, for the same "these are two different modes"
+  // reason toggleTechnology() clears this one.
+  function toggleTechnologyOnly(t: string) {
+    setFilters((f) => ({
+      ...f,
+      technology: [],
+      technologyOnly: f.technologyOnly.includes(t)
+        ? f.technologyOnly.filter((x) => x !== t)
+        : [...f.technologyOnly, t],
     }))
     setTablePage(1)
   }
@@ -170,7 +257,8 @@ export default function SitesPage() {
     setTablePage(1)
   }
   const activeFilterCount = [
-    filters.region, filters.district, filters.status, filters.search, ...filters.technology,
+    filters.region, filters.district, filters.status, filters.search,
+    ...filters.technology, ...filters.technologyOnly,
   ].filter(Boolean).length
 
   // Dropdown/pill options — derived from the real, currently-loaded
@@ -189,18 +277,36 @@ export default function SitesPage() {
     [sites],
   )
 
-  // ── Map view: client-side filtering over the full array ────────────
+  // ── Client-side filtering over the full array ───────────────────────
   // Unchanged approach from before this rebuild (MapView has always been
   // handed a pre-filtered slice of the one big useSites() array) — only
   // what narrows it changed, from tree-node selection to these filters.
+  // Named generically (not "mapSites") since 2026-09-09: it's also what
+  // the Table view's CSV export downloads (see exportFilteredCsv() below)
+  // — the Table's own useSitesPage() only ever holds ONE server-paged
+  // slice of the filtered result, not the full set an export needs.
   const searchQ = filters.search.trim().toLowerCase()
-  const mapSites = useMemo(() => {
+  const filteredSites = useMemo(() => {
     if (!sites) return []
     return sites.filter((s) => {
       if (filters.region && (s.region || 'Unassigned') !== filters.region) return false
       if (filters.district && (s.district || 'Unassigned') !== filters.district) return false
       if (filters.status && s.deployment_status !== filters.status) return false
-      if (filters.technology.length && !filters.technology.some((t) => s.techs.includes(t))) return false
+      if (filters.technologyOnly.length) {
+        // Full tech set must equal EXACTLY this set — e.g. "2G only" +
+        // "4G only" matches a site with 2G+4G and nothing else, not a
+        // 2G-only site and not a 2G+3G+4G site.
+        if (
+          s.techs.length !== filters.technologyOnly.length
+          || !filters.technologyOnly.every((t) => s.techs.includes(t))
+        ) {
+          return false
+        }
+      } else if (filters.technology.length && !filters.technology.every((t) => s.techs.includes(t))) {
+        // AND, not OR (2026-09-10) — a site must have every selected
+        // technology, not just one of them.
+        return false
+      }
       if (searchQ && !siteMatchesTreeQuery(s, searchQ)) return false
       return true
     })
@@ -211,12 +317,47 @@ export default function SitesPage() {
   // moves the viewport, same "re-fit on a real scope change only" reason
   // this key existed before the rebuild (see MapView.tsx's own comment).
   const mapScopeKey = useMemo(
-    () => `${filters.region}|${filters.district}|${filters.status}|${filters.technology.join(',')}|${searchQ}`,
+    () => `${filters.region}|${filters.district}|${filters.status}|${filters.technology.join(',')}|${filters.technologyOnly.join(',')}|${searchQ}`,
     [filters, searchQ],
   )
-  const mapLabel = activeFilterCount > 0 || mapSites.length !== (sites?.length ?? 0)
-    ? `${mapSites.length.toLocaleString()} site${mapSites.length === 1 ? '' : 's'} matching filters`
-    : `All Nepal — ${mapSites.length.toLocaleString()} sites`
+  const mapLabel = activeFilterCount > 0 || filteredSites.length !== (sites?.length ?? 0)
+    ? `${filteredSites.length.toLocaleString()} site${filteredSites.length === 1 ? '' : 's'} matching filters`
+    : `All Nepal — ${filteredSites.length.toLocaleString()} sites`
+
+  // "Export data" (2026-09-09, "add export data feature from site
+  // topology table layout of result after filter") — downloads every
+  // site currently matching the shared filter bar as CSV, not just the
+  // Table view's own current page of 20 (useSitesPage() only ever holds
+  // one server-paged slice — filteredSites above is the full filtered
+  // set, already loaded client-side for the Map view, so no new backend
+  // endpoint is needed). Built entirely client-side with a Blob + a
+  // throwaway <a download> link, matching this app's existing CSV export
+  // convention (see SlaTrackerPage.tsx/DtExploreTab.tsx) rather than a
+  // server-rendered file.
+  function exportFilteredCsv() {
+    const header = ['S.N.', 'Site ID', 'Name', 'Region', 'District', 'Palika', 'Technology', 'Latitude', 'Longitude', 'Status']
+    const rows = filteredSites.map((s, i) => [
+      i + 1,
+      s.id,
+      s.name || '',
+      s.region || '',
+      s.district || '',
+      s.palika || '',
+      s.techs.join('/'),
+      s.lat ?? '',
+      s.lng ?? '',
+      s.deployment_status || '',
+    ])
+    const csv = [header, ...rows]
+      .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
+      .join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `Sites_Export_${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
 
   // ── Table view: real server-side paging/filtering ───────────────────
   const [tablePage, setTablePage] = useState(1)
@@ -227,7 +368,10 @@ export default function SitesPage() {
       region: filters.region || undefined,
       district: filters.district || undefined,
       status: filters.status || undefined,
-      technology: filters.technology.length ? filters.technology : undefined,
+      // Mutually exclusive on the frontend (see the Filters type's own
+      // comment) — only ever send one of the two.
+      technology: !filters.technologyOnly.length && filters.technology.length ? filters.technology : undefined,
+      technologyOnly: filters.technologyOnly.length ? filters.technologyOnly : undefined,
       q: filters.search || undefined,
     }),
     [tablePage, filters],
@@ -366,18 +510,12 @@ export default function SitesPage() {
         <span className="sites-active-toggle-track"><span className="sites-active-toggle-thumb" /></span>
         Only active
       </label>
-      <div className="sites-tech-pills" role="group" aria-label="Technology">
-        {technologyOptions.map((t) => (
-          <button
-            key={t}
-            type="button"
-            className={`sites-tech-pill${filters.technology.includes(t) ? ' active' : ''}`}
-            onClick={() => toggleTechnology(t)}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      <TechnologyFilterPills
+        options={technologyOptions}
+        filters={filters}
+        toggleTechnology={toggleTechnology}
+        toggleTechnologyOnly={toggleTechnologyOnly}
+      />
       <form
         className="sites-search-form"
         onSubmit={(e) => {
@@ -398,6 +536,15 @@ export default function SitesPage() {
           ✕ Clear filters
         </button>
       )}
+      <button
+        type="button"
+        className="btn-secondary btn-small"
+        onClick={exportFilteredCsv}
+        disabled={filteredSites.length === 0}
+        title="Download every site currently matching these filters as a CSV file"
+      >
+        ⬇ Export CSV ({filteredSites.length.toLocaleString()})
+      </button>
     </div>
   )
 
@@ -600,18 +747,12 @@ export default function SitesPage() {
               <span className="sites-active-toggle-track"><span className="sites-active-toggle-thumb" /></span>
               Show name
             </label>
-            <div className="sites-tech-pills" role="group" aria-label="Technology">
-              {technologyOptions.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  className={`sites-tech-pill${filters.technology.includes(t) ? ' active' : ''}`}
-                  onClick={() => toggleTechnology(t)}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
+            <TechnologyFilterPills
+              options={technologyOptions}
+              filters={filters}
+              toggleTechnology={toggleTechnology}
+              toggleTechnologyOnly={toggleTechnologyOnly}
+            />
             <form
               onSubmit={(e) => {
                 e.preventDefault()
@@ -631,12 +772,12 @@ export default function SitesPage() {
               </button>
             )}
             <p className="sites-map-filter-panel-count">
-              {mapSites.length.toLocaleString()} plotted of {sites.length.toLocaleString()}
+              {filteredSites.length.toLocaleString()} plotted of {sites.length.toLocaleString()}
             </p>
           </div>
 
           <MapView
-            sites={mapSites}
+            sites={filteredSites}
             scopeKey={mapScopeKey}
             selected={selected}
             selectedSectors={selected && selectedSiteDetail?.id === selected.id ? selectedSiteDetail.sectors : undefined}

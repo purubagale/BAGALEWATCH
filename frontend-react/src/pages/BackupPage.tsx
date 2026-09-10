@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { ApiError, apiErrorMessage, apiFetch, apiJson } from '../api/client'
 import { useBackupSummary, useSites } from '../api/queries'
 import { isAllowed } from '../api/types'
-import type { BackupExportPayload, BackupImportResult, BackupRestoreFlags, KpiImportResult, SectorImportResult } from '../api/types'
+import type { BackupExportPayload, BackupImportResult, BackupRestoreFlags, KpiImportResult, SectorImportResult, SiteResetResult } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { csvTextToRows } from '../lib/dtTemplateParser'
 import { readXlsxRows } from '../lib/xlsxReader'
@@ -35,6 +35,11 @@ import { resolveDistrictBackfill, type DistrictBackfillResult } from '../lib/dis
  * no extra endpoint needed just to populate the dropdowns. */
 
 type ExportScope = { type: 'all' } | { type: 'region'; region: string } | { type: 'district'; district: string }
+
+// The exact phrase a superadmin must type before the Reset Site Data
+// button enables -- see the state block's comment above and
+// handleResetSiteData() below.
+const RESET_CONFIRM_PHRASE = 'RESET'
 
 function pad(n: number) {
   return String(n).padStart(2, '0')
@@ -228,6 +233,19 @@ export default function BackupPage() {
   const [restoreResult, setRestoreResult] = useState<string[] | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // Reset Site Data for Live Sync (2026-09-10, "add a feature in backup
+  // to reset the application such that it will erase all the stored
+  // data of site details uploaded from excel... ready for live sync").
+  // UI counterpart of `manage.py clear_sites --confirm` -- see
+  // core/backup.py's SiteDataResetView docstring. resetConfirmText has
+  // to exactly equal RESET_CONFIRM_PHRASE before the danger button even
+  // enables -- a second, independent confirmation beyond the click
+  // itself, on top of the server's own {"confirm": "RESET"} body check.
+  const [resetConfirmText, setResetConfirmText] = useState('')
+  const [resetBusy, setResetBusy] = useState(false)
+  const [resetError, setResetError] = useState<string | null>(null)
+  const [resetResult, setResetResult] = useState<SiteResetResult['deleted'] | null>(null)
+
   // Site/Sector import (2026-08-05, repurposed 2026-08-26) — see
   // core/site_import.py's module docstring. Originally an add-only Site
   // Details slot (identity: name/region/district/lat/lng); site identity
@@ -400,6 +418,31 @@ export default function BackupPage() {
       setRestoreError(apiErrorMessage(err, 'Restore failed.'))
     } finally {
       setRestoreBusy(false)
+    }
+  }
+
+  async function handleResetSiteData() {
+    if (resetConfirmText !== RESET_CONFIRM_PHRASE) return
+    setResetBusy(true)
+    setResetError(null)
+    setResetResult(null)
+    try {
+      const result = await apiJson<SiteResetResult>('/api/v2/backup/reset-sites/', {
+        method: 'POST',
+        body: JSON.stringify({ confirm: 'RESET' }),
+      })
+      setResetResult(result.deleted)
+      setResetConfirmText('')
+      // Every page reading site/tree data should reflect the wipe
+      // immediately, same invalidation set as a restore.
+      qc.invalidateQueries({ queryKey: ['sites'] })
+      qc.invalidateQueries({ queryKey: ['tree'] })
+      qc.invalidateQueries({ queryKey: ['backup-summary'] })
+      qc.invalidateQueries({ queryKey: ['live-site-sources'] })
+    } catch (err) {
+      setResetError(apiErrorMessage(err, 'Reset failed.'))
+    } finally {
+      setResetBusy(false)
     }
   }
 
@@ -825,6 +868,54 @@ export default function BackupPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Reset Site Data for Live Sync (2026-09-10) ── */}
+      {canRestore && (
+        <div className="backup-card backup-card-danger">
+          <div className="backup-card-title">🗑 Reset Site Data for Live Sync</div>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 12 }}>
+            Permanently deletes every site, sector, KPI snapshot, and tree assignment currently stored — including
+            anything originally uploaded from Excel or restored from a <code>.netwatch</code> backup. Use this to
+            clear out old Excel-imported site data before running a fresh Live Site Directory sync. Sync source
+            configuration (Live Site Sync page) is <strong>not</strong> affected — after this finishes, run a sync
+            there to repopulate everything from the live source.
+          </div>
+          <div className="backup-note-card" style={{ marginBottom: 12 }}>
+            ⚠ This cannot be undone. If you might need the current data again, export a <code>.netwatch</code> backup
+            above first — not to restore sites from later (restore no longer re-creates or deletes sites, see the
+            note on the Restore Project card below), but so the data still exists somewhere if you need to look
+            something up.
+          </div>
+          {resetError && <div className="form-error">{resetError}</div>}
+          {resetResult && (
+            <div className="form-success">
+              Deleted {resetResult.sites} site{resetResult.sites === 1 ? '' : 's'}, {resetResult.sectors} sector
+              {resetResult.sectors === 1 ? '' : 's'}, {resetResult.kpi_snapshots} KPI snapshot
+              {resetResult.kpi_snapshots === 1 ? '' : 's'}, and {resetResult.tree_assignments} tree assignment
+              {resetResult.tree_assignments === 1 ? '' : 's'}. The app is ready for a fresh live sync.
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label className="muted" style={{ fontSize: 11 }}>
+              Type <strong>{RESET_CONFIRM_PHRASE}</strong> to confirm:
+            </label>
+            <input
+              type="text"
+              value={resetConfirmText}
+              onChange={(e) => setResetConfirmText(e.target.value)}
+              placeholder={RESET_CONFIRM_PHRASE}
+              style={{ width: 140 }}
+            />
+            <button
+              className="btn-danger"
+              onClick={handleResetSiteData}
+              disabled={resetBusy || resetConfirmText !== RESET_CONFIRM_PHRASE}
+            >
+              {resetBusy ? 'Resetting…' : '⚠ Erase All Site Data'}
+            </button>
+          </div>
         </div>
       )}
     </div>
