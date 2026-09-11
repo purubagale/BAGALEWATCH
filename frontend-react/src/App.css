@@ -343,7 +343,13 @@ textarea:focus {
 .app-sidebar-row { display: flex; align-items: center; }
 .app-sidebar-link {
   display: flex;
-  align-items: center;
+  /* flex-start (not center) — with the description now wrapping to
+     multiple lines (2026-09-10 fix: descriptions were being cut off
+     with an ellipsis and never shown anywhere, not even a tooltip), a
+     vertically-centered icon would float oddly next to a 2-3 line
+     text block. Top-aligning it reads correctly for both a single-line
+     label and a wrapped label+description pair. */
+  align-items: flex-start;
   gap: 12px;
   flex: 1;
   min-width: 0;
@@ -388,9 +394,14 @@ textarea:focus {
 .app-sidebar-desc {
   font-size: 11px;
   color: var(--header-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 2026-09-10: was nowrap + ellipsis + overflow:hidden, so the
+     subtitle was silently cut off (and not even reachable via a hover
+     tooltip). Wrap it instead so the full description is always
+     visible. */
+  white-space: normal;
+  overflow: visible;
+  line-height: 1.35;
+  word-break: break-word;
 }
 .app-sidebar-link.active .app-sidebar-desc { color: inherit; opacity: 0.75; }
 
