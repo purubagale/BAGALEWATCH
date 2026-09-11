@@ -317,39 +317,60 @@ class SiteViewSet(viewsets.ModelViewSet):
         deployment_status = params.get('status')
         if deployment_status:
             qs = qs.filter(deployment_status=deployment_status)
-        # Technology (2026-09-07) — one or more `technology=` params,
-        # OR'd together, each matched the SAME way SiteSearchView's own
-        # `tech` filter already does: Site.tech OR any sector's Sector.tech
-        # (2G/3G values on this real dataset live almost entirely on
-        # sector rows — see that view's docstring). Repeatable query param
-        # (?technology=2G&technology=4G) rather than a comma-joined string,
-        # matching DRF/browsable-API convention for a multi-value filter.
-        technologies = params.getlist('technology')
-        if technologies:
-            tech_q = Q()
-            for t in technologies:
-                t = t.strip()
-                if not t:
-                    continue
-                # Bug fixed 2026-09-08 ("if i select single or multiple
-                # field in technology, it is giving wrong result") --
-                # SiteListSerializer.get_techs() (what actually populates
-                # the Technology column/pills the user picks from) unions
-                # THREE sources: Site.tech, Sector.tech, AND
-                # Site.operational_technologies (the Live Site Directory
-                # sync's own source, populated for nearly every site right
-                # after the 2026-09-07 reset, before any Sector Data
-                # import). This filter only checked the first two, so
-                # picking "2G" matched only the small legacy subset with
-                # Sector rows and silently excluded the sync-only sites
-                # the column itself was showing a "2G" badge for.
-                tech_q |= (
-                    Q(tech__icontains=t)
-                    | Q(operational_technologies__contains=[t.upper()])
-                    | Exists(Sector.objects.filter(site_id=OuterRef('pk'), tech__icontains=t))
-                )
-            if tech_q:
-                qs = qs.filter(tech_q)
+        # Technology (2026-09-07, AND-ed 2026-09-10) — one or more
+        # `technology=` params, now ALL required at once rather than
+        # OR'd ("if i select 2g and 3g, display as 2g and 3g not 2g or
+        # 3g... if i searched 2g,3g,4g all, then display sites having
+        # all 2g, 3g and 4g"), plus one or more `technology_only=` values
+        # for the "2G only"/"3G only"/"4G only" pills -- originally a
+        # single exact value, extended same day to a repeatable param
+        # ("allow multiple selection for 2g only, 3g only and 4g only.
+        # if selected 2g only and 4g only, then displays the site that
+        # have 2g and 4g only"): a site's tech set must equal EXACTLY the
+        # set of `technology_only` values sent, no more and no fewer --
+        # {'2G'} matches only a 2G-only site, {'2G','4G'} matches only a
+        # site with 2G+4G and nothing else (not 2G alone, not 2G+3G+4G).
+        # The two params are mutually exclusive on the frontend (picking
+        # any "only" pill clears the regular multi-select and vice versa,
+        # SitesPage.tsx); if a client somehow sends both, `technology_only`
+        # wins and `technology` is ignored, same "the more specific one
+        # wins" rule as picking any single option would imply.
+        #
+        # Neither can be a single SQL WHERE the way the old OR filter
+        # was: a site's real tech set is the union of THREE separate
+        # sources with no combined column to index — Site.tech,
+        # Site.operational_technologies (a JSON array), and any distinct
+        # Sector.tech row — exactly what SiteListSerializer.get_techs()
+        # already computes for display (see that method's own docstring
+        # for why all three exist). So this fetches those three raw
+        # sources for every row `qs` already matches on
+        # region/district/status/search (cheap — same query shape
+        # `_techs_by_site()` already runs for the whole-database Map
+        # view), builds each site's full tech set in Python exactly like
+        # get_techs() does, and narrows `qs` to just the matching ids
+        # before pagination ever sees it.
+        technologies = [t.strip().upper() for t in params.getlist('technology') if t.strip()]
+        technology_only = {t.strip().upper() for t in params.getlist('technology_only') if t.strip()}
+        if technology_only or technologies:
+            sector_techs_by_site = self._techs_by_site(qs)
+            matching_ids = []
+            for site_id, site_tech, operational_technologies in qs.values_list(
+                'id', 'tech', 'operational_technologies',
+            ):
+                techs = set()
+                if site_tech:
+                    techs.add(site_tech.strip().upper())
+                for t in (operational_technologies or []):
+                    if t:
+                        techs.add(str(t).strip().upper())
+                techs |= sector_techs_by_site.get(site_id, set())
+
+                if technology_only:
+                    if techs == technology_only:
+                        matching_ids.append(site_id)
+                elif set(technologies).issubset(techs):
+                    matching_ids.append(site_id)
+            qs = qs.filter(id__in=matching_ids)
         return qs
 
     @staticmethod

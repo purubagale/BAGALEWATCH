@@ -94,6 +94,12 @@ urlpatterns = [
     path('backup/summary/', backup.BackupSummaryView.as_view(), name='backup-summary'),
     path('backup/export/', backup.BackupExportView.as_view(), name='backup-export'),
     path('backup/import/', backup.BackupImportView.as_view(), name='backup-import'),
+    # Reset-for-live-sync (2026-09-10) -- erases all Site/Sector/KPI-
+    # snapshot/tree-assignment data (the UI counterpart of
+    # `manage.py clear_sites`) so the app can be repopulated cleanly
+    # from the Live Site Directory sync. See SiteDataResetView's
+    # docstring in core/backup.py.
+    path('backup/reset-sites/', backup.SiteDataResetView.as_view(), name='backup-reset-sites'),
     # Add-only site/sector import from an uploaded Excel/CSV file
     # (2026-08-05) — see core/site_import.py's module docstring.
     path('backup/import-sites/', site_import.ImportSitesView.as_view(), name='backup-import-sites'),

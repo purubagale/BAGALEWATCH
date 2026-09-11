@@ -88,7 +88,10 @@ in this app (see IsAdminOrSuperadmin's docstring in views.py) — this is
 additive-only, not destructive, so it doesn't need the extra
 superadmin-only caution BackupImportView's full-replace restore does.
 """
-from django.db import transaction
+import logging
+import threading
+
+from django.db import connection, transaction
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -98,6 +101,8 @@ from .live_sites import sync_live_sites
 from .models import LiveSiteSource, Sector, Site
 from .serializers import LiveSiteSourceSerializer
 from .views import IsAdminOrSuperadmin, IsSuperadminOnly
+
+logger = logging.getLogger(__name__)
 
 SECTOR_FIELDS = [
     'sector', 'tech', 'local_cell_id', 'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'pci',
@@ -722,14 +727,36 @@ class LiveSiteSourceSyncView(APIView):
     `site-sync` container, which now polls every ENABLED source on its
     own `sync_interval_minutes` — see sync_live_sites.py's --loop).
 
+    **2026-09-09 — runs in a background thread, not inline** (found via a
+    real "Sync now" click against the live NetBox source: 5,444 sites
+    PLUS a 16,390-record paginated device fetch for operational
+    technologies — 44 sequential HTTP round trips to NetBox that
+    routinely took well past a minute end to end). Doing that inline in
+    the request/response cycle meant this endpoint was racing nginx's
+    proxy timeout no matter how generous that timeout was set (raised
+    60s -> 150s in frontend-react/nginx.conf the same day, which helps
+    but doesn't remove the ceiling) — a large enough/slow enough source
+    will always eventually beat a fixed synchronous timeout. Backend logs
+    confirmed the sync itself was succeeding every time; only the HTTP
+    response describing it was getting cut off first.
+
+    POSTing here now just STARTS the sync (in a plain daemon thread —
+    this app has no Celery/task-queue infrastructure, and one-off manual
+    triggers don't need one) and returns immediately with `started: true`
+    plus a snapshot of the source as it was at the moment of the click.
+    The actual result lands on the source row itself exactly as a
+    scheduled sync's does (last_run_at/last_success_at/last_created/
+    last_updated/last_warnings/last_error) — the admin page's own 15s
+    poll (useLiveSiteSources) picks it up once it's done; there is no
+    separate "job status" endpoint to poll. A background failure (e.g.
+    NetBox unreachable) surfaces the same way a scheduled failure does:
+    in `last_error` on the next poll, not as an immediate error toast.
+
     IsAdminOrSuperadmin, not superadmin-only — triggering a sync with a
     source's ALREADY-STORED credentials is the same "manual trigger"
-    tier LiveSiteSyncView used, not a credential write.
-
-    502, not 500, on a failed pull — same reasoning LiveSiteSyncView's
-    docstring gave: an unreachable/misconfigured source is an expected,
-    actionable state (fix config / check the source is up), not a bug in
-    this app."""
+    tier LiveSiteSyncView used, not a credential write. The 400s below
+    (no source / no URL configured) are still synchronous, since those
+    are known before any network call is even attempted."""
 
     permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
 
@@ -739,8 +766,28 @@ class LiveSiteSourceSyncView(APIView):
             return Response({'detail': 'Source not found.'}, status=404)
         if not source.api_url:
             return Response({'detail': f'"{source.name}" has no API URL configured.'}, status=400)
-        try:
-            result = sync_live_sites(source=source)
-        except Exception as exc:  # noqa: BLE001 — surfaced to the caller as a 502, not a 500 traceback
-            return Response({'detail': str(exc)}, status=502)
-        return Response({**result, 'source': LiveSiteSourceSerializer(source).data})
+
+        # Captured BEFORE the background thread starts touching `source`,
+        # so the response always reflects "what this source looked like
+        # right when you clicked," not a value that raced the thread's
+        # own first write.
+        snapshot = LiveSiteSourceSerializer(source).data
+
+        def _run_in_background():
+            try:
+                sync_live_sites(source=source)
+            except Exception:  # noqa: BLE001 — already recorded onto source.last_error by sync_live_sites(); nothing left to surface to since there's no request/caller left listening
+                logger.exception(
+                    'Background Live Site sync failed for source %s (%r)', source.pk, source.name,
+                )
+            finally:
+                # This thread outlives the request that spawned it — close
+                # its DB connection explicitly rather than leaving it for
+                # CONN_MAX_AGE to eventually reap on a thread nothing else
+                # will ever reuse.
+                connection.close()
+
+        threading.Thread(
+            target=_run_in_background, name=f'live-site-sync-{source.pk}', daemon=True,
+        ).start()
+        return Response({'started': True, 'source': snapshot}, status=202)

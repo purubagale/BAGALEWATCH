@@ -24,7 +24,7 @@ import type {
   KpiTrend,
   LiveSiteSource,
   LiveSiteSourceInput,
-  LiveSiteSourceSyncResult,
+  LiveSiteSourceSyncStartResponse,
   MenuItem,
   MenuItemWrite,
   MenuTreeNode,
@@ -83,7 +83,11 @@ export function useSitesPage(params: SitesPageParams, enabled = true) {
   if (params.district) qs.set('district', params.district)
   if (params.status) qs.set('status', params.status)
   if (params.q) qs.set('q', params.q)
-  for (const t of params.technology ?? []) qs.append('technology', t)
+  if (params.technologyOnly?.length) {
+    for (const t of params.technologyOnly) qs.append('technology_only', t)
+  } else {
+    for (const t of params.technology ?? []) qs.append('technology', t)
+  }
   return useQuery({
     queryKey: ['sites-page', params],
     queryFn: () => apiJson<SitesPageResponse>(`/api/v2/sites/?${qs.toString()}`),
@@ -361,14 +365,17 @@ export function useDeleteLiveSiteSource() {
 }
 
 // Per-source manual "Sync now" — the admin-triggered counterpart to the
-// site-sync container's own per-source schedule. Invalidates the list so
-// the row's just-updated status (last run/result/warnings) shows without
-// waiting for the next 15s poll.
+// site-sync container's own per-source schedule. This only STARTS the
+// sync (see LiveSiteSourceSyncStartResponse's docstring for why it runs
+// in the background rather than waiting for the result inline); the
+// invalidate here just refreshes the list right away in case
+// last_run_at already moved, the actual finished result shows up via
+// the list's own 15s poll once the background sync completes.
 export function useSyncLiveSiteSource() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (sourceId: number) =>
-      apiJson<LiveSiteSourceSyncResult>(`/api/v2/sites/sync-live/sources/${sourceId}/sync/`, { method: 'POST' }),
+      apiJson<LiveSiteSourceSyncStartResponse>(`/api/v2/sites/sync-live/sources/${sourceId}/sync/`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['live-site-sources'] }),
   })
 }

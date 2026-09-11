@@ -257,6 +257,11 @@ function ClusteredMarkers({
       disableClusteringAtZoom: 14,
     })
     const withCoords = sites.filter((s) => s.lat != null && s.lng != null)
+    // Pending hover-close timers across all markers built by this effect
+    // run, so a teardown mid-hover (filters changing, a relocate drag
+    // completing, etc.) can't fire a stray closePopup() after the marker
+    // it belonged to is already gone.
+    const pendingCloseTimers = new Set<ReturnType<typeof setTimeout>>()
     for (const s of withCoords) {
       const marker = L.marker([s.lat as number, s.lng as number], { icon: defaultIcon, draggable: canRelocate })
       const popupHtml = buildMarkerPopupHtml(s)
@@ -277,15 +282,57 @@ function ClusteredMarkers({
         maxWidth: 260,
         autoPan: false,
       })
+      // Hover-open/hover-close, debounced (fixed 2026-09-10, "flickering
+      // popup on hover"). Root cause: the popup opens directly on top of
+      // the marker's own hit area, so the instant Leaflet inserts its DOM
+      // the browser hands the marker underneath a synthetic mouseout (a
+      // new element now covers the cursor) -- which closed the popup
+      // immediately, which put the marker back under the cursor, which
+      // reopened it, forever: an open/close/open loop many times a
+      // second, seen as flicker rather than a stable popup. Fix has two
+      // parts: (1) mouseout no longer closes instantly, it schedules a
+      // close a beat later, and (2) once Leaflet actually creates the
+      // popup's DOM ('popupopen'), moving the cursor onto THAT element
+      // also cancels the pending close, same as re-entering the marker
+      // would -- so drifting from the marker onto its own popup content,
+      // or just the normal jitter of the open transition, never closes
+      // it. `pinned` (click-to-keep-open) is unchanged by any of this.
       let pinned = false
+      let closeTimer: ReturnType<typeof setTimeout> | undefined
+      function cancelClose() {
+        if (closeTimer !== undefined) {
+          clearTimeout(closeTimer)
+          pendingCloseTimers.delete(closeTimer)
+          closeTimer = undefined
+        }
+      }
+      function scheduleClose() {
+        cancelClose()
+        closeTimer = setTimeout(() => {
+          pendingCloseTimers.delete(closeTimer as ReturnType<typeof setTimeout>)
+          closeTimer = undefined
+          if (!pinned) marker.closePopup()
+        }, 150)
+        pendingCloseTimers.add(closeTimer)
+      }
       marker.on('mouseover', () => {
+        cancelClose()
         if (!pinned) marker.openPopup()
       })
-      marker.on('mouseout', () => {
-        if (!pinned) marker.closePopup()
+      marker.on('mouseout', scheduleClose)
+      marker.on('popupopen', () => {
+        const el = marker.getPopup()?.getElement() as (HTMLElement & { _hoverBound?: boolean }) | undefined
+        // Guarded so repeated opens don't stack duplicate DOM listeners
+        // (Leaflet can rebuild the popup's container across opens).
+        if (el && !el._hoverBound) {
+          el._hoverBound = true
+          L.DomEvent.on(el, 'mouseenter', cancelClose)
+          L.DomEvent.on(el, 'mouseleave', scheduleClose)
+        }
       })
       marker.on('popupclose', () => {
         pinned = false
+        cancelClose()
       })
       marker.on('click', () => {
         pinned = true
@@ -321,6 +368,8 @@ function ClusteredMarkers({
     }
     map.addLayer(cluster)
     return () => {
+      for (const t of pendingCloseTimers) clearTimeout(t)
+      pendingCloseTimers.clear()
       map.removeLayer(cluster)
     }
   }, [sites, map, onSelect, canRelocate, onRelocateRequest, showNames])

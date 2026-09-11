@@ -91,8 +91,10 @@ export interface SitesPageParams {
   district?: string
   /** Site.deployment_status, exact match — see SiteViewSet.get_queryset(). */
   status?: string
-  /** One or more technology values, OR'd together server-side. */
+  /** One or more technology values — a site must have ALL of them (AND, since 2026-09-10; see SiteViewSet.get_queryset()). Ignored when technologyOnly is set. */
   technology?: string[]
+  /** One or more "X only" values — site's full tech set must equal EXACTLY this set (2026-09-10, extended same day to allow more than one: "2g only"+"4g only" matches a 2G+4G-only site). Mutually exclusive with `technology`. */
+  technologyOnly?: string[]
   q?: string
 }
 
@@ -267,6 +269,21 @@ export interface BackupRestoreFlags {
 export interface BackupImportResult {
   ok: true
   restored: string[]
+}
+
+// Reset-for-live-sync (2026-09-10) -- the UI counterpart of
+// `manage.py clear_sites --confirm` (core/backup.py's
+// SiteDataResetView). Erases Site/Sector/KPI-snapshot/tree-assignment
+// data only; Live Site Directory source config is left untouched on
+// purpose, so a sync afterward repopulates everything cleanly.
+export interface SiteResetResult {
+  ok: true
+  deleted: {
+    sites: number
+    sectors: number
+    kpi_snapshots: number
+    tree_assignments: number
+  }
 }
 
 // Sector import (2026-08-05, updated 2026-08-26) — see core/
@@ -1112,14 +1129,17 @@ export interface LiveSiteSourceInput {
   api_key?: string
 }
 
-/** POST .../sources/<id>/sync/ response — the sync result plus the
- * source row it just updated, so the page can show the new status
- * without a second round-trip. */
-export interface LiveSiteSourceSyncResult {
-  created: number
-  updated: number
-  unchanged?: number
-  warnings: string[]
+/** POST .../sources/<id>/sync/ response (2026-09-09 — runs in the
+ * background, not inline: a real sync against a large source can take
+ * well over a minute, longer than any sensible HTTP timeout, so this
+ * endpoint only STARTS the sync and returns immediately). `source` is a
+ * snapshot from the moment of the click, not the finished result — the
+ * actual created/updated/warnings/error land on the source row itself
+ * (last_run_at and friends) once the background sync finishes, picked
+ * up by useLiveSiteSources()'s own 15s poll. See
+ * LiveSiteSourceSyncView's docstring (core/site_import.py). */
+export interface LiveSiteSourceSyncStartResponse {
+  started: true
   source: LiveSiteSource
 }
 

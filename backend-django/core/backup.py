@@ -48,7 +48,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import DtBand, KpiThreshold, Sector, Site, SiteAssignment, TreeFolder, TreeSettings
+from .models import DtBand, KpiSnapshot, KpiThreshold, Sector, Site, SiteAssignment, TreeFolder, TreeSettings
 from .serializers import SiteDetailSerializer, TreeFolderSerializer
 from .views import IsAdminOrSuperadmin, IsSuperadminOnly
 
@@ -372,3 +372,64 @@ class BackupImportView(APIView):
                 restored.append('band colors')
 
         return Response({'ok': True, 'restored': restored})
+
+
+class SiteDataResetView(APIView):
+    """POST /api/v2/backup/reset-sites/ -- deletes every Site (and, via
+    CASCADE, every Sector/KpiSnapshot/tree SiteAssignment) so the app can
+    be brought back to a clean slate and then fully repopulated by the
+    Live Site Directory sync. This is the UI counterpart of
+    `python manage.py clear_sites --confirm`
+    (core/management/commands/clear_sites.py) -- added so a superadmin
+    doesn't need shell access to a real deployment's container to do
+    this. Same delete, same transaction shape, same ordering (deleting
+    the CASCADE targets first purely so the reported counts are exact,
+    even though Site's own CASCADE would take all three anyway).
+
+    Deliberately does NOT touch LiveSiteSource (core/live_sites.py) --
+    the whole point of this action is "erase the old Excel-imported/
+    `.netwatch`-restored site data, but keep whatever live-sync
+    source(s) are already configured, so a normal sync immediately
+    repopulates everything cleanly." Nor does it touch tree/thresholds/
+    dt_bands configuration, which isn't per-site data at all.
+
+    Body: {"confirm": "RESET"} -- the exact literal string, not just a
+    truthy boolean, so a client bug that accidentally POSTs `{}` (or
+    `{"confirm": true}` from a stray checkbox) can't trigger this by
+    itself. BackupPage.tsx additionally makes the user type this same
+    word into a text box before the button even enables -- two
+    independent confirmations for what is, along with
+    BackupImportView's restore, the most destructive action in this app.
+
+    Superadmin only, same tier as restore.
+    """
+
+    permission_classes = [IsAuthenticated, IsSuperadminOnly]
+
+    def post(self, request):
+        if (request.data or {}).get('confirm') != 'RESET':
+            return Response(
+                {'detail': 'Send {"confirm": "RESET"} to proceed -- this permanently deletes all site data.'},
+                status=400,
+            )
+
+        site_count = Site.objects.count()
+        sector_count = Sector.objects.count()
+        snapshot_count = KpiSnapshot.objects.count()
+        assignment_count = SiteAssignment.objects.count()
+
+        with transaction.atomic():
+            Sector.objects.all().delete()
+            KpiSnapshot.objects.all().delete()
+            SiteAssignment.objects.all().delete()
+            Site.objects.all().delete()
+
+        return Response({
+            'ok': True,
+            'deleted': {
+                'sites': site_count,
+                'sectors': sector_count,
+                'kpi_snapshots': snapshot_count,
+                'tree_assignments': assignment_count,
+            },
+        })
