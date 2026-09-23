@@ -77,21 +77,26 @@ type SectorImportTech = '4G' | '3G' | '2G'
 // out a header-naming mismatch is to hand the user a file guaranteed to
 // match). Header order/text here is exactly the CANONICAL name for each
 // column findCol() in siteImportParser.ts tries first (before falling back
-// to its looser aliases), and matches _build_sector_data_workbook's own
-// export columns (exports.py) minus 'Tech' — this per-tech upload SLOT
-// already declares its own tech (see SectorImportSlot's docstring), so the
-// template doesn't need that column at all. Site ID in the sample row is a
-// placeholder, not a real one — a row naming a site that doesn't already
-// exist in the Live Site Directory is skipped and reported, never created.
+// to its looser aliases).
+//
+// Same-day follow-up ("i have this fields in my file but template have
+// more fields. no need more fields. just match with my fields") — the
+// user's real source file only ever carries these 11 columns (Carrier/
+// Site Band/Cell Active Status/Site Existence are legitimately absent, not
+// just blank), confirmed from a screenshot of its actual header row. Those
+// four are still optional on the parser/backend side (a row missing them
+// is never an error, see SECTOR_FIELDS's `_coerce()` "blank means leave
+// alone" rule in site_import.py) — dropped ONLY from this template so it
+// matches what the user's file actually looks like, not to change what
+// upload will accept.
 const SECTOR_TEMPLATE_HEADER = [
   'Site ID', 'Cell Name', 'Sector', 'Local Cell ID', 'Latitude', 'Longitude',
   'Height (m)', 'Azimuth (deg)', 'MT (deg)', 'ET (deg)', 'PCI',
-  'Carrier', 'Site Band', 'Cell Active Status', 'Site Existence',
 ]
 const SECTOR_TEMPLATE_SAMPLE: Record<SectorImportTech, string[]> = {
-  '4G': ['CDR0001', 'CDR0001_L1', 'A', '1', '27.700000', '85.300000', '30', '120', '2', '0', '101', 'NTC', 'B3', 'ACTIVE', 'EXISTING'],
-  '3G': ['CDR0001', 'CDR0001_U1', 'A', '1', '27.700000', '85.300000', '30', '120', '2', '0', '', 'NTC', 'U2100', 'ACTIVE', 'EXISTING'],
-  '2G': ['CDR0001', 'CDR0001_G1', 'A', '1', '27.700000', '85.300000', '30', '120', '2', '0', '', 'NTC', 'G900', 'ACTIVE', 'EXISTING'],
+  '4G': ['CDR0001', 'CDR0001_L1', 'A', '1', '27.700000', '85.300000', '30', '120', '2', '0', '101'],
+  '3G': ['CDR0001', 'CDR0001_U1', 'A', '1', '27.700000', '85.300000', '30', '120', '2', '0', ''],
+  '2G': ['CDR0001', 'CDR0001_G1', 'A', '1', '27.700000', '85.300000', '30', '120', '2', '0', ''],
 }
 
 function downloadSectorTemplate(tech: SectorImportTech) {
