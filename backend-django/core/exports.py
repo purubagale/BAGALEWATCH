@@ -102,22 +102,37 @@ def _build_sector_data_workbook(qs):
     trips like every other real column here.
 
     Gained Carrier/Site Band/Cell Active Status/Site Existence columns
-    same day, same follow-up ("need to store all those data also") — see
-    Sector.carrier/site_band/cell_active_status/site_existence's
-    docstring in models.py. Exported as plain text exactly as stored,
-    same round-trip contract as every other column here."""
+    2026-08-09, same-day follow-up ("need to store all those data also")
+    — see Sector.carrier/site_band/cell_active_status/site_existence's
+    docstring in models.py.
+
+    **Cell Active Status/Site Existence dropped again, 2026-09-23**
+    ("Cell Active Status,Site Existence not needed" — said of every tech,
+    4G/3G/2G alike, following the same request that split
+    SiteDetailPage.tsx's Sectors table into per-tech tabs and trimmed
+    BackupPage.tsx's per-tech upload templates the same way). Both fields
+    stay on the Sector model and are still accepted on import (a raw API
+    caller can still send them; site_import.py's SECTOR_FIELDS never
+    changed) — only this export's own column list shrank, so a fresh
+    export doesn't hand back two columns the app itself no longer displays
+    or asks for anywhere. Carrier/Site Band stay: still genuinely needed
+    for at least one tech (Carrier for 3G/2G, Site Band for 2G — see
+    SECTOR_EXTRA_COLUMNS' docstring in SiteDetailPage.tsx), and this sheet
+    mixes every tech's sectors in one flat list rather than tabbing them
+    apart, so it always shows every column any tech might use rather than
+    picking one tech's subset the way the per-tech upload template does."""
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = 'Sector Data'
     ws.append([
         'Site ID', 'Cell Name', 'Sector', 'Tech', 'Local Cell ID', 'Lat', 'Long',
         'Height (m)', 'Azimuth (deg)', 'MT (deg)', 'ET (deg)', 'PCI',
-        'Carrier', 'Site Band', 'Cell Active Status', 'Site Existence',
+        'Carrier', 'Site Band',
     ])
     for s in qs.prefetch_related('sectors'):
         sectors = list(s.sectors.all())
         if not sectors:
-            ws.append([s.id, '—', '—', '', None, s.lat, s.lng, None, None, None, None, None, '', '', '', ''])
+            ws.append([s.id, '—', '—', '', None, s.lat, s.lng, None, None, None, None, None, '', ''])
         else:
             for sec in sectors:
                 sec_lat = sec.lat if sec.lat is not None else s.lat
@@ -125,7 +140,7 @@ def _build_sector_data_workbook(qs):
                 ws.append([
                     s.id, sec.cell_name or '', sec.sector or '', sec.tech or '', sec.local_cell_id,
                     sec_lat, sec_lng, sec.height, sec.azimuth, sec.mech_tilt, sec.elec_tilt, sec.pci,
-                    sec.carrier or '', sec.site_band or '', sec.cell_active_status or '', sec.site_existence or '',
+                    sec.carrier or '', sec.site_band or '',
                 ])
     _autofit(ws)
     return wb

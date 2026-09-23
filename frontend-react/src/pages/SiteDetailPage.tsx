@@ -89,18 +89,43 @@ const SECTOR_COLUMNS: [keyof SectorWrite, string][] = [
   ['lng', 'Lng (optional override)'],
   // Real columns from the user's own 3G/2G source files (2026-08-09,
   // "need to store all those data also") — plain text, not numeric, so
-  // they're also listed in NON_NUMERIC_SECTOR_KEYS below so
-  // normalizeForSave() doesn't try to coerce them into a number.
+  // also listed in NON_NUMERIC_SECTOR_KEYS below so normalizeForSave()
+  // doesn't try to coerce them into a number.
+  //
+  // 'cell_active_status'/'site_existence' dropped from this editable list
+  // (2026-09-23, "need not to be displayed... not needed" for 4G, 3G, OR
+  // 2G) — Sector.cell_active_status/site_existence stay on the model
+  // (existing stored values aren't erased, and site_import.py still
+  // accepts them from a raw API caller), just no longer surfaced for
+  // manual editing here. 'carrier'/'site_band' stay editable for every
+  // row regardless of that row's own tech — this flat edit-mode table has
+  // one shared column set across all sectors at once (unlike the read-mode
+  // table's per-tech tabs just below), and both fields are still needed
+  // for AT LEAST one tech (carrier for 3G/2G, site_band for 2G only — see
+  // SECTOR_EXTRA_COLUMNS' own docstring).
   ['carrier', 'Carrier'],
   ['site_band', 'Site Band'],
-  ['cell_active_status', 'Cell Active Status'],
-  ['site_existence', 'Site Existence'],
 ]
 
 const NON_NUMERIC_SECTOR_KEYS: (keyof SectorWrite)[] = [
-  'cell_name', 'sector', 'tech', 'kpi_date',
-  'carrier', 'site_band', 'cell_active_status', 'site_existence',
+  'cell_name', 'sector', 'tech', 'kpi_date', 'carrier', 'site_band',
 ]
+
+// Read-mode Sectors table's extra (beyond the tech-agnostic base columns)
+// columns, per active tab (2026-09-23 follow-up to the 4G/3G/2G tab split
+// above: "Carrier, Site Band, Cell Active Status, Site Existence need not
+// to be displayed in 4g tab. For 3g... Site Band... not needed because it
+// is operating in only one band. For 2g[,] Active Status, Site Existence
+// not needed."). Net effect: Cell Active Status/Site Existence are gone
+// from every tab (not needed by any tech, per that same message); Carrier
+// shows for 3G and 2G (not 4G); Site Band shows for 2G only (2G genuinely
+// operates across multiple bands — 900/1800 — unlike this network's
+// single-band 3G).
+const SECTOR_EXTRA_COLUMNS: Record<KpiTech, { key: 'carrier' | 'site_band'; label: string }[]> = {
+  '4G': [],
+  '3G': [{ key: 'carrier', label: 'Carrier' }],
+  '2G': [{ key: 'carrier', label: 'Carrier' }, { key: 'site_band', label: 'Site Band' }],
+}
 
 function toNum(v: unknown): number | null {
   if (v === '' || v === null || v === undefined) return null
@@ -799,14 +824,9 @@ export default function SiteDetailPage() {
                         <th>Elec Tilt (°)</th>
                         <th>Cell ID</th>
                         <th>Location</th>
-                        {/* Real columns from the user's own 3G/2G source files
-                            (2026-08-09, "need to store all those data also")
-                            — see Sector.carrier/site_band/cell_active_status/
-                            site_existence's docstring in models.py. */}
-                        <th>Carrier</th>
-                        <th>Site Band</th>
-                        <th>Cell Active Status</th>
-                        <th>Site Existence</th>
+                        {SECTOR_EXTRA_COLUMNS[sectorTech].map((col) => (
+                          <th key={col.key}>{col.label}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
@@ -839,10 +859,9 @@ export default function SiteDetailPage() {
                               <span className="sector-location-inherited" title="Same location as the site">(site)</span>
                             )}
                           </td>
-                          <td>{sec.carrier || '—'}</td>
-                          <td>{sec.site_band || '—'}</td>
-                          <td>{sec.cell_active_status || '—'}</td>
-                          <td>{sec.site_existence || '—'}</td>
+                          {SECTOR_EXTRA_COLUMNS[sectorTech].map((col) => (
+                            <td key={col.key}>{sec[col.key] || '—'}</td>
+                          ))}
                         </tr>
                       ))}
                     </tbody>

@@ -83,24 +83,44 @@ type SectorImportTech = '4G' | '3G' | '2G'
 // more fields. no need more fields. just match with my fields") — the
 // user's real source file only ever carries these 11 columns (Carrier/
 // Site Band/Cell Active Status/Site Existence are legitimately absent, not
-// just blank), confirmed from a screenshot of its actual header row. Those
-// four are still optional on the parser/backend side (a row missing them
-// is never an error, see SECTOR_FIELDS's `_coerce()` "blank means leave
-// alone" rule in site_import.py) — dropped ONLY from this template so it
-// matches what the user's file actually looks like, not to change what
-// upload will accept.
-const SECTOR_TEMPLATE_HEADER = [
+// just blank), confirmed from a screenshot of its actual header row.
+//
+// Second follow-up, same day ("Carrier, Site Band, Cell Active Status,
+// Site Existence need not to be displayed in 4g tab. For 3g... Site
+// Band... not needed because it is operating in only one band. For
+// 2g[,] Active Status, Site Existence not needed") — per-tech column set,
+// matching SiteDetailPage.tsx's SECTOR_EXTRA_COLUMNS exactly so the
+// template a user downloads for a tab always matches what that tab
+// actually shows/needs: 4G gets none of the four; 3G gets Carrier only
+// (single-band, no Site Band); 2G gets Carrier + Site Band (2G genuinely
+// spans multiple bands here). Cell Active Status/Site Existence never
+// appear in any tech's template — declared not needed for all three.
+// Both are still optional on the parser/backend side regardless (a row
+// missing them is never an error, see SECTOR_FIELDS's `_coerce()` "blank
+// means leave alone" rule in site_import.py) — this only controls what
+// the DOWNLOADED template hands the user to fill in.
+const SECTOR_TEMPLATE_BASE_HEADER = [
   'Site ID', 'Cell Name', 'Sector', 'Local Cell ID', 'Latitude', 'Longitude',
   'Height (m)', 'Azimuth (deg)', 'MT (deg)', 'ET (deg)', 'PCI',
 ]
-const SECTOR_TEMPLATE_SAMPLE: Record<SectorImportTech, string[]> = {
+const SECTOR_TEMPLATE_BASE_SAMPLE: Record<SectorImportTech, string[]> = {
   '4G': ['CDR0001', 'CDR0001_L1', 'A', '1', '27.700000', '85.300000', '30', '120', '2', '0', '101'],
   '3G': ['CDR0001', 'CDR0001_U1', 'A', '1', '27.700000', '85.300000', '30', '120', '2', '0', ''],
   '2G': ['CDR0001', 'CDR0001_G1', 'A', '1', '27.700000', '85.300000', '30', '120', '2', '0', ''],
 }
+// [header column, sample value] for the extra columns each tech's
+// template appends after the base ones above.
+const SECTOR_TEMPLATE_EXTRA: Record<SectorImportTech, [string, string][]> = {
+  '4G': [],
+  '3G': [['Carrier', 'Single Carrier']],
+  '2G': [['Carrier', 'Single Carrier'], ['Site Band', 'G900']],
+}
 
 function downloadSectorTemplate(tech: SectorImportTech) {
-  const lines = [SECTOR_TEMPLATE_HEADER.join(','), SECTOR_TEMPLATE_SAMPLE[tech].join(',')]
+  const extra = SECTOR_TEMPLATE_EXTRA[tech]
+  const header = [...SECTOR_TEMPLATE_BASE_HEADER, ...extra.map(([label]) => label)]
+  const sample = [...SECTOR_TEMPLATE_BASE_SAMPLE[tech], ...extra.map(([, value]) => value)]
+  const lines = [header.join(','), sample.join(',')]
   const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
   downloadBlob(blob, `${tech.toLowerCase()}_sector_data_template.csv`)
 }
