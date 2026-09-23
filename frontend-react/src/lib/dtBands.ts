@@ -90,14 +90,69 @@ export const CQI_BANDS: Band[] = [
   { label: '13-15', min: 13, max: 16, color: '#16a34a' },
 ]
 
+// DL Throughput (Mbps) bands (2026-09-23) -- not a vendor-verified
+// reference table the way RSRP/RSRQ/SINR/etc. above are (those trace back
+// to a real TEMS-style route plot, see this file's own header comment);
+// these cutoffs are a reasonable starting point for a 4G data session and
+// should be revisited once real before/after throughput comparisons show
+// whether they read sensibly. Reuses the same worst->best red/orange/
+// yellow/light-green/green palette as RSRP_BANDS/CQI_BANDS so a
+// throughput plot reads consistently with every other absolute-value
+// band table in this app.
+export const THROUGHPUT_BANDS: Band[] = [
+  { label: '< 2', min: -999, max: 2, color: '#dc2626' },
+  { label: '2 to 5', min: 2, max: 5, color: '#f97316' },
+  { label: '5 to 10', min: 5, max: 10, color: '#eab308' },
+  { label: '10 to 20', min: 10, max: 20, color: '#84cc16' },
+  { label: '> 20', min: 20, max: 9999, color: '#16a34a' },
+]
+
 export function bandColor(bands: Band[], v: number | null | undefined): string {
   if (v === null || v === undefined) return '#94a3b8'
   for (const b of bands) if (v >= b.min && v < b.max) return b.color
   return '#94a3b8'
 }
 
+// PCI Plot (2026-09-23, "PCI Plot (PS DL-Best server)") -- deliberately
+// NOT a `bandColor()`-style threshold table: PCI is a cell IDENTITY (which
+// physical cell served this sample), not a graded good/bad reading, so
+// "which PCI band is this in" is a meaningless question the way "which
+// RSRP band" isn't. A real deployment reuses the same 3 (LTE)/8-ish
+// (2G/3G) PCI/BSIC mod-N values across many physically distant cells, so
+// this is a plain deterministic hash into a fixed categorical palette --
+// good enough to visually tell neighboring cells' coverage apart on one
+// map, NOT a claim that color X always means "PCI X" across different
+// sessions/maps (it doesn't, and doesn't need to for that purpose).
+// Deliberately kept OUT of the TaggedMetric/metricsForTech system (see
+// DtExploreTab.tsx's PCI tab) -- that system feeds DtBandsPage.tsx's
+// admin band-customization UI, which makes no sense for a categorical
+// value, and every TaggedMetric consumer assumes bandColor()-style
+// threshold coloring.
+const PCI_PALETTE = [
+  '#dc2626', '#f97316', '#eab308', '#84cc16', '#16a34a', '#0d9488',
+  '#0ea5e9', '#2563eb', '#7c3aed', '#c026d3', '#db2777', '#78716c',
+]
+export function pciColor(pci: number | null | undefined): string {
+  if (pci === null || pci === undefined) return '#94a3b8'
+  return PCI_PALETTE[Math.abs(pci) % PCI_PALETTE.length]
+}
+
+// Band Distribution (2026-09-23, "Band (Mode: ... FREE/B3 Lock/B20 Lock
+// mode)") — same categorical-hash approach as pciColor() above and for
+// the same reason: which band a sample was on is an identity ("3", "20"),
+// not a graded reading, so a threshold band table makes no sense here
+// either. Reuses PCI_PALETTE for a consistent look, but hashes the band's
+// own STRING (DriveTestSample.band is free text, not a number — see its
+// docstring) rather than reusing pciColor's numeric-modulo approach.
+export function bandCategoryColor(band: string | null | undefined): string {
+  if (!band) return '#94a3b8'
+  let hash = 0
+  for (let i = 0; i < band.length; i++) hash = (hash * 31 + band.charCodeAt(i)) >>> 0
+  return PCI_PALETTE[hash % PCI_PALETTE.length]
+}
+
 export interface DtMetric {
-  key: keyof Pick<DtSample, 'rsrp' | 'rsrq' | 'sinr' | 'ecno' | 'rx_qual' | 'cqi'>
+  key: keyof Pick<DtSample, 'rsrp' | 'rsrq' | 'sinr' | 'ecno' | 'rx_qual' | 'cqi' | 'dl'>
   label: string
   unit: string
   bands: Band[]
@@ -126,6 +181,12 @@ export function metricsForTech(tech: DtTech): DtMetric[] {
     { key: 'rsrq', label: 'RSRQ', unit: ' dB', bands: RSRQ_BANDS },
     { key: 'sinr', label: 'SINR', unit: ' dB', bands: SINR_BANDS },
     { key: 'cqi', label: 'CQI', unit: '', bands: CQI_BANDS },
+    // DL Throughput (2026-09-23, "Download Plot from PDCP") -- DriveTestSample.dl
+    // already stored/returned per sample and already flows through
+    // compare()/DtCompareReportView (see DT_COMPARE_METRICS in
+    // drive_test.py, kept in sync with this list), just never plottable
+    // as a tab until now.
+    { key: 'dl', label: 'DL Throughput', unit: ' Mbps', bands: THROUGHPUT_BANDS },
   ]
 }
 

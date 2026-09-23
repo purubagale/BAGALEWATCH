@@ -587,6 +587,11 @@ export interface DtSample {
   sinr: number | null
   dl: number | null
   pci: number | null
+  // LTE band the serving cell was on (e.g. "3", "20") -- see
+  // DriveTestSample.band's docstring in models.py. Blank ('') for any
+  // sample saved before this field existed, or where trpAnalysis.ts
+  // never decoded a band value in the first place.
+  band?: string | null
   // LTE-only 3GPP Channel Quality Indicator, 0-15, higher is better --
   // see DriveTestSample.cqi's docstring in models.py.
   cqi: number | null
@@ -725,6 +730,11 @@ export interface DtSessionListItem {
   size_bytes: number | null
   sample_count: number
   remarks: string
+  // Drive "mode" this session was run in -- Free Mode, a band-lock
+  // (B3/B20/...), Idle vs an active DL/UL session, etc. (2026-09-23) --
+  // see DriveTestSession.mode's docstring in models.py. Blank ('') means
+  // not set, same convention as `remarks`/`name` on an older session.
+  mode: string
   attachment_count: number
   activities: DtSessionActivityTag[]
 }
@@ -1111,6 +1121,7 @@ export interface DtSessionCreate {
   uploaded_date: string
   meta: DtSessionMeta
   samples: DtSample[]
+  mode?: string
 }
 
 // GET/PUT /permissions-matrix/ shape — excludes superadmin (see

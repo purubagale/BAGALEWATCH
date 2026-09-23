@@ -789,6 +789,25 @@ export function useUpdateDtSessionRemarks(sessionId: number | undefined) {
   })
 }
 
+// Drive "mode" (Free Mode / band-lock / Idle vs active), editable after
+// upload same as remarks above (2026-09-23) — mirrors
+// useUpdateDtSessionRemarks exactly; see DriveTestSessionViewSet.mode()'s
+// own docstring in drive_test.py.
+export function useUpdateDtSessionMode(sessionId: number | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (mode: string) =>
+      apiJson<{ mode: string }>(`/api/v2/dt-sessions/${sessionId}/mode/`, {
+        method: 'PATCH',
+        body: JSON.stringify({ mode }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dt-session', sessionId] })
+      qc.invalidateQueries({ queryKey: ['dt-sessions'] })
+    },
+  })
+}
+
 // Multiple-file upload (2026-09-07, "attaching multiple files related
 // to the saved session") — FormData, not JSON, since these are
 // arbitrary binary files; see client.ts's apiFetch for the matching

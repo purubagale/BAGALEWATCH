@@ -11,6 +11,7 @@ import DtCallDownloadSummary from '../components/DtCallDownloadSummary'
 import DtCoverageMap from '../components/DtCoverageMap'
 import { DT_SESSION_HISTORY_PATH } from '../constants/opaqueRoutes'
 import { MAX_MAP_DOTS, subsampleForMap } from '../lib/dtBands'
+import { DriveModeSelect } from '../lib/dtDriveMode'
 import { computeSessionMeta, csvTextToRows, haversineKm, parseTemplateRows } from '../lib/dtTemplateParser'
 import { trpaAnalyzeFile, trpaSummarizeCallEvents, trpaSummarizeDownloadEvents, type TrpaEventRow, type TrpaRow } from '../lib/trpAnalysis'
 import { readXlsxRowsForTech } from '../lib/xlsxReader'
@@ -100,6 +101,15 @@ function num(v: unknown): number | null {
 function int(v: unknown): number | null {
   const n = num(v)
   return n != null ? Math.round(n) : null
+}
+// A TEMS Band field can come back as either a string ("3") or a number
+// (3) depending on the source file -- unlike pci/cqi above this is stored
+// as free text (DriveTestSample.band is a CharField, see its docstring),
+// so a numeric value is stringified rather than coerced with int().
+function bandStr(v: unknown): string {
+  if (typeof v === 'string') return v.trim()
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v)
+  return ''
 }
 
 // The INSTANTANEOUS measurement fields trpRowToDtSample reads per tech —
@@ -201,6 +211,7 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
   let rsrq: number | null = null
   let sinr: number | null = null
   let pci: number | null = null
+  let band = ''
   let cqi: number | null = null
   let dl: number | null = null
   let rxQual: number | null = null
@@ -215,6 +226,13 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     rsrq = num(row.rsrq)
     sinr = num(row.sinr)
     pci = int(row.pci)
+    // Already decoded + forward-filled by trpAnalysis.ts
+    // (Radio.Lte.ServingCell[8].Band, on-change like pci -- see
+    // SERVING_FORWARD_FILL_KEYS there) but never carried through to the
+    // saved sample until now (2026-09-23, "Band (Mode: ... Lock mode)" —
+    // real drives re-run per band-lock, so which band a sample was
+    // actually on is real data this app already decodes).
+    band = bandStr(row.band)
     cqi = int(row.cqi)
     // Real DL throughput, when TEMS declared it — a genuine field this
     // engine confirmed against a real 4G DL capture (see trpAnalysis.ts's
@@ -239,7 +257,7 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     date: row.isoTs.slice(0, 10),
     lat, lng,
     rsrp: primary,
-    rsrq, sinr, dl, pci, cqi,
+    rsrq, sinr, dl, pci, band, cqi,
     serving_site_id: null,
     serving_site_name: null,
     serving_sector: null,
@@ -261,6 +279,14 @@ interface PendingTrpSession {
   // that computeSessionMeta's own fixed return shape doesn't declare.
   meta: DtSessionMeta
   sessionName: string
+  // Drive "mode" for this session (2026-09-23) -- editable per detected
+  // tech group, same as sessionName, since a single multi-file .trp batch
+  // can genuinely mix modes across its 4G/3G/2G groups (e.g. a 4G capture
+  // driven under "B3 Lock" alongside a 2G capture driven "Free Mode").
+  // Blank by default -- never auto-detected (unlike meta.testType, which
+  // IS inferable from the file's own events) since drive mode is operator
+  // intent, not something the capture data itself reveals.
+  mode: string
   driveTestDate: string
   sourceFiles: string[]
   // How many raw radio samples the decoder actually found across all of
@@ -420,7 +446,7 @@ function buildTrpSessions(
     const driveTestDate = dtDates.length ? dtDates.sort().pop()! : new Date().toISOString().slice(0, 10)
     const district = resolveDistrict(grp.samples, sites) ?? 'Unknown'
     const sessionName = `DT_trp_${driveTestDate.replace(/-/g, '')}_${district.replace(/\s+/g, '')}_${tech}${testType ? `_${testType}` : ''}`
-    sessions.push({ tech, samples, meta, sessionName, driveTestDate, sourceFiles: grp.files, rawDecodedCount: grp.rawDecodedCount, wasCapped })
+    sessions.push({ tech, samples, meta, sessionName, mode: '', driveTestDate, sourceFiles: grp.files, rawDecodedCount: grp.rawDecodedCount, wasCapped })
   }
   return sessions
 }
@@ -516,6 +542,13 @@ export default function DtUploadPage() {
   const [mode, setMode] = useState<UploadMode>('template')
   const [tech, setTech] = useState<DtTech>('4G')
   const [sessionName, setSessionName] = useState('')
+  // Drive "mode" this session was run in (2026-09-23) -- named `driveMode`
+  // here, NOT `mode`, to avoid colliding with this page's own unrelated
+  // `mode` state just above (the Template-vs-.trp upload-flow picker).
+  // See DriveTestSession.mode's docstring in models.py for why this is a
+  // real field. Curated dropdown + free text, optional -- blank means
+  // "not set," same as an older session that predates this field.
+  const [driveMode, setDriveMode] = useState('')
   const [uploadedFile, setUploadedFile] = useState<{ name: string } | null>(null)
   const [parsedSamples, setParsedSamples] = useState<DtSample[] | null>(null)
   const [parseErr, setParseErr] = useState<string | null>(null)
@@ -682,6 +715,7 @@ export default function DtUploadPage() {
           date: driveTestDate,
           uploaded_date: new Date().toISOString().slice(0, 10),
           meta,
+          mode: driveMode,
         },
         parsedSamples,
       )
@@ -693,6 +727,7 @@ export default function DtUploadPage() {
       navigate(`${DT_SESSION_HISTORY_PATH}?session=${created.id}`)
       resetUpload()
       setSessionName('')
+      setDriveMode('')
     } catch (e) {
       setSaveProgress(null)
       setSaveErr(apiErrorMessage(e, 'Could not save the session — if some batches already landed, the partial session is visible (and removable) from Session History rather than silently lost.'))
@@ -796,6 +831,9 @@ export default function DtUploadPage() {
   function updateActiveTrpName(name: string) {
     setTrpSessions((prev) => prev.map((s, i) => (i === trpActiveIdx ? { ...s, sessionName: name } : s)))
   }
+  function updateActiveTrpMode(mode: string) {
+    setTrpSessions((prev) => prev.map((s, i) => (i === trpActiveIdx ? { ...s, mode } : s)))
+  }
 
   // Saves ONE grouped session — via saveSessionChunked (additive-only,
   // batched for large sessions, see that function's own comment) — then
@@ -814,6 +852,7 @@ export default function DtUploadPage() {
           date: s.driveTestDate,
           uploaded_date: new Date().toISOString().slice(0, 10),
           meta: s.meta,
+          mode: s.mode,
         },
         s.samples,
       )
@@ -919,6 +958,7 @@ export default function DtUploadPage() {
                   onChange={(e) => setSessionName(e.target.value)}
                   style={{ marginLeft: 'auto', minWidth: 220 }}
                 />
+                <DriveModeSelect value={driveMode} onChange={setDriveMode} />
                 <button className="btn-secondary btn-small" type="button" onClick={() => downloadTemplate(tech)}>
                   ⬇ Download {tech} Template
                 </button>
@@ -1062,6 +1102,7 @@ export default function DtUploadPage() {
                       onChange={(e) => updateActiveTrpName(e.target.value)}
                       style={{ marginLeft: 'auto', minWidth: 260 }}
                     />
+                    <DriveModeSelect value={trpSessions[trpActiveIdx].mode} onChange={updateActiveTrpMode} />
                   </div>
 
                   <div className="report-summary-cards" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>

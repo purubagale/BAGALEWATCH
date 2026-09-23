@@ -690,6 +690,26 @@ class DriveTestSession(models.Model):
     # everything-else-is-immutable design (see this viewset's own
     # docstring for why v2 deliberately has no update/partial_update).
     remarks = models.TextField(blank=True, default='')
+    # Which "mode" this drive was run in -- Free Mode, a specific band-lock
+    # (e.g. "B3 Lock", "B20 Lock"), Idle vs an active DL/UL session, etc.
+    # (2026-09-23 request: real drive tests for one site aren't one file,
+    # they're a matrix of mode x phase x metric -- "PCI Plot... Pre DT",
+    # "Band (Mode: Idle at B3 Lock mode)... Post DT", and so on -- and
+    # today there is no way to tell two same-site/same-tech sessions apart
+    # by which mode they were driven in). A real CharField, not a `meta`
+    # key -- this needs to be *filtered/found* by mode, which `meta` (a
+    # plain untyped JSONField, see above) has no query path for anywhere
+    # in this app, while a top-level field is trivially filterable and
+    # matches how `tech` already works. Deliberately not a `choices=`
+    # enum, same "not a real enum" convention `tech` uses -- the UI offers
+    # a curated dropdown (see DtUploadPage.tsx/
+    # DtSessionHistoryPage.tsx) but a future mode string never needs a
+    # migration to add. Editable after the fact via
+    # DriveTestSessionViewSet.mode(), mirroring remarks() immediately
+    # above/below it -- same "one dedicated action per editable field"
+    # convention, not a general update/PATCH (see this model's own
+    # viewset docstring).
+    mode = models.CharField(max_length=40, blank=True, default='')
 
     class Meta:
         db_table = 'v2_dt_sessions'
@@ -1122,6 +1142,18 @@ class DriveTestSample(models.Model):
     cqi = models.SmallIntegerField(null=True, blank=True)
     dl = SignalFloatField(null=True, blank=True)
     pci = models.IntegerField(null=True, blank=True)
+    # LTE band this sample's serving cell was on (e.g. "3", "20") --
+    # already decoded and forward-filled client-side by trpAnalysis.ts
+    # (Radio.Lte.ServingCell[8].Band, on-change like pci/earfcn) but
+    # dropped when trpRowToDtSample() (DtUploadPage.tsx) built the row
+    # that actually gets saved here (2026-09-23 follow-up: real drive
+    # tests are re-run per band-lock mode -- "Band (Mode: Idle at B3 Lock
+    # mode)" -- so knowing which band a sample was actually on, not just
+    # its PCI, is real data this app already has and wasn't storing).
+    # Plain CharField, not an int/choices -- the raw TEMS band string
+    # round-trips as-is, same "carry the vendor's own value through
+    # unchanged" convention as Sector.carrier/site_band.
+    band = models.CharField(max_length=10, blank=True, default='')
     serving_site_id = models.CharField(max_length=64, blank=True, null=True)
     serving_site_name = models.CharField(max_length=255, blank=True, null=True)
     serving_sector = models.CharField(max_length=20, blank=True, null=True)

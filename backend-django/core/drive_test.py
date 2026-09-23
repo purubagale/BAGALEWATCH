@@ -61,7 +61,10 @@ from .views import IsAdminOrSuperadmin
 DT_COMPARE_METRICS = {
     '2G': ['rsrp', 'rx_qual'],
     '3G': ['rsrp', 'ecno'],
-    '4G': ['rsrp', 'rsrq', 'sinr', 'cqi'],
+    # 'dl' (DL throughput, Mbps) added 2026-09-23 alongside
+    # dtBands.ts's metricsForTech('4G') gaining a matching entry -- must
+    # stay in sync with that function per this module's own comment below.
+    '4G': ['rsrp', 'rsrq', 'sinr', 'cqi', 'dl'],
 }
 
 # Direction each metric improves in: +1 means "higher is better" (every
@@ -88,7 +91,13 @@ DT_COMPARE_DIRECTION = {'rx_qual': -1}
 # No DT_COMPARE_DIRECTION entry needed for cqi -- higher is better, same
 # as every metric except rx_qual, and directionFor()'s fallback already
 # defaults to +1 for anything not in that dict.
-DT_COMPARE_DEADBAND = {'rx_qual': 1.0, 'cqi': 1.0}
+# `dl` (Mbps) gets its own 1.0 deadband -- the default 2.0 (sized for
+# dB-scale RF metrics) is the wrong order of magnitude for a throughput
+# reading that can swing several Mbps between two otherwise-similar drives
+# just from radio scheduling noise; 1.0 Mbps is a starting point, not a
+# vendor-verified figure -- revisit once real before/after DL comparisons
+# show whether it over/under-reports "changed."
+DT_COMPARE_DEADBAND = {'rx_qual': 1.0, 'cqi': 1.0, 'dl': 1.0}
 DT_COMPARE_DEFAULT_DEADBAND = 2.0
 
 
@@ -204,7 +213,7 @@ class DriveTestSessionViewSet(
         return DriveTestSessionListSerializer
 
     def get_permissions(self):
-        if self.action in ('create', 'destroy', 'samples', 'remarks'):
+        if self.action in ('create', 'destroy', 'samples', 'remarks', 'mode'):
             return [IsAuthenticated(), IsAdminOrSuperadmin()]
         if self.action == 'attachments':
             # GET (list) is read-only, same tier as retrieve/list below;
@@ -286,6 +295,25 @@ class DriveTestSessionViewSet(
         session.remarks = remarks
         session.save(update_fields=['remarks'])
         return Response({'remarks': session.remarks})
+
+    @action(detail=True, methods=['patch'])
+    def mode(self, request, pk=None):
+        """`PATCH /api/v2/dt-sessions/<id>/mode/` — the drive "mode" this
+        session was run in (Free Mode, a band-lock like B3/B20, Idle vs an
+        active DL/UL session, ...), editable after the fact exactly like
+        remarks() immediately above -- same "one dedicated action per
+        editable field on an otherwise-immutable session" convention, not
+        a general update/partial_update (see this viewset's own
+        docstring). See DriveTestSession.mode's own docstring in models.py
+        for why this is a real field, not a `meta` key.
+        """
+        session = self.get_object()
+        mode = request.data.get('mode')
+        if mode is None or not isinstance(mode, str):
+            return Response({'mode': ['This field is required and must be a string.']}, status=400)
+        session.mode = mode
+        session.save(update_fields=['mode'])
+        return Response({'mode': session.mode})
 
     @action(detail=True, methods=['get', 'post'], url_path='attachments')
     def attachments(self, request, pk=None):

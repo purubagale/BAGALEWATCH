@@ -625,7 +625,7 @@ class DriveTestSampleSerializer(serializers.ModelSerializer):
     class Meta:
         model = DriveTestSample
         fields = [
-            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'cqi',
+            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band', 'cqi',
             'serving_site_id', 'serving_site_name', 'serving_sector', 'serving_cell_name',
             'serving_local_cell_id', 'serving_dist_km', 'cell_role', 'rx_qual',
             'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
@@ -642,6 +642,9 @@ _DT_SAMPLE_STR_FIELDS = {
     'serving_site_id': (64, True), 'serving_site_name': (255, True),
     'serving_sector': (20, True), 'serving_cell_name': (100, True),
     'cell_role': (10, False),
+    # (2026-09-23) — not null=True on the model (blank=True, default=''),
+    # same non-nullable convention as cell_role above.
+    'band': (10, False),
 }
 # The only fields a malformed/absent value should 400 on (matching what
 # DRF's FloatField already did) — they are what a coverage plot needs.
@@ -713,7 +716,7 @@ def _coerce_dt_sample(raw):
 # dict (+ session_id + the derived location).
 _DT_COPY_COLUMNS = (
     'session_id', 'ts', 'date', 'lat', 'lng', 'location',
-    'rsrp', 'rsrq', 'sinr', 'dl', 'pci',
+    'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band',
     'serving_site_id', 'serving_site_name', 'serving_sector', 'serving_cell_name',
     'serving_local_cell_id', 'serving_dist_km', 'cell_role', 'rx_qual',
     'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
@@ -758,7 +761,7 @@ def _bulk_insert_dt_samples(session_id, rows):
             _copy_field(r['ts']), _copy_field(r['date']),
             _copy_field(lat), _copy_field(lng), _copy_field(loc),
             _copy_field(r['rsrp']), _copy_field(r['rsrq']), _copy_field(r['sinr']),
-            _copy_field(r['dl']), _copy_field(r['pci']),
+            _copy_field(r['dl']), _copy_field(r['pci']), _copy_field(r['band']),
             _copy_field(r['serving_site_id']), _copy_field(r['serving_site_name']),
             _copy_field(r['serving_sector']), _copy_field(r['serving_cell_name']),
             _copy_field(r['serving_local_cell_id']), _copy_field(r['serving_dist_km']),
@@ -798,7 +801,7 @@ class DriveTestSamplePlotSerializer(serializers.ModelSerializer):
     class Meta:
         model = DriveTestSample
         fields = [
-            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'cqi',
+            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band', 'cqi',
             'serving_site_name', 'rx_qual', 'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
             # serving-cell attribution (dt_serving_cell.py): serving_site_id
             # keys the per-session /serving-cells/ lookup that the coverage
@@ -833,7 +836,7 @@ class DriveTestSessionListSerializer(serializers.ModelSerializer):
         model = DriveTestSession
         fields = [
             'id', 'name', 'tech', 'date', 'uploaded_date', 'saved_at',
-            'uploaded_by_name', 'meta', 'size_bytes', 'sample_count', 'remarks', 'attachment_count',
+            'uploaded_by_name', 'meta', 'size_bytes', 'sample_count', 'remarks', 'mode', 'attachment_count',
             'activities',
         ]
 
@@ -1382,7 +1385,7 @@ class DriveTestSessionWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DriveTestSession
-        fields = ['id', 'name', 'tech', 'date', 'uploaded_date', 'meta', 'samples', 'remarks']
+        fields = ['id', 'name', 'tech', 'date', 'uploaded_date', 'meta', 'samples', 'remarks', 'mode']
         read_only_fields = ['id']
 
     def validate_samples(self, value):

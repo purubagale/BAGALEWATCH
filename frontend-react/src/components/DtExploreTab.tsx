@@ -7,12 +7,26 @@ import { useDtServingCellsForSessions, useDtSessionsNear, useSites } from '../ap
 import type { DtSample, DtServingCell, DtSessionDetail, DtTech, SiteListItem } from '../api/types'
 import { ACTIVITY_ROLE_LABELS } from './AttachActivityModal'
 import { clusterDtSessionsByArea, type DtSessionCluster } from '../lib/dtSessionClustering'
-import { ALL_TECHS, bandColor, subsampleForMap, type TaggedMetric } from '../lib/dtBands'
+import { ALL_TECHS, bandCategoryColor, bandColor, pciColor, subsampleForMap, type TaggedMetric } from '../lib/dtBands'
 import { useDtMetrics } from '../lib/useDtMetrics'
 import { haversineKm } from '../lib/dtTemplateParser'
 import { pointInPolygon, polygonAverageCenter, polygonBoundingRadiusKm, type LatLng } from '../lib/geo'
 import { NEPAL_DISTRICT_BOUNDARIES } from '../lib/nepalDistrictBoundaries'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
+
+// Sentinel metricTag value for the PCI Plot tab (2026-09-23) — never a
+// real TaggedMetric.tag (those are always "<Label>:<Tech>", e.g.
+// "RSRP:4G"), so it can share the same metricTag state/tab-bar as the
+// real metrics without colliding, while still being handled as a special
+// case wherever it actually changes behavior (see the PCI_TAG checks
+// below).
+const PCI_TAG = 'PCI'
+// Band Distribution tab (2026-09-23) — same sentinel-tag pattern as
+// PCI_TAG above, see its own comment.
+const BAND_TAG = 'Band'
+// Caps the PCI Plot's/Band Distribution's legend swatch count — see
+// distinctPcis'/distinctBands' own comments.
+const PCI_LEGEND_CAP = 24
 
 const DEFAULT_CENTER: [number, number] = [28.3949, 84.124]
 const DEFAULT_ZOOM = 7
@@ -447,6 +461,93 @@ function NearSamplesLayer({
   return null
 }
 
+// PCI Plot (2026-09-23, "PCI Plot (PS DL-Best server)") — a leaner sibling
+// of NearSamplesLayer above: colors each 4G sample by its serving cell's
+// PCI (pciColor(), a fixed categorical hash — see that function's own
+// docstring for why this is deliberately NOT a TaggedMetric/bandColor()
+// threshold table) instead of a graded signal reading. 4G-only — PCI is
+// this app's own established 4G-specific cell identity (dtBands.ts's
+// signalLabel()/metricsForTech() already treat 3G/2G's own identities,
+// Scrambling Code and BCCH+BSIC, as separate concepts, never as "PCI").
+// Deliberately skips NearSamplesLayer's hover/click "show link to serving
+// site" interactivity — a real but separate enhancement, not needed to
+// answer "which cell served this spot."
+function PciSamplesLayer({ sessions }: { sessions: DtSessionDetail[] }) {
+  const map = useMap()
+
+  useEffect(() => {
+    const layer = L.layerGroup()
+    for (const session of sessions) {
+      if (session.tech !== '4G') continue
+      const withVal = session.samples.filter((sample) => sample.lat != null && sample.lng != null && sample.pci != null)
+      const drawn = subsampleForMap(withVal)
+      for (const sample of drawn) {
+        const color = pciColor(sample.pci)
+        L.circleMarker([sample.lat as number, sample.lng as number], {
+          radius: 3,
+          color,
+          fillColor: color,
+          fillOpacity: 0.85,
+          weight: 0,
+        })
+          .bindTooltip(
+            `<b>${session.name}</b> (4G)<br>${sample.ts || sample.date || ''}<br>PCI: ${sample.pci}` +
+              (sample.serving_site_name ? `<br>${sample.serving_site_name}` : ''),
+            { sticky: true, direction: 'top', offset: [0, -4] },
+          )
+          .addTo(layer)
+      }
+    }
+    layer.addTo(map)
+    return () => {
+      map.removeLayer(layer)
+    }
+  }, [map, sessions])
+
+  return null
+}
+
+// Band Distribution (2026-09-23, "Band (Mode: ... Lock mode)") — mirrors
+// PciSamplesLayer exactly, colored by bandCategoryColor(sample.band)
+// instead of pciColor(sample.pci). 4G-only for the same reason PCI is:
+// `band` is only ever populated by the .trp upload path's
+// trpRowToDtSample() today (see DriveTestSample.band's own docstring),
+// which only decodes it for 4G.
+function BandSamplesLayer({ sessions }: { sessions: DtSessionDetail[] }) {
+  const map = useMap()
+
+  useEffect(() => {
+    const layer = L.layerGroup()
+    for (const session of sessions) {
+      if (session.tech !== '4G') continue
+      const withVal = session.samples.filter((sample) => sample.lat != null && sample.lng != null && !!sample.band)
+      const drawn = subsampleForMap(withVal)
+      for (const sample of drawn) {
+        const color = bandCategoryColor(sample.band)
+        L.circleMarker([sample.lat as number, sample.lng as number], {
+          radius: 3,
+          color,
+          fillColor: color,
+          fillOpacity: 0.85,
+          weight: 0,
+        })
+          .bindTooltip(
+            `<b>${session.name}</b> (4G)<br>${sample.ts || sample.date || ''}<br>Band: ${sample.band}` +
+              (sample.serving_site_name ? `<br>${sample.serving_site_name}` : ''),
+            { sticky: true, direction: 'top', offset: [0, -4] },
+          )
+          .addTo(layer)
+      }
+    }
+    layer.addTo(map)
+    return () => {
+      map.removeLayer(layer)
+    }
+  }, [map, sessions])
+
+  return null
+}
+
 function csvEscape(v: string | number | null | undefined): string {
   const s = v == null ? '' : String(v)
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
@@ -805,12 +906,63 @@ export default function DtExploreTab() {
     if (sessionsLoading) return byFilter
     return byFilter.filter((m) => presentTechs.has(m.tech))
   }, [allMetrics, techFilter, presentTechs, sessionsLoading])
+  // PCI Plot tab (2026-09-23) — same tech-filter + presence gating as the
+  // real metric tabs above, scoped to 4G (see PciSamplesLayer's docstring
+  // for why). Kept out of visibleMetrics/TaggedMetric entirely (see
+  // pciColor()'s own docstring) — this is a plain boolean gate on whether
+  // the extra tab renders at all.
+  const pciTabVisible = techFilter.has('4G') && (sessionsLoading || presentTechs.has('4G'))
+  // Band Distribution tab visibility — gated on actual band DATA being
+  // present (not just a 4G session existing), unlike PCI's presence check
+  // above: `band` is a brand-new field (2026-09-23) only ever populated
+  // for a freshly re-uploaded .trp session, so most existing 4G sessions
+  // genuinely have none yet — showing an always-empty tab for those would
+  // just be confusing rather than "not built yet."
+  const hasBandData = useMemo(
+    () => nearSessions.some((s) => s.tech === '4G' && s.samples.some((sample) => !!sample.band)),
+    [nearSessions],
+  )
+  const bandTabVisible = techFilter.has('4G') && hasBandData
   useEffect(() => {
+    if (metricTag === PCI_TAG) {
+      if (!pciTabVisible && visibleMetrics.length) setMetricTag(visibleMetrics[0].tag)
+      return
+    }
+    if (metricTag === BAND_TAG) {
+      if (!bandTabVisible && visibleMetrics.length) setMetricTag(visibleMetrics[0].tag)
+      return
+    }
     if (visibleMetrics.length && !visibleMetrics.some((m) => m.tag === metricTag)) {
       setMetricTag(visibleMetrics[0].tag)
     }
-  }, [visibleMetrics, metricTag])
+  }, [visibleMetrics, metricTag, pciTabVisible, bandTabVisible])
+  const isPciTab = metricTag === PCI_TAG
+  const isBandTab = metricTag === BAND_TAG
   const metric = visibleMetrics.find((m) => m.tag === metricTag) ?? visibleMetrics[0] ?? allMetrics[0]
+
+  // Distinct PCIs/Bands actually present, for the PCI Plot's/Band
+  // Distribution's legend — capped so a route with many distinct served
+  // cells/bands doesn't turn the legend into a wall of swatches; every dot
+  // on the map still shows its exact value in its tooltip regardless of
+  // this cap.
+  const distinctPcis = useMemo(() => {
+    if (!isPciTab) return []
+    const set = new Set<number>()
+    for (const s of nearSessions) {
+      if (s.tech !== '4G') continue
+      for (const sample of s.samples) if (sample.pci != null) set.add(sample.pci)
+    }
+    return [...set].sort((a, b) => a - b).slice(0, PCI_LEGEND_CAP)
+  }, [isPciTab, nearSessions])
+  const distinctBands = useMemo(() => {
+    if (!isBandTab) return []
+    const set = new Set<string>()
+    for (const s of nearSessions) {
+      if (s.tech !== '4G') continue
+      for (const sample of s.samples) if (sample.band) set.add(sample.band)
+    }
+    return [...set].sort().slice(0, PCI_LEGEND_CAP)
+  }, [isBandTab, nearSessions])
 
   // Serving-site hover/click connector (2026-09-04) — one /serving-cells/
   // fetch per session currently plotted (see useDtServingCellsForSessions'
@@ -968,15 +1120,41 @@ export default function DtExploreTab() {
           <div className="report-toolbar" style={{ marginTop: 12, marginBottom: 0 }}>
             <div className="feat-tabs" style={{ borderBottom: 'none', flexWrap: 'wrap' }}>
               {visibleMetrics.map((m) => (
-                <div key={m.tag} className={m.tag === metric.tag ? 'feat-tab active' : 'feat-tab'} onClick={() => setMetricTag(m.tag)}>
+                <div key={m.tag} className={!isPciTab && !isBandTab && m.tag === metric.tag ? 'feat-tab active' : 'feat-tab'} onClick={() => setMetricTag(m.tag)}>
                   {m.tag}
                 </div>
               ))}
+              {pciTabVisible && (
+                <div className={isPciTab ? 'feat-tab active' : 'feat-tab'} onClick={() => setMetricTag(PCI_TAG)}>
+                  {PCI_TAG}
+                </div>
+              )}
+              {bandTabVisible && (
+                <div className={isBandTab ? 'feat-tab active' : 'feat-tab'} onClick={() => setMetricTag(BAND_TAG)}>
+                  {BAND_TAG}
+                </div>
+              )}
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
               <span style={{ fontSize: 10, color: '#6b7280', alignSelf: 'center' }}>Export:</span>
-              <button type="button" className="btn-secondary btn-small" onClick={() => exportCsv(nearSessions, metric, nearSites, point, shape, radiusKm, pointLabel)}>CSV</button>
-              <button type="button" className="btn-secondary btn-small" onClick={() => exportKml(nearSessions, metric, nearSites, point, shape, radiusKm, pointLabel)}>KML</button>
+              <button
+                type="button"
+                className="btn-secondary btn-small"
+                disabled={isPciTab || isBandTab}
+                title={isPciTab ? 'CSV export is not yet available for the PCI Plot' : isBandTab ? 'CSV export is not yet available for Band Distribution' : undefined}
+                onClick={() => exportCsv(nearSessions, metric, nearSites, point, shape, radiusKm, pointLabel)}
+              >
+                CSV
+              </button>
+              <button
+                type="button"
+                className="btn-secondary btn-small"
+                disabled={isPciTab || isBandTab}
+                title={isPciTab ? 'KML export is not yet available for the PCI Plot' : isBandTab ? 'KML export is not yet available for Band Distribution' : undefined}
+                onClick={() => exportKml(nearSessions, metric, nearSites, point, shape, radiusKm, pointLabel)}
+              >
+                KML
+              </button>
               <button
                 type="button"
                 className="btn-secondary btn-small"
@@ -1008,7 +1186,13 @@ export default function DtExploreTab() {
               />
               <SearchAreaLayer point={pointTuple as LatLng} radiusKm={radiusKm} shape={shape} label={pointLabel} />
               <NearSitesLayer sites={nearSites} onSelect={setSelectedSite} />
-              <NearSamplesLayer sessions={nearSessions} metric={metric} servingCells={servingCells} />
+              {isPciTab ? (
+                <PciSamplesLayer sessions={nearSessions} />
+              ) : isBandTab ? (
+                <BandSamplesLayer sessions={nearSessions} />
+              ) : (
+                <NearSamplesLayer sessions={nearSessions} metric={metric} servingCells={servingCells} />
+              )}
               <FullscreenSync isFullscreen={isFullscreen} bounds={currentBounds} />
               <InvalidateOnResize />
             </MapContainer>
@@ -1028,13 +1212,29 @@ export default function DtExploreTab() {
           <div className="dt-legend">
             <span className="dt-legend-item"><span className="dt-legend-dot" style={{ background: '#7f77dd' }} />Search point / area</span>
             <span className="dt-legend-item"><span className="dt-legend-dot" style={{ background: '#1e2330', border: '1px solid #e6e9ef' }} />BTS site</span>
-            {metric.bands.map((b) => (
-              <span key={b.label} className="dt-legend-item">
-                <span className="dt-legend-dot" style={{ background: b.color }} />
-                {b.label}
-                {metric.unit}
-              </span>
-            ))}
+            {isPciTab ? (
+              distinctPcis.map((pci) => (
+                <span key={pci} className="dt-legend-item">
+                  <span className="dt-legend-dot" style={{ background: pciColor(pci) }} />
+                  PCI {pci}
+                </span>
+              ))
+            ) : isBandTab ? (
+              distinctBands.map((band) => (
+                <span key={band} className="dt-legend-item">
+                  <span className="dt-legend-dot" style={{ background: bandCategoryColor(band) }} />
+                  Band {band}
+                </span>
+              ))
+            ) : (
+              metric.bands.map((b) => (
+                <span key={b.label} className="dt-legend-item">
+                  <span className="dt-legend-dot" style={{ background: b.color }} />
+                  {b.label}
+                  {metric.unit}
+                </span>
+              ))
+            )}
           </div>
 
           <div className="dt-explore-lists">
