@@ -200,7 +200,10 @@ export interface SiteDetail extends SiteListItem {
 // v1's _upsert_site: omitted optional fields clear to null/blank), so
 // the form always sends the complete SiteDetail-shaped object back.
 
-export type SectorWrite = Omit<Sector, 'id'>
+// 'config_changes' excluded too (2026-09-23) — a read-only reverse
+// relation (SectorSerializer.get_config_changes()), never something a
+// site/sector edit writes.
+export type SectorWrite = Omit<Sector, 'id' | 'config_changes'>
 
 export type SiteWrite = Omit<SiteDetail, 'sectors' | 'updated_at'> & {
   sectors: SectorWrite[]
