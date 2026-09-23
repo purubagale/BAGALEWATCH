@@ -233,6 +233,17 @@ export default function SiteDetailPage() {
   const [draft, setDraft] = useState<SiteWrite | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [kpiTech, setKpiTech] = useState<KpiTech>('4G')
+  // Sectors tab (2026-09-23, "all 2g, 3g and 4g data are displayed
+  // together resulting improper display... like in KPI values, display
+  // sector detail also in separate tab with their related data only") —
+  // the Sectors table used to show every sector at the site in one list
+  // regardless of tech, unlike KPI Values just above it which already
+  // tabs 4G LTE/3G UMTS/2G GSM apart. Mirrors that same tab pattern
+  // (kpiTech/KpiTech) rather than introducing a separate concept — only
+  // scoped to the read-mode table below; edit mode still shows/edits every
+  // sector in one flat list (removing/re-adding a sector by tab would need
+  // its own index-mapping work this request didn't ask for).
+  const [sectorTech, setSectorTech] = useState<KpiTech>('4G')
   const sectorsSectionRef = useRef<HTMLElement>(null)
   const [showAddIssue, setShowAddIssue] = useState(false)
   const [newIssueTitle, setNewIssueTitle] = useState('')
@@ -451,6 +462,15 @@ export default function SiteDetailPage() {
 
   const identitySource = editing && draft ? draft : site
   const realSectors = (editing ? draft?.sectors : site.sectors) ?? []
+  // Read-mode Sectors table split by tech (see sectorTech's own docstring
+  // above) — a blank Sector.tech defaults to '4G', matching every other
+  // "which tech is this sector" judgment already made elsewhere on this
+  // page (techBadgeClass, sectorIdLabel, summarizeSectorTechs).
+  const sectorsByTech: Record<KpiTech, Sector[]> = { '4G': [], '3G': [], '2G': [] }
+  for (const sec of site.sectors) {
+    const t = (sec.tech || '4G').toUpperCase()
+    sectorsByTech[t === '2G' || t === '3G' ? t : '4G'].push(sec)
+  }
   const canManageIssues = user?.role === 'superadmin' || user?.role === 'admin'
 
   return (
@@ -750,80 +770,101 @@ export default function SiteDetailPage() {
           </div>
         ) : site.sectors.length > 0 ? (
           <>
-            <div className="sectors-table-wrap">
-              <table className="sectors-table">
-                <thead>
-                  <tr>
-                    <th>Cell Name</th>
-                    <th>Tech</th>
-                    <th>Sector</th>
-                    <th>Local Cell ID</th>
-                    <th>Height (m)</th>
-                    <th>Azimuth (°)</th>
-                    <th>Mech Tilt (°)</th>
-                    <th>Elec Tilt (°)</th>
-                    <th>Cell ID</th>
-                    <th>Location</th>
-                    {/* Real columns from the user's own 3G/2G source files
-                        (2026-08-09, "need to store all those data also")
-                        — see Sector.carrier/site_band/cell_active_status/
-                        site_existence's docstring in models.py. */}
-                    <th>Carrier</th>
-                    <th>Site Band</th>
-                    <th>Cell Active Status</th>
-                    <th>Site Existence</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {site.sectors.map((sec) => (
-                    <tr key={sec.id}>
-                      <td className="sector-cell-name">{sec.cell_name || '—'}</td>
-                      <td>
-                        <span className={`sector-tech-badge ${techBadgeClass(sec.tech)}`}>{sec.tech || '4G'}</span>
-                      </td>
-                      <td className="sector-cell-accent">{sec.sector || '—'}</td>
-                      <td>{sec.local_cell_id ?? '—'}</td>
-                      <td className="sector-cell-num">{sec.height ?? '—'}</td>
-                      <td className="sector-cell-num">{sec.azimuth !== null ? `${sec.azimuth}°` : '—'}</td>
-                      <td className="sector-cell-num">{sec.mech_tilt !== null ? `${sec.mech_tilt}°` : '—'}</td>
-                      <td className="sector-cell-num">{sec.elec_tilt !== null ? `${sec.elec_tilt}°` : '—'}</td>
-                      <td className="sector-cell-num">{sectorIdLabel(sec)}</td>
-                      <td className="sector-cell-num">
-                        {/* Optional per-sector GPS override (2026-08-09) —
-                            blank/"(site)" is the common case, meaning this
-                            sector is physically at the site's own lat/lng.
-                            Only shows real coordinates when a superadmin
-                            explicitly set them (sector-table edit mode),
-                            e.g. for a later expansion cabinet at a genuinely
-                            different spot — never fabricated here. */}
-                        {sec.lat != null && sec.lng != null ? (
-                          <span className="sector-location-override" title="This sector has its own GPS location, different from the site's">
-                            {sec.lat.toFixed(5)}, {sec.lng.toFixed(5)}
-                          </span>
-                        ) : (
-                          <span className="sector-location-inherited" title="Same location as the site">(site)</span>
-                        )}
-                      </td>
-                      <td>{sec.carrier || '—'}</td>
-                      <td>{sec.site_band || '—'}</td>
-                      <td>{sec.cell_active_status || '—'}</td>
-                      <td>{sec.site_existence || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="sector-azimuth-heading">Sector Azimuth Layout</div>
-            <div className="sector-azimuth-grid">
-              {site.sectors.map((sec) => (
-                <div key={sec.id} className="sector-azimuth-card">
-                  <div className="sector-azimuth-card-icon">📡</div>
-                  <div className="sector-azimuth-card-label">{sec.sector || '—'}</div>
-                  <div className="sector-azimuth-card-deg">{sec.azimuth !== null ? `${sec.azimuth}°` : '—'}</div>
-                </div>
+            <div className="kpi-tabs">
+              {(['4G', '3G', '2G'] as KpiTech[]).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={`kpi-tab${sectorTech === t ? ' active' : ''}`}
+                  onClick={() => setSectorTech(t)}
+                >
+                  {t === '4G' ? '4G LTE' : t === '3G' ? '3G UMTS' : '2G GSM'} ({sectorsByTech[t].length})
+                </button>
               ))}
             </div>
+
+            {sectorsByTech[sectorTech].length > 0 ? (
+              <>
+                <div className="sectors-table-wrap">
+                  <table className="sectors-table">
+                    <thead>
+                      <tr>
+                        <th>Cell Name</th>
+                        <th>Tech</th>
+                        <th>Sector</th>
+                        <th>Local Cell ID</th>
+                        <th>Height (m)</th>
+                        <th>Azimuth (°)</th>
+                        <th>Mech Tilt (°)</th>
+                        <th>Elec Tilt (°)</th>
+                        <th>Cell ID</th>
+                        <th>Location</th>
+                        {/* Real columns from the user's own 3G/2G source files
+                            (2026-08-09, "need to store all those data also")
+                            — see Sector.carrier/site_band/cell_active_status/
+                            site_existence's docstring in models.py. */}
+                        <th>Carrier</th>
+                        <th>Site Band</th>
+                        <th>Cell Active Status</th>
+                        <th>Site Existence</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sectorsByTech[sectorTech].map((sec) => (
+                        <tr key={sec.id}>
+                          <td className="sector-cell-name">{sec.cell_name || '—'}</td>
+                          <td>
+                            <span className={`sector-tech-badge ${techBadgeClass(sec.tech)}`}>{sec.tech || '4G'}</span>
+                          </td>
+                          <td className="sector-cell-accent">{sec.sector || '—'}</td>
+                          <td>{sec.local_cell_id ?? '—'}</td>
+                          <td className="sector-cell-num">{sec.height ?? '—'}</td>
+                          <td className="sector-cell-num">{sec.azimuth !== null ? `${sec.azimuth}°` : '—'}</td>
+                          <td className="sector-cell-num">{sec.mech_tilt !== null ? `${sec.mech_tilt}°` : '—'}</td>
+                          <td className="sector-cell-num">{sec.elec_tilt !== null ? `${sec.elec_tilt}°` : '—'}</td>
+                          <td className="sector-cell-num">{sectorIdLabel(sec)}</td>
+                          <td className="sector-cell-num">
+                            {/* Optional per-sector GPS override (2026-08-09) —
+                                blank/"(site)" is the common case, meaning this
+                                sector is physically at the site's own lat/lng.
+                                Only shows real coordinates when a superadmin
+                                explicitly set them (sector-table edit mode),
+                                e.g. for a later expansion cabinet at a genuinely
+                                different spot — never fabricated here. */}
+                            {sec.lat != null && sec.lng != null ? (
+                              <span className="sector-location-override" title="This sector has its own GPS location, different from the site's">
+                                {sec.lat.toFixed(5)}, {sec.lng.toFixed(5)}
+                              </span>
+                            ) : (
+                              <span className="sector-location-inherited" title="Same location as the site">(site)</span>
+                            )}
+                          </td>
+                          <td>{sec.carrier || '—'}</td>
+                          <td>{sec.site_band || '—'}</td>
+                          <td>{sec.cell_active_status || '—'}</td>
+                          <td>{sec.site_existence || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="sector-azimuth-heading">Sector Azimuth Layout</div>
+                <div className="sector-azimuth-grid">
+                  {sectorsByTech[sectorTech].map((sec) => (
+                    <div key={sec.id} className="sector-azimuth-card">
+                      <div className="sector-azimuth-card-icon">📡</div>
+                      <div className="sector-azimuth-card-label">{sec.sector || '—'}</div>
+                      <div className="sector-azimuth-card-deg">{sec.azimuth !== null ? `${sec.azimuth}°` : '—'}</div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="kpi-pane-empty">
+                No {sectorTech === '4G' ? '4G LTE' : sectorTech === '3G' ? '3G UMTS' : '2G GSM'} sectors recorded for this site.
+              </div>
+            )}
           </>
         ) : (
           <div className="kpi-pane-empty">No sectors recorded for this site yet.</div>
