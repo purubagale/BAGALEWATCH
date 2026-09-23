@@ -79,6 +79,26 @@ def _build_site_details_workbook(qs):
     return wb
 
 
+# Per-tech extra columns for the Sector Data export, one sheet per tech
+# (2026-09-23, "manage with export also for all 2g, 3g, 4g" — following the
+# same request that split SiteDetailPage.tsx's Sectors table into 4G/3G/2G
+# tabs and trimmed BackupPage.tsx's per-tech upload templates the same
+# way). Mirrors SECTOR_EXTRA_COLUMNS in SiteDetailPage.tsx and
+# SECTOR_TEMPLATE_EXTRA in BackupPage.tsx exactly: 4G needs neither Carrier
+# nor Site Band; 3G needs Carrier only (single-band, per the user); 2G
+# needs Site Band only (spans multiple bands here, but — same-day
+# correction, "For 2g, carrier also is not needed" — no Carrier column).
+# Cell Active Status/Site Existence never appear for any tech (dropped
+# 2026-09-23, "not needed" for all three) — both stay on the Sector model
+# and are still accepted on import; only every export/template/display
+# surface stopped showing them.
+_SECTOR_EXPORT_EXTRA = {
+    '4G': [],
+    '3G': [('Carrier', lambda sec: sec.carrier or '')],
+    '2G': [('Site Band', lambda sec: sec.site_band or '')],
+}
+
+
 def _build_sector_data_workbook(qs):
     """The 'Lat'/'Long' columns here used to always be the SITE's own
     coordinate, repeated on every one of its sector rows — before Sector
@@ -94,40 +114,50 @@ def _build_sector_data_workbook(qs):
     per-sector location correctly instead of flattening it back to the
     site's location on every export/re-import cycle.
 
-    Gained a 'Tech' column 2026-08-09 ("yes for 2g and 3g also need
-    sector import") — SECTOR_FIELDS in site_import.py never included
-    'tech' at all, so a re-uploaded sector kept whatever Tech it already
-    had (or blank, defaulting to 4G in core/sector_expansion.py's
-    classification) regardless of what this export showed. Now round-
-    trips like every other real column here.
-
-    Gained Carrier/Site Band/Cell Active Status/Site Existence columns
-    same day, same follow-up ("need to store all those data also") — see
-    Sector.carrier/site_band/cell_active_status/site_existence's
-    docstring in models.py. Exported as plain text exactly as stored,
-    same round-trip contract as every other column here."""
+    **Split into three sheets, one per tech, 2026-09-23** ("manage with
+    export also for all 2g, 3g, 4g" — see `_SECTOR_EXPORT_EXTRA`'s own
+    docstring). Previously this was ONE "Sector Data" sheet with every
+    tech's sectors mixed together plus a 'Tech' column and every
+    accessory column (Carrier/Site Band/Cell Active Status/Site Existence)
+    shown for every row regardless of whether that tech actually uses it —
+    exactly the "improper display" the SiteDetailPage.tsx tab split fixed
+    for the on-screen table; this export had the same problem. No 'Tech'
+    column needed any more since each sheet already says which tech it is
+    (mirrors BackupPage.tsx's per-tech upload SLOTS, which dropped the
+    combined-sheet Tech column the same way — see SectorImportSlot's
+    docstring). A site with no sectors OF THAT TECH still gets a '—'
+    placeholder row on that tech's sheet (even if it has real sectors on
+    a DIFFERENT tech's sheet) — same "every site is visible, discoverable
+    even with nothing entered yet" contract the original single-sheet
+    version had, just now evaluated per sheet instead of once overall."""
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = 'Sector Data'
-    ws.append([
-        'Site ID', 'Cell Name', 'Sector', 'Tech', 'Local Cell ID', 'Lat', 'Long',
-        'Height (m)', 'Azimuth (deg)', 'MT (deg)', 'ET (deg)', 'PCI',
-        'Carrier', 'Site Band', 'Cell Active Status', 'Site Existence',
-    ])
-    for s in qs.prefetch_related('sectors'):
-        sectors = list(s.sectors.all())
-        if not sectors:
-            ws.append([s.id, '—', '—', '', None, s.lat, s.lng, None, None, None, None, None, '', '', '', ''])
-        else:
-            for sec in sectors:
-                sec_lat = sec.lat if sec.lat is not None else s.lat
-                sec_lng = sec.lng if sec.lng is not None else s.lng
-                ws.append([
-                    s.id, sec.cell_name or '', sec.sector or '', sec.tech or '', sec.local_cell_id,
-                    sec_lat, sec_lng, sec.height, sec.azimuth, sec.mech_tilt, sec.elec_tilt, sec.pci,
-                    sec.carrier or '', sec.site_band or '', sec.cell_active_status or '', sec.site_existence or '',
-                ])
-    _autofit(ws)
+    sites = list(qs.prefetch_related('sectors'))
+    for i, (tech, extra_cols) in enumerate(_SECTOR_EXPORT_EXTRA.items()):
+        ws = wb.active if i == 0 else wb.create_sheet(f'{tech} Sector Data')
+        ws.title = f'{tech} Sector Data'
+        ws.append([
+            'Site ID', 'Cell Name', 'Sector', 'Local Cell ID', 'Lat', 'Long',
+            'Height (m)', 'Azimuth (deg)', 'MT (deg)', 'ET (deg)', 'PCI',
+        ] + [label for label, _ in extra_cols])
+        for s in sites:
+            sectors = [sec for sec in s.sectors.all() if (sec.tech or '4G').upper() == tech]
+            if not sectors:
+                ws.append(
+                    [s.id, '—', '—', None, s.lat, s.lng, None, None, None, None, None]
+                    + ['' for _ in extra_cols]
+                )
+            else:
+                for sec in sectors:
+                    sec_lat = sec.lat if sec.lat is not None else s.lat
+                    sec_lng = sec.lng if sec.lng is not None else s.lng
+                    ws.append(
+                        [
+                            s.id, sec.cell_name or '', sec.sector or '', sec.local_cell_id,
+                            sec_lat, sec_lng, sec.height, sec.azimuth, sec.mech_tilt, sec.elec_tilt, sec.pci,
+                        ]
+                        + [getter(sec) for _, getter in extra_cols]
+                    )
+        _autofit(ws)
     return wb
 
 

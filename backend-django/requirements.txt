@@ -1,13 +1,13 @@
 Django==5.2.16
 djangorestframework==3.15.2
 djangorestframework-simplejwt==5.3.1
-psycopg2-binary==2.9.10
+psycopg2-binary==2.9.13
 django-cors-headers==4.4.0
 drf-spectacular==0.27.2
 python-dotenv==1.0.1
 gunicorn==23.0.0
 openpyxl==3.1.5
-Pillow==11.0.0
+Pillow==12.3.0
 redis==5.0.8
 # Keycloak SSO (2026-08-23). PyJWT itself already ships via simplejwt, but
 # it cannot VERIFY an RS256 signature without cryptography, and the OIDC
@@ -15,3 +15,7 @@ redis==5.0.8
 # versions pms/nt-pms already runs against this realm.
 cryptography==42.0.5
 requests==2.33.1
+# Vendor RNO report importer (2026-09-15) -- reads the antenna change-log
+# and recommendation tables out of an uploaded vendor .docx. See
+# core/rf_reports.py's module docstring.
+python-docx==1.1.2

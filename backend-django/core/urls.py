@@ -3,14 +3,24 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import (api_auth, backup, consent, dashboard, drive_test, exports,
-               kpi_trend, reports, rescue, rf_audit, site_import, sso_views,
-               telemetry_admin, views)
+               issues, kpi_trend, reports, rescue, rf_audit, rf_reports,
+               site_import, sso_views, telemetry_admin, views)
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
 router.register('permissions', views.MenuPermissionViewSet, basename='menu-permission')
 router.register('users', views.UserViewSet, basename='user')
 router.register('dt-sessions', drive_test.DriveTestSessionViewSet, basename='dt-session')
+# Optimization activities (2026-09-12) — groups a set of existing
+# DriveTestSession rows into one named before/after-change optimization
+# effort. See OptimizationActivityViewSet's docstring in drive_test.py.
+router.register('dt-activities', drive_test.OptimizationActivityViewSet, basename='dt-activity')
+# Site/Sector issue tracker (2026-09-14) -- see IssueViewSet's docstring
+# in core/issues.py.
+router.register('issues', issues.IssueViewSet, basename='issue')
+# Vendor RNO report importer (2026-09-15) -- see
+# RfOptimizationReportViewSet's docstring in core/rf_reports.py.
+router.register('rf-reports', rf_reports.RfOptimizationReportViewSet, basename='rf-report')
 router.register('menu-items', views.MenuItemViewSet, basename='menu-item')
 # Superadmin-only management of external API credentials (2026-08-12) —
 # see core/api_auth.py's ApiKeyViewSet docstring. Distinct from the
@@ -159,6 +169,35 @@ urlpatterns = [
         'dt-sessions/<int:session_id>/attachments/<int:attachment_id>/',
         drive_test.DriveTestSessionAttachmentDetailView.as_view(),
         name='dt-session-attachment-detail',
+    ),
+    # Flat (not router-nested) delete endpoint for one optimization
+    # activity <-> session link (2026-09-12) -- see
+    # OptimizationActivitySessionDetailView's own docstring in
+    # drive_test.py for why this isn't a second @action on
+    # OptimizationActivityViewSet.
+    path(
+        'dt-activities/<int:activity_id>/sessions/<int:link_id>/',
+        drive_test.OptimizationActivitySessionDetailView.as_view(),
+        name='dt-activity-session-detail',
+    ),
+
+    # Vendor RNO report importer (2026-09-15) -- registered BEFORE the
+    # router's `rf-reports/<pk>/` include below, same reason as
+    # sites/search/ above: this literal path must win over the router's
+    # dynamic pk pattern (which would otherwise treat "parse-preview"
+    # itself as an rf-report id lookup). See RfReportParsePreviewView's
+    # docstring in core/rf_reports.py.
+    path('rf-reports/parse-preview/', rf_reports.RfReportParsePreviewView.as_view(), name='rf-report-parse-preview'),
+
+    # Flat (not router-nested) download endpoint for one RF report
+    # attachment (2026-09-15) -- see RfReportAttachmentDetailView's own
+    # docstring in rf_reports.py for why this isn't a second @action on
+    # RfOptimizationReportViewSet (same reasoning as
+    # DriveTestSessionAttachmentDetailView above).
+    path(
+        'rf-reports/<int:report_id>/attachments/<int:attachment_id>/download/',
+        rf_reports.RfReportAttachmentDetailView.as_view(),
+        name='rf-report-attachment-download',
     ),
 
     path('', include(router.urls)),

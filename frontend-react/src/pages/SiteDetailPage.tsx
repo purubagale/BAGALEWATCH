@@ -1,13 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { apiErrorMessage } from '../api/client'
-import { useDeleteSite, useSite, useUpdateSite } from '../api/queries'
+import {
+  useCreateIssue,
+  useDeleteIssue,
+  useDeleteSite,
+  useIssues,
+  useSite,
+  useSiteDtSessions,
+  useUpdateIssue,
+  useUpdateSite,
+} from '../api/queries'
 import { isAllowed } from '../api/types'
-import type { Sector, SectorWrite, SiteDetail, SiteWrite } from '../api/types'
+import type { Issue, IssueSeverity, IssueStatus, Sector, SectorWrite, SiteDetail, SiteDtSession, SiteWrite } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
-import { SITES_PATH } from '../constants/opaqueRoutes'
+import { DT_SESSION_HISTORY_PATH, SITES_PATH } from '../constants/opaqueRoutes'
 import { useSearchModal } from '../contexts/SearchModalContext'
 import SiteLocationMiniMap from '../components/SiteLocationMiniMap'
+import { ISSUE_SEVERITY_LABELS, ISSUE_STATUS_LABELS, ISSUE_STATUS_ORDER } from '../lib/issueLabels'
 import { STATUS_COLOR, STATUS_LABELS } from '../lib/statusColor'
 
 const KPI_FIELDS: [keyof SiteWrite, string][] = [
@@ -79,18 +89,47 @@ const SECTOR_COLUMNS: [keyof SectorWrite, string][] = [
   ['lng', 'Lng (optional override)'],
   // Real columns from the user's own 3G/2G source files (2026-08-09,
   // "need to store all those data also") — plain text, not numeric, so
-  // they're also listed in NON_NUMERIC_SECTOR_KEYS below so
-  // normalizeForSave() doesn't try to coerce them into a number.
+  // also listed in NON_NUMERIC_SECTOR_KEYS below so normalizeForSave()
+  // doesn't try to coerce them into a number.
+  //
+  // 'cell_active_status'/'site_existence' dropped from this editable list
+  // (2026-09-23, "need not to be displayed... not needed" for 4G, 3G, OR
+  // 2G) — Sector.cell_active_status/site_existence stay on the model
+  // (existing stored values aren't erased, and site_import.py still
+  // accepts them from a raw API caller), just no longer surfaced for
+  // manual editing here. 'carrier'/'site_band' stay editable for every
+  // row regardless of that row's own tech — this flat edit-mode table has
+  // one shared column set across all sectors at once (unlike the read-mode
+  // table's per-tech tabs just below), and each is still needed for
+  // exactly one tech (carrier for 3G only, site_band for 2G only — see
+  // SECTOR_EXTRA_COLUMNS' own docstring; 2G's own follow-up, "carrier also
+  // is not needed," removed it from the 2G tab specifically).
   ['carrier', 'Carrier'],
   ['site_band', 'Site Band'],
-  ['cell_active_status', 'Cell Active Status'],
-  ['site_existence', 'Site Existence'],
 ]
 
 const NON_NUMERIC_SECTOR_KEYS: (keyof SectorWrite)[] = [
-  'cell_name', 'sector', 'tech', 'kpi_date',
-  'carrier', 'site_band', 'cell_active_status', 'site_existence',
+  'cell_name', 'sector', 'tech', 'kpi_date', 'carrier', 'site_band',
 ]
+
+// Read-mode Sectors table's extra (beyond the tech-agnostic base columns)
+// columns, per active tab (2026-09-23 follow-up to the 4G/3G/2G tab split
+// above: "Carrier, Site Band, Cell Active Status, Site Existence need not
+// to be displayed in 4g tab. For 3g... Site Band... not needed because it
+// is operating in only one band. For 2g[,] Active Status, Site Existence
+// not needed" — then a same-day correction, "For 2g, carrier also is not
+// needed"). Net effect: Cell Active Status/Site Existence are gone from
+// every tab; Carrier shows for 3G only; Site Band shows for 2G only (2G
+// genuinely operates across multiple bands — 900/1800 — unlike this
+// network's single-band 3G, and doesn't need a Carrier column at all).
+// 4G needs neither. Mirrors exports.py's per-tech sheets in
+// _build_sector_data_workbook exactly, and BackupPage.tsx's per-tech
+// upload templates (SECTOR_TEMPLATE_EXTRA).
+const SECTOR_EXTRA_COLUMNS: Record<KpiTech, { key: 'carrier' | 'site_band'; label: string }[]> = {
+  '4G': [],
+  '3G': [{ key: 'carrier', label: 'Carrier' }],
+  '2G': [{ key: 'site_band', label: 'Site Band' }],
+}
 
 function toNum(v: unknown): number | null {
   if (v === '' || v === null || v === undefined) return null
@@ -207,14 +246,39 @@ export default function SiteDetailPage() {
   // page refresh silently reverting to "← Back to sites" instead.
   const fromSearch = searchParams.get('fromSearch') === '1'
   const { data: site, isLoading, error } = useSite(id)
+  const { data: nearbyDtSessions } = useSiteDtSessions(id)
   const updateSite = useUpdateSite(id || '')
   const deleteSite = useDeleteSite()
+  // Site Issues (2026-09-14) -- see Issue's docstring in the backend's
+  // core/models.py. Scoped to this site the same way nearbyDtSessions
+  // above is scoped -- server-side filtering, not a client-side filter
+  // over every issue in the system.
+  const { data: siteIssues } = useIssues(id ? { site: id } : undefined)
+  const createIssue = useCreateIssue()
+  const updateIssue = useUpdateIssue()
+  const deleteIssue = useDeleteIssue()
 
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<SiteWrite | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [kpiTech, setKpiTech] = useState<KpiTech>('4G')
+  // Sectors tab (2026-09-23, "all 2g, 3g and 4g data are displayed
+  // together resulting improper display... like in KPI values, display
+  // sector detail also in separate tab with their related data only") —
+  // the Sectors table used to show every sector at the site in one list
+  // regardless of tech, unlike KPI Values just above it which already
+  // tabs 4G LTE/3G UMTS/2G GSM apart. Mirrors that same tab pattern
+  // (kpiTech/KpiTech) rather than introducing a separate concept — only
+  // scoped to the read-mode table below; edit mode still shows/edits every
+  // sector in one flat list (removing/re-adding a sector by tab would need
+  // its own index-mapping work this request didn't ask for).
+  const [sectorTech, setSectorTech] = useState<KpiTech>('4G')
   const sectorsSectionRef = useRef<HTMLElement>(null)
+  const [showAddIssue, setShowAddIssue] = useState(false)
+  const [newIssueTitle, setNewIssueTitle] = useState('')
+  const [newIssueDescription, setNewIssueDescription] = useState('')
+  const [newIssueSeverity, setNewIssueSeverity] = useState<IssueSeverity>('medium')
+  const [addIssueError, setAddIssueError] = useState<string | null>(null)
 
   // Tree row shortcut icons (2026-07-30, Sites page) navigate here with
   // ?edit=1 or ?addSector=1 instead of duplicating this page's own
@@ -393,8 +457,50 @@ export default function SiteDetailPage() {
     navigate(SITES_PATH)
   }
 
+  async function handleAddIssue() {
+    if (!id) return
+    if (!newIssueTitle.trim()) {
+      setAddIssueError('Title is required.')
+      return
+    }
+    setAddIssueError(null)
+    try {
+      await createIssue.mutateAsync({
+        site: id,
+        title: newIssueTitle.trim(),
+        description: newIssueDescription.trim(),
+        severity: newIssueSeverity,
+      })
+      setNewIssueTitle('')
+      setNewIssueDescription('')
+      setNewIssueSeverity('medium')
+      setShowAddIssue(false)
+    } catch (err) {
+      setAddIssueError(apiErrorMessage(err, 'Could not create issue.'))
+    }
+  }
+
+  function handleIssueStatusChange(issue: Issue, status: IssueStatus) {
+    updateIssue.mutate({ id: issue.id, issue: { status } })
+  }
+
+  async function handleDeleteIssue(issue: Issue) {
+    if (!window.confirm(`Delete issue "${issue.title}"? This cannot be undone.`)) return
+    await deleteIssue.mutateAsync(issue.id)
+  }
+
   const identitySource = editing && draft ? draft : site
   const realSectors = (editing ? draft?.sectors : site.sectors) ?? []
+  // Read-mode Sectors table split by tech (see sectorTech's own docstring
+  // above) — a blank Sector.tech defaults to '4G', matching every other
+  // "which tech is this sector" judgment already made elsewhere on this
+  // page (techBadgeClass, sectorIdLabel, summarizeSectorTechs).
+  const sectorsByTech: Record<KpiTech, Sector[]> = { '4G': [], '3G': [], '2G': [] }
+  for (const sec of site.sectors) {
+    const t = (sec.tech || '4G').toUpperCase()
+    sectorsByTech[t === '2G' || t === '3G' ? t : '4G'].push(sec)
+  }
+  const canManageIssues = user?.role === 'superadmin' || user?.role === 'admin'
 
   return (
     <div className="site-detail-page">
@@ -693,83 +799,277 @@ export default function SiteDetailPage() {
           </div>
         ) : site.sectors.length > 0 ? (
           <>
-            <div className="sectors-table-wrap">
-              <table className="sectors-table">
-                <thead>
-                  <tr>
-                    <th>Cell Name</th>
-                    <th>Tech</th>
-                    <th>Sector</th>
-                    <th>Local Cell ID</th>
-                    <th>Height (m)</th>
-                    <th>Azimuth (°)</th>
-                    <th>Mech Tilt (°)</th>
-                    <th>Elec Tilt (°)</th>
-                    <th>Cell ID</th>
-                    <th>Location</th>
-                    {/* Real columns from the user's own 3G/2G source files
-                        (2026-08-09, "need to store all those data also")
-                        — see Sector.carrier/site_band/cell_active_status/
-                        site_existence's docstring in models.py. */}
-                    <th>Carrier</th>
-                    <th>Site Band</th>
-                    <th>Cell Active Status</th>
-                    <th>Site Existence</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {site.sectors.map((sec) => (
-                    <tr key={sec.id}>
-                      <td className="sector-cell-name">{sec.cell_name || '—'}</td>
-                      <td>
-                        <span className={`sector-tech-badge ${techBadgeClass(sec.tech)}`}>{sec.tech || '4G'}</span>
-                      </td>
-                      <td className="sector-cell-accent">{sec.sector || '—'}</td>
-                      <td>{sec.local_cell_id ?? '—'}</td>
-                      <td className="sector-cell-num">{sec.height ?? '—'}</td>
-                      <td className="sector-cell-num">{sec.azimuth !== null ? `${sec.azimuth}°` : '—'}</td>
-                      <td className="sector-cell-num">{sec.mech_tilt !== null ? `${sec.mech_tilt}°` : '—'}</td>
-                      <td className="sector-cell-num">{sec.elec_tilt !== null ? `${sec.elec_tilt}°` : '—'}</td>
-                      <td className="sector-cell-num">{sectorIdLabel(sec)}</td>
-                      <td className="sector-cell-num">
-                        {/* Optional per-sector GPS override (2026-08-09) —
-                            blank/"(site)" is the common case, meaning this
-                            sector is physically at the site's own lat/lng.
-                            Only shows real coordinates when a superadmin
-                            explicitly set them (sector-table edit mode),
-                            e.g. for a later expansion cabinet at a genuinely
-                            different spot — never fabricated here. */}
-                        {sec.lat != null && sec.lng != null ? (
-                          <span className="sector-location-override" title="This sector has its own GPS location, different from the site's">
-                            {sec.lat.toFixed(5)}, {sec.lng.toFixed(5)}
-                          </span>
-                        ) : (
-                          <span className="sector-location-inherited" title="Same location as the site">(site)</span>
-                        )}
-                      </td>
-                      <td>{sec.carrier || '—'}</td>
-                      <td>{sec.site_band || '—'}</td>
-                      <td>{sec.cell_active_status || '—'}</td>
-                      <td>{sec.site_existence || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="sector-azimuth-heading">Sector Azimuth Layout</div>
-            <div className="sector-azimuth-grid">
-              {site.sectors.map((sec) => (
-                <div key={sec.id} className="sector-azimuth-card">
-                  <div className="sector-azimuth-card-icon">📡</div>
-                  <div className="sector-azimuth-card-label">{sec.sector || '—'}</div>
-                  <div className="sector-azimuth-card-deg">{sec.azimuth !== null ? `${sec.azimuth}°` : '—'}</div>
-                </div>
+            <div className="kpi-tabs">
+              {(['4G', '3G', '2G'] as KpiTech[]).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={`kpi-tab${sectorTech === t ? ' active' : ''}`}
+                  onClick={() => setSectorTech(t)}
+                >
+                  {t === '4G' ? '4G LTE' : t === '3G' ? '3G UMTS' : '2G GSM'} ({sectorsByTech[t].length})
+                </button>
               ))}
             </div>
+
+            {sectorsByTech[sectorTech].length > 0 ? (
+              <>
+                <div className="sectors-table-wrap">
+                  <table className="sectors-table">
+                    <thead>
+                      <tr>
+                        <th>Cell Name</th>
+                        <th>Tech</th>
+                        <th>Sector</th>
+                        <th>Local Cell ID</th>
+                        <th>Height (m)</th>
+                        <th>Azimuth (°)</th>
+                        <th>Mech Tilt (°)</th>
+                        <th>Elec Tilt (°)</th>
+                        <th>Cell ID</th>
+                        <th>Location</th>
+                        {SECTOR_EXTRA_COLUMNS[sectorTech].map((col) => (
+                          <th key={col.key}>{col.label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sectorsByTech[sectorTech].map((sec) => (
+                        <tr key={sec.id}>
+                          <td className="sector-cell-name">{sec.cell_name || '—'}</td>
+                          <td>
+                            <span className={`sector-tech-badge ${techBadgeClass(sec.tech)}`}>{sec.tech || '4G'}</span>
+                          </td>
+                          <td className="sector-cell-accent">{sec.sector || '—'}</td>
+                          <td>{sec.local_cell_id ?? '—'}</td>
+                          <td className="sector-cell-num">{sec.height ?? '—'}</td>
+                          <td className="sector-cell-num">{sec.azimuth !== null ? `${sec.azimuth}°` : '—'}</td>
+                          <td className="sector-cell-num">{sec.mech_tilt !== null ? `${sec.mech_tilt}°` : '—'}</td>
+                          <td className="sector-cell-num">{sec.elec_tilt !== null ? `${sec.elec_tilt}°` : '—'}</td>
+                          <td className="sector-cell-num">{sectorIdLabel(sec)}</td>
+                          <td className="sector-cell-num">
+                            {/* Optional per-sector GPS override (2026-08-09) —
+                                blank/"(site)" is the common case, meaning this
+                                sector is physically at the site's own lat/lng.
+                                Only shows real coordinates when a superadmin
+                                explicitly set them (sector-table edit mode),
+                                e.g. for a later expansion cabinet at a genuinely
+                                different spot — never fabricated here. */}
+                            {sec.lat != null && sec.lng != null ? (
+                              <span className="sector-location-override" title="This sector has its own GPS location, different from the site's">
+                                {sec.lat.toFixed(5)}, {sec.lng.toFixed(5)}
+                              </span>
+                            ) : (
+                              <span className="sector-location-inherited" title="Same location as the site">(site)</span>
+                            )}
+                          </td>
+                          {SECTOR_EXTRA_COLUMNS[sectorTech].map((col) => (
+                            <td key={col.key}>{sec[col.key] || '—'}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="sector-azimuth-heading">Sector Azimuth Layout</div>
+                <div className="sector-azimuth-grid">
+                  {sectorsByTech[sectorTech].map((sec) => (
+                    <div key={sec.id} className="sector-azimuth-card">
+                      <div className="sector-azimuth-card-icon">📡</div>
+                      <div className="sector-azimuth-card-label">{sec.sector || '—'}</div>
+                      <div className="sector-azimuth-card-deg">{sec.azimuth !== null ? `${sec.azimuth}°` : '—'}</div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="kpi-pane-empty">
+                No {sectorTech === '4G' ? '4G LTE' : sectorTech === '3G' ? '3G UMTS' : '2G GSM'} sectors recorded for this site.
+              </div>
+            )}
           </>
         ) : (
           <div className="kpi-pane-empty">No sectors recorded for this site yet.</div>
+        )}
+      </section>
+
+      {/* -- Drive Tests Near This Site --------------------------------
+          2026-09-12 request: surface which DT sessions were driven near
+          this site right on the site page, instead of RF engineers
+          having to separately search DT Session History by site name.
+          Every DriveTestSession is already tagged at save time with
+          meta.nearby_site_ids (~1km of the session's route, computed
+          server-side -- see _nearby_site_ids() in the backend's
+          serializers.py), so useSiteDtSessions() just asks for sessions
+          tagged with THIS site's id -- no new schema needed. Shown even
+          when empty (a muted one-liner, not hidden) so the feature is
+          discoverable. */}
+      <section>
+        <div className="site-form-section">Drive Tests Near This Site</div>
+
+        {nearbyDtSessions && nearbyDtSessions.length > 0 ? (
+          <div className="sectors-table-wrap">
+            <table className="sectors-table">
+              <thead>
+                <tr>
+                  <th>Session</th>
+                  <th>Tech</th>
+                  <th>Date</th>
+                  <th>Samples</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {nearbyDtSessions.map((session: SiteDtSession, i: number) => (
+                  <tr key={session.id}>
+                    <td className="sector-cell-name">
+                      <Link to={`${DT_SESSION_HISTORY_PATH}?session=${session.id}`}>
+                        {session.name || `Session #${session.id}`}
+                      </Link>
+                    </td>
+                    <td>
+                      <span className={`sector-tech-badge ${techBadgeClass(session.tech)}`}>{session.tech || '4G'}</span>
+                    </td>
+                    <td>
+                      {session.date
+                        ? new Date(session.date).toLocaleDateString()
+                        : session.saved_at
+                          ? new Date(session.saved_at).toLocaleDateString()
+                          : '—'}
+                    </td>
+                    <td className="sector-cell-num">{session.sample_count}</td>
+                    <td>
+                      {i === 0 && <span className="dt-session-latest-badge">Latest</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="kpi-pane-empty">No drive tests recorded near this site yet.</div>
+        )}
+      </section>
+
+      {/* -- Site Issues -----------------------------------------------
+          2026-09-14 request: a lightweight problem tracker for this
+          site/its sectors, linked to OptimizationActivity (see Issue's
+          docstring in the backend's core/models.py). Same "shown even
+          when empty, discoverable rather than hidden" convention already
+          used for the Drive Tests section just above. */}
+      <section>
+        <div className="site-form-section">
+          Site Issues
+          {canManageIssues && !showAddIssue && (
+            <button
+              type="button"
+              className="btn-secondary btn-small"
+              style={{ marginLeft: 12 }}
+              onClick={() => setShowAddIssue(true)}
+            >
+              + New Issue
+            </button>
+          )}
+        </div>
+
+        {showAddIssue && (
+          <div className="edit-grid" style={{ marginBottom: 16 }}>
+            {addIssueError && <div className="form-error">{addIssueError}</div>}
+            <label>
+              Title
+              <input
+                type="text"
+                value={newIssueTitle}
+                onChange={(e) => setNewIssueTitle(e.target.value)}
+                placeholder="e.g. Persistent low RSRP complaint — Sector 2"
+                autoFocus
+              />
+            </label>
+            <label>
+              Description (optional)
+              <textarea
+                rows={2}
+                value={newIssueDescription}
+                onChange={(e) => setNewIssueDescription(e.target.value)}
+                placeholder="What was observed, and by whom…"
+              />
+            </label>
+            <label>
+              Severity
+              <select value={newIssueSeverity} onChange={(e) => setNewIssueSeverity(e.target.value as IssueSeverity)}>
+                {(Object.entries(ISSUE_SEVERITY_LABELS) as [IssueSeverity, string][]).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" className="btn-secondary btn-small" onClick={() => { setShowAddIssue(false); setAddIssueError(null) }} disabled={createIssue.isPending}>
+                Cancel
+              </button>
+              <button type="button" className="btn-primary btn-small" onClick={handleAddIssue} disabled={createIssue.isPending}>
+                {createIssue.isPending ? 'Saving…' : 'Save Issue'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {siteIssues && siteIssues.length > 0 ? (
+          <div className="sectors-table-wrap">
+            <table className="sectors-table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Severity</th>
+                  <th>Status</th>
+                  <th>Assignee</th>
+                  <th>Resolved By</th>
+                  <th>Created</th>
+                  {canManageIssues && <th />}
+                </tr>
+              </thead>
+              <tbody>
+                {siteIssues.map((issue: Issue) => (
+                  <tr key={issue.id}>
+                    <td className="sector-cell-name">
+                      {issue.title}
+                      {issue.description && <div className="muted">{issue.description}</div>}
+                    </td>
+                    <td>
+                      <span className={`issue-badge issue-${issue.severity}`}>{ISSUE_SEVERITY_LABELS[issue.severity]}</span>
+                    </td>
+                    <td>
+                      {canManageIssues ? (
+                        <select
+                          value={issue.status}
+                          onChange={(e) => handleIssueStatusChange(issue, e.target.value as typeof issue.status)}
+                          disabled={updateIssue.isPending}
+                        >
+                          {ISSUE_STATUS_ORDER.map((value) => (
+                            <option key={value} value={value}>{ISSUE_STATUS_LABELS[value]}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className={`issue-badge issue-${issue.status}`}>{ISSUE_STATUS_LABELS[issue.status]}</span>
+                      )}
+                    </td>
+                    <td>{issue.assignee_name ?? '—'}</td>
+                    <td>{issue.resolved_by_activity_name?.name ?? '—'}</td>
+                    <td>{new Date(issue.created_at).toLocaleDateString()}</td>
+                    {canManageIssues && (
+                      <td>
+                        <button type="button" className="btn-secondary btn-small" onClick={() => handleDeleteIssue(issue)}>
+                          Delete
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          !showAddIssue && <div className="kpi-pane-empty">No issues recorded for this site yet.</div>
         )}
       </section>
     </div>

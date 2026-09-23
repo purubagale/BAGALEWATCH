@@ -224,7 +224,13 @@ export function parseSectorRows(rows: string[][]): ParsedSectorRow[] {
   // bare "Cell ID" header instead of "Local Cell ID"; kept as a lower-
   // priority alias after 'localcellid' so an unambiguous file with BOTH
   // columns still prefers the more specific one.
-  const iLocalCellId = findCol(header, 'localcellid', 'cellid')
+  // 'localcell' added (2026-09-23) — a real 4G source file uses "Local
+  // Cell" with no "ID"/"Cell ID" suffix at all, which neither existing
+  // alias's substring check matches ("localcell" doesn't contain
+  // "localcellid" or "cellid" as a substring — the "id" that "cellid"
+  // needs never appears). Lowest priority of the three so a file with a
+  // more specific column name still prefers it.
+  const iLocalCellId = findCol(header, 'localcellid', 'cellid', 'localcell')
   const iLat = findCol(header, 'latitude', 'lat')
   const iLng = findCol(header, 'longitude', 'long', 'lng', 'lon')
   const iHeight = findCol(header, 'height')

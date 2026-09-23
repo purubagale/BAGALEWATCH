@@ -16,11 +16,19 @@ import type {
   DtBandsMap,
   DtSample,
   DtServingCell,
+  DtSessionCompare,
   DtSessionCreate,
   DtSessionAttachment,
   DtSessionDetail,
   DtSessionListItem,
   DtTech,
+  Issue,
+  IssueCreate,
+  IssueUpdate,
+  OptimizationActivity,
+  OptimizationActivityAttach,
+  OptimizationActivityRole,
+  OptimizationActivityWrite,
   KpiTrend,
   LiveSiteSource,
   LiveSiteSourceInput,
@@ -34,6 +42,7 @@ import type {
   RfAuditData,
   ScatterData,
   SiteDetail,
+  SiteDtSession,
   SiteListItem,
   SitesPageParams,
   SitesPageResponse,
@@ -105,6 +114,19 @@ export function useSite(siteId: string | undefined) {
   return useQuery({
     queryKey: ['site', siteId],
     queryFn: () => apiJson<SiteDetail>(`/api/v2/sites/${siteId}/`),
+    enabled: !!siteId,
+  })
+}
+
+// Site Detail page's "Drive Tests Near This Site" panel — every
+// DriveTestSession whose meta.nearby_site_ids (tagged at upload time,
+// see _nearby_site_ids() in the backend's serializers.py) includes this
+// site, most recent first. Same useQuery/apiJson pattern as useSite()
+// above.
+export function useSiteDtSessions(siteId: string | undefined) {
+  return useQuery({
+    queryKey: ['site-dt-sessions', siteId],
+    queryFn: () => apiJson<SiteDtSession[]>(`/api/v2/sites/${siteId}/dt-sessions/`),
     enabled: !!siteId,
   })
 }
@@ -711,6 +733,26 @@ export function useDtServingCellsForSessions(ids: number[]) {
   })
 }
 
+// Delta compare (2026-09-12) -- backend does the spatial-grid binning
+// server-side (see DriveTestSessionViewSet.compare()'s docstring), so
+// unlike useDtSession/compareQueries above (which pull each FULL session,
+// samples array included, for the Overlay view), this only ever fetches
+// the already-aggregated per-cell response -- small regardless of how
+// many raw samples either session has. `a`/`b` are session ids, kept as
+// plain numbers (not DtSessionListItem) since that's all the endpoint
+// needs; DtSessionHistoryPage decides the before(a)/after(b) ORDER via
+// lib/dtCompareAssignment.ts before calling this. `enabled` requires both
+// ids and the query key includes both so switching which pair (or which
+// one is "before" vs "after" after a swap) refetches correctly.
+export function useDtSessionCompare(a: number | undefined, b: number | undefined) {
+  return useQuery({
+    queryKey: ['dt-session-compare', a, b],
+    queryFn: () => apiJson<DtSessionCompare>(`/api/v2/dt-sessions/compare/?a=${a}&b=${b}`),
+    enabled: a !== undefined && b !== undefined,
+    gcTime: DT_SESSION_GC_TIME,
+  })
+}
+
 export function useCreateDtSession() {
   const qc = useQueryClient()
   return useMutation({
@@ -774,6 +816,121 @@ export function useDeleteDtSessionAttachment(sessionId: number | undefined) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dt-session', sessionId] }),
   })
 }
+
+// Optimization Activities (2026-09-12) -- groups existing DriveTestSession
+// rows into one named before/after-change optimization effort; see
+// OptimizationActivityViewSet's docstring in drive_test.py. `dt-sessions`
+// is invalidated alongside `dt-activities` on every mutation that changes
+// a link, since DriveTestSessionListSerializer.activities is embedded on
+// each session row and would otherwise go stale on the History table
+// after an attach/detach.
+function invalidateDtActivities(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['dt-activities'] })
+  qc.invalidateQueries({ queryKey: ['dt-sessions'] })
+}
+
+export function useOptimizationActivities() {
+  return useQuery({
+    queryKey: ['dt-activities'],
+    queryFn: () => apiJson<OptimizationActivity[]>('/api/v2/dt-activities/'),
+  })
+}
+
+export function useCreateOptimizationActivity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (activity: OptimizationActivityWrite) =>
+      apiJson<OptimizationActivity>('/api/v2/dt-activities/', { method: 'POST', body: JSON.stringify(activity) }),
+    // Only the activities list changes here -- no session yet linked, so
+    // no need for the fuller invalidateDtActivities(). `issues` is also
+    // invalidated -- when `resolve_issue_id` was set, the backend just
+    // moved that issue to 'resolved' as a side effect (see
+    // OptimizationActivitySerializer.create() in serializers.py), and an
+    // Issues list/tab open elsewhere should reflect that without a
+    // manual refresh. Harmless no-op refetch when no issue was picked.
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dt-activities'] })
+      qc.invalidateQueries({ queryKey: ['issues'] })
+    },
+  })
+}
+
+export function useDeleteOptimizationActivity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (activityId: number) => apiJson<void>(`/api/v2/dt-activities/${activityId}/`, { method: 'DELETE' }),
+    // CASCADE-deletes every session_links row for this activity on the
+    // backend, so linked sessions' own `activities` field changes too.
+    onSuccess: () => invalidateDtActivities(qc),
+  })
+}
+
+export function useAttachSessionToActivity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ activityId, sessionId, role, note }: { activityId: number; sessionId: number; role: OptimizationActivityRole; note?: string }) =>
+      apiJson<OptimizationActivity>(`/api/v2/dt-activities/${activityId}/sessions/`, {
+        method: 'POST',
+        body: JSON.stringify({ session: sessionId, role, note: note ?? '' } satisfies OptimizationActivityAttach),
+      }),
+    onSuccess: () => invalidateDtActivities(qc),
+  })
+}
+
+export function useDetachSessionFromActivity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ activityId, linkId }: { activityId: number; linkId: number }) =>
+      apiJson<void>(`/api/v2/dt-activities/${activityId}/sessions/${linkId}/`, { method: 'DELETE' }),
+    onSuccess: () => invalidateDtActivities(qc),
+  })
+}
+
+// Site/Sector Issue tracker (2026-09-14) -- see Issue's docstring in
+// core/models.py. `filters` builds a query string the same
+// `?status=&site=&assignee=&severity=` shape IssueViewSet.get_queryset()
+// (core/issues.py) filters on -- an empty/omitted filter key is left out
+// of the URL entirely rather than sent as an empty param, matching how
+// callers elsewhere in this file build optional query strings.
+export function useIssues(filters?: { status?: string; site?: string; assignee?: number; severity?: string }) {
+  const params = new URLSearchParams()
+  if (filters?.status) params.set('status', filters.status)
+  if (filters?.site) params.set('site', filters.site)
+  if (filters?.assignee != null) params.set('assignee', String(filters.assignee))
+  if (filters?.severity) params.set('severity', filters.severity)
+  const qs = params.toString()
+  return useQuery({
+    queryKey: ['issues', filters ?? {}],
+    queryFn: () => apiJson<Issue[]>(`/api/v2/issues/${qs ? `?${qs}` : ''}`),
+  })
+}
+
+export function useCreateIssue() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (issue: IssueCreate) =>
+      apiJson<Issue>('/api/v2/issues/', { method: 'POST', body: JSON.stringify(issue) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['issues'] }),
+  })
+}
+
+export function useUpdateIssue() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, issue }: { id: number; issue: IssueUpdate }) =>
+      apiJson<Issue>(`/api/v2/issues/${id}/`, { method: 'PATCH', body: JSON.stringify(issue) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['issues'] }),
+  })
+}
+
+export function useDeleteIssue() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => apiJson<void>(`/api/v2/issues/${id}/`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['issues'] }),
+  })
+}
+
 
 // Companion to useCreateDtSession for large sessions (2026-08-14 fix — a
 // real 363,082-sample .trp upload hit "Could not save this session (HTTP
@@ -993,5 +1150,99 @@ export function useTelemetryDtSessionSamples(id: number | null) {
     queryFn: () => apiJson<TelemetryDriveTestSessionSamplesResponse>(`/api/v2/telemetry/dt-sessions/${id}/samples/`),
     enabled: id != null,
     refetchInterval: 10_000,
+  })
+}
+
+// ── Vendor RNO report importer (2026-09-15) ──────────────────────────────
+// See RfOptimizationReport's docstring in core/models.py and
+// RfReportsPage.tsx's own comment for the full parse-preview -> review
+// -> confirm-import flow these hooks support.
+import type {
+  RfOptimizationReport,
+  RfOptimizationReportCreate,
+  RfReportAttachment,
+  RfReportAttachmentCategory,
+  RfReportParsePreview,
+} from '../api/types'
+
+export function useRfReports() {
+  return useQuery({
+    queryKey: ['rf-reports'],
+    queryFn: () => apiJson<RfOptimizationReport[]>('/api/v2/rf-reports/'),
+  })
+}
+
+export function useRfReport(id: number | null) {
+  return useQuery({
+    queryKey: ['rf-report', id],
+    queryFn: () => apiJson<RfOptimizationReport>(`/api/v2/rf-reports/${id}/`),
+    enabled: id != null,
+  })
+}
+
+// Parses an uploaded vendor .docx -- saves nothing, just returns
+// candidate rows for review (RfReportParsePreviewView). FormData, not
+// JSON, same first-use fix client.ts's apiFetch already carries for
+// DT session attachments.
+export function useParseRfReport() {
+  return useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData()
+      form.append('file', file)
+      return apiJson<RfReportParsePreview>('/api/v2/rf-reports/parse-preview/', {
+        method: 'POST',
+        body: form,
+      })
+    },
+  })
+}
+
+export function useConfirmRfReportImport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (report: RfOptimizationReportCreate) =>
+      apiJson<RfOptimizationReport>('/api/v2/rf-reports/', { method: 'POST', body: JSON.stringify(report) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['rf-reports'] })
+      qc.invalidateQueries({ queryKey: ['issues'] })
+    },
+  })
+}
+
+export function useDeleteRfReport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => apiJson<void>(`/api/v2/rf-reports/${id}/`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['rf-reports'] }),
+  })
+}
+
+// `reportId` here is a DEFAULT, not a requirement -- ReportDetail (an
+// existing, already-saved report) passes it at hook-creation time and
+// calls mutateAsync({ files, category }) same as before. ImportWizard
+// doesn't have a report id until confirm-import just returned one, so
+// it calls useUploadRfReportAttachments() with no default and passes
+// `reportId` per-call instead (2026-09-15 follow-up: "allow system to
+// save report ... also with attachment" -- auto-attaching the original
+// source file right after a successful import).
+export function useUploadRfReportAttachments(defaultReportId?: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      files, category, reportId = defaultReportId,
+    }: { files: File[]; category?: RfReportAttachmentCategory; reportId?: number }) => {
+      const form = new FormData()
+      for (const file of files) form.append('files', file)
+      if (category) form.append('category', category)
+      return apiJson<RfReportAttachment[]>(`/api/v2/rf-reports/${reportId}/attachments/`, {
+        method: 'POST',
+        body: form,
+      })
+    },
+    onSuccess: (_data, variables) => {
+      const reportId = variables.reportId ?? defaultReportId
+      qc.invalidateQueries({ queryKey: ['rf-report', reportId] })
+      qc.invalidateQueries({ queryKey: ['rf-reports'] })
+    },
   })
 }

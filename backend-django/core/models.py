@@ -750,6 +750,343 @@ class DriveTestSessionAttachment(models.Model):
         return self.original_filename or self.file.name
 
 
+class OptimizationActivity(models.Model):
+    """Groups a set of DriveTestSession rows into one named RF
+    optimization effort (2026-09-12 request: "record that a set of
+    DriveTestSession rows belong together as one optimization effort").
+
+    The workflow this exists for: an RF engineer runs a "before" drive
+    test against a complaint or a coverage problem, makes a change
+    (antenna tilt, a new site, a parameter tweak), then runs an "after"
+    drive test to verify the fix worked -- and sometimes that verification
+    fails or only partially helps, so there's a second change and a
+    third drive test, and so on. Every one of those drive tests already
+    exists today as its own independent DriveTestSession row (uploaded,
+    stored, browsable in History) -- what's missing is any record that
+    three or four of those otherwise-unrelated-looking sessions are
+    actually chapters of the same story. Without this, an engineer
+    reviewing History six months later sees a pile of same-ish-looking
+    drive tests near the same site with no way to tell which "after" run
+    answers which "before" run, or what change was made in between --
+    that context currently lives only in people's memory or a separate
+    spreadsheet, if anywhere at all.
+
+    Deliberately a thin wrapper, not a redesign of DriveTestSession
+    itself: sessions stay exactly as immutable and independently
+    uploadable as they already are (see DriveTestSession's own docstring
+    on why v2 has no general update path) -- an activity is just a name,
+    some free-text notes on what changed and why, and a set of links to
+    existing sessions via OptimizationActivitySession below. A session
+    can belong to zero, one, or several activities (e.g. one "before"
+    drive covering two different complaint tickets each tracked as its
+    own activity), and nothing about creating or uploading a session
+    requires picking an activity up front -- linking is a separate,
+    optional step, matching how attachments/remarks were also bolted on
+    to an existing session after the fact rather than required at
+    upload time.
+    """
+    name = models.CharField(max_length=255)
+    notes = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_optimization_activities'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.name
+
+
+class OptimizationActivitySession(models.Model):
+    """One DriveTestSession attached to one OptimizationActivity, tagged
+    with what role that particular drive played in the effort (baseline
+    / after-change / re-verify -- see OptimizationActivity's docstring
+    for the before/after/re-verify workflow this models). This is the
+    join row, not a copy of session data -- everything about the drive
+    itself (samples, meta, tech, remarks, attachments) stays owned by
+    DriveTestSession; this table only records the relationship and a
+    short per-link note an engineer can use to say what was specific
+    about THIS session's role (e.g. "tilt changed 2° down on this run",
+    "re-drove same route after swapping the RRU").
+
+    `unique_together` on (activity, session) stops the same session being
+    attached to the same activity twice by accident (e.g. a double-click
+    on "Attach"), but deliberately does NOT stop a session appearing more
+    than once with different roles across DIFFERENT activities, or an
+    activity having several sessions with the SAME role -- a single
+    baseline drive is sometimes reused as the "before" reference for two
+    separate fixes at the same site, and it's normal for an engineer to
+    re-drive the same baseline route twice before a change if the first
+    pass looked inconclusive, so two 'baseline' links on one activity is
+    a real, legitimate case, not a data-entry mistake to block.
+    """
+    ROLE_CHOICES = [
+        ('baseline', 'Baseline (pre)'),
+        ('after_change', 'After Change'),
+        ('re_verify', 'Re-verify'),
+    ]
+    activity = models.ForeignKey(OptimizationActivity, on_delete=models.CASCADE, related_name='session_links')
+    session = models.ForeignKey(DriveTestSession, on_delete=models.CASCADE, related_name='activity_links')
+    role = models.CharField(max_length=12, choices=ROLE_CHOICES)
+    note = models.TextField(blank=True, default='')
+    linked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_optimization_activity_sessions'
+        unique_together = [('activity', 'session')]
+        ordering = ['linked_at']
+
+    def __str__(self):
+        return f'{self.activity_id}:{self.session_id} ({self.role})'
+
+
+class RfOptimizationReport(models.Model):
+    """One imported Radio Network Optimization report from a vendor,
+    covering one contract lot (2026-09-15 request: "How can we utilize
+    this report or data of this report in our application for network
+    optimization and repository"). Two real samples seen so far -- a
+    218MB LOT2 report and a 528MB LOT6 report -- each a Word document
+    with, among many other pre/post KPI tables, an antenna azimuth/tilt
+    CHANGE LOG table and one or more open RECOMMENDATION tables (new
+    site/band additions).
+
+    Scope, per the user's own explicit choice when this was proposed:
+    only those two table shapes are extracted into structured rows here
+    (SectorConfigChange below, and ordinary Issue rows with
+    `source_report` set to this report -- see Issue.source_report) --
+    NOT the ~30 per-cell KPI pre/post tables the same reports also
+    carry, which is a separate, larger follow-up if ever needed.
+
+    Minutes-of-Meeting content (2026-09-15 follow-up: "a mom is done
+    including the reasons not meeting KPI threshold... should be handled
+    with just attachment") is deliberately NOT parsed into anything
+    structured -- MOM narrative doesn't repeat as a table the way the
+    change log/recommendations do, so it's kept as a plain
+    RfReportAttachment file (category=CATEGORY_MOM) below, same as the
+    source .docx itself, rather than a second parser this feature has no
+    real structured shape to target.
+
+    The source document itself is NOT stored as a required field here --
+    see RfReportAttachment (category=CATEGORY_SOURCE) for keeping the
+    original file, which is optional and separate from actually running
+    the parser (parse-preview accepts an upload without persisting
+    anything until confirm-import).
+    """
+    lot_name = models.CharField(max_length=100)
+    title = models.CharField(max_length=255, blank=True, default='')
+    vendor = models.CharField(max_length=255, blank=True, default='')
+    period_covered = models.CharField(max_length=100, blank=True, default='')
+    # Network label (2026-09-15 follow-up: "Lot name and period covered
+    # and Network like Network II, Phase I, Lot 6 can be auto retrieved
+    # by using uploaded report") -- kept as its own free-text field
+    # rather than folded into period_covered, since a real report's
+    # title page names Lot/Network/Phase as three separate things (e.g.
+    # "Network II, Phase I, LOT-6"). rf_reports.py's parse-preview
+    # extracts a best-effort suggestion for all three from the
+    # document's title/first-heading text; the review UI keeps every
+    # field editable regardless.
+    network = models.CharField(max_length=100, blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    imported_by = models.ForeignKey(
+        'User', null=True, blank=True, on_delete=models.SET_NULL, related_name='rf_report_imports'
+    )
+    imported_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_rf_optimization_reports'
+        ordering = ['-imported_at']
+
+    def __str__(self):
+        return f'{self.lot_name} ({self.imported_at:%Y-%m-%d})'
+
+
+def rf_report_attachment_upload_path(instance, filename):
+    # Same UUID-prefixed convention as dt_session_attachment_upload_path
+    # above -- a report can carry several attachments (source doc, MOM,
+    # anything else) that can easily share an original filename.
+    safe_name = (filename or 'file').replace('/', '_').replace('\\', '_')
+    return f'rf_report_attachments/{instance.report_id}/{uuid.uuid4().hex}_{safe_name}'
+
+
+class RfReportAttachment(models.Model):
+    """Arbitrary supporting files kept alongside an RfOptimizationReport
+    -- the original vendor .docx, a separate Minutes-of-Meeting record
+    (2026-09-15: "should be handled with just attachment"), or anything
+    else -- same generic file-attachment shape as
+    DriveTestSessionAttachment above. `category` exists purely so the UI
+    can label a MOM file distinctly from the source report or any other
+    supporting file; nothing in the app parses or gates on it.
+    """
+    CATEGORY_SOURCE = 'source'
+    CATEGORY_MOM = 'mom'
+    CATEGORY_OTHER = 'other'
+    CATEGORY_CHOICES = [
+        (CATEGORY_SOURCE, 'Source report'),
+        (CATEGORY_MOM, 'Minutes of Meeting'),
+        (CATEGORY_OTHER, 'Other'),
+    ]
+    report = models.ForeignKey(RfOptimizationReport, on_delete=models.CASCADE, related_name='attachments')
+    file = models.FileField(upload_to=rf_report_attachment_upload_path, max_length=500)
+    original_filename = models.CharField(max_length=255, blank=True, default='')
+    category = models.CharField(max_length=10, choices=CATEGORY_CHOICES, default=CATEGORY_OTHER)
+    # 2026-09-15 follow-up ("allow system to save report with size
+    # compressed... for full access") -- every upload through
+    # RfOptimizationReportViewSet.attachments is now gzip-compressed
+    # before being written to storage (real source docs seen: 218-528MB,
+    # and vendor .docx is already-compressed-XML so gains are modest but
+    # real; a MOM file is typically plain text/small, where gzip does
+    # much better). `is_compressed` lets the download endpoint
+    # (RfReportAttachmentDetailView in rf_reports.py) know to decompress
+    # on the way out -- the stored file's own bytes are gzip, never the
+    # original document, so nothing that reads `file` directly elsewhere
+    # gets a usable document without going through that endpoint.
+    is_compressed = models.BooleanField(default=False)
+    size_bytes = models.BigIntegerField(null=True, blank=True)
+    uploaded_by = models.ForeignKey(
+        'User', null=True, blank=True, on_delete=models.SET_NULL, related_name='rf_report_attachments'
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_rf_report_attachments'
+        ordering = ['-uploaded_at']
+        indexes = [
+            models.Index(fields=['report']),
+        ]
+
+    def __str__(self):
+        return self.original_filename or self.file.name
+
+
+class SectorConfigChange(models.Model):
+    """One antenna azimuth/tilt change-log row imported from a vendor
+    RNO report's change-log table (real shape seen: SN / Cell Name /
+    Azimuth-Mtilt-Etilt / After change / Result / Antenna Type / 4G
+    Antenna Shared with -- see core/rf_reports.py's parser). `sector` is
+    matched by cell name against this app's existing Sector rows at
+    import-review time and can be null if no match was found or
+    confirmed -- a change-log row is kept either way (it's still real
+    history worth having even if this app doesn't yet have a matching
+    Sector row for it).
+
+    Before/after values are kept as the vendor's own raw text rather
+    than split into separate azimuth/mtilt/etilt columns -- real files
+    combine all three into one cell (e.g. "180/2/4") and the
+    separator/order isn't consistent enough across vendors/lots to
+    reliably parse apart; `raw_row` keeps the complete original row
+    (every column, verbatim, keyed by the document's own header text)
+    for anyone who needs to check the source text against the fields
+    above it.
+    """
+    report = models.ForeignKey(RfOptimizationReport, on_delete=models.CASCADE, related_name='antenna_changes')
+    sn = models.IntegerField(null=True, blank=True)
+    cell_name = models.CharField(max_length=255, blank=True, default='')
+    sector = models.ForeignKey(
+        'Sector', null=True, blank=True, on_delete=models.SET_NULL, related_name='config_changes'
+    )
+    before_change = models.CharField(max_length=255, blank=True, default='')
+    after_change = models.CharField(max_length=255, blank=True, default='')
+    result = models.CharField(max_length=255, blank=True, default='')
+    antenna_type = models.CharField(max_length=255, blank=True, default='')
+    antenna_shared_with = models.CharField(max_length=255, blank=True, default='')
+    raw_row = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_sector_config_changes'
+        ordering = ['report', 'sn']
+        indexes = [
+            models.Index(fields=['report']),
+            models.Index(fields=['sector']),
+        ]
+
+    def __str__(self):
+        return f'{self.cell_name} ({self.report_id})'
+
+
+class Issue(models.Model):
+    """Site/sector issue tracker (2026-09-14 request) -- a lightweight
+    record of a problem noticed at a site or one of its sectors (a
+    complaint, a coverage gap, a hardware fault, anything an RF/NOC
+    engineer wants to track through to resolution), with an explicit
+    link to the OptimizationActivity that eventually resolved it.
+
+    Deliberately the mirror image of OptimizationActivity's own
+    relationship to DriveTestSession above: an OptimizationActivity
+    groups the *drive tests* that document a before/after optimization
+    effort, while an Issue is the *problem* that effort was raised to
+    fix in the first place. `resolved_by_activity` is the join between
+    the two -- set (and `status` moved to 'resolved') once someone picks
+    this issue while creating/editing the OptimizationActivity that
+    addresses it (see IssueViewSet and OptimizationActivityViewSet's
+    `resolve_issue` handling in core/issues.py / core/drive_test.py). An
+    issue can exist and be worked for a long time with no activity at
+    all -- the link is optional and only appears once real optimization
+    work is recorded against it.
+    """
+    STATUS_CHOICES = [
+        ('open', 'Open'),
+        ('in_progress', 'In Progress'),
+        ('resolved', 'Resolved'),
+        ('closed', 'Closed'),
+    ]
+    SEVERITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+        ('critical', 'Critical'),
+    ]
+    site = models.ForeignKey(Site, on_delete=models.CASCADE, related_name='issues')
+    sector = models.ForeignKey(
+        Sector, null=True, blank=True, on_delete=models.SET_NULL, related_name='issues'
+    )
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default='')
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='open', db_index=True)
+    severity = models.CharField(max_length=10, choices=SEVERITY_CHOICES, default='medium')
+    assignee = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='assigned_issues'
+    )
+    created_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='created_issues'
+    )
+    resolved_by_activity = models.ForeignKey(
+        OptimizationActivity, null=True, blank=True, on_delete=models.SET_NULL, related_name='resolved_issues'
+    )
+    # Set when this Issue was created FROM a vendor RNO report's
+    # recommendation table by the importer (2026-09-15 — see
+    # RfOptimizationReport's docstring above), rather than typed in by
+    # hand on this page. Null for every ordinary manually-created issue,
+    # which is still the normal way to open one. SET_NULL (not CASCADE)
+    # so deleting the import record never takes a real, possibly already
+    # worked-on issue down with it -- the issue just loses its "where
+    # this came from" trace.
+    source_report = models.ForeignKey(
+        RfOptimizationReport, null=True, blank=True, on_delete=models.SET_NULL, related_name='recommendation_issues'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    # Set explicitly by IssueViewSet (not a save() override) when status
+    # transitions to/from 'resolved' -- same "business logic sets the
+    # timestamp, the model doesn't guess at a transition" convention
+    # already used for TelemetryRemoteOptOutRequest.fulfilled_at
+    # (telemetry.py), rather than an auto_now/auto_now_add field that
+    # would fire unconditionally on every save.
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'v2_issues'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['site']),
+        ]
+
+    def __str__(self):
+        return f'{self.title} ({self.site_id})'
+
+
 class DriveTestSample(models.Model):
     """One GPS-tagged reading. Field list matches v1's real `dt_records`
     table exactly (23 columns) — see `DriveTestSession`'s docstring.
@@ -777,6 +1114,12 @@ class DriveTestSample(models.Model):
     rsrp = SignalFloatField(null=True, blank=True)
     rsrq = SignalFloatField(null=True, blank=True)
     sinr = SignalFloatField(null=True, blank=True)
+    # LTE-only 3GPP Channel Quality Indicator, 0-15, higher is better --
+    # a clean small integer index (not a sub-integer dBm/dB reading like
+    # rsrp/rsrq/sinr above), so plain SmallIntegerField rather than
+    # SignalFloatField. Null for 2G/3G samples (CQI doesn't apply to
+    # those techs) and for any 4G upload path that doesn't supply it.
+    cqi = models.SmallIntegerField(null=True, blank=True)
     dl = SignalFloatField(null=True, blank=True)
     pci = models.IntegerField(null=True, blank=True)
     serving_site_id = models.CharField(max_length=64, blank=True, null=True)
@@ -1326,6 +1669,13 @@ class ApiKey(models.Model):
         ('sites:write', 'Sites & Sectors — write'),
         ('dt:read', 'Drive Test sessions — read'),
         ('dt:write', 'Drive Test sessions — write'),
+        # Added 2026-09-14 — read-only access to the already-aggregated
+        # TelemetryCoverageBin rows (geohash-binned mean signal + sample/
+        # device counts). No `coverage:write` counterpart: coverage bins
+        # are a server-computed rollup (prune_telemetry.py /
+        # roll_telemetry_bins.py), never something an external partner
+        # uploads directly, unlike Sites or DT sessions.
+        ('coverage:read', 'Telemetry Coverage — read'),
     ]
 
     name = models.CharField(max_length=100)
@@ -1475,6 +1825,10 @@ class TelemetrySample(models.Model):
     rx_qual = models.SmallIntegerField(null=True, blank=True)
     rscp_dbm = models.SmallIntegerField(null=True, blank=True)
     ecio_db = models.SmallIntegerField(null=True, blank=True)
+    # cqi (2026-09-15) -- LTE/NR-only Channel Quality Indicator, 3GPP
+    # standard 0-15 integer scale, higher is better. Null on 2G/3G samples
+    # and on any device whose SDK build predates this field.
+    cqi = models.SmallIntegerField(null=True, blank=True)
     battery_pct = models.SmallIntegerField(null=True, blank=True)
     trigger_reason = models.CharField(max_length=10, choices=TRIGGERS, default='periodic')
 
@@ -1539,6 +1893,8 @@ class TelemetryCoverageBin(models.Model):
     rsrp_min = models.SmallIntegerField(null=True, blank=True)
     rsrq_mean = SignalFloatField(null=True, blank=True)
     sinr_mean = SignalFloatField(null=True, blank=True)
+    # cqi_mean (2026-09-15) -- LTE/NR-only, 3GPP 0-15 scale, higher better.
+    cqi_mean = SignalFloatField(null=True, blank=True)
 
     first_ts = models.DateTimeField(null=True, blank=True)
     last_ts = models.DateTimeField(null=True, blank=True)

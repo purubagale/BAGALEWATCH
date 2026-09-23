@@ -201,6 +201,7 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
   let rsrq: number | null = null
   let sinr: number | null = null
   let pci: number | null = null
+  let cqi: number | null = null
   let dl: number | null = null
   let rxQual: number | null = null
   let bcch: number | null = null
@@ -214,6 +215,7 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     rsrq = num(row.rsrq)
     sinr = num(row.sinr)
     pci = int(row.pci)
+    cqi = int(row.cqi)
     // Real DL throughput, when TEMS declared it — a genuine field this
     // engine confirmed against a real 4G DL capture (see trpAnalysis.ts's
     // module comment), not the never-verified extraction CLAUDE.md flags
@@ -237,7 +239,7 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     date: row.isoTs.slice(0, 10),
     lat, lng,
     rsrp: primary,
-    rsrq, sinr, dl, pci,
+    rsrq, sinr, dl, pci, cqi,
     serving_site_id: null,
     serving_site_name: null,
     serving_sector: null,

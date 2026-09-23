@@ -15,4 +15,5 @@ urlpatterns = [
     path('dt-sessions/', external_api.ExternalDtSessionListCreateView.as_view(), name='ext-dt-sessions'),
     path('dt-sessions/<int:session_id>/', external_api.ExternalDtSessionDetailView.as_view(), name='ext-dt-session-detail'),
     path('dt-sessions/<int:session_id>/samples/', external_api.ExternalDtSampleListCreateView.as_view(), name='ext-dt-session-samples'),
+    path('coverage/', external_api.ExternalCoverageBinListView.as_view(), name='ext-coverage'),
 ]

@@ -107,6 +107,14 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // file, same convention as every other entry.
   '/rescue-lookup': '/r5t8mq',
   '/rescue-policy': '/r2p6ky',
+  // Site/Sector Issue tracker's global list (2026-09-14) -- seeded
+  // server-side by migration 0058_seed_issues_menuitem.py -- keep this
+  // in sync with that file, same convention as every other entry.
+  '/issues': '/i8s4kw',
+  // Vendor RNO report importer (2026-09-15) -- seeded server-side by
+  // migration 0062_seed_rf_reports_menuitem.py -- keep this in sync
+  // with that file, same convention as every other entry.
+  '/rf-reports': '/g3q7nx',
 }
 
 export const DASHBOARD_PATH = OPAQUE_PATHS['/dashboard']

@@ -46,7 +46,23 @@ ALLOWED_HOSTS = [h.strip() for h in os.environ.get('ALLOWED_HOSTS', 'localhost,1
 # of Django and rejects an oversized body before it ever reaches here —
 # both must move together, raising one without the other just moves
 # which layer's error you see.
-DATA_UPLOAD_MAX_MEMORY_SIZE = 150 * 1024 * 1024
+#
+# Raised again 2026-09-15 (150MB -> 700MB): the vendor RNO report
+# importer's `POST /api/v2/rf-reports/parse-preview/` (core/rf_reports.py)
+# uploads an entire vendor .docx as one unchunked multipart body, same
+# "no sensible way to chunk this" reasoning as Backup/Restore above —
+# python-docx needs the complete file to open it as a zip archive, there
+# is no per-row streaming API to batch this the way DT sessions are.
+# Real files seen so far: a 218MB LOT2 report and a 528MB LOT6 report.
+# Django's MultiPartParser enforces this cap against the WHOLE multipart
+# body (not just non-file fields) before parsing even starts, so this
+# has to cover the largest real upload with real headroom, not just the
+# non-file portion. 700MB clears the 528MB LOT6 sample with room for a
+# somewhat larger future lot; this is an admin/superadmin-only,
+# occasional upload (not a routine per-user action), so the DoS-surface
+# tradeoff of a larger cap here is the same one already accepted for
+# Backup/Restore above, not a new category of risk.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 700 * 1024 * 1024
 
 # ── Security hardening (2026-08-08, "secure the system for unauthorized
 # access and tampering" follow-up) ──────────────────────────────────────

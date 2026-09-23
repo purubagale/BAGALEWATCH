@@ -14,6 +14,12 @@ Alarms category were both offered and NOT selected (Alarms doubly so:
 there is no alarm/fault model anywhere in v2 to expose in the first
 place, see the research pass that preceded this feature).
 
+**2026-09-14 addition:** a read-only `coverage:read` scope exposing the
+already-aggregated TelemetryCoverageBin rows (geohash-binned mean
+signal + sample/device counts) — one-directional (share out only, no
+write scope) since a bin is a server-computed rollup, never something
+an external partner uploads directly.
+
 **What this deliberately does NOT do:**
 - No DELETE anywhere in this module. An external system can create and
   update Sites/Sectors/DT sessions, and append DT samples, but can never
@@ -41,9 +47,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .api_auth import ApiKeyAuthentication, ApiKeyRateThrottle, require_scope
-from .models import DriveTestSample, DriveTestSession, Sector, Site
+from .models import DriveTestSample, DriveTestSession, Sector, Site, TelemetryCoverageBin
 from .serializers import (
     DriveTestSampleSerializer,
+    ExternalCoverageBinSerializer,
     ExternalDtSessionCreateSerializer,
     ExternalDtSessionListSerializer,
     ExternalSiteDetailSerializer,
@@ -340,3 +347,62 @@ class ExternalDtSampleListCreateView(ExternalApiView):
             {'session_id': session.id, 'samples_added': added, 'total_samples': session.samples.count()},
             status=201,
         )
+
+
+# ── Telemetry coverage bins (2026-09-14) ─────────────────────────────────
+
+class ExternalCoverageBinListView(ExternalApiView):
+    """`GET /api/external/v1/coverage/` (scope `coverage:read`) —
+    paginated, already-aggregated TelemetryCoverageBin rows.
+
+    Query params (all optional):
+      network_type=LTE|NR|UMTS|GSM|UNKNOWN
+      region=<Site.region string>
+      min_lat=, max_lat=, min_lng=, max_lng=   bounding box on
+        center_lat/center_lng — lets a caller pull one area of interest
+        instead of paging through the entire table.
+      min_sample_count=<int>   drop thin bins a partner isn't confident
+        plotting.
+
+    Read-only by design — see this module's docstring for why there is
+    no `coverage:write` counterpart."""
+
+    def get_permissions(self):
+        return [require_scope('coverage:read')()]
+
+    def get(self, request):
+        qs = TelemetryCoverageBin.objects.all().order_by('id')
+        qs = qs.exclude(center_lat__isnull=True).exclude(center_lng__isnull=True)
+
+        network_type = request.query_params.get('network_type')
+        region = request.query_params.get('region')
+        if network_type:
+            qs = qs.filter(network_type=network_type)
+        if region:
+            qs = qs.filter(region=region)
+
+        bbox_params = {
+            'min_lat': 'center_lat__gte', 'max_lat': 'center_lat__lte',
+            'min_lng': 'center_lng__gte', 'max_lng': 'center_lng__lte',
+        }
+        for param, lookup in bbox_params.items():
+            raw = request.query_params.get(param)
+            if raw is None or raw == '':
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                return Response({param: ['Must be a number.']}, status=400)
+            qs = qs.filter(**{lookup: value})
+
+        min_sample_count = request.query_params.get('min_sample_count')
+        if min_sample_count not in (None, ''):
+            try:
+                min_sample_count = int(min_sample_count)
+            except (TypeError, ValueError):
+                return Response({'min_sample_count': ['Must be an integer.']}, status=400)
+            qs = qs.filter(sample_count__gte=min_sample_count)
+
+        paginator = ExternalApiPagination()
+        page = paginator.paginate_queryset(qs, request, view=self)
+        return paginator.get_paginated_response(ExternalCoverageBinSerializer(page, many=True).data)

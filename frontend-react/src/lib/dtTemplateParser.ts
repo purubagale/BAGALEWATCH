@@ -85,6 +85,7 @@ export function parseTemplateRows(rows: string[][], tech: DtTech): DtSample[] {
   let iRsrq = -1,
     iSinr = -1,
     iPci = -1,
+    iCqi = -1,
     iRxQual = -1,
     iBcch = -1,
     iBsic = -1,
@@ -108,6 +109,7 @@ export function parseTemplateRows(rows: string[][], tech: DtTech): DtSample[] {
     iRsrq = findCol(header, 'rsrq')
     iSinr = findCol(header, 'sinr')
     iPci = findCol(header, 'pci')
+    iCqi = findCol(header, 'cqi')
   }
 
   if (iLat < 0 || iLng < 0 || iPrimary < 0) {
@@ -174,6 +176,7 @@ export function parseTemplateRows(rows: string[][], tech: DtTech): DtSample[] {
       sinr: null,
       dl: null,
       pci: null,
+      cqi: null,
       serving_site_id: null,
       serving_site_name: null,
       serving_sector: null,
@@ -201,6 +204,10 @@ export function parseTemplateRows(rows: string[][], tech: DtTech): DtSample[] {
       if (iPci >= 0) {
         const v = parseInt(row[iPci], 10)
         if (Number.isFinite(v)) rec.pci = v
+      }
+      if (iCqi >= 0) {
+        const v = parseInt(row[iCqi], 10)
+        if (Number.isFinite(v)) rec.cqi = v
       }
     } else if (tech === '3G') {
       rec.rscp = primary
