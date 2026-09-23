@@ -769,6 +769,18 @@ export interface OptimizationActivitySessionLink {
   note: string
 }
 
+// One entry of OptimizationActivitySerializer.get_resolved_issues() --
+// the Issue-mediated trace back to a vendor report (only ever populated
+// for a RECOMMENDATION-derived Issue; see OptimizationActivity.source_report's
+// own docstring in models.py for the more common change-log path, which
+// this type's sibling fields below (source_report/antenna_changes) cover
+// instead).
+export interface OptimizationActivityResolvedIssue {
+  id: number
+  title: string
+  source_report: { id: number; lot_name: string } | null
+}
+
 // GET/POST /api/v2/dt-activities/ item shape (OptimizationActivitySerializer).
 export interface OptimizationActivity {
   id: number
@@ -778,6 +790,13 @@ export interface OptimizationActivity {
   created_at: string
   updated_at: string
   sessions: OptimizationActivitySessionLink[]
+  resolved_issues: OptimizationActivityResolvedIssue[]
+  // Direct vendor-report link (2026-09-23), managed via link_report() --
+  // see OptimizationActivity.source_report/antenna_changes' own
+  // docstrings in models.py for why this is separate from
+  // resolved_issues above.
+  source_report: { id: number; lot_name: string; network: string } | null
+  antenna_changes: SectorConfigChange[]
 }
 
 // POST /api/v2/dt-activities/ request body. `resolve_issue_id` (2026-09-14,
@@ -1037,6 +1056,11 @@ export interface RfOptimizationReport {
   antenna_changes_detail: SectorConfigChange[]
   attachments: RfReportAttachment[]
   recommendation_count: number
+  // Which OptimizationActivity(s) reference this report directly
+  // (2026-09-23) -- the reverse of OptimizationActivity.source_report,
+  // independent of recommendation_count above (which only counts
+  // recommendation-derived Issues, not this direct link).
+  activities: { id: number; name: string; session_count: number }[]
 }
 
 // POST /api/v2/rf-reports/ request body -- confirm-import.

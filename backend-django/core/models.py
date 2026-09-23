@@ -810,6 +810,32 @@ class OptimizationActivity(models.Model):
     created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # Direct link to the vendor RNO report this effort stems from
+    # (2026-09-23, "need to relate and manage vendor provided RNO
+    # report") — INDEPENDENT of Issue.source_report/resolved_by_activity
+    # below. That Issue-mediated path only ever fires for a
+    # RECOMMENDATION row (see RfOptimizationReport's own docstring); the
+    # other table the same importer already parses, SectorConfigChange
+    # (the actual antenna azimuth/tilt change-log — the thing a Pre/Post
+    # drive most often exists to verify), never gets an Issue at all, so
+    # an activity driven straight from a change-log entry had no way to
+    # reference its source report until now. 'RfOptimizationReport' is a
+    # forward reference (defined later in this file) — Django resolves
+    # the string at app-loading time same as every other quoted FK here.
+    source_report = models.ForeignKey(
+        'RfOptimizationReport', null=True, blank=True, on_delete=models.SET_NULL, related_name='activities'
+    )
+    # Which specific antenna change(s) this activity's drives verify — an
+    # activity can address more than one cell at a site in one effort, and
+    # a change can, in principle, be re-verified by more than one activity
+    # over time (e.g. a re-verify months later after a related complaint).
+    # Managed via OptimizationActivityViewSet.link_report(), not at
+    # creation — mirrors how sessions are attached any time after an
+    # activity exists, not just up front (see OptimizationActivitySession
+    # below), rather than resolve_issue_id's one-shot-at-creation rule.
+    antenna_changes = models.ManyToManyField(
+        'SectorConfigChange', blank=True, related_name='verifying_activities'
+    )
 
     class Meta:
         db_table = 'v2_optimization_activities'

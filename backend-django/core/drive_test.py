@@ -31,7 +31,9 @@ from .models import (
     DriveTestSessionAttachment,
     OptimizationActivity,
     OptimizationActivitySession,
+    RfOptimizationReport,
     Sector,
+    SectorConfigChange,
     Site,
 )
 from .serializers import (
@@ -666,7 +668,7 @@ class OptimizationActivityViewSet(
     serializer_class = OptimizationActivitySerializer
 
     def get_permissions(self):
-        if self.action in ('create', 'destroy', 'sessions'):
+        if self.action in ('create', 'destroy', 'sessions', 'link_report'):
             return [IsAuthenticated(), IsAdminOrSuperadmin()]
         return [IsAuthenticated()]
 
@@ -704,6 +706,42 @@ class OptimizationActivityViewSet(
             note=link_serializer.validated_data.get('note', ''),
         )
         return Response(OptimizationActivitySerializer(activity).data, status=201)
+
+    @action(detail=True, methods=['post'], url_path='link_report')
+    def link_report(self, request, pk=None):
+        """`POST /api/v2/dt-activities/<id>/link_report/` (2026-09-23,
+        "need to relate and manage vendor provided RNO report") — records
+        that this activity's drives verify a vendor RNO report's antenna
+        change-log entry (or entries), independent of the Issue-mediated
+        `resolve_issue_id` path (which only ever covers a RECOMMENDATION
+        row — see OptimizationActivity.source_report's own docstring in
+        models.py for why the change-log needs its own direct link).
+
+        Body: `{report: <id>, antenna_change_ids?: [<id>, ...]}`.
+        `source_report` is SET (replaced, like any other single-value
+        field) to the given report; `antenna_change_ids` (optional) are
+        ADDED to `antenna_changes` — additive, not a replace, matching
+        `sessions()` above's own "attach any time, never a wholesale
+        reset" convention (an activity can verify a second cell's change
+        discovered partway through the same effort without losing the
+        first one). Every id in `antenna_change_ids` must belong to the
+        given report — cross-report ids are silently ignored rather than
+        erroring, since that's most likely a stale id from switching which
+        report is selected in the picker, not a real request to link an
+        unrelated report's row.
+        """
+        activity = self.get_object()
+        report_id = request.data.get('report')
+        report = RfOptimizationReport.objects.filter(pk=report_id).first()
+        if report is None:
+            return Response({'report': ['A valid report id is required.']}, status=400)
+        activity.source_report = report
+        activity.save(update_fields=['source_report'])
+        change_ids = request.data.get('antenna_change_ids') or []
+        if change_ids:
+            changes = SectorConfigChange.objects.filter(pk__in=change_ids, report=report)
+            activity.antenna_changes.add(*changes)
+        return Response(OptimizationActivitySerializer(activity).data)
 
 
 class OptimizationActivitySessionDetailView(APIView):

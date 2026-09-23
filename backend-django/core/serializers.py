@@ -986,6 +986,35 @@ class OptimizationActivitySessionSerializer(serializers.ModelSerializer):
         fields = ['session', 'role', 'note']
 
 
+class SectorConfigChangeSerializer(serializers.ModelSerializer):
+    """Read shape for one SectorConfigChange row -- nested (read-only)
+    inside RfOptimizationReportSerializer below, and (2026-09-23) inside
+    OptimizationActivitySerializer's `antenna_changes` above it in this
+    file -- moved up here (was originally defined right before
+    RfOptimizationReportSerializer) so that class can reference it without
+    a forward-reference NameError, since Python evaluates a class body's
+    field assignments at import time, top to bottom."""
+    sector_label = serializers.SerializerMethodField()
+    site_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SectorConfigChange
+        fields = [
+            'id', 'sn', 'cell_name', 'sector', 'sector_label', 'site_id',
+            'before_change', 'after_change', 'result', 'antenna_type',
+            'antenna_shared_with', 'raw_row', 'created_at',
+        ]
+        read_only_fields = fields
+
+    def get_sector_label(self, obj):
+        if not obj.sector_id:
+            return None
+        return obj.sector.cell_name or obj.sector.sector
+
+    def get_site_id(self, obj):
+        return obj.sector.site_id if obj.sector_id else None
+
+
 class OptimizationActivitySerializer(serializers.ModelSerializer):
     """List/detail/create shape for one OptimizationActivity (2026-09-12
     — grouping a set of DriveTestSession rows into one named RF
@@ -1028,12 +1057,26 @@ class OptimizationActivitySerializer(serializers.ModelSerializer):
         queryset=Issue.objects.all(), source='resolve_issue', write_only=True, required=False,
         allow_null=True,
     )
+    # Read-only trace back to the vendor RNO report this activity resolves
+    # or verifies (2026-09-23, "need to relate and manage vendor provided
+    # RNO report") -- two independent paths, both surfaced here:
+    # `resolved_issues` (reverse of Issue.resolved_by_activity, only ever
+    # populated for a RECOMMENDATION-derived Issue) and `source_report`/
+    # `antenna_changes` (the direct link managed by
+    # OptimizationActivityViewSet.link_report(), for the more common
+    # change-log case that never goes through an Issue at all). Neither is
+    # writable here -- `resolved_issues` is set via resolve_issue_id
+    # above/a direct IssueSerializer PATCH, and source_report/
+    # antenna_changes only via link_report().
+    resolved_issues = serializers.SerializerMethodField()
+    source_report = serializers.SerializerMethodField()
+    antenna_changes = SectorConfigChangeSerializer(many=True, read_only=True)
 
     class Meta:
         model = OptimizationActivity
         fields = [
             'id', 'name', 'notes', 'created_by', 'created_at', 'updated_at', 'sessions',
-            'resolve_issue_id',
+            'resolve_issue_id', 'resolved_issues', 'source_report', 'antenna_changes',
         ]
 
     def create(self, validated_data):
@@ -1065,6 +1108,28 @@ class OptimizationActivitySerializer(serializers.ModelSerializer):
             }
             for link in links
         ]
+
+    def get_resolved_issues(self, obj):
+        return [
+            {
+                'id': issue.id,
+                'title': issue.title,
+                'source_report': (
+                    {'id': issue.source_report_id, 'lot_name': issue.source_report.lot_name}
+                    if issue.source_report_id else None
+                ),
+            }
+            for issue in obj.resolved_issues.select_related('source_report').all()
+        ]
+
+    def get_source_report(self, obj):
+        if not obj.source_report_id:
+            return None
+        return {
+            'id': obj.source_report_id,
+            'lot_name': obj.source_report.lot_name,
+            'network': obj.source_report.network,
+        }
 
 
 class IssueSerializer(serializers.ModelSerializer):
@@ -1132,30 +1197,6 @@ class IssueSerializer(serializers.ModelSerializer):
         if not obj.resolved_by_activity_id:
             return None
         return {'id': obj.resolved_by_activity_id, 'name': obj.resolved_by_activity.name}
-
-
-class SectorConfigChangeSerializer(serializers.ModelSerializer):
-    """Read shape for one SectorConfigChange row -- nested (read-only)
-    inside RfOptimizationReportSerializer below."""
-    sector_label = serializers.SerializerMethodField()
-    site_id = serializers.SerializerMethodField()
-
-    class Meta:
-        model = SectorConfigChange
-        fields = [
-            'id', 'sn', 'cell_name', 'sector', 'sector_label', 'site_id',
-            'before_change', 'after_change', 'result', 'antenna_type',
-            'antenna_shared_with', 'raw_row', 'created_at',
-        ]
-        read_only_fields = fields
-
-    def get_sector_label(self, obj):
-        if not obj.sector_id:
-            return None
-        return obj.sector.cell_name or obj.sector.sector
-
-    def get_site_id(self, obj):
-        return obj.sector.site_id if obj.sector_id else None
 
 
 class RfReportAttachmentSerializer(serializers.ModelSerializer):
@@ -1241,6 +1282,15 @@ class RfOptimizationReportSerializer(serializers.ModelSerializer):
     at that point, already visible on the existing Issues page/API via
     `source_report`, so duplicating them here would only be a second
     place the same data could drift out of sync.
+
+    `activities` (2026-09-23, "need to relate and manage vendor provided
+    RNO report") -- the OTHER direction of OptimizationActivity.source_report
+    (see that field's own docstring): which optimization efforts/drive
+    tests reference THIS report directly (independent of the recommendation
+    -> Issue -> resolved_by_activity chain `recommendation_count` above
+    counts). Closes the loop so a report's own page can link straight to
+    the drives that verified each change, not just show that a change was
+    imported.
     """
     antenna_changes = _AntennaChangeInputSerializer(many=True, write_only=True, required=False)
     recommendations = _RecommendationInputSerializer(many=True, write_only=True, required=False)
@@ -1248,6 +1298,7 @@ class RfOptimizationReportSerializer(serializers.ModelSerializer):
     attachments = RfReportAttachmentSerializer(many=True, read_only=True)
     imported_by_name = serializers.SerializerMethodField()
     recommendation_count = serializers.SerializerMethodField()
+    activities = serializers.SerializerMethodField()
 
     class Meta:
         model = RfOptimizationReport
@@ -1255,7 +1306,7 @@ class RfOptimizationReportSerializer(serializers.ModelSerializer):
             'id', 'lot_name', 'title', 'vendor', 'period_covered', 'network', 'notes',
             'imported_by', 'imported_by_name', 'imported_at',
             'antenna_changes', 'recommendations',
-            'antenna_changes_detail', 'attachments', 'recommendation_count',
+            'antenna_changes_detail', 'attachments', 'recommendation_count', 'activities',
         ]
         read_only_fields = ['imported_by', 'imported_at']
 
@@ -1266,6 +1317,12 @@ class RfOptimizationReportSerializer(serializers.ModelSerializer):
 
     def get_recommendation_count(self, obj):
         return obj.recommendation_issues.count()
+
+    def get_activities(self, obj):
+        return [
+            {'id': activity.id, 'name': activity.name, 'session_count': activity.session_links.count()}
+            for activity in obj.activities.all()
+        ]
 
     def create(self, validated_data):
         antenna_rows = validated_data.pop('antenna_changes', [])

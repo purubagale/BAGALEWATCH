@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { apiErrorMessage } from '../api/client'
 import {
   useConfirmRfReportImport, useDeleteRfReport, useParseRfReport, useRfReports,
@@ -10,6 +11,7 @@ import type {
 } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import SearchableSelect from '../components/SearchableSelect'
+import { DT_SESSION_HISTORY_PATH } from '../constants/opaqueRoutes'
 import { ISSUE_SEVERITY_LABELS, ISSUE_SEVERITY_ORDER } from '../lib/issueLabels'
 
 // Vendor RNO (Radio Network Optimization) report importer (2026-09-15
@@ -219,6 +221,33 @@ function ReportDetail({ report }: { report: RfOptimizationReport }) {
         Recommendations ({report.recommendation_count})
       </h3>
       <p className="muted">Each recommendation was imported as an Issue — see the Issues page to track them through to resolution.</p>
+
+      {/* Verified By (2026-09-23, "need to relate and manage vendor
+          provided RNO report") -- the other direction of
+          OptimizationActivity.source_report: which drive-test efforts
+          reference THIS report directly (see AttachActivityModal.tsx's
+          "Link vendor report" section, which is how this gets set).
+          Shown even when empty so it's discoverable rather than looking
+          like the feature doesn't exist. No per-activity deep link into
+          DT Session History exists yet (that page has no activity-scoped
+          filter), so this links to the page generally, not a
+          pre-filtered view. */}
+      <h3>Verified By ({report.activities.length})</h3>
+      {report.activities.length > 0 ? (
+        <ul className="plain-list">
+          {report.activities.map((a) => (
+            <li key={a.id}>
+              <strong>{a.name}</strong> — {a.session_count} linked session{a.session_count === 1 ? '' : 's'}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">
+          No optimization activity has linked to this report yet — see{' '}
+          <Link to={DT_SESSION_HISTORY_PATH}>DT Session History</Link>'s "Link" action to record which drives verify a
+          change here.
+        </p>
+      )}
 
       <h3>Attachments ({report.attachments.length})</h3>
       <ul className="plain-list">
