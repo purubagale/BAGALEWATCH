@@ -88,17 +88,19 @@ type SectorImportTech = '4G' | '3G' | '2G'
 // Second follow-up, same day ("Carrier, Site Band, Cell Active Status,
 // Site Existence need not to be displayed in 4g tab. For 3g... Site
 // Band... not needed because it is operating in only one band. For
-// 2g[,] Active Status, Site Existence not needed") — per-tech column set,
-// matching SiteDetailPage.tsx's SECTOR_EXTRA_COLUMNS exactly so the
+// 2g[,] Active Status, Site Existence not needed" — then a further same-
+// day correction, "For 2g, carrier also is not needed") — per-tech column
+// set, matching SiteDetailPage.tsx's SECTOR_EXTRA_COLUMNS exactly so the
 // template a user downloads for a tab always matches what that tab
 // actually shows/needs: 4G gets none of the four; 3G gets Carrier only
-// (single-band, no Site Band); 2G gets Carrier + Site Band (2G genuinely
-// spans multiple bands here). Cell Active Status/Site Existence never
-// appear in any tech's template — declared not needed for all three.
-// Both are still optional on the parser/backend side regardless (a row
-// missing them is never an error, see SECTOR_FIELDS's `_coerce()` "blank
-// means leave alone" rule in site_import.py) — this only controls what
-// the DOWNLOADED template hands the user to fill in.
+// (single-band, no Site Band); 2G gets Site Band only (spans multiple
+// bands here, but doesn't need its own Carrier column). Cell Active
+// Status/Site Existence never appear in any tech's template — declared
+// not needed for all three. All four are still optional on the parser/
+// backend side regardless (a row missing them is never an error, see
+// SECTOR_FIELDS's `_coerce()` "blank means leave alone" rule in
+// site_import.py) — this only controls what the DOWNLOADED template hands
+// the user to fill in.
 const SECTOR_TEMPLATE_BASE_HEADER = [
   'Site ID', 'Cell Name', 'Sector', 'Local Cell ID', 'Latitude', 'Longitude',
   'Height (m)', 'Azimuth (deg)', 'MT (deg)', 'ET (deg)', 'PCI',
@@ -113,7 +115,7 @@ const SECTOR_TEMPLATE_BASE_SAMPLE: Record<SectorImportTech, string[]> = {
 const SECTOR_TEMPLATE_EXTRA: Record<SectorImportTech, [string, string][]> = {
   '4G': [],
   '3G': [['Carrier', 'Single Carrier']],
-  '2G': [['Carrier', 'Single Carrier'], ['Site Band', 'G900']],
+  '2G': [['Site Band', 'G900']],
 }
 
 function downloadSectorTemplate(tech: SectorImportTech) {
@@ -155,7 +157,17 @@ function SectorImportSlot({ tech, label }: { tech: SectorImportTech; label: stri
     setError(null)
     setResult(null)
     try {
-      const raw = await readFileRows(file, 'sector')
+      // Sheet hint is the TECH ('4G'/'3G'/'2G'), not the generic 'sector'
+      // string (2026-09-23) — now that exports.py's "Sector Data" download
+      // produces three separate sheets ("4G Sector Data"/"3G Sector
+      // Data"/"2G Sector Data"), a plain 'sector' hint would match all
+      // three (each name contains "sector") and readXlsxRows's
+      // find()-first-match would always resolve to the 4G sheet regardless
+      // of which slot the file was dropped into. A single-sheet file
+      // (the common case — a hand-built CSV/XLSX with no tech in its sheet
+      // name) is unaffected: the hint just won't match anything, and
+      // readXlsxRows already falls back to that file's only sheet.
+      const raw = await readFileRows(file, tech)
       const records = parseSectorRows(raw)
       if (!records.length) throw new Error('No rows with a Site ID and Cell Name were found in this file.')
       setRows(records)

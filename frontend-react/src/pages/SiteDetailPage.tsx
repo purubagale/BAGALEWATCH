@@ -100,9 +100,10 @@ const SECTOR_COLUMNS: [keyof SectorWrite, string][] = [
   // manual editing here. 'carrier'/'site_band' stay editable for every
   // row regardless of that row's own tech — this flat edit-mode table has
   // one shared column set across all sectors at once (unlike the read-mode
-  // table's per-tech tabs just below), and both fields are still needed
-  // for AT LEAST one tech (carrier for 3G/2G, site_band for 2G only — see
-  // SECTOR_EXTRA_COLUMNS' own docstring).
+  // table's per-tech tabs just below), and each is still needed for
+  // exactly one tech (carrier for 3G only, site_band for 2G only — see
+  // SECTOR_EXTRA_COLUMNS' own docstring; 2G's own follow-up, "carrier also
+  // is not needed," removed it from the 2G tab specifically).
   ['carrier', 'Carrier'],
   ['site_band', 'Site Band'],
 ]
@@ -116,15 +117,18 @@ const NON_NUMERIC_SECTOR_KEYS: (keyof SectorWrite)[] = [
 // above: "Carrier, Site Band, Cell Active Status, Site Existence need not
 // to be displayed in 4g tab. For 3g... Site Band... not needed because it
 // is operating in only one band. For 2g[,] Active Status, Site Existence
-// not needed."). Net effect: Cell Active Status/Site Existence are gone
-// from every tab (not needed by any tech, per that same message); Carrier
-// shows for 3G and 2G (not 4G); Site Band shows for 2G only (2G genuinely
-// operates across multiple bands — 900/1800 — unlike this network's
-// single-band 3G).
+// not needed" — then a same-day correction, "For 2g, carrier also is not
+// needed"). Net effect: Cell Active Status/Site Existence are gone from
+// every tab; Carrier shows for 3G only; Site Band shows for 2G only (2G
+// genuinely operates across multiple bands — 900/1800 — unlike this
+// network's single-band 3G, and doesn't need a Carrier column at all).
+// 4G needs neither. Mirrors exports.py's per-tech sheets in
+// _build_sector_data_workbook exactly, and BackupPage.tsx's per-tech
+// upload templates (SECTOR_TEMPLATE_EXTRA).
 const SECTOR_EXTRA_COLUMNS: Record<KpiTech, { key: 'carrier' | 'site_band'; label: string }[]> = {
   '4G': [],
   '3G': [{ key: 'carrier', label: 'Carrier' }],
-  '2G': [{ key: 'carrier', label: 'Carrier' }, { key: 'site_band', label: 'Site Band' }],
+  '2G': [{ key: 'site_band', label: 'Site Band' }],
 }
 
 function toNum(v: unknown): number | null {
