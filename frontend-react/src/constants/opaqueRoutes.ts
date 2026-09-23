@@ -115,6 +115,10 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // migration 0062_seed_rf_reports_menuitem.py -- keep this in sync
   // with that file, same convention as every other entry.
   '/rf-reports': '/g3q7nx',
+  // DT Plot Catalog (2026-09-23) -- seeded server-side by migration
+  // 0067_seed_dt_plot_catalog_menuitem.py -- keep this in sync with that
+  // file, same convention as every other entry.
+  '/dt-plot-catalog': '/k9d4wr',
 }
 
 export const DASHBOARD_PATH = OPAQUE_PATHS['/dashboard']
@@ -123,9 +127,12 @@ export const SITES_PATH = OPAQUE_PATHS['/sites']
 // successful save, so it needs the real path rather than just the
 // old descriptive one used as this map's key.
 export const DT_SESSION_HISTORY_PATH = OPAQUE_PATHS['/dt-session-history']
+// DtPlotCatalogPage.tsx links 'available' rows straight into DT Explore.
+export const DT_EXPLORE_PATH = OPAQUE_PATHS['/dt-explore']
 // SiteDetailPage.tsx's Antenna Change History section (2026-09-23) links
 // each imported change back to its source report.
 export const RF_REPORTS_PATH = OPAQUE_PATHS['/rf-reports']
+export const DT_PLOT_CATALOG_PATH = OPAQUE_PATHS['/dt-plot-catalog']
 
 /** Maps a pathname's top-level segment back to its ORIGINAL descriptive
  * name (e.g. both `/sites` and its alias `/e6t2pv` normalize to
