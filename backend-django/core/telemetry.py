@@ -243,6 +243,9 @@ def coerce_sample(raw, received_at):
         'rx_qual': _i16(raw.get('rx_qual')),
         'rscp_dbm': _i16(raw.get('rscp_dbm')),
         'ecio_db': _i16(raw.get('ecio_db')),
+        # cqi (2026-09-15) -- LTE/NR-only Channel Quality Indicator, 0-15,
+        # higher is better. See models.py's TelemetrySample.cqi comment.
+        'cqi': _i16(raw.get('cqi')),
         'battery_pct': _i16(raw.get('battery_pct')),
         'trigger_reason': tr if tr in _TRIGGERS else 'periodic',
         'region': '',
@@ -255,7 +258,7 @@ _COPY_COLS = (
     'device_id', 'ts', 'received_at', 'lat', 'lng', 'location', 'gps_accuracy_m',
     'cell_id', 'pci', 'tac', 'mcc', 'mnc', 'network_type',
     'rsrp_dbm', 'rsrq_db', 'rssi_dbm', 'sinr_db', 'rx_qual', 'rscp_dbm', 'ecio_db',
-    'battery_pct', 'trigger_reason', 'region',
+    'battery_pct', 'trigger_reason', 'region', 'cqi',
 )
 _COPY_SQL = 'COPY v2_telemetry_samples (' + ', '.join(_COPY_COLS) + ') FROM STDIN WITH (FORMAT text)'
 
@@ -352,6 +355,7 @@ def bulk_insert_samples(rows):
             _cf(r['rsrp_dbm']), _cf(r['rsrq_db']), _cf(r['rssi_dbm']), _cf(r['sinr_db']),
             _cf(r['rx_qual']), _cf(r['rscp_dbm']), _cf(r['ecio_db']),
             _cf(r['battery_pct']), _cf(r['trigger_reason']), _cf(r['region']),
+            _cf(r['cqi']),
         )) + '\n')
     buf.seek(0)
     with connection.cursor() as cur:

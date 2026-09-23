@@ -18,12 +18,19 @@ from .models import (
     DriveTestSample,
     DriveTestSession,
     DriveTestSessionAttachment,
+    Issue,
     KpiThreshold,
     LiveSiteSource,
     MenuItem,
     MenuPermission,
+    OptimizationActivity,
+    OptimizationActivitySession,
+    RfOptimizationReport,
+    RfReportAttachment,
     Sector,
+    SectorConfigChange,
     Site,
+    TelemetryCoverageBin,
     TreeFolder,
 )
 
@@ -618,7 +625,7 @@ class DriveTestSampleSerializer(serializers.ModelSerializer):
     class Meta:
         model = DriveTestSample
         fields = [
-            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci',
+            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'cqi',
             'serving_site_id', 'serving_site_name', 'serving_sector', 'serving_cell_name',
             'serving_local_cell_id', 'serving_dist_km', 'cell_role', 'rx_qual',
             'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
@@ -628,7 +635,7 @@ class DriveTestSampleSerializer(serializers.ModelSerializer):
 _DT_SAMPLE_FLOAT_FIELDS = (
     'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'serving_dist_km', 'rx_qual', 'rscp', 'ecno',
 )
-_DT_SAMPLE_INT_FIELDS = ('pci', 'serving_local_cell_id', 'bcch', 'bsic', 'scrambling_code')
+_DT_SAMPLE_INT_FIELDS = ('pci', 'cqi', 'serving_local_cell_id', 'bcch', 'bsic', 'scrambling_code')
 # name -> (max_length, nullable) — mirrors the model's CharField columns.
 _DT_SAMPLE_STR_FIELDS = {
     'ts': (32, False), 'date': (16, False),
@@ -710,6 +717,7 @@ _DT_COPY_COLUMNS = (
     'serving_site_id', 'serving_site_name', 'serving_sector', 'serving_cell_name',
     'serving_local_cell_id', 'serving_dist_km', 'cell_role', 'rx_qual',
     'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
+    'cqi',
 )
 _DT_COPY_SQL = (
     'COPY v2_dt_samples (' + ', '.join(_DT_COPY_COLUMNS) + ') FROM STDIN WITH (FORMAT text)'
@@ -758,6 +766,7 @@ def _bulk_insert_dt_samples(session_id, rows):
             _copy_field(r['bcch']), _copy_field(r['bsic']),
             _copy_field(r['rscp']), _copy_field(r['ecno']),
             _copy_field(r['scrambling_code']),
+            _copy_field(r['cqi']),
         )) + '\n')
     buf.seek(0)
     with connection.cursor() as cur:
@@ -789,7 +798,7 @@ class DriveTestSamplePlotSerializer(serializers.ModelSerializer):
     class Meta:
         model = DriveTestSample
         fields = [
-            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci',
+            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'cqi',
             'serving_site_name', 'rx_qual', 'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
             # serving-cell attribution (dt_serving_cell.py): serving_site_id
             # keys the per-session /serving-cells/ lookup that the coverage
@@ -811,18 +820,54 @@ class DriveTestSessionListSerializer(serializers.ModelSerializer):
     # annotated in the view's queryset (a Subquery, not a second Count(),
     # see drive_test.py's _attachment_count_expr() docstring for why).
     attachment_count = serializers.IntegerField(read_only=True)
+    # Which OptimizationActivity effort(s) this session is part of, if any
+    # (2026-09-12) — lets the History table badge a row ("part of:
+    # <activity name> (baseline)") without a second per-row fetch. Relies
+    # on DriveTestSessionViewSet.queryset's
+    # `.prefetch_related('activity_links__activity')` for this to stay
+    # one extra query for the whole list rather than one per session --
+    # see that queryset's own comment.
+    activities = serializers.SerializerMethodField()
 
     class Meta:
         model = DriveTestSession
         fields = [
             'id', 'name', 'tech', 'date', 'uploaded_date', 'saved_at',
             'uploaded_by_name', 'meta', 'size_bytes', 'sample_count', 'remarks', 'attachment_count',
+            'activities',
         ]
 
     def get_uploaded_by_name(self, obj):
         if not obj.uploaded_by_id:
             return None
         return obj.uploaded_by.name or obj.uploaded_by.username
+
+    def get_activities(self, obj):
+        return [
+            {'id': link.activity_id, 'name': link.activity.name, 'role': link.role}
+            for link in obj.activity_links.all()
+        ]
+
+
+class SiteDtSessionSerializer(serializers.ModelSerializer):
+    """Trimmed sibling of DriveTestSessionListSerializer, for
+    SiteViewSet.dt_sessions() (`GET /api/v2/sites/<id>/dt-sessions/`) --
+    the Site Detail page's "Drive Tests Near This Site" panel. Deliberately
+    NOT the full list serializer: this is a small summary panel embedded
+    in a site page, not the History table, so it skips uploaded_by_name,
+    meta (the whole nearby_site_ids payload this query is matching
+    against, irrelevant to display), size_bytes and attachment_count --
+    the last of which specifically needs a correlated Subquery annotation
+    (drive_test.py's _attachment_count_expr()) that lives in drive_test.py,
+    which itself imports IsAdminOrSuperadmin FROM views.py -- importing
+    that expression here (or into views.py, where this action lives)
+    would create a views.py <-> drive_test.py circular import. Not worth
+    it for one extra count column on a summary panel."""
+    sample_count = serializers.IntegerField(read_only=True)  # annotated in the view's queryset
+
+    class Meta:
+        model = DriveTestSession
+        fields = ['id', 'name', 'tech', 'date', 'uploaded_date', 'saved_at', 'sample_count']
 
 
 # Keep in sync with the frontend's dtBands.MAX_MAP_DOTS. Every DT map
@@ -920,6 +965,327 @@ class DriveTestSessionNearSerializer(DriveTestSessionListSerializer):
 
     class Meta(DriveTestSessionListSerializer.Meta):
         fields = DriveTestSessionListSerializer.Meta.fields + ['samples']
+
+
+class OptimizationActivitySessionSerializer(serializers.ModelSerializer):
+    """Write shape for OptimizationActivityViewSet's `sessions` attach
+    action's request body -- `session` is the existing DriveTestSession
+    being linked (by id), `role`/`note` describe how it fits into the
+    activity (see OptimizationActivitySession's docstring in models.py).
+    Not used for reading -- the activity detail's own nested `sessions`
+    field (OptimizationActivitySerializer.get_sessions below) is a
+    hand-built dict shape richer than this write serializer, including
+    session name/tech/date pulled in from the linked DriveTestSession."""
+    session = serializers.PrimaryKeyRelatedField(queryset=DriveTestSession.objects.all())
+
+    class Meta:
+        model = OptimizationActivitySession
+        fields = ['session', 'role', 'note']
+
+
+class OptimizationActivitySerializer(serializers.ModelSerializer):
+    """List/detail/create shape for one OptimizationActivity (2026-09-12
+    — grouping a set of DriveTestSession rows into one named RF
+    optimization effort; see OptimizationActivity's docstring in
+    models.py for the before/after/re-verify workflow this exists for).
+
+    N+1 tradeoff on `sessions` below: deliberately a plain per-object
+    `.select_related('session').all()` query on `session_links` here in
+    the serializer, NOT a `Prefetch` added to
+    OptimizationActivityViewSet.queryset. An activity typically links
+    2-5 sessions (one baseline, one or two after-change/re-verify runs)
+    and the list of activities itself is expected to stay small (one row
+    per real optimization effort someone bothered to name, not one per
+    drive test) -- so this is at most a handful of extra small indexed
+    queries per request, not a per-session-row multiplication problem
+    like the attachment/sample count annotations in drive_test.py had to
+    solve for a table that can hold tens of thousands of rows. If
+    activity volume ever grows enough for this to matter, swap in
+    `Prefetch('session_links', queryset=OptimizationActivitySession
+    .objects.select_related('session'))` on the viewset queryset without
+    changing this method's body at all.
+
+    `resolve_issue_id` (2026-09-14, write-only): optional id of an
+    existing Issue (see models.py) this activity resolves. Same
+    create()-side-effect pattern DriveTestSessionWriteSerializer.create()
+    already uses for nearby-site tagging above, rather than a second
+    dedicated attach endpoint like the `sessions` action below uses for
+    DriveTestSession links -- an activity resolves AT MOST one Issue
+    (unlike the several DriveTestSession links `sessions` manages), so a
+    single optional field on the same create call it's decided at is
+    simpler than a whole extra action for a one-shot, create-time-only
+    choice. Only usable at creation: OptimizationActivityViewSet has no
+    update/partial_update at all (see its own docstring) -- undoing or
+    reassigning this link is a direct PATCH to IssueSerializer's own
+    `resolved_by_activity`/`status` fields instead.
+    """
+    created_by = serializers.SerializerMethodField()
+    sessions = serializers.SerializerMethodField()
+    resolve_issue_id = serializers.PrimaryKeyRelatedField(
+        queryset=Issue.objects.all(), source='resolve_issue', write_only=True, required=False,
+        allow_null=True,
+    )
+
+    class Meta:
+        model = OptimizationActivity
+        fields = [
+            'id', 'name', 'notes', 'created_by', 'created_at', 'updated_at', 'sessions',
+            'resolve_issue_id',
+        ]
+
+    def create(self, validated_data):
+        issue = validated_data.pop('resolve_issue', None)
+        activity = super().create(validated_data)
+        if issue is not None:
+            issue.resolved_by_activity = activity
+            issue.status = 'resolved'
+            issue.resolved_at = timezone.now()
+            issue.save(update_fields=['resolved_by_activity', 'status', 'resolved_at', 'updated_at'])
+        return activity
+
+    def get_created_by(self, obj):
+        if not obj.created_by_id:
+            return None
+        return obj.created_by.name or obj.created_by.username
+
+    def get_sessions(self, obj):
+        links = obj.session_links.select_related('session').all()
+        return [
+            {
+                'link_id': link.id,
+                'session_id': link.session_id,
+                'session_name': link.session.name,
+                'tech': link.session.tech,
+                'date': link.session.date,
+                'role': link.role,
+                'note': link.note,
+            }
+            for link in links
+        ]
+
+
+class IssueSerializer(serializers.ModelSerializer):
+    """List/detail/create/update shape for one Issue (2026-09-14 site/
+    sector issue tracker; see Issue's docstring in models.py). Follows
+    OptimizationActivitySerializer's own pattern immediately above:
+    read-only human-friendly representations for every FK
+    (site/sector/assignee/created_by/resolved_by_activity) alongside the
+    plain writable id fields DRF gives every ModelSerializer FK by
+    default (`site`, `sector`, `assignee`, `created_by`,
+    `resolved_by_activity` all still accept a plain pk on write -- these
+    *_name/*_label fields are additive, read-only sidecars, not a
+    replacement for them).
+
+    `resolved_by_activity`/`status`/`resolved_at` are all writable here
+    directly (unlike OptimizationActivity's own session links, which go
+    through a dedicated attach action) -- an Issue's link to the
+    activity that resolved it is simple enough (a single nullable FK,
+    not a many-to-many join with per-link metadata) to set directly via
+    PATCH. The *normal* way this link gets set, though, is the other
+    direction: picking an existing open Issue while creating/editing an
+    OptimizationActivity (see OptimizationActivityViewSet.perform_create/
+    perform_update in drive_test.py), which also takes care of moving
+    `status` to 'resolved' and stamping `resolved_at` -- a direct PATCH
+    to this serializer is the fallback for correcting/undoing that by
+    hand.
+    """
+    site_name = serializers.SerializerMethodField()
+    sector_label = serializers.SerializerMethodField()
+    assignee_name = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+    resolved_by_activity_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Issue
+        fields = [
+            'id', 'site', 'site_name', 'sector', 'sector_label', 'title', 'description',
+            'status', 'severity', 'assignee', 'assignee_name', 'created_by', 'created_by_name',
+            'resolved_by_activity', 'resolved_by_activity_name', 'created_at', 'updated_at',
+            'resolved_at',
+        ]
+        read_only_fields = ['created_by', 'created_at', 'updated_at']
+
+    def get_site_name(self, obj):
+        if not obj.site_id:
+            return None
+        return obj.site.name or obj.site_id
+
+    def get_sector_label(self, obj):
+        if not obj.sector_id:
+            return None
+        return obj.sector.cell_name or obj.sector.sector
+
+    def get_assignee_name(self, obj):
+        if not obj.assignee_id:
+            return None
+        return obj.assignee.name or obj.assignee.username
+
+    def get_created_by_name(self, obj):
+        if not obj.created_by_id:
+            return None
+        return obj.created_by.name or obj.created_by.username
+
+    def get_resolved_by_activity_name(self, obj):
+        if not obj.resolved_by_activity_id:
+            return None
+        return {'id': obj.resolved_by_activity_id, 'name': obj.resolved_by_activity.name}
+
+
+class SectorConfigChangeSerializer(serializers.ModelSerializer):
+    """Read shape for one SectorConfigChange row -- nested (read-only)
+    inside RfOptimizationReportSerializer below."""
+    sector_label = serializers.SerializerMethodField()
+    site_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SectorConfigChange
+        fields = [
+            'id', 'sn', 'cell_name', 'sector', 'sector_label', 'site_id',
+            'before_change', 'after_change', 'result', 'antenna_type',
+            'antenna_shared_with', 'raw_row', 'created_at',
+        ]
+        read_only_fields = fields
+
+    def get_sector_label(self, obj):
+        if not obj.sector_id:
+            return None
+        return obj.sector.cell_name or obj.sector.sector
+
+    def get_site_id(self, obj):
+        return obj.sector.site_id if obj.sector_id else None
+
+
+class RfReportAttachmentSerializer(serializers.ModelSerializer):
+    """Read shape for one RfReportAttachment -- same pattern as
+    DriveTestSessionAttachmentSerializer above. `url` points at
+    RfReportAttachmentDetailView (a flat download endpoint, see its own
+    docstring in rf_reports.py) rather than the stored file's raw
+    storage URL -- every attachment is gzip-compressed on disk since
+    2026-09-15 (`is_compressed`), so the raw storage URL alone would
+    just serve gzip bytes with the wrong filename; the download endpoint
+    decompresses transparently and sets the real filename."""
+    url = serializers.SerializerMethodField()
+    uploaded_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RfReportAttachment
+        fields = [
+            'id', 'original_filename', 'category', 'url', 'is_compressed',
+            'size_bytes', 'uploaded_by_name', 'uploaded_at',
+        ]
+
+    def get_url(self, obj):
+        request = self.context.get('request')
+        path = f'/api/v2/rf-reports/{obj.report_id}/attachments/{obj.id}/download/'
+        return request.build_absolute_uri(path) if request is not None else path
+
+    def get_uploaded_by_name(self, obj):
+        if not obj.uploaded_by_id:
+            return None
+        return obj.uploaded_by.name or obj.uploaded_by.username
+
+
+class _AntennaChangeInputSerializer(serializers.Serializer):
+    """Write-only shape for one reviewed antenna-change-log row on
+    RfOptimizationReportSerializer.create() below. Deliberately
+    permissive (every text field optional/blank) -- this is
+    user-reviewed data from the parse-preview step, already editable in
+    the frontend before it ever reaches here, not raw unvalidated
+    document content."""
+    sn = serializers.IntegerField(required=False, allow_null=True)
+    cell_name = serializers.CharField(required=False, allow_blank=True, default='')
+    sector = serializers.PrimaryKeyRelatedField(queryset=Sector.objects.all(), required=False, allow_null=True, default=None)
+    before_change = serializers.CharField(required=False, allow_blank=True, default='')
+    after_change = serializers.CharField(required=False, allow_blank=True, default='')
+    result = serializers.CharField(required=False, allow_blank=True, default='')
+    antenna_type = serializers.CharField(required=False, allow_blank=True, default='')
+    antenna_shared_with = serializers.CharField(required=False, allow_blank=True, default='')
+    raw_row = serializers.JSONField(required=False, allow_null=True, default=None)
+
+
+class _RecommendationInputSerializer(serializers.Serializer):
+    """Write-only shape for one reviewed recommendation row -- becomes
+    one Issue with `source_report` set to this import (see Issue's
+    docstring in models.py). `site` is REQUIRED here -- unlike the
+    parse-preview suggestion, which can come back null for a genuinely
+    new proposed site/sector with no existing counterpart yet -- because
+    Issue.site is a mandatory FK; the review UI must resolve every
+    recommendation row to some existing site (the nearest real one, for
+    a brand-new site proposal) before this will accept it."""
+    site = serializers.PrimaryKeyRelatedField(queryset=Site.objects.all())
+    sector = serializers.PrimaryKeyRelatedField(queryset=Sector.objects.all(), required=False, allow_null=True, default=None)
+    title = serializers.CharField()
+    description = serializers.CharField(required=False, allow_blank=True, default='')
+    severity = serializers.ChoiceField(choices=Issue.SEVERITY_CHOICES, required=False, default='medium')
+
+
+class RfOptimizationReportSerializer(serializers.ModelSerializer):
+    """List/detail/create shape for one imported vendor RNO report (see
+    RfOptimizationReport's docstring in models.py). `antenna_changes`/
+    `recommendations` are write-only nested lists on create -- the
+    frontend's reviewed parse-preview result -- and `create()` persists
+    the parent report plus every child row: antenna-change rows become
+    SectorConfigChange rows, recommendation rows each become an ordinary
+    Issue with `source_report` set to this report (2026-09-15 scope
+    decision: recommendations reuse the existing Issue tracker rather
+    than a dedicated model, so they show up on the same Issues
+    list/page everyone already uses, filterable there like any other
+    issue).
+
+    On read, `antenna_changes_detail` is the real nested
+    SectorConfigChangeSerializer list. Recommendation rows are
+    deliberately NOT nested back here on read -- they're just Issue rows
+    at that point, already visible on the existing Issues page/API via
+    `source_report`, so duplicating them here would only be a second
+    place the same data could drift out of sync.
+    """
+    antenna_changes = _AntennaChangeInputSerializer(many=True, write_only=True, required=False)
+    recommendations = _RecommendationInputSerializer(many=True, write_only=True, required=False)
+    antenna_changes_detail = SectorConfigChangeSerializer(source='antenna_changes', many=True, read_only=True)
+    attachments = RfReportAttachmentSerializer(many=True, read_only=True)
+    imported_by_name = serializers.SerializerMethodField()
+    recommendation_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RfOptimizationReport
+        fields = [
+            'id', 'lot_name', 'title', 'vendor', 'period_covered', 'network', 'notes',
+            'imported_by', 'imported_by_name', 'imported_at',
+            'antenna_changes', 'recommendations',
+            'antenna_changes_detail', 'attachments', 'recommendation_count',
+        ]
+        read_only_fields = ['imported_by', 'imported_at']
+
+    def get_imported_by_name(self, obj):
+        if not obj.imported_by_id:
+            return None
+        return obj.imported_by.name or obj.imported_by.username
+
+    def get_recommendation_count(self, obj):
+        return obj.recommendation_issues.count()
+
+    def create(self, validated_data):
+        antenna_rows = validated_data.pop('antenna_changes', [])
+        recommendation_rows = validated_data.pop('recommendations', [])
+        report = RfOptimizationReport.objects.create(**validated_data)
+
+        if antenna_rows:
+            SectorConfigChange.objects.bulk_create([
+                SectorConfigChange(report=report, **row) for row in antenna_rows
+            ])
+
+        if recommendation_rows:
+            request = self.context.get('request')
+            created_by = request.user if request and request.user.is_authenticated else None
+            Issue.objects.bulk_create([
+                Issue(
+                    site=row['site'], sector=row.get('sector'), title=row['title'],
+                    description=row.get('description', ''), severity=row.get('severity', 'medium'),
+                    created_by=created_by, source_report=report,
+                )
+                for row in recommendation_rows
+            ])
+        return report
 
 
 # ~1km nearby-site tagging (2026-07-30 request) — "through this tag, it
@@ -1248,3 +1614,25 @@ class ExternalDtSessionCreateSerializer(serializers.Serializer):
     uploaded_date = serializers.DateField(required=False, allow_null=True)
     meta = serializers.JSONField(required=False, allow_null=True)
     samples = DriveTestSampleSerializer(many=True, required=False)
+
+
+class ExternalCoverageBinSerializer(serializers.ModelSerializer):
+    """`GET /api/external/v1/coverage/` (scope `coverage:read`) —
+    read-only, already-aggregated TelemetryCoverageBin rows. Deliberately
+    exposes ONLY rollup fields computed across many devices/samples
+    (geohash + center coordinates, mean/percentile signal, sample &
+    approx-device counts, time span) — TelemetryCoverageBin carries no
+    per-device or per-subscriber column at all (see the model's own
+    docstring: raw {position, signal} points are rolled up and dropped),
+    so there is nothing here that could re-identify a device or
+    subscriber, matching this API's existing Sites/DT read serializers'
+    "aggregated or already-public" posture."""
+
+    class Meta:
+        model = TelemetryCoverageBin
+        fields = [
+            'geohash', 'network_type', 'region', 'center_lat', 'center_lng',
+            'sample_count', 'device_count',
+            'rsrp_mean', 'rsrp_p10', 'rsrp_min', 'rsrq_mean', 'sinr_mean',
+            'first_ts', 'last_ts',
+        ]

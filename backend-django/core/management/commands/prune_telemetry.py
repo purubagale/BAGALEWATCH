@@ -49,7 +49,7 @@ _AGGREGATE_SQL = """
 INSERT INTO v2_telemetry_coverage_bins AS b
   (geohash, network_type, mnc, region, center_lat, center_lng,
    sample_count, device_count, rsrp_mean, rsrp_p10, rsrp_min,
-   rsrq_mean, sinr_mean, first_ts, last_ts, updated_at)
+   rsrq_mean, sinr_mean, cqi_mean, first_ts, last_ts, updated_at)
 SELECT
   gh,
   network_type,
@@ -64,12 +64,13 @@ SELECT
   min(rsrp_dbm),
   avg(rsrq_db),
   avg(sinr_db),
+  avg(cqi),
   min(ts),
   max(ts),
   now()
 FROM (
   SELECT ST_GeoHash(location::geometry, 7) AS gh,
-         network_type, mnc, device_id, region, rsrp_dbm, rsrq_db, sinr_db, ts
+         network_type, mnc, device_id, region, rsrp_dbm, rsrq_db, sinr_db, cqi, ts
   FROM {part}
   WHERE location IS NOT NULL
     -- Skip whatever roll_telemetry_bins.py already merged (see this
@@ -105,6 +106,11 @@ ON CONFLICT (geohash, network_type, mnc) DO UPDATE SET
       WHEN b.sinr_mean IS NULL THEN EXCLUDED.sinr_mean
       WHEN EXCLUDED.sinr_mean IS NULL THEN b.sinr_mean
       ELSE (b.sinr_mean * b.sample_count + EXCLUDED.sinr_mean * EXCLUDED.sample_count)
+           / NULLIF(b.sample_count + EXCLUDED.sample_count, 0) END,
+  cqi_mean = CASE
+      WHEN b.cqi_mean IS NULL THEN EXCLUDED.cqi_mean
+      WHEN EXCLUDED.cqi_mean IS NULL THEN b.cqi_mean
+      ELSE (b.cqi_mean * b.sample_count + EXCLUDED.cqi_mean * EXCLUDED.sample_count)
            / NULLIF(b.sample_count + EXCLUDED.sample_count, 0) END,
   first_ts = LEAST(b.first_ts, EXCLUDED.first_ts),
   last_ts  = GREATEST(b.last_ts, EXCLUDED.last_ts),

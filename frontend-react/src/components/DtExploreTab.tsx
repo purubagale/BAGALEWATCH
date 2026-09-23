@@ -5,6 +5,8 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useDtServingCellsForSessions, useDtSessionsNear, useSites } from '../api/queries'
 import type { DtSample, DtServingCell, DtSessionDetail, DtTech, SiteListItem } from '../api/types'
+import { ACTIVITY_ROLE_LABELS } from './AttachActivityModal'
+import { clusterDtSessionsByArea, type DtSessionCluster } from '../lib/dtSessionClustering'
 import { ALL_TECHS, bandColor, subsampleForMap, type TaggedMetric } from '../lib/dtBands'
 import { useDtMetrics } from '../lib/useDtMetrics'
 import { haversineKm } from '../lib/dtTemplateParser'
@@ -670,6 +672,19 @@ export default function DtExploreTab() {
   const [error, setError] = useState<string | null>(null)
   const [sitesExpanded, setSitesExpanded] = useState(false)
   const [sessionsExpanded, setSessionsExpanded] = useState(false)
+  // "Latest per area" clustering, reused as-is from DT Session History
+  // (2026-09-13 follow-up to that page's 2026-09-12 feature -- same
+  // union-find grouping over meta.nearby_site_ids, see
+  // lib/dtSessionClustering.ts). Defaults OFF here, unlike History's
+  // default-ON: History's list spans every saved session across every
+  // area, where re-tests of one spot get buried among many unrelated
+  // areas' sessions. Explore's "Nearby Sessions" list is already scoped
+  // to one searched point/radius, so it's normally a small, already-
+  // relevant set an engineer wants to see in full -- clustering here is
+  // an opt-in for the busy, repeatedly-re-driven spot rather than the
+  // default.
+  const [latestOnly, setLatestOnly] = useState(false)
+  const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set())
   // "Open site detail" quickview (2026-08-05) — set by clicking either a
   // site marker on the map (NearSitesLayer's onSelect) or a row in the
   // "Nearby Sites" list below; same `.site-quickview` card SitesPage
@@ -733,6 +748,42 @@ export default function DtExploreTab() {
       .map((s) => ({ ...s, samples: s.samples.filter((r) => r.lat != null && r.lng != null && pointInPolygon(r.lat as number, r.lng as number, shape.points)) }))
       .filter((s) => s.samples.length > 0)
   }, [nearSessionsRaw, shape])
+
+  // "Latest per area" clustering over the currently-shown near-sessions
+  // list (see the latestOnly state comment above). Grouped by the same
+  // meta.nearby_site_ids union-find as History, computed here over just
+  // this search's results rather than every saved session.
+  const areaClusters = useMemo(() => clusterDtSessionsByArea(nearSessions), [nearSessions])
+  const areaClusterBySessionId = useMemo(() => {
+    const map = new Map<number, DtSessionCluster<DtSessionDetail>>()
+    for (const c of areaClusters) for (const s of c.sessions) map.set(s.id, c)
+    return map
+  }, [areaClusters])
+
+  // Same "keep first-seen cluster's latest, everything else stays one
+  // click away via its '+N earlier here' chip" logic as
+  // DtSessionHistoryPage.tsx's visibleSessions -- see that page for the
+  // full explanation. With latestOnly off this is just nearSessions
+  // unchanged.
+  const displaySessions = useMemo(() => {
+    if (!latestOnly) return nearSessions
+    const emitted = new Set<string>()
+    const result: typeof nearSessions = []
+    for (const s of nearSessions) {
+      const cluster = areaClusterBySessionId.get(s.id)
+      if (!cluster) {
+        result.push(s)
+        continue
+      }
+      if (emitted.has(cluster.key)) continue
+      emitted.add(cluster.key)
+      result.push(cluster.sessions[0])
+      if (cluster.sessions.length > 1 && expandedClusters.has(cluster.key)) {
+        result.push(...cluster.sessions.slice(1))
+      }
+    }
+    return result
+  }, [nearSessions, latestOnly, areaClusterBySessionId, expandedClusters])
 
   // Metric tabs track the tech filter above (RSRP/RSRQ/SINR only while 4G
   // is ticked, RSCP/Ec-Io only while 3G, RxLevel/RxQual only while 2G) —
@@ -807,7 +858,20 @@ export default function DtExploreTab() {
     setPoint({ lat: resolved.lat, lng: resolved.lng })
     setSitesExpanded(false)
     setSessionsExpanded(false)
+    setExpandedClusters(new Set())
     setSelectedSite(null)
+  }
+
+  // Expand/collapse one area cluster's older sessions (see the
+  // "+N earlier here" chip in the Nearby Sessions list below) -- same
+  // shape as DtSessionHistoryPage.tsx's toggleClusterExpanded.
+  function toggleClusterExpanded(key: string) {
+    setExpandedClusters((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
   function toggleTech(t: DtTech) {
@@ -997,16 +1061,67 @@ export default function DtExploreTab() {
             </div>
             <div className="dt-explore-list-col">
               <div className="dt-explore-list-title">Nearby Sessions ({nearSessions.length})</div>
+              {nearSessions.length > 0 && (
+                // "Latest only" toggle (2026-09-13), reusing
+                // .sites-active-toggle + clusterDtSessionsByArea exactly
+                // as DtSessionHistoryPage.tsx does -- see the latestOnly
+                // state comment above for why this defaults off here.
+                <label
+                  className="sites-active-toggle"
+                  style={{ marginBottom: 8 }}
+                  title="Show only the latest session for each drive-test area; older re-tests stay one click away"
+                >
+                  <input type="checkbox" checked={latestOnly} onChange={(e) => setLatestOnly(e.target.checked)} />
+                  <span className="sites-active-toggle-track"><span className="sites-active-toggle-thumb" /></span>
+                  Latest only
+                </label>
+              )}
               {!sessionsLoading && nearSessions.length === 0 && <div className="page-status">No saved drive-test coverage in this area.</div>}
-              {(sessionsExpanded ? nearSessions : []).map((s) => (
-                <div key={s.id} className="dt-dup-card">
-                  <div className="dt-dup-card-name">{s.name}</div>
-                  <div className="dt-dup-card-sub">{s.tech} · {s.date} · {s.samples.length} pts in area</div>
-                </div>
-              ))}
+              {(sessionsExpanded ? displaySessions : []).map((s) => {
+                // Cluster info only matters (and is only computed here)
+                // while "Latest only" is on -- same convention as
+                // DtSessionHistoryPage.tsx's visibleSessions.map().
+                const cluster = latestOnly ? areaClusterBySessionId.get(s.id) : undefined
+                const isClusterHead = !!cluster && cluster.sessions[0].id === s.id
+                const isClusterSibling = !!cluster && !isClusterHead
+                return (
+                  <div key={s.id} className={isClusterSibling ? 'dt-dup-card dt-cluster-child-row' : 'dt-dup-card'}>
+                    <div className="dt-dup-card-name">
+                      {isClusterSibling ? '↳ ' : ''}
+                      {s.name}
+                      {cluster && isClusterHead && cluster.sessions.length > 1 && (
+                        <button
+                          type="button"
+                          className="dt-cluster-chip"
+                          onClick={() => toggleClusterExpanded(cluster.key)}
+                          title="Older sessions saved for this same area"
+                        >
+                          {expandedClusters.has(cluster.key)
+                            ? 'Hide earlier sessions'
+                            : `+${cluster.sessions.length - 1} earlier here`}
+                        </button>
+                      )}
+                    </div>
+                    <div className="dt-dup-card-sub">{s.tech} · {s.date} · {s.samples.length} pts in area</div>
+                    {/* Optimization Activity badges (2026-09-13), same
+                        markup/classes as DtSessionHistoryPage.tsx --
+                        Explore only shows them (no "Attach to Activity"
+                        action here, that stays a History-only workflow). */}
+                    {s.activities.length > 0 && (
+                      <div className="dt-activity-badges">
+                        {s.activities.map((a) => (
+                          <span key={`${a.id}-${a.role}`} className="dt-activity-badge" title={`${a.name} · ${ACTIVITY_ROLE_LABELS[a.role]}`}>
+                            {a.name} · {ACTIVITY_ROLE_LABELS[a.role]}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
               {nearSessions.length > 0 && (
                 <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSessionsExpanded((v) => !v)}>
-                  {sessionsExpanded ? '▲ Show fewer' : `▼ Show all ${nearSessions.length} sessions`}
+                  {sessionsExpanded ? '▲ Show fewer' : `▼ Show all ${displaySessions.length} sessions`}
                 </button>
               )}
             </div>

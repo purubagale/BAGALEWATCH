@@ -1,13 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { apiErrorMessage } from '../api/client'
-import { useDeleteSite, useSite, useUpdateSite } from '../api/queries'
+import {
+  useCreateIssue,
+  useDeleteIssue,
+  useDeleteSite,
+  useIssues,
+  useSite,
+  useSiteDtSessions,
+  useUpdateIssue,
+  useUpdateSite,
+} from '../api/queries'
 import { isAllowed } from '../api/types'
-import type { Sector, SectorWrite, SiteDetail, SiteWrite } from '../api/types'
+import type { Issue, IssueSeverity, IssueStatus, Sector, SectorWrite, SiteDetail, SiteDtSession, SiteWrite } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
-import { SITES_PATH } from '../constants/opaqueRoutes'
+import { DT_SESSION_HISTORY_PATH, SITES_PATH } from '../constants/opaqueRoutes'
 import { useSearchModal } from '../contexts/SearchModalContext'
 import SiteLocationMiniMap from '../components/SiteLocationMiniMap'
+import { ISSUE_SEVERITY_LABELS, ISSUE_STATUS_LABELS, ISSUE_STATUS_ORDER } from '../lib/issueLabels'
 import { STATUS_COLOR, STATUS_LABELS } from '../lib/statusColor'
 
 const KPI_FIELDS: [keyof SiteWrite, string][] = [
@@ -207,14 +217,28 @@ export default function SiteDetailPage() {
   // page refresh silently reverting to "← Back to sites" instead.
   const fromSearch = searchParams.get('fromSearch') === '1'
   const { data: site, isLoading, error } = useSite(id)
+  const { data: nearbyDtSessions } = useSiteDtSessions(id)
   const updateSite = useUpdateSite(id || '')
   const deleteSite = useDeleteSite()
+  // Site Issues (2026-09-14) -- see Issue's docstring in the backend's
+  // core/models.py. Scoped to this site the same way nearbyDtSessions
+  // above is scoped -- server-side filtering, not a client-side filter
+  // over every issue in the system.
+  const { data: siteIssues } = useIssues(id ? { site: id } : undefined)
+  const createIssue = useCreateIssue()
+  const updateIssue = useUpdateIssue()
+  const deleteIssue = useDeleteIssue()
 
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<SiteWrite | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [kpiTech, setKpiTech] = useState<KpiTech>('4G')
   const sectorsSectionRef = useRef<HTMLElement>(null)
+  const [showAddIssue, setShowAddIssue] = useState(false)
+  const [newIssueTitle, setNewIssueTitle] = useState('')
+  const [newIssueDescription, setNewIssueDescription] = useState('')
+  const [newIssueSeverity, setNewIssueSeverity] = useState<IssueSeverity>('medium')
+  const [addIssueError, setAddIssueError] = useState<string | null>(null)
 
   // Tree row shortcut icons (2026-07-30, Sites page) navigate here with
   // ?edit=1 or ?addSector=1 instead of duplicating this page's own
@@ -393,8 +417,41 @@ export default function SiteDetailPage() {
     navigate(SITES_PATH)
   }
 
+  async function handleAddIssue() {
+    if (!id) return
+    if (!newIssueTitle.trim()) {
+      setAddIssueError('Title is required.')
+      return
+    }
+    setAddIssueError(null)
+    try {
+      await createIssue.mutateAsync({
+        site: id,
+        title: newIssueTitle.trim(),
+        description: newIssueDescription.trim(),
+        severity: newIssueSeverity,
+      })
+      setNewIssueTitle('')
+      setNewIssueDescription('')
+      setNewIssueSeverity('medium')
+      setShowAddIssue(false)
+    } catch (err) {
+      setAddIssueError(apiErrorMessage(err, 'Could not create issue.'))
+    }
+  }
+
+  function handleIssueStatusChange(issue: Issue, status: IssueStatus) {
+    updateIssue.mutate({ id: issue.id, issue: { status } })
+  }
+
+  async function handleDeleteIssue(issue: Issue) {
+    if (!window.confirm(`Delete issue "${issue.title}"? This cannot be undone.`)) return
+    await deleteIssue.mutateAsync(issue.id)
+  }
+
   const identitySource = editing && draft ? draft : site
   const realSectors = (editing ? draft?.sectors : site.sectors) ?? []
+  const canManageIssues = user?.role === 'superadmin' || user?.role === 'admin'
 
   return (
     <div className="site-detail-page">
@@ -770,6 +827,185 @@ export default function SiteDetailPage() {
           </>
         ) : (
           <div className="kpi-pane-empty">No sectors recorded for this site yet.</div>
+        )}
+      </section>
+
+      {/* -- Drive Tests Near This Site --------------------------------
+          2026-09-12 request: surface which DT sessions were driven near
+          this site right on the site page, instead of RF engineers
+          having to separately search DT Session History by site name.
+          Every DriveTestSession is already tagged at save time with
+          meta.nearby_site_ids (~1km of the session's route, computed
+          server-side -- see _nearby_site_ids() in the backend's
+          serializers.py), so useSiteDtSessions() just asks for sessions
+          tagged with THIS site's id -- no new schema needed. Shown even
+          when empty (a muted one-liner, not hidden) so the feature is
+          discoverable. */}
+      <section>
+        <div className="site-form-section">Drive Tests Near This Site</div>
+
+        {nearbyDtSessions && nearbyDtSessions.length > 0 ? (
+          <div className="sectors-table-wrap">
+            <table className="sectors-table">
+              <thead>
+                <tr>
+                  <th>Session</th>
+                  <th>Tech</th>
+                  <th>Date</th>
+                  <th>Samples</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {nearbyDtSessions.map((session: SiteDtSession, i: number) => (
+                  <tr key={session.id}>
+                    <td className="sector-cell-name">
+                      <Link to={`${DT_SESSION_HISTORY_PATH}?session=${session.id}`}>
+                        {session.name || `Session #${session.id}`}
+                      </Link>
+                    </td>
+                    <td>
+                      <span className={`sector-tech-badge ${techBadgeClass(session.tech)}`}>{session.tech || '4G'}</span>
+                    </td>
+                    <td>
+                      {session.date
+                        ? new Date(session.date).toLocaleDateString()
+                        : session.saved_at
+                          ? new Date(session.saved_at).toLocaleDateString()
+                          : '—'}
+                    </td>
+                    <td className="sector-cell-num">{session.sample_count}</td>
+                    <td>
+                      {i === 0 && <span className="dt-session-latest-badge">Latest</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="kpi-pane-empty">No drive tests recorded near this site yet.</div>
+        )}
+      </section>
+
+      {/* -- Site Issues -----------------------------------------------
+          2026-09-14 request: a lightweight problem tracker for this
+          site/its sectors, linked to OptimizationActivity (see Issue's
+          docstring in the backend's core/models.py). Same "shown even
+          when empty, discoverable rather than hidden" convention already
+          used for the Drive Tests section just above. */}
+      <section>
+        <div className="site-form-section">
+          Site Issues
+          {canManageIssues && !showAddIssue && (
+            <button
+              type="button"
+              className="btn-secondary btn-small"
+              style={{ marginLeft: 12 }}
+              onClick={() => setShowAddIssue(true)}
+            >
+              + New Issue
+            </button>
+          )}
+        </div>
+
+        {showAddIssue && (
+          <div className="edit-grid" style={{ marginBottom: 16 }}>
+            {addIssueError && <div className="form-error">{addIssueError}</div>}
+            <label>
+              Title
+              <input
+                type="text"
+                value={newIssueTitle}
+                onChange={(e) => setNewIssueTitle(e.target.value)}
+                placeholder="e.g. Persistent low RSRP complaint — Sector 2"
+                autoFocus
+              />
+            </label>
+            <label>
+              Description (optional)
+              <textarea
+                rows={2}
+                value={newIssueDescription}
+                onChange={(e) => setNewIssueDescription(e.target.value)}
+                placeholder="What was observed, and by whom…"
+              />
+            </label>
+            <label>
+              Severity
+              <select value={newIssueSeverity} onChange={(e) => setNewIssueSeverity(e.target.value as IssueSeverity)}>
+                {(Object.entries(ISSUE_SEVERITY_LABELS) as [IssueSeverity, string][]).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" className="btn-secondary btn-small" onClick={() => { setShowAddIssue(false); setAddIssueError(null) }} disabled={createIssue.isPending}>
+                Cancel
+              </button>
+              <button type="button" className="btn-primary btn-small" onClick={handleAddIssue} disabled={createIssue.isPending}>
+                {createIssue.isPending ? 'Saving…' : 'Save Issue'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {siteIssues && siteIssues.length > 0 ? (
+          <div className="sectors-table-wrap">
+            <table className="sectors-table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Severity</th>
+                  <th>Status</th>
+                  <th>Assignee</th>
+                  <th>Resolved By</th>
+                  <th>Created</th>
+                  {canManageIssues && <th />}
+                </tr>
+              </thead>
+              <tbody>
+                {siteIssues.map((issue: Issue) => (
+                  <tr key={issue.id}>
+                    <td className="sector-cell-name">
+                      {issue.title}
+                      {issue.description && <div className="muted">{issue.description}</div>}
+                    </td>
+                    <td>
+                      <span className={`issue-badge issue-${issue.severity}`}>{ISSUE_SEVERITY_LABELS[issue.severity]}</span>
+                    </td>
+                    <td>
+                      {canManageIssues ? (
+                        <select
+                          value={issue.status}
+                          onChange={(e) => handleIssueStatusChange(issue, e.target.value as typeof issue.status)}
+                          disabled={updateIssue.isPending}
+                        >
+                          {ISSUE_STATUS_ORDER.map((value) => (
+                            <option key={value} value={value}>{ISSUE_STATUS_LABELS[value]}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className={`issue-badge issue-${issue.status}`}>{ISSUE_STATUS_LABELS[issue.status]}</span>
+                      )}
+                    </td>
+                    <td>{issue.assignee_name ?? '—'}</td>
+                    <td>{issue.resolved_by_activity_name?.name ?? '—'}</td>
+                    <td>{new Date(issue.created_at).toLocaleDateString()}</td>
+                    {canManageIssues && (
+                      <td>
+                        <button type="button" className="btn-secondary btn-small" onClick={() => handleDeleteIssue(issue)}>
+                          Delete
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          !showAddIssue && <div className="kpi-pane-empty">No issues recorded for this site yet.</div>
         )}
       </section>
     </div>

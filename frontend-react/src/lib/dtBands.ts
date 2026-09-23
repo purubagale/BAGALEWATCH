@@ -76,6 +76,20 @@ export const RXQUAL_BANDS: Band[] = [
   { label: '>= 7', min: 7, max: 999, color: '#7f1d1d' },
 ]
 
+// LTE-only 3GPP Channel Quality Indicator, integer 0-15, higher is
+// better -- like RSRP/RSRQ/SINR above (NOT inverted like RXQUAL_BANDS,
+// whose low value is good). Reuses RSRP_BANDS' own worst->best red/
+// orange/yellow/light-green/green palette so CQI reads consistently
+// with the app's other absolute-value bands rather than introducing a
+// new color family for a single metric.
+export const CQI_BANDS: Band[] = [
+  { label: '0-4', min: 0, max: 5, color: '#dc2626' },
+  { label: '5-7', min: 5, max: 8, color: '#f97316' },
+  { label: '8-9', min: 8, max: 10, color: '#eab308' },
+  { label: '10-12', min: 10, max: 13, color: '#84cc16' },
+  { label: '13-15', min: 13, max: 16, color: '#16a34a' },
+]
+
 export function bandColor(bands: Band[], v: number | null | undefined): string {
   if (v === null || v === undefined) return '#94a3b8'
   for (const b of bands) if (v >= b.min && v < b.max) return b.color
@@ -83,7 +97,7 @@ export function bandColor(bands: Band[], v: number | null | undefined): string {
 }
 
 export interface DtMetric {
-  key: keyof Pick<DtSample, 'rsrp' | 'rsrq' | 'sinr' | 'ecno' | 'rx_qual'>
+  key: keyof Pick<DtSample, 'rsrp' | 'rsrq' | 'sinr' | 'ecno' | 'rx_qual' | 'cqi'>
   label: string
   unit: string
   bands: Band[]
@@ -111,6 +125,7 @@ export function metricsForTech(tech: DtTech): DtMetric[] {
     { key: 'rsrp', label: 'RSRP', unit: ' dBm', bands: RSRP_BANDS },
     { key: 'rsrq', label: 'RSRQ', unit: ' dB', bands: RSRQ_BANDS },
     { key: 'sinr', label: 'SINR', unit: ' dB', bands: SINR_BANDS },
+    { key: 'cqi', label: 'CQI', unit: '', bands: CQI_BANDS },
   ]
 }
 

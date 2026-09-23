@@ -75,6 +75,7 @@ function formatSignal(s: TelemetryLiveSample): string {
     if (s.rsrp_dbm != null) parts.push(`RSRP ${s.rsrp_dbm} dBm`)
     if (s.rsrq_db != null) parts.push(`RSRQ ${s.rsrq_db} dB`)
     if (s.sinr_db != null) parts.push(`SINR ${s.sinr_db} dB`)
+    if (s.cqi != null) parts.push(`CQI ${s.cqi}`)
     return parts.join(', ')
   }
   if (s.rssi_dbm != null) return `${s.rssi_dbm} dBm (RSSI)`

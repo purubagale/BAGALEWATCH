@@ -6,7 +6,7 @@ from django.db.models import Count, Exists, OuterRef, Q
 
 from django.core.files.base import ContentFile
 from rest_framework import pagination, permissions, status, viewsets
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -37,6 +37,7 @@ from .serializers import (
     MeSerializer,
     SectorSerializer,
     SiteDetailSerializer,
+    SiteDtSessionSerializer,
     SiteListSerializer,
     SiteWriteSerializer,
     TreeFolderSerializer,
@@ -434,6 +435,57 @@ class SiteViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             serializer.save(updated_by=request.user)
         return Response(serializer.data)
+
+    # Max sessions returned by dt_sessions() below -- this is a Site Detail
+    # summary panel ("which drive tests were driven near this site"), not
+    # a full history browser (that's DT Session History, which already
+    # exists and this panel deep-links into) -- so it caps rather than
+    # paginates.
+    DT_SESSIONS_LIMIT = 20
+
+    @action(detail=True, methods=['get'], url_path='dt-sessions')
+    def dt_sessions(self, request, pk=None):
+        """GET /api/v2/sites/<id>/dt-sessions/ -- every DriveTestSession
+        whose meta.nearby_site_ids (see _nearby_site_ids() in
+        serializers.py -- every Site within ~1km of that session's route,
+        computed server-side at upload time) includes THIS site's id,
+        most-recent first, capped to DT_SESSIONS_LIMIT. Feeds the Site
+        Detail page's "Drive Tests Near This Site" panel so an RF
+        engineer can see (and jump straight to) relevant drive tests
+        without separately searching DT Session History by site name.
+
+        `meta` is a JSONField and `nearby_site_ids` is a key WITHIN it
+        (not a top-level field), so this uses a key-transform `contains`
+        lookup -- meta__nearby_site_ids__contains=[pk] -- which on
+        Postgres compiles to a `jsonb @>` containment check on the
+        extracted meta -> 'nearby_site_ids' array, exactly like
+        Site.operational_technologies__contains=[...] elsewhere in this
+        module (get_queryset() above) except one level deeper. This is
+        NOT the same case SiteSearchView.get()'s _sites_with_dt_coverage()
+        docstring warns off -- that one needed `contains` with an OuterRef
+        (a per-row correlated value) on its right-hand side, which
+        Postgres's jsonb @> operator can't take since it needs a literal
+        to serialize to jsonb; here the right-hand side is `pk`, the URL's
+        literal site id, so the literal-serialization path applies fine.
+        `pk` is used AS-IS (a plain string, e.g. "CDR0123") rather than
+        int()-cast -- confirmed against the model that Site.id is a
+        CharField, not an autoincrement int (see Site's own docstring in
+        models.py), and _nearby_site_ids() stores exactly that string via
+        `.values_list('id', flat=True)` with no casting, so the array
+        this filters against is an array of site-id strings.
+
+        Read-only, IsAuthenticated only (list-tier, not the admin/
+        superadmin write tier get_permissions() reserves for create/
+        update/destroy above) -- viewing this panel needs no more
+        privilege than viewing the site itself.
+        """
+        site = self.get_object()
+        qs = (
+            DriveTestSession.objects.filter(meta__nearby_site_ids__contains=[site.pk])
+            .annotate(sample_count=Count('samples'))
+            .order_by('-date', '-saved_at')[: self.DT_SESSIONS_LIMIT]
+        )
+        return Response(SiteDtSessionSerializer(qs, many=True).data)
 
 
 class SiteSectorListView(APIView):

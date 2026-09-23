@@ -587,6 +587,9 @@ export interface DtSample {
   sinr: number | null
   dl: number | null
   pci: number | null
+  // LTE-only 3GPP Channel Quality Indicator, 0-15, higher is better --
+  // see DriveTestSample.cqi's docstring in models.py.
+  cqi: number | null
   // Serving-cell attribution (dt_serving_cell.py). `serving_site_id` +
   // `serving_dist_km` come back on the plot fetch and drive the coverage
   // map's hover connector (see useDtServingCells / DtCoverageMap). The
@@ -723,6 +726,142 @@ export interface DtSessionListItem {
   sample_count: number
   remarks: string
   attachment_count: number
+  activities: DtSessionActivityTag[]
+}
+
+// Optimization Activities (2026-09-12) -- see OptimizationActivity's
+// docstring in core/models.py for the before/after-change/re-verify
+// grouping workflow this supports. `role` matches
+// OptimizationActivitySession.ROLE_CHOICES on the backend exactly.
+export type OptimizationActivityRole = 'baseline' | 'after_change' | 're_verify'
+
+// One entry of DriveTestSessionListSerializer.get_activities() -- which
+// activity/activities a session belongs to, embedded directly on each
+// DtSessionListItem/DtSessionDetail row so History doesn't need a
+// second per-row fetch to show it.
+export interface DtSessionActivityTag {
+  id: number
+  name: string
+  role: OptimizationActivityRole
+}
+
+// One linked session inside OptimizationActivitySerializer.get_sessions()
+// -- richer than DtSessionActivityTag above (session name/tech/date +
+// the per-link note), and keyed by `link_id` (the join row's own id,
+// needed for DELETE .../sessions/<link_id>/) rather than the activity id.
+export interface OptimizationActivitySessionLink {
+  link_id: number
+  session_id: number
+  session_name: string
+  tech: DtTech
+  date: string | null
+  role: OptimizationActivityRole
+  note: string
+}
+
+// GET/POST /api/v2/dt-activities/ item shape (OptimizationActivitySerializer).
+export interface OptimizationActivity {
+  id: number
+  name: string
+  notes: string
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  sessions: OptimizationActivitySessionLink[]
+}
+
+// POST /api/v2/dt-activities/ request body. `resolve_issue_id` (2026-09-14,
+// optional) picks an existing Issue this activity resolves -- the
+// backend (OptimizationActivitySerializer.create()) sets that issue's
+// resolved_by_activity to the new activity and moves its status to
+// 'resolved' as a side effect. Create-only, matching
+// OptimizationActivityViewSet having no update/partial_update at all.
+export interface OptimizationActivityWrite {
+  name: string
+  notes?: string
+  resolve_issue_id?: number | null
+}
+
+// POST /api/v2/dt-activities/<id>/sessions/ request body
+// (OptimizationActivitySessionSerializer's write shape).
+export interface OptimizationActivityAttach {
+  session: number
+  role: OptimizationActivityRole
+  note?: string
+}
+
+// Site/Sector Issue tracker (2026-09-14) -- see Issue's docstring in
+// core/models.py for the full workflow. `status`/`severity` match
+// Issue.STATUS_CHOICES/SEVERITY_CHOICES on the backend exactly.
+export type IssueStatus = 'open' | 'in_progress' | 'resolved' | 'closed'
+export type IssueSeverity = 'low' | 'medium' | 'high' | 'critical'
+
+// A resolved issue's link back to the OptimizationActivity that fixed
+// it (IssueSerializer.get_resolved_by_activity_name) -- null until an
+// activity is created/edited with this issue picked as the one it
+// resolves (see OptimizationActivityWrite.resolve_issue_id below).
+export interface IssueResolvedByActivity {
+  id: number
+  name: string
+}
+
+// GET/POST/PATCH /api/v2/issues/ item shape (IssueSerializer). `site` is
+// the Site's own string id (Site.id is a CharField PK, not a number --
+// see Site's docstring in core/models.py), matching every other
+// site-id-shaped field in this file (e.g. DtSessionMeta.siteId-alikes).
+export interface Issue {
+  id: number
+  site: string
+  site_name: string | null
+  sector: number | null
+  sector_label: string | null
+  title: string
+  description: string
+  status: IssueStatus
+  severity: IssueSeverity
+  assignee: number | null
+  assignee_name: string | null
+  created_by: number | null
+  created_by_name: string | null
+  resolved_by_activity: number | null
+  resolved_by_activity_name: IssueResolvedByActivity | null
+  created_at: string
+  updated_at: string
+  resolved_at: string | null
+}
+
+// POST /api/v2/issues/ request body.
+export interface IssueCreate {
+  site: string
+  sector?: number | null
+  title: string
+  description?: string
+  status?: IssueStatus
+  severity?: IssueSeverity
+  assignee?: number | null
+}
+
+// PATCH /api/v2/issues/<id>/ request body -- every field optional, same
+// partial-update shape used elsewhere in this file (e.g. Partial<UserWrite>
+// at queries.ts's useUpdateUser).
+export type IssueUpdate = Partial<IssueCreate> & {
+  resolved_by_activity?: number | null
+}
+
+// GET /api/v2/sites/<id>/dt-sessions/ item shape — the Site Detail page's
+// "Drive Tests Near This Site" panel. A trimmed sibling of
+// DtSessionListItem (matches SiteDtSessionSerializer on the backend):
+// this is a small summary panel embedded in a site page, not the History
+// table, so it skips uploaded_by_name/meta/size_bytes/remarks/
+// attachment_count — fields that panel has no room or need for.
+export interface SiteDtSession {
+  id: number
+  name: string
+  tech: DtTech
+  date: string | null
+  uploaded_date: string | null
+  saved_at: string
+  sample_count: number
 }
 
 // GET .../dt-sessions/<id>/attachments/ item shape, and the nested
@@ -742,6 +881,166 @@ export interface DtSessionDetail extends DtSessionListItem {
   attachments: DtSessionAttachment[]
 }
 
+// ── Vendor RNO report importer (2026-09-15) ──────────────────────────────
+// See RfOptimizationReport's docstring in core/models.py for the full
+// feature: an uploaded vendor .docx is parsed for its antenna
+// change-log table and recommendation tables (parse-preview, nothing
+// saved yet), reviewed/edited in the frontend, then confirmed into one
+// RfOptimizationReport + its SectorConfigChange rows + one Issue per
+// recommendation. Minutes-of-Meeting content is NOT parsed -- it's a
+// plain RfReportAttachment (category='mom'), same as the source .docx.
+
+export type RfReportAttachmentCategory = 'source' | 'mom' | 'other'
+
+// One row from RfReportParsePreviewView's response -- NOT yet saved.
+// `matched_sector_id`/`matched_site_id` are best-effort suggestions from
+// the backend's cell-name lookup; the review UI lets the user override
+// or clear them before confirm-import.
+export interface RfAntennaChangePreviewRow {
+  sn: number | null
+  cell_name: string
+  before_change: string
+  after_change: string
+  result: string
+  antenna_type: string
+  antenna_shared_with: string
+  raw_row: Record<string, string>
+  matched_sector_id: number | null
+  matched_site_id: string | null
+}
+
+export interface RfRecommendationPreviewRow {
+  sn: number | null
+  identifier: string
+  title: string
+  description: string
+  raw_row: Record<string, string>
+  matched_sector_id: number | null
+  matched_site_id: string | null
+  // 'exact' = matched by cell/site name; 'nearest' = no name match, but
+  // a nearest-by-distance Site was suggested from coordinates found in
+  // the row (2026-09-15 follow-up, see rf_reports.py's _nearest_site) --
+  // null means matched_site_id is also null (no suggestion at all).
+  // Either way this is just a suggestion; the review UI's site picker
+  // stays fully overridable.
+  site_match_type: 'exact' | 'nearest' | null
+  site_match_distance_km: number | null
+}
+
+// A near-miss table from parse-preview -- looked recommendation-ish
+// (see rf_reports.py's _looks_recommendation_ish) but wasn't classified
+// with full confidence. `parsed: true` means it still got folded into
+// `recommendations` above despite the uncertainty; `parsed: false` means
+// it has no usable identifier column and was skipped entirely -- shown
+// so a human can tell whether anything in it needs to be added by hand.
+export interface RfReportUnmatchedTable {
+  header: string[]
+  row_count: number
+  parsed: boolean
+}
+
+// Best-effort Lot name / Network / Period-covered suggestion scraped
+// from the document's own title page (2026-09-15 follow-up) -- the
+// import form pre-fills from this but keeps every field editable.
+export interface RfReportSuggestedMetadata {
+  lot_name: string
+  network: string
+  period_covered: string
+}
+
+// POST /api/v2/rf-reports/parse-preview/ response.
+export interface RfReportParsePreview {
+  antenna_changes: RfAntennaChangePreviewRow[]
+  recommendations: RfRecommendationPreviewRow[]
+  tables_scanned: number
+  tables_matched: number
+  tables_unmatched: RfReportUnmatchedTable[]
+  suggested_metadata: RfReportSuggestedMetadata
+  suggested_notes: string
+}
+
+// One reviewed antenna-change row as sent to confirm-import
+// (RfOptimizationReportCreate.antenna_changes below).
+export interface RfAntennaChangeInput {
+  sn: number | null
+  cell_name: string
+  sector: number | null
+  before_change: string
+  after_change: string
+  result: string
+  antenna_type: string
+  antenna_shared_with: string
+  raw_row?: Record<string, string> | null
+}
+
+// One reviewed recommendation row as sent to confirm-import -- becomes
+// one Issue with source_report set. `site` is required (unlike the
+// preview's matched_site_id, which can be null) -- see
+// _RecommendationInputSerializer's docstring in serializers.py.
+export interface RfRecommendationInput {
+  site: string
+  sector?: number | null
+  title: string
+  description?: string
+  severity?: IssueSeverity
+}
+
+export interface SectorConfigChange {
+  id: number
+  sn: number | null
+  cell_name: string
+  sector: number | null
+  sector_label: string | null
+  site_id: string | null
+  before_change: string
+  after_change: string
+  result: string
+  antenna_type: string
+  antenna_shared_with: string
+  raw_row: Record<string, string> | null
+  created_at: string
+}
+
+export interface RfReportAttachment {
+  id: number
+  original_filename: string
+  category: RfReportAttachmentCategory
+  url: string | null
+  is_compressed: boolean
+  size_bytes: number | null
+  uploaded_by_name: string | null
+  uploaded_at: string
+}
+
+// GET/POST /api/v2/rf-reports/ item shape.
+export interface RfOptimizationReport {
+  id: number
+  lot_name: string
+  title: string
+  vendor: string
+  period_covered: string
+  network: string
+  notes: string
+  imported_by: number | null
+  imported_by_name: string | null
+  imported_at: string
+  antenna_changes_detail: SectorConfigChange[]
+  attachments: RfReportAttachment[]
+  recommendation_count: number
+}
+
+// POST /api/v2/rf-reports/ request body -- confirm-import.
+export interface RfOptimizationReportCreate {
+  lot_name: string
+  title?: string
+  vendor?: string
+  period_covered?: string
+  network?: string
+  notes?: string
+  antenna_changes?: RfAntennaChangeInput[]
+  recommendations?: RfRecommendationInput[]
+}
+
 // GET /api/v2/dt-sessions/<id>/serving-cells/ — the distinct serving
 // cells this session's samples were attributed to, joined to Site coords
 // + Sector azimuth. Loaded once per session; the coverage map's hover
@@ -758,6 +1057,51 @@ export interface DtServingCell {
   azimuth: number | null
   sample_count: number
   mean_dist_km: number | null
+}
+
+// GET /api/v2/dt-sessions/compare/?a=<id>&b=<id> (2026-09-12) -- see
+// DriveTestSessionViewSet.compare()'s docstring in backend-django/core/
+// drive_test.py for the full contract; field names below mirror its
+// Response() dict exactly.
+export interface DtCompareSessionSummary {
+  id: number
+  name: string
+  date: string | null
+  tech: DtTech
+}
+
+// One matched grid cell's before/after averages + delta. `a`/`b`/`delta`
+// are keyed by whichever metric names `metrics` below lists for this
+// tech (a subset of 'rsrp' | 'rsrq' | 'sinr' | 'ecno' | 'rx_qual') --
+// plain `Record<string, ...>` rather than DtMetric's narrower key union
+// since which keys are actually present varies per tech and this shape
+// is read generically (`cell.delta[metricKey]`) by DtCompareDeltaMap.
+export interface DtCompareCell {
+  lat: number
+  lng: number
+  sample_count_a: number
+  sample_count_b: number
+  a: Record<string, number | null>
+  b: Record<string, number | null>
+  delta: Record<string, number | null>
+}
+
+export interface DtCompareSummary {
+  matched_cells: number
+  unmatched_cells_a: number
+  unmatched_cells_b: number
+  avg_delta: Record<string, number | null>
+  improved_pct: Record<string, number | null>
+  degraded_pct: Record<string, number | null>
+  unchanged_pct: Record<string, number | null>
+}
+
+export interface DtSessionCompare {
+  session_a: DtCompareSessionSummary
+  session_b: DtCompareSessionSummary
+  metrics: string[]
+  cells: DtCompareCell[]
+  summary: DtCompareSummary
 }
 
 export interface DtSessionCreate {
@@ -1043,13 +1387,14 @@ export interface BrandingSettingsWrite {
 // core/external_api.py) — a distinct concern from this app's own JWT
 // login, managed here only as plain superadmin CRUD over the ApiKey
 // model (same shape as UsersPage/MenuAdminPage's own hooks).
-export type ApiKeyScope = 'sites:read' | 'sites:write' | 'dt:read' | 'dt:write'
+export type ApiKeyScope = 'sites:read' | 'sites:write' | 'dt:read' | 'dt:write' | 'coverage:read'
 
 export const API_KEY_SCOPES: { value: ApiKeyScope; label: string }[] = [
   { value: 'sites:read', label: 'Sites & Sectors — read' },
   { value: 'sites:write', label: 'Sites & Sectors — write' },
   { value: 'dt:read', label: 'Drive Test sessions — read' },
   { value: 'dt:write', label: 'Drive Test sessions — write' },
+  { value: 'coverage:read', label: 'Telemetry Coverage — read' },
 ]
 
 export interface ApiKeyRow {
@@ -1196,6 +1541,9 @@ export interface TelemetryCoverageBin {
   rsrp_min: number | null
   rsrq_mean: number | null
   sinr_mean: number | null
+  // cqi_mean (2026-09-15) -- LTE/NR-only Channel Quality Indicator mean,
+  // 0-15 scale, higher is better (see backend TelemetryCoverageBin.cqi_mean).
+  cqi_mean: number | null
   last_ts: string | null
 }
 
@@ -1246,6 +1594,9 @@ export interface TelemetryLiveSample {
   rx_qual: number | null
   rscp_dbm: number | null
   ecio_db: number | null
+  // cqi (2026-09-15) -- LTE/NR-only Channel Quality Indicator, 0-15,
+  // higher is better (see backend TelemetrySample.cqi).
+  cqi?: number | null
   trigger_reason: string
 }
 

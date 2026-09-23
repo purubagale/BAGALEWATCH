@@ -170,6 +170,7 @@ def _bin_row(b):
         'rsrp_min': b.rsrp_min,
         'rsrq_mean': b.rsrq_mean,
         'sinr_mean': b.sinr_mean,
+        'cqi_mean': b.cqi_mean,
         'last_ts': b.last_ts,
     }
 
@@ -181,8 +182,8 @@ def _aggregate_raw(qs, limit):
     prune_telemetry.py does it, so the map looks identical either way."""
     acc = {}
     scanned = 0
-    for lat, lng, nt, region, rsrp, rsrq, sinr, ts in qs.values_list(
-        'lat', 'lng', 'network_type', 'region', 'rsrp_dbm', 'rsrq_db', 'sinr_db', 'ts',
+    for lat, lng, nt, region, rsrp, rsrq, sinr, cqi, ts in qs.values_list(
+        'lat', 'lng', 'network_type', 'region', 'rsrp_dbm', 'rsrq_db', 'sinr_db', 'cqi', 'ts',
     ).iterator(chunk_size=5000):
         scanned += 1
         if scanned > _MAX_RAW_SCAN:
@@ -199,6 +200,7 @@ def _aggregate_raw(qs, limit):
                 'center_lat': clat, 'center_lng': clng, 'n': 0,
                 'rsrp_sum': 0.0, 'rsrp_n': 0, 'rsrp_min': None,
                 'rsrq_sum': 0.0, 'rsrq_n': 0, 'sinr_sum': 0.0, 'sinr_n': 0,
+                'cqi_sum': 0.0, 'cqi_n': 0,
                 'last_ts': ts,
             }
         a['n'] += 1
@@ -214,6 +216,9 @@ def _aggregate_raw(qs, limit):
         if sinr is not None:
             a['sinr_sum'] += sinr
             a['sinr_n'] += 1
+        if cqi is not None:
+            a['cqi_sum'] += cqi
+            a['cqi_n'] += 1
 
     rows = []
     for a in acc.values():
@@ -230,6 +235,7 @@ def _aggregate_raw(qs, limit):
             'rsrp_min': a['rsrp_min'],
             'rsrq_mean': round(a['rsrq_sum'] / a['rsrq_n'], 1) if a['rsrq_n'] else None,
             'sinr_mean': round(a['sinr_sum'] / a['sinr_n'], 1) if a['sinr_n'] else None,
+            'cqi_mean': round(a['cqi_sum'] / a['cqi_n'], 1) if a['cqi_n'] else None,
             'last_ts': a['last_ts'],
         })
     rows.sort(key=lambda r: r['sample_count'], reverse=True)
@@ -415,6 +421,9 @@ class TelemetryLiveSamplesView(APIView):
                 'rsrp_dbm': s.rsrp_dbm,
                 'rsrq_db': s.rsrq_db,
                 'sinr_db': s.sinr_db,
+                # cqi (2026-09-15) -- LTE/NR-only Channel Quality Indicator,
+                # 0-15, higher is better (see models.py's TelemetrySample.cqi).
+                'cqi': s.cqi,
                 # rssi_dbm (2026-09-03) -- GSM/UMTS (2G/3G) samples only
                 # ever populate this, never rsrp_dbm/rsrq_db/sinr_db (LTE/
                 # NR-only fields, see CellSampleCollector.kt's
@@ -705,6 +714,9 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 'rsrp_dbm': s.rsrp_dbm,
                 'rsrq_db': s.rsrq_db,
                 'sinr_db': s.sinr_db,
+                # cqi (2026-09-15) -- LTE/NR-only Channel Quality Indicator,
+                # 0-15, higher is better (see models.py's TelemetrySample.cqi).
+                'cqi': s.cqi,
                 # rssi_dbm (2026-09-03, "need to collect any 2g, 3g or 4g
                 # data") -- GSM/UMTS samples only ever populate this, never
                 # rsrp_dbm/rsrq_db/sinr_db (LTE/NR-only fields -- see

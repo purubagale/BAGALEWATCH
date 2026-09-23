@@ -1582,6 +1582,82 @@ textarea:focus {
 .sector-tech-badge.tech-3g { color: var(--tech-3g); background: var(--tech-3g-bg); border-color: var(--tech-3g-border); }
 .sector-tech-badge.tech-4g { color: var(--tech-4g); background: var(--tech-4g-bg); border-color: var(--tech-4g-border); }
 
+/* "Latest" badge on the Site Detail "Drive Tests Near This Site" table's
+   most-recent row (the -date/-saved_at ordering the backend already
+   returns) — same pill shape as .sector-tech-badge, --status-success
+   palette rather than a tech color since this isn't a tech indicator. */
+.dt-session-latest-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border-radius: 4px;
+  padding: 2px 7px;
+  border: 1px solid;
+  display: inline-block;
+  white-space: nowrap;
+  color: var(--status-success);
+  background: var(--status-success-bg-subtle);
+  border-color: var(--status-success-border);
+}
+
+/* Issue status/severity badges (2026-09-14 Site/Sector Issue tracker) --
+   same small pill shape as .sector-tech-badge/.dt-session-latest-badge
+   above, built from the existing --status-* palette. Only success/danger
+   have full bg-subtle+border tokens defined in this app (see their own
+   comments above) -- warning/info modifiers here are plain colored text
+   instead of a full pill box, rather than inventing new token pairs this
+   palette doesn't otherwise carry. */
+.issue-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border-radius: 4px;
+  padding: 2px 7px;
+  display: inline-block;
+  white-space: nowrap;
+}
+.issue-badge.issue-open { color: var(--status-info); }
+.issue-badge.issue-in_progress { color: var(--status-warning); }
+.issue-badge.issue-resolved {
+  color: var(--status-success);
+  background: var(--status-success-bg-subtle);
+  border: 1px solid var(--status-success-border);
+}
+.issue-badge.issue-closed { color: var(--text-dim); }
+.issue-badge.issue-low { color: var(--text-dim); }
+.issue-badge.issue-medium { color: var(--status-warning); }
+.issue-badge.issue-high {
+  color: var(--status-danger);
+  background: var(--status-danger-bg-subtle);
+  border: 1px solid var(--status-danger-border);
+}
+.issue-badge.issue-critical {
+  color: var(--status-danger);
+  background: var(--status-danger-bg-subtle);
+  border: 1px solid var(--status-danger-border);
+  font-weight: 800;
+}
+
+/* RF Reports page (2026-09-15 vendor RNO report importer) -- the
+   expand/collapse toggle on each imported report row, and its plain
+   attachment list, both first used there. */
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-primary);
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-link:hover { text-decoration: underline; }
+.plain-list {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 12px;
+  font-size: 12px;
+}
+.plain-list li { padding: 3px 0; }
+
 .sector-azimuth-heading {
   font-size: 10px;
   letter-spacing: 0.1em;
@@ -2194,7 +2270,50 @@ textarea:focus {
   font-size: 12px;
 }
 .dt-nearby-sites-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-tertiary); }
+/* "Latest per area" clustering (2026-09-12) -- the "+N earlier here"
+   expand/collapse chip on a cluster's head row, and the muted/indented
+   look for the older sibling rows it reveals. */
+.dt-cluster-chip {
+  display: inline-block;
+  margin-left: 8px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 11px;
+  text-decoration: underline;
+}
+.dt-cluster-chip:hover { color: var(--link-accent); }
+.dt-cluster-child-row { background: var(--bg-app); }
+.dt-cluster-child-row td { color: var(--text-secondary); }
 .dt-remarks-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-secondary); }
+
+/* Optimization Activity badges + upload-time link-suggestion banner
+   (2026-09-12) -- see AttachActivityModal.tsx and DtSessionHistoryPage.tsx. */
+.dt-activity-badges { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px; }
+.dt-activity-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--brand-primary-soft);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.dt-activity-suggestion-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--brand-primary-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
 
 /* Session Remarks + Attachments (2026-09-07) — small note/file panels
    under a session's map, styled like a plain content card rather than
@@ -3175,3 +3294,55 @@ textarea:focus {
 }
 .sites-layer-toggle button:hover { background: var(--bg-hover); color: var(--text-primary); }
 .sites-layer-toggle button.active { background: var(--brand-primary); color: var(--text-on-brand); }
+
+/* ── Print (2026-09-12, DtCompareReportView.tsx) ──────────────────────
+   First @media print block in this file. The report is rendered inside
+   a `.modal-overlay`/`.modal-box` (this app's standard modal chrome —
+   see AttachActivityModal.tsx) which itself sits several DOM levels
+   inside `.app-shell` (Layout.tsx: `.app-shell` > `.app-sidebar` +
+   `.app-content-col` > `.app-topbar` + `.app-main`, with any open modal
+   appended as one more `.app-shell` child, fixed-positioned over
+   everything). A structural exclusion like `body > *:not(...)` can't
+   reach any of this — none of it is a direct child of <body>, it's all
+   nested under the React root div — so instead this hides EVERYTHING
+   under <body> by default and re-reveals only the report's own
+   `.dt-report-print-area` wrapper and its contents, regardless of how
+   deeply nested that wrapper is. The wrapper is then pulled out of the
+   modal's fixed/flex-centered positioning (which would otherwise center
+   it inside one viewport-sized page and clip the rest) so it flows
+   normally from the top of the printed page(s). */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .dt-report-print-area,
+  .dt-report-print-area * {
+    visibility: visible;
+  }
+  .dt-report-print-area {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    margin: 0;
+    padding: 0.5in;
+    box-sizing: border-box;
+    color: #000;
+    background: #fff;
+  }
+  .dt-report-print-area table {
+    page-break-inside: auto;
+  }
+  .dt-report-print-area tr {
+    page-break-inside: avoid;
+  }
+  .dt-report-print-area h1,
+  .dt-report-print-area h2 {
+    page-break-after: avoid;
+  }
+  /* Buttons/close-controls in the report's own header, plus anything
+     else explicitly opted out (this app has no other print view yet,
+     so this class is currently only used here). */
+  .dt-report-no-print {
+    display: none !important;
+  }
+}

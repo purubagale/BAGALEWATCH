@@ -14,12 +14,17 @@ import {
   useUpdateDtSessionRemarks,
   useUploadDtSessionAttachments,
 } from '../api/queries'
-import type { DtSessionDetail } from '../api/types'
+import type { DtSessionDetail, DtSessionListItem } from '../api/types'
 import { isAllowed } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
+import AttachActivityModal, { ACTIVITY_ROLE_LABELS } from '../components/AttachActivityModal'
 import DtCompareMap, { MAX_COMPARE } from '../components/DtCompareMap'
+import DtCompareDeltaMap from '../components/DtCompareDeltaMap'
+import DtCompareReportView from '../components/DtCompareReportView'
 import DtCallDownloadSummary from '../components/DtCallDownloadSummary'
 import DtCoverageMap from '../components/DtCoverageMap'
+import { assignDtCompareOrder } from '../lib/dtCompareAssignment'
+import { clusterDtSessionsByArea, type DtSessionCluster } from '../lib/dtSessionClustering'
 
 // Split out of the former single-page DtDataManagerPage.tsx (2026-08-09
 // request: "manage upload, manage session and explore in different sub
@@ -33,7 +38,29 @@ export default function DtSessionHistoryPage() {
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
   const [compareIds, setCompareIds] = useState<Set<number>>(new Set())
   const [comparing, setComparing] = useState(false)
+  // Delta (before/after) compare mode (2026-09-12) -- ADDITIVE to the
+  // existing Overlay mode (DtCompareMap), only ever selectable with
+  // EXACTLY 2 sessions checked and the same tech; see the compareMode
+  // effect + deltaAvailable/deltaTechMismatch below for how that's
+  // enforced. deltaSwapped lets the user flip the auto before/after
+  // guess (lib/dtCompareAssignment.ts) for the currently-selected pair.
+  const [compareMode, setCompareMode] = useState<'overlay' | 'delta'>('overlay')
+  const [deltaSwapped, setDeltaSwapped] = useState(false)
+  // Export Report modal (2026-09-12) -- a print-friendly summary of the
+  // current Delta comparison, for handing to management or attaching to
+  // a closed complaint ticket. Only ever opened while Delta mode is
+  // active with data loaded (see the 'Export Report' button below), so
+  // it can reuse the exact same before/after pair Delta mode is showing.
+  const [reportOpen, setReportOpen] = useState(false)
   const [historySearch, setHistorySearch] = useState('')
+  // "Latest per area" clustering (2026-09-12 request: RF engineers
+  // re-drive the same area repeatedly over weeks/months and the list
+  // gets buried under old re-tests of the same spot). Defaults ON since
+  // that's the common case; every old session stays one click away via
+  // the per-cluster "+N earlier here" expander below, nothing is hidden
+  // permanently. See lib/dtSessionClustering.ts for the grouping logic.
+  const [latestOnly, setLatestOnly] = useState(true)
+  const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set())
   // Drag-to-resize + collapsible right panel for the session-list/detail
   // split (2026-07-30 request, follow-up to the overlap fix — the fixed
   // 360px/1fr grid worked but the user wanted manual control over the
@@ -42,6 +69,14 @@ export default function DtSessionHistoryPage() {
   const [historyLeftWidth, setHistoryLeftWidth] = useState(360)
   const [historyRightCollapsed, setHistoryRightCollapsed] = useState(false)
   const historyDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+
+  // Optimization Activities (2026-09-12) -- linking a session to a named
+  // before/after-change effort. `linkingSession` drives the per-row
+  // "Link" action's modal; the upload-time suggestion banner below opens
+  // the same modal pre-filled instead, via `suggestionOpen`.
+  const [linkingSession, setLinkingSession] = useState<DtSessionListItem | null>(null)
+  const [suggestionOpen, setSuggestionOpen] = useState(false)
+  const [suggestionDismissed, setSuggestionDismissed] = useState(false)
 
   const { data: sites } = useSites()
   const { data: sessions, isLoading: sessionsLoading, error: sessionsError } = useDtSessions()
@@ -80,7 +115,7 @@ export default function DtSessionHistoryPage() {
   // so no backend query param needed. Matches session name OR any tagged
   // nearby site's id/name, per the user's explicit ask that the ~1km tag
   // make "future search" easier.
-  const visibleSessions = useMemo(() => {
+  const searchFilteredSessions = useMemo(() => {
     const q = historySearch.trim().toLowerCase()
     if (!q || !sessions) return sessions
     return sessions.filter((s) => {
@@ -89,6 +124,84 @@ export default function DtSessionHistoryPage() {
       return ids.some((id) => id.toLowerCase().includes(q) || (siteNameById.get(id) ?? '').toLowerCase().includes(q))
     })
   }, [sessions, historySearch, siteNameById])
+
+  // "Latest per area" clustering is computed over the SEARCH-FILTERED
+  // list, not the full session list — chosen over the alternative
+  // (cluster the whole list, then filter the clustered result by search)
+  // because it keeps every visible row relevant to what was typed: if a
+  // search matches 3 sessions from one area and there's a 4th sibling
+  // session elsewhere that doesn't match, showing that unrelated 4th
+  // session's date just because it shares a cluster with matches would
+  // be surprising. The tradeoff is that "latest" here means latest AMONG
+  // MATCHES, not latest overall for that area — acceptable since a
+  // search is already the user narrowing to a specific thing they want.
+  const clusters = useMemo(() => clusterDtSessionsByArea(searchFilteredSessions ?? []), [searchFilteredSessions])
+  const clusterBySessionId = useMemo(() => {
+    const map = new Map<number, DtSessionCluster>()
+    for (const c of clusters) for (const s of c.sessions) map.set(s.id, c)
+    return map
+  }, [clusters])
+
+  // Upload-time link-suggestion banner (2026-09-12): DtUploadPage lands
+  // here with `?session=<id>` right after a save (see the effect above).
+  // If that just-saved session has no activities yet AND shares an area
+  // cluster with at least one OTHER existing session, offer to link it
+  // as a follow-up rather than requiring the engineer to remember to do
+  // that from the row action. Deliberately clustered over the FULL
+  // (unfiltered by search) session list -- unlike `clusters` above, this
+  // banner's relevance shouldn't depend on whatever's currently typed in
+  // the search box.
+  const justSavedSessionId = useMemo(() => {
+    const raw = searchParams.get('session')
+    if (!raw) return null
+    const id = Number(raw)
+    return Number.isFinite(id) ? id : null
+  }, [searchParams])
+  const allAreaClusters = useMemo(() => clusterDtSessionsByArea(sessions ?? []), [sessions])
+  const linkSuggestion = useMemo(() => {
+    if (justSavedSessionId == null || !sessions) return null
+    const session = sessions.find((s) => s.id === justSavedSessionId)
+    if (!session || session.activities.length > 0) return null
+    const cluster = allAreaClusters.find((c) => c.sessions.some((s) => s.id === justSavedSessionId))
+    if (!cluster || cluster.sessions.length < 2) return null
+    const siblings = cluster.sessions.filter((s) => s.id !== justSavedSessionId)
+    // Prefer pre-selecting an activity a cluster-sibling already belongs
+    // to (most likely to be "the same effort") over defaulting to
+    // create-new; fall back to a suggested name derived from the first
+    // nearby site's name when no sibling has one yet.
+    const siblingWithActivity = siblings.find((s) => s.activities.length > 0)
+    const suggestedActivityId = siblingWithActivity ? siblingWithActivity.activities[0].id : null
+    const siteId = session.meta?.nearby_site_ids?.[0]
+    const suggestedName = suggestedActivityId == null && siteId ? (siteNameById.get(siteId) ?? '') : ''
+    return { session, siblingCount: siblings.length, suggestedActivityId, suggestedName }
+  }, [justSavedSessionId, sessions, allAreaClusters, siteNameById])
+
+  // Final row list the table renders. With latestOnly off, or with no
+  // search-filtered sessions, this is just searchFilteredSessions
+  // unchanged (today's behavior, byte-for-byte). With latestOnly on,
+  // walk the search-filtered list in its existing order and, the first
+  // time a cluster is encountered, emit only its latest session — plus
+  // the rest of that cluster right after, but only if the user has
+  // expanded it via the "+N earlier here" chip (see the table body).
+  const visibleSessions = useMemo(() => {
+    if (!searchFilteredSessions || !latestOnly) return searchFilteredSessions
+    const emitted = new Set<string>()
+    const result: typeof searchFilteredSessions = []
+    for (const s of searchFilteredSessions) {
+      const cluster = clusterBySessionId.get(s.id)
+      if (!cluster) {
+        result.push(s)
+        continue
+      }
+      if (emitted.has(cluster.key)) continue
+      emitted.add(cluster.key)
+      result.push(cluster.sessions[0])
+      if (cluster.sessions.length > 1 && expandedClusters.has(cluster.key)) {
+        result.push(...cluster.sessions.slice(1))
+      }
+    }
+    return result
+  }, [searchFilteredSessions, latestOnly, clusterBySessionId, expandedClusters])
   const { data: sessionDetail, isLoading: detailLoading } = useDtSession(selectedSessionId ?? undefined)
   const { data: servingCells } = useDtServingCells(selectedSessionId ?? undefined)
   const deleteSession = useDeleteDtSession()
@@ -149,6 +262,50 @@ export default function DtSessionHistoryPage() {
     })
   }
 
+  // Delta mode eligibility (2026-09-12) -- computed straight off the
+  // already-loaded session LIST items (tech/date/activities are all
+  // list-serializer fields), not the full-detail compareSessions fetch
+  // above, so the mode toggle can show/enable itself immediately as soon
+  // as exactly 2 rows are checked, without waiting on a samples fetch
+  // Delta mode doesn't even need (see useDtSessionCompare's own comment
+  // in queries.ts for why Delta is cheap regardless of session size).
+  const selectedCompareSessions = useMemo(
+    () => (sessions ?? []).filter((s) => compareIds.has(s.id)),
+    [sessions, compareIds],
+  )
+  const exactlyTwoSelected = selectedCompareSessions.length === 2
+  const deltaTechMismatch = exactlyTwoSelected && selectedCompareSessions[0].tech !== selectedCompareSessions[1].tech
+  const deltaAvailable = exactlyTwoSelected && !deltaTechMismatch
+  const deltaOrder = useMemo(
+    () => (exactlyTwoSelected ? assignDtCompareOrder(selectedCompareSessions[0], selectedCompareSessions[1]) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [exactlyTwoSelected, selectedCompareSessions[0]?.id, selectedCompareSessions[1]?.id],
+  )
+
+  // Falls back to Overlay whenever the selection stops being exactly 2
+  // (or becomes tech-mismatched) so Delta's UI never lingers showing for
+  // a selection it no longer applies to. Also clears a stale swap when
+  // the selected PAIR itself changes, so flipping session A for a
+  // different one doesn't carry over the previous pair's swap.
+  useEffect(() => {
+    if (!deltaAvailable) setCompareMode('overlay')
+  }, [deltaAvailable])
+  useEffect(() => {
+    setDeltaSwapped(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCompareSessions[0]?.id, selectedCompareSessions[1]?.id])
+
+  // Expand/collapse one area cluster's older sessions (see the
+  // "+N earlier here" chip in the table body below).
+  function toggleClusterExpanded(key: string) {
+    setExpandedClusters((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
   // Drag-to-resize for the left/right split. Plain window mousemove/
   // mouseup listeners (no library) — addEventListener and
   // removeEventListener below both close over the SAME function
@@ -189,6 +346,26 @@ export default function DtSessionHistoryPage() {
       <h1>DT Session History</h1>
       <p className="muted">Browse and compare saved drive-test sessions on the coverage map.</p>
 
+      {/* Upload-time link-suggestion banner (2026-09-12) -- see the
+          linkSuggestion memo above for exactly what triggers this.
+          Dismissing just hides it for this page visit (suggestionDismissed
+          is plain component state, nothing persisted). */}
+      {linkSuggestion && !suggestionDismissed && (
+        <div className="dt-activity-suggestion-banner">
+          <span>
+            Found {linkSuggestion.siblingCount} earlier session{linkSuggestion.siblingCount === 1 ? '' : 's'} near this route — link as a follow-up?
+          </span>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <button type="button" className="btn-primary btn-small" onClick={() => setSuggestionOpen(true)}>
+              Link…
+            </button>
+            <button type="button" className="btn-secondary btn-small" onClick={() => setSuggestionDismissed(true)}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Flex, not grid — needed a draggable divider plus a fully-
           collapsible right panel, neither of which mixes well with a
           fixed grid-template-columns string. showRight is true whenever
@@ -224,8 +401,55 @@ export default function DtSessionHistoryPage() {
               onChange={(e) => setHistorySearch(e.target.value)}
             />
           )}
+          {!!sessions?.length && (
+            // "Latest only" toggle (2026-09-12) — reuses .sites-active-toggle,
+            // the same pill-switch look SitesPage.tsx's map filter panel
+            // uses for "Only active"/"Show name", for a consistent look
+            // rather than inventing a new toggle style for this page.
+            <label className="sites-active-toggle" style={{ marginBottom: 8 }} title="Show only the latest session for each drive-test area; older re-tests stay one click away">
+              <input
+                type="checkbox"
+                checked={latestOnly}
+                onChange={(e) => setLatestOnly(e.target.checked)}
+              />
+              <span className="sites-active-toggle-track"><span className="sites-active-toggle-thumb" /></span>
+              Latest only
+            </label>
+          )}
           {compareIds.size >= 2 && (
             <div style={{ marginBottom: 8 }}>
+              {/* Delta mode toggle (2026-09-12) -- only ever shown with
+                  EXACTLY 2 sessions checked (Delta has no meaning for 1,
+                  3 or 4). Same tech required too; shown disabled with an
+                  explanatory tooltip rather than hidden outright when 2
+                  are checked but techs differ, so it's clear WHY it's
+                  unavailable rather than looking like it's missing. */}
+              {exactlyTwoSelected && (
+                <div className="feat-tabs" style={{ borderBottom: 'none', marginBottom: 6 }}>
+                  <div className={compareMode === 'overlay' ? 'feat-tab active' : 'feat-tab'} onClick={() => setCompareMode('overlay')}>
+                    Overlay
+                  </div>
+                  <div
+                    className={compareMode === 'delta' ? 'feat-tab active' : 'feat-tab'}
+                    style={deltaTechMismatch ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+                    title={
+                      deltaTechMismatch
+                        ? `Sessions must be the same technology to compare (got ${selectedCompareSessions[0]?.tech} and ${selectedCompareSessions[1]?.tech}).`
+                        : 'Numeric before/after diff, binned into a shared grid'
+                    }
+                    onClick={() => {
+                      if (!deltaTechMismatch) setCompareMode('delta')
+                    }}
+                  >
+                    Delta (before/after)
+                  </div>
+                </div>
+              )}
+              {!exactlyTwoSelected && (compareIds.size === 1 || compareIds.size > 2) && (
+                <p className="muted" style={{ fontSize: 10, margin: '0 0 6px' }} title="Select exactly 2 sessions to compare before/after">
+                  Select exactly 2 sessions for Delta (before/after) comparison.
+                </p>
+              )}
               <button
                 type="button"
                 className="btn-primary btn-small"
@@ -264,8 +488,20 @@ export default function DtSessionHistoryPage() {
                     <td colSpan={7} className="page-status">No sessions match “{historySearch}”.</td>
                   </tr>
                 )}
-                {visibleSessions?.map((s) => (
-                  <tr key={s.id} className={s.id === selectedSessionId ? 'row-selected' : ''}>
+                {visibleSessions?.map((s) => {
+                  // Cluster info only matters (and is only computed here)
+                  // while "Latest only" is on — with it off this is all
+                  // undefined and every row renders exactly as before.
+                  const cluster = latestOnly ? clusterBySessionId.get(s.id) : undefined
+                  const isClusterHead = !!cluster && cluster.sessions[0].id === s.id
+                  const isClusterSibling = !!cluster && !isClusterHead
+                  return (
+                  <tr
+                    key={s.id}
+                    className={[s.id === selectedSessionId ? 'row-selected' : '', isClusterSibling ? 'dt-cluster-child-row' : '']
+                      .filter(Boolean)
+                      .join(' ')}
+                  >
                     <td>
                       <input
                         type="checkbox"
@@ -284,8 +520,38 @@ export default function DtSessionHistoryPage() {
                           setComparing(false)
                         }}
                       >
+                        {isClusterSibling ? '↳ ' : ''}
                         {s.name}
                       </button>
+                      {cluster && isClusterHead && cluster.sessions.length > 1 && (
+                        <button
+                          type="button"
+                          className="dt-cluster-chip"
+                          onClick={() => toggleClusterExpanded(cluster.key)}
+                          title="Older sessions saved for this same area"
+                        >
+                          {expandedClusters.has(cluster.key)
+                            ? 'Hide earlier sessions'
+                            : `+${cluster.sessions.length - 1} earlier here`}
+                        </button>
+                      )}
+                      {/* Optimization Activity badges (2026-09-12) -- a
+                          session usually belongs to 0 or 1 activity;
+                          rendered as a small pill row rather than a table
+                          column so it doesn't widen every row when empty. */}
+                      {s.activities.length > 0 && (
+                        <div className="dt-activity-badges">
+                          {s.activities.map((a) => (
+                            <span
+                              key={`${a.id}-${a.role}`}
+                              className="dt-activity-badge"
+                              title={`${a.name} · ${ACTIVITY_ROLE_LABELS[a.role]}`}
+                            >
+                              {a.name} · {ACTIVITY_ROLE_LABELS[a.role]}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td>{s.tech}</td>
                     <td>{s.date ?? '—'}</td>
@@ -294,6 +560,17 @@ export default function DtSessionHistoryPage() {
                     </td>
                     <td>{s.attachment_count > 0 ? `📎 ${s.attachment_count}` : <span className="muted">—</span>}</td>
                     <td className="admin-table-actions">
+                      {canDelete && (
+                        <button
+                          className="btn-secondary btn-small"
+                          type="button"
+                          style={{ marginRight: 6 }}
+                          title="Link to an optimization activity"
+                          onClick={() => setLinkingSession(s)}
+                        >
+                          🔗 Link
+                        </button>
+                      )}
                       {canDelete && (
                         <button
                           className="btn-danger btn-small"
@@ -315,7 +592,8 @@ export default function DtSessionHistoryPage() {
                       )}
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
             </div>
@@ -342,8 +620,39 @@ export default function DtSessionHistoryPage() {
               </div>
               {comparing ? (
                 <div>
-                  {compareLoading && <div className="page-status">Loading sessions…</div>}
-                  {!compareLoading && compareSessions.length >= 2 && <DtCompareMap sessions={compareSessions} />}
+                  {compareMode === 'delta' && deltaAvailable && deltaOrder ? (
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                        {/* Export Report (2026-09-12) -- opens DtCompareReportView.tsx,
+                            a print-friendly (Print > Save as PDF) summary of this same
+                            before/after pair, for handing to management or attaching to
+                            a closed complaint ticket. There's no PDF library anywhere in
+                            this stack, so this deliberately leans on the browser's own
+                            print-to-PDF rather than adding one for a first version. */}
+                        <button type="button" className="btn-secondary btn-small" onClick={() => setReportOpen(true)}>
+                          📄 Export Report
+                        </button>
+                      </div>
+                      <DtCompareDeltaMap
+                        before={deltaSwapped ? deltaOrder.after : deltaOrder.before}
+                        after={deltaSwapped ? deltaOrder.before : deltaOrder.after}
+                        reason={deltaOrder.reason}
+                        onSwap={() => setDeltaSwapped((v) => !v)}
+                      />
+                      {reportOpen && (
+                        <DtCompareReportView
+                          before={deltaSwapped ? deltaOrder.after : deltaOrder.before}
+                          after={deltaSwapped ? deltaOrder.before : deltaOrder.after}
+                          onClose={() => setReportOpen(false)}
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      {compareLoading && <div className="page-status">Loading sessions…</div>}
+                      {!compareLoading && compareSessions.length >= 2 && <DtCompareMap sessions={compareSessions} />}
+                    </>
+                  )}
                 </div>
               ) : (
                 selectedSessionId && (
@@ -525,6 +834,18 @@ export default function DtSessionHistoryPage() {
           </button>
         )}
       </div>
+
+      {linkingSession && (
+        <AttachActivityModal session={linkingSession} onClose={() => setLinkingSession(null)} />
+      )}
+      {suggestionOpen && linkSuggestion && (
+        <AttachActivityModal
+          session={linkSuggestion.session}
+          initialActivityId={linkSuggestion.suggestedActivityId}
+          initialNewName={linkSuggestion.suggestedName}
+          onClose={() => setSuggestionOpen(false)}
+        />
+      )}
     </div>
   )
 }
