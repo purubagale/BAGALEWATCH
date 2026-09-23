@@ -70,6 +70,36 @@ async function readFileRows(file: File, sheetHint: string): Promise<string[][]> 
 
 type SectorImportTech = '4G' | '3G' | '2G'
 
+// Downloadable Sector Data template (2026-09-23, "allow download the exact
+// template in application also" — a real 4G upload failed with "No rows
+// with a Site ID and Cell Name were found in this file" even though
+// parseSectorRows's column matching is flexible; the fastest way to rule
+// out a header-naming mismatch is to hand the user a file guaranteed to
+// match). Header order/text here is exactly the CANONICAL name for each
+// column findCol() in siteImportParser.ts tries first (before falling back
+// to its looser aliases), and matches _build_sector_data_workbook's own
+// export columns (exports.py) minus 'Tech' — this per-tech upload SLOT
+// already declares its own tech (see SectorImportSlot's docstring), so the
+// template doesn't need that column at all. Site ID in the sample row is a
+// placeholder, not a real one — a row naming a site that doesn't already
+// exist in the Live Site Directory is skipped and reported, never created.
+const SECTOR_TEMPLATE_HEADER = [
+  'Site ID', 'Cell Name', 'Sector', 'Local Cell ID', 'Latitude', 'Longitude',
+  'Height (m)', 'Azimuth (deg)', 'MT (deg)', 'ET (deg)', 'PCI',
+  'Carrier', 'Site Band', 'Cell Active Status', 'Site Existence',
+]
+const SECTOR_TEMPLATE_SAMPLE: Record<SectorImportTech, string[]> = {
+  '4G': ['CDR0001', 'CDR0001_L1', 'A', '1', '27.700000', '85.300000', '30', '120', '2', '0', '101', 'NTC', 'B3', 'ACTIVE', 'EXISTING'],
+  '3G': ['CDR0001', 'CDR0001_U1', 'A', '1', '27.700000', '85.300000', '30', '120', '2', '0', '', 'NTC', 'U2100', 'ACTIVE', 'EXISTING'],
+  '2G': ['CDR0001', 'CDR0001_G1', 'A', '1', '27.700000', '85.300000', '30', '120', '2', '0', '', 'NTC', 'G900', 'ACTIVE', 'EXISTING'],
+}
+
+function downloadSectorTemplate(tech: SectorImportTech) {
+  const lines = [SECTOR_TEMPLATE_HEADER.join(','), SECTOR_TEMPLATE_SAMPLE[tech].join(',')]
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
+  downloadBlob(blob, `${tech.toLowerCase()}_sector_data_template.csv`)
+}
+
 /** One self-contained upload slot for a single tech's Sector Data file
  * (2026-08-09, "i have some seperate colums of sector information than
  * 4g... allow seperate upload of sector data for 4g, 3g and 2g rather
@@ -135,12 +165,22 @@ function SectorImportSlot({ tech, label }: { tech: SectorImportTech; label: stri
 
   return (
     <div className="backup-import-col">
-      <div className="backup-card-title" style={{ fontSize: 11, marginBottom: 6 }}>{label} (add + update)</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+        <div className="backup-card-title" style={{ fontSize: 11 }}>{label} (add + update)</div>
+        <button
+          type="button"
+          className="btn-secondary btn-small"
+          onClick={() => downloadSectorTemplate(tech)}
+        >
+          ⬇ Template
+        </button>
+      </div>
       <div className="muted" style={{ fontSize: 9, marginBottom: 8 }}>
         Missing sectors are added as {tech}. An existing sector is updated only if the row's values genuinely
         differ, otherwise left alone. A row for a site that doesn't exist yet is skipped and reported — sites are
         managed by the Live Site Directory sync, not this upload. Column headers are matched flexibly, so this
-        doesn't need to match any particular template.
+        doesn't need to match any particular template — but if a file gets rejected, download the template above
+        and compare its headers against yours.
       </div>
       <div
         className="dt-drop-zone"
