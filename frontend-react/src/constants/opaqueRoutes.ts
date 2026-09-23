@@ -123,6 +123,9 @@ export const SITES_PATH = OPAQUE_PATHS['/sites']
 // successful save, so it needs the real path rather than just the
 // old descriptive one used as this map's key.
 export const DT_SESSION_HISTORY_PATH = OPAQUE_PATHS['/dt-session-history']
+// SiteDetailPage.tsx's Antenna Change History section (2026-09-23) links
+// each imported change back to its source report.
+export const RF_REPORTS_PATH = OPAQUE_PATHS['/rf-reports']
 
 /** Maps a pathname's top-level segment back to its ORIGINAL descriptive
  * name (e.g. both `/sites` and its alias `/e6t2pv` normalize to

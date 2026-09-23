@@ -14,7 +14,7 @@ import {
 import { isAllowed } from '../api/types'
 import type { Issue, IssueSeverity, IssueStatus, Sector, SectorWrite, SiteDetail, SiteDtSession, SiteWrite } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
-import { DT_SESSION_HISTORY_PATH, SITES_PATH } from '../constants/opaqueRoutes'
+import { DT_SESSION_HISTORY_PATH, RF_REPORTS_PATH, SITES_PATH } from '../constants/opaqueRoutes'
 import { useSearchModal } from '../contexts/SearchModalContext'
 import SiteLocationMiniMap from '../components/SiteLocationMiniMap'
 import { ISSUE_SEVERITY_LABELS, ISSUE_STATUS_LABELS, ISSUE_STATUS_ORDER } from '../lib/issueLabels'
@@ -502,6 +502,15 @@ export default function SiteDetailPage() {
   }
   const canManageIssues = user?.role === 'superadmin' || user?.role === 'admin'
 
+  // Antenna Change History (2026-09-23, "need to relate and manage vendor
+  // provided RNO report" -- site/sector-level view, not just inside an
+  // Activity) — flattens every sector's config_changes into one list for
+  // the site-wide section below, sorted newest-first (matches every other
+  // "recent activity" list on this page).
+  const antennaChangeRows = site.sectors
+    .flatMap((sec) => sec.config_changes.map((c) => ({ ...c, cellName: sec.cell_name })))
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+
   return (
     <div className="site-detail-page">
       {fromSearch ? (
@@ -949,6 +958,55 @@ export default function SiteDetailPage() {
           </div>
         ) : (
           <div className="kpi-pane-empty">No drive tests recorded near this site yet.</div>
+        )}
+      </section>
+
+      {/* -- Antenna Change History --------------------------------------
+          2026-09-23 request: "need to relate and manage vendor provided
+          RNO report" -- site/sector-level half. Sector.config_changes
+          (reverse of SectorConfigChange.sector) is flattened across every
+          sector into antennaChangeRows above. Shown even when empty, same
+          discoverable-not-hidden convention as every other section on
+          this page. Once an OptimizationActivity links to a change (Step
+          5b, AttachActivityModal.tsx's "Link vendor report" section) that
+          relationship would show here too via a future
+          verifying_activities lookup -- not added yet since this section
+          is already useful without it and that reverse lookup needs its
+          own small serializer addition. */}
+      <section>
+        <div className="site-form-section">Antenna Change History</div>
+
+        {antennaChangeRows.length > 0 ? (
+          <div className="sectors-table-wrap">
+            <table className="sectors-table">
+              <thead>
+                <tr>
+                  <th>Cell Name</th>
+                  <th>Report</th>
+                  <th>Before → After</th>
+                  <th>Result</th>
+                  <th>Antenna Type</th>
+                  <th>Imported</th>
+                </tr>
+              </thead>
+              <tbody>
+                {antennaChangeRows.map((c) => (
+                  <tr key={c.id}>
+                    <td className="sector-cell-name">{c.cellName || '—'}</td>
+                    <td>
+                      <Link to={RF_REPORTS_PATH}>{c.report.lot_name}</Link>
+                    </td>
+                    <td>{c.before_change} → {c.after_change}</td>
+                    <td>{c.result || '—'}</td>
+                    <td>{c.antenna_type || '—'}</td>
+                    <td>{new Date(c.created_at).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="kpi-pane-empty">No vendor-imported antenna changes recorded for this site's sectors yet.</div>
         )}
       </section>
 

@@ -45,6 +45,19 @@ CRUD_MENUS = {'sites', 'rsrpmgr', 'tree', 'thresholds', 'datasource', 'backup', 
 
 
 class SectorSerializer(serializers.ModelSerializer):
+    """`config_changes` (2026-09-23, "need to relate and manage vendor
+    provided RNO report" -- site/sector-level half, the other side of
+    OptimizationActivity.source_report's docstring) -- the reverse of
+    SectorConfigChange.sector (`related_name='config_changes'`, models.py),
+    surfaced here so SiteDetailPage.tsx's "Antenna Change History" section
+    can show every vendor-imported antenna change against this sector
+    without a second endpoint. Deliberately a hand-built dict, not
+    SectorConfigChangeSerializer reused as-is -- that serializer has no
+    `report` field at all (it's nested INSIDE a report's own serializer,
+    where the parent is already known), but this direction genuinely needs
+    to name which report each change came from."""
+    config_changes = serializers.SerializerMethodField()
+
     class Meta:
         model = Sector
         fields = [
@@ -63,6 +76,21 @@ class SectorSerializer(serializers.ModelSerializer):
             # Sector.carrier/site_band/cell_active_status/site_existence's
             # docstring in models.py.
             'carrier', 'site_band', 'cell_active_status', 'site_existence',
+            'config_changes',
+        ]
+
+    def get_config_changes(self, obj):
+        return [
+            {
+                'id': c.id,
+                'report': {'id': c.report_id, 'lot_name': c.report.lot_name},
+                'before_change': c.before_change,
+                'after_change': c.after_change,
+                'result': c.result,
+                'antenna_type': c.antenna_type,
+                'created_at': c.created_at,
+            }
+            for c in obj.config_changes.select_related('report').all()
         ]
 
 

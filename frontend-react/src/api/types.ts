@@ -98,6 +98,22 @@ export interface SitesPageParams {
   q?: string
 }
 
+// One entry of SectorSerializer.get_config_changes() (2026-09-23) --
+// deliberately a distinct, slimmer shape from SectorConfigChange below
+// (which is the full RfReportsPage antenna-change-log row, including
+// raw_row/sn/site_id/etc. this direction doesn't need) -- see that
+// serializer method's own docstring for why it's hand-built rather than
+// reusing SectorConfigChangeSerializer as-is.
+export interface SectorAntennaChange {
+  id: number
+  report: { id: number; lot_name: string }
+  before_change: string
+  after_change: string
+  result: string
+  antenna_type: string
+  created_at: string
+}
+
 export interface Sector {
   id: number
   cell_name: string
@@ -133,6 +149,12 @@ export interface Sector {
   site_band: string
   cell_active_status: string
   site_existence: string
+  // Vendor-imported antenna azimuth/tilt changes against this sector
+  // (2026-09-23, "need to relate and manage vendor provided RNO report")
+  // -- reverse of SectorConfigChange.sector, see SectorSerializer.get_config_changes()'s
+  // own docstring in serializers.py for why this is a hand-built shape
+  // rather than reusing SectorConfigChangeSerializer as-is.
+  config_changes: SectorAntennaChange[]
 }
 
 export interface SiteDetail extends SiteListItem {
