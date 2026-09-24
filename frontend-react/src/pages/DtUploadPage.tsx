@@ -363,6 +363,43 @@ interface PendingTrpSession {
 // .trp files remain the full-fidelity archive.
 const TRP_SAVE_SAMPLE_CAP = MAX_MAP_DOTS
 
+// Reserves part of the save-time cap for samples carrying a "sparse"
+// measurement (dl/cqi) that TEMS reports far less often than RSRP/RSRQ/
+// SINR (2026-09-24, confirmed live: a 1,060,967-raw-row session's DL
+// Throughput plot showed only a handful of dots after the plain
+// even-stride subsampleForMap() below diluted its already-rare
+// pdschThroughput/cqi readings down to almost nothing). The comment on
+// TRP_SAVE_SAMPLE_CAP above ("every plotted metric sits at ~100% coverage
+// after fillForwardTrpRows") was true for RSRP/RSRQ/SINR/RxQual when it
+// was written -- it stopped being true once dl/cqi joined the plottable
+// metrics (2026-09-23), since neither is reported anywhere near every
+// sample even after the 5s fill-forward window.
+//
+// 30% of the cap reserved for sparse-metric rows is a starting point, not
+// a measured split -- revisit if a real session still looks too sparse
+// for one side or too route-thin for the general RSRP/PCI/Band coverage
+// on the other. 3G/2G are unaffected: dl/cqi are always null on those
+// samples (trpRowToDtSample only ever sets them in the 4G branch), so
+// `sparseRows` is empty and this behaves exactly like the plain
+// subsampleForMap() call it replaces.
+const TRP_SPARSE_METRIC_SHARE = 0.3
+const TRP_SPARSE_METRIC_FIELDS: (keyof DtSample)[] = ['dl', 'cqi']
+
+function subsampleWithSparseMetrics(rows: DtSample[], max: number): DtSample[] {
+  if (rows.length <= max) return rows
+  const sparseBudget = Math.floor(max * TRP_SPARSE_METRIC_SHARE)
+  const sparseRows = rows.filter((r) => TRP_SPARSE_METRIC_FIELDS.some((f) => r[f] != null))
+  const keptSparse = subsampleForMap(sparseRows, sparseBudget)
+  const generalBudget = max - Math.min(keptSparse.length, sparseBudget)
+  const general = subsampleForMap(rows, generalBudget)
+  // De-dup by object identity (both passes can independently pick the same
+  // row) via a Set, then restore chronological order -- both inputs are
+  // slices of the same already-chronological `rows` array, but the two
+  // independent strides interleave when merged.
+  const merged = new Set([...general, ...keptSparse])
+  return [...merged].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
+}
+
 // Auto-detects which of the standard NTC drive-test types a session is,
 // from the SAME structural event evidence trpaSummarizeCallEvents/
 // trpaSummarizeDownloadEvents already computed — no separate detection
@@ -446,7 +483,7 @@ function buildTrpSessions(
     // favoring whichever file happened to be concatenated first.
     const chronological = [...grp.samples].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
     const wasCapped = chronological.length > TRP_SAVE_SAMPLE_CAP
-    const samples = subsampleForMap(chronological, TRP_SAVE_SAMPLE_CAP)
+    const samples = subsampleWithSparseMetrics(chronological, TRP_SAVE_SAMPLE_CAP)
     const meta: DtSessionMeta = computeSessionMeta(samples, grp.files)
     const callSummary = trpaSummarizeCallEvents(grp.events)
     if (callSummary) meta.callSummary = callSummary
