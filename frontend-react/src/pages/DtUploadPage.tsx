@@ -123,7 +123,19 @@ function bandStr(v: unknown): string {
 // (see SERVING_FORWARD_FILL_KEYS there). Listing them here too would just
 // be a redundant, 5s-capped second pass over values already filled.
 const TRP_FILL_FORWARD_FIELDS: Record<DtTech, string[]> = {
-  '4G': ['rsrp', 'rsrq', 'sinr', 'pdschThroughput'],
+  // 'cqi' added 2026-09-24 -- a real bug, not a missing decoder: CQI IS
+  // logged straight from the .trp file (trpAnalysis.ts's TRPA_TECH_FIELDS,
+  // Radio.Lte.ServingCell[8].CqiCodeword0Average/Stream[2].Cqi), but TEMS
+  // reports it in its own record group, separate from the RSRP/RSRQ/SINR
+  // group -- without forward-filling it the same way, a CQI reading
+  // almost never lands in the same raw row as the RSRP value
+  // trpRowToDtSample() requires, so every sample's cqi came through null
+  // (confirmed live: a real upload's CQI plot showed 0 samples in every
+  // band). Same 5s-bounded carry as its rsrp/rsrq/sinr/pdschThroughput
+  // siblings, not pci/band's unbounded identity carry -- CQI is a
+  // periodic measurement, not a cell identity that stays valid until
+  // changed.
+  '4G': ['rsrp', 'rsrq', 'sinr', 'pdschThroughput', 'cqi'],
   '3G': ['rscp', 'ecno'],
   '2G': ['rssiFull', 'rssiSub', 'rxQualFull', 'rxQualSub'],
 }
