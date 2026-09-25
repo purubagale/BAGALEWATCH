@@ -3,16 +3,14 @@ import { Link } from 'react-router-dom'
 import { apiErrorMessage } from '../api/client'
 import {
   useConfirmRfReportImport, useDeleteRfReport, useParseRfReport, useRfReports,
-  useSites, useUploadRfReportAttachments,
+  useUploadRfReportAttachments,
 } from '../api/queries'
 import type {
-  IssueSeverity, RfAntennaChangePreviewRow, RfOptimizationReport, RfOptimizationReportCreate,
-  RfRecommendationPreviewRow, RfReportAttachmentCategory, RfReportUnmatchedTable,
+  RfAntennaChangePreviewRow, RfCellKpiPreviewRow, RfLotKpiPreviewRow, RfOptimizationReport,
+  RfOptimizationReportCreate, RfReportAttachmentCategory, RfReportUnmatchedTable,
 } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
-import SearchableSelect from '../components/SearchableSelect'
 import { DT_SESSION_HISTORY_PATH } from '../constants/opaqueRoutes'
-import { ISSUE_SEVERITY_LABELS, ISSUE_SEVERITY_ORDER } from '../lib/issueLabels'
 
 // Vendor RNO (Radio Network Optimization) report importer (2026-09-15
 // request: "How can we utilize this report or data of this report in
@@ -20,30 +18,27 @@ import { ISSUE_SEVERITY_LABELS, ISSUE_SEVERITY_ORDER } from '../lib/issueLabels'
 // RfOptimizationReport's docstring in core/models.py and
 // core/rf_reports.py's module docstring for the full design.
 //
-// Scope, per the user's own explicit choice: only the antenna
-// change-log table and the open recommendation tables are parsed into
-// structured rows -- NOT the ~30 per-cell KPI pre/post tables the same
-// vendor reports also carry. Minutes-of-Meeting content is deliberately
-// NOT parsed at all (2026-09-15 follow-up: "should be handled with just
-// attachment") -- it's a plain file upload via the attachments section
-// below, same as the source .docx itself.
+// Scope (revised 2026-09-26, "during its trace, previously
+// recommendation for new site was also extracted, now it is not
+// needed. need to extract The Lot-Wise OSS KPI and worst cell
+// optimization also"): the antenna change-log table, the Lot-wise OSS
+// KPI table(s), and the per-cell worst-cell-optimization KPI tables are
+// parsed into structured rows. Recommendation-table parsing was removed
+// entirely -- historical Issue rows it created earlier stay intact, but
+// no new ones are created by this importer. Minutes-of-Meeting content
+// is deliberately NOT parsed at all (2026-09-15 follow-up: "should be
+// handled with just attachment") -- it's a plain file upload via the
+// attachments section below, same as the source .docx itself.
 //
 // Flow: pick a .docx -> parse-preview (nothing saved yet) -> review/edit
-// every detected row and resolve each recommendation to a real Site
-// (required -- Issue.site is a mandatory FK, see
-// _RecommendationInputSerializer's docstring in serializers.py) ->
-// confirm-import persists the report + SectorConfigChange rows + one
-// Issue per recommendation. A parse can take a while for real files
-// (218-528MB seen) -- python-docx has to open the whole document.
+// every detected row -> confirm-import persists the report +
+// SectorConfigChange rows + RfKpiSummary/RfCellKpi rows. A parse can
+// take a while for real files (218-528MB seen) -- python-docx has to
+// open the whole document.
 
 type AntennaRowState = RfAntennaChangePreviewRow & { include: boolean }
-type RecommendationRowState = RfRecommendationPreviewRow & {
-  include: boolean
-  title: string
-  description: string
-  siteId: string | null
-  severity: IssueSeverity
-}
+type LotKpiRowState = RfLotKpiPreviewRow & { include: boolean }
+type CellKpiRowState = RfCellKpiPreviewRow & { include: boolean }
 
 const ATTACHMENT_CATEGORY_LABELS: Record<RfReportAttachmentCategory, string> = {
   source: 'Source report',
@@ -56,7 +51,6 @@ export default function RfReportsPage() {
   const canManage = user?.role === 'superadmin' || user?.role === 'admin'
 
   const { data: reports, isLoading, error } = useRfReports()
-  const { data: sites } = useSites()
   const deleteReport = useDeleteRfReport()
 
   const [showImport, setShowImport] = useState(false)
@@ -78,8 +72,9 @@ export default function RfReportsPage() {
     <div className="admin-page">
       <h1>RF Reports</h1>
       <p className="muted">
-        Import a vendor Radio Network Optimization report — the antenna change log and open
-        recommendation tables become structured records here; everything is reviewed before anything is saved.
+        Import a vendor Radio Network Optimization report — the antenna change log, Lot-wise OSS
+        KPI table and worst-cell optimization tables become structured records here; everything
+        is reviewed before anything is saved.
       </p>
 
       {!showImport && (
@@ -89,7 +84,7 @@ export default function RfReportsPage() {
       )}
 
       {showImport && (
-        <ImportWizard sites={sites ?? []} onDone={() => setShowImport(false)} onCancel={() => setShowImport(false)} />
+        <ImportWizard onDone={() => setShowImport(false)} onCancel={() => setShowImport(false)} />
       )}
 
       <table className="admin-table" style={{ marginTop: 20 }}>
@@ -100,7 +95,8 @@ export default function RfReportsPage() {
             <th>Title</th>
             <th>Vendor</th>
             <th>Antenna Changes</th>
-            <th>Recommendations</th>
+            <th>Lot KPIs</th>
+            <th>Worst-Cell KPIs</th>
             <th>Imported By</th>
             <th>Imported</th>
             <th />
@@ -121,7 +117,7 @@ export default function RfReportsPage() {
           ))}
           {!reports?.length && (
             <tr>
-              <td colSpan={9} className="page-status">No reports imported yet.</td>
+              <td colSpan={10} className="page-status">No reports imported yet.</td>
             </tr>
           )}
         </tbody>
@@ -150,7 +146,8 @@ function ReportRow({
         <td>{report.title || '—'}</td>
         <td>{report.vendor || '—'}</td>
         <td>{report.antenna_changes_detail.length}</td>
-        <td>{report.recommendation_count}</td>
+        <td>{report.lot_kpis_detail.length}</td>
+        <td>{report.cell_kpis_detail.length}</td>
         <td>{report.imported_by_name ?? '—'}</td>
         <td>{new Date(report.imported_at).toLocaleDateString()}</td>
         <td className="admin-table-actions">
@@ -159,7 +156,7 @@ function ReportRow({
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={9}>
+          <td colSpan={10}>
             <ReportDetail report={report} />
           </td>
         </tr>
@@ -217,10 +214,69 @@ function ReportDetail({ report }: { report: RfOptimizationReport }) {
         <p className="muted">No antenna change rows were imported for this report.</p>
       )}
 
-      <h3>
-        Recommendations ({report.recommendation_count})
-      </h3>
-      <p className="muted">Each recommendation was imported as an Issue — see the Issues page to track them through to resolution.</p>
+      <h3>Lot-wise OSS KPI ({report.lot_kpis_detail.length})</h3>
+      {report.lot_kpis_detail.length > 0 ? (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>KPI</th>
+                <th>Target</th>
+                <th>Pre</th>
+                <th>Post</th>
+                <th>Remark</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.lot_kpis_detail.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.kpi_name}</td>
+                  <td>{row.target}</td>
+                  <td>{row.pre_value}</td>
+                  <td>{row.post_value}</td>
+                  <td>{row.remark}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted">No Lot-wise OSS KPI table was imported for this report.</p>
+      )}
+
+      <h3>Worst-Cell KPI ({report.cell_kpis_detail.length})</h3>
+      {report.cell_kpis_detail.length > 0 ? (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>eNBID</th>
+                <th>eNodeB Name</th>
+                <th>Cell Name</th>
+                <th>Sector Match</th>
+                <th>Metric</th>
+                <th>Pre</th>
+                <th>Post</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.cell_kpis_detail.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.enb_id}</td>
+                  <td>{row.enodeb_name}</td>
+                  <td>{row.cell_name}</td>
+                  <td>{row.matched_sector_id ? 'Matched' : <span className="muted">No match</span>}</td>
+                  <td>{row.metric_name}</td>
+                  <td>{row.pre_value}</td>
+                  <td>{row.post_value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted">No worst-cell optimization tables were imported for this report.</p>
+      )}
 
       {/* Verified By (2026-09-23, "need to relate and manage vendor
           provided RNO report") -- the other direction of
@@ -284,9 +340,8 @@ function ReportDetail({ report }: { report: RfOptimizationReport }) {
 }
 
 function ImportWizard({
-  sites, onDone, onCancel,
+  onDone, onCancel,
 }: {
-  sites: { id: string; name: string }[]
   onDone: () => void
   onCancel: () => void
 }) {
@@ -302,7 +357,8 @@ function ImportWizard({
   const [notes, setNotes] = useState('')
 
   const [antennaRows, setAntennaRows] = useState<AntennaRowState[]>([])
-  const [recRows, setRecRows] = useState<RecommendationRowState[]>([])
+  const [lotKpiRows, setLotKpiRows] = useState<LotKpiRowState[]>([])
+  const [cellKpiRows, setCellKpiRows] = useState<CellKpiRowState[]>([])
   const [tablesUnmatched, setTablesUnmatched] = useState<RfReportUnmatchedTable[]>([])
   const [confirmError, setConfirmError] = useState<string | null>(null)
   // Kept so the original upload can be re-sent as a compressed 'source'
@@ -312,31 +368,14 @@ function ImportWizard({
   // same file a second time.
   const [sourceFile, setSourceFile] = useState<File | null>(null)
 
-  const siteOptions = sites.map((s) => `${s.name || s.id} (${s.id})`)
-  function siteIdFromLabel(label: string): string | null {
-    const match = sites.find((s) => `${s.name || s.id} (${s.id})` === label)
-    return match ? match.id : null
-  }
-  function siteLabelFromId(id: string | null): string {
-    if (!id) return ''
-    const match = sites.find((s) => s.id === id)
-    return match ? `${match.name || match.id} (${match.id})` : ''
-  }
-
   async function onFileChosen(file: File | null) {
     if (!file) return
     setConfirmError(null)
     setSourceFile(file)
     const preview = await parseReport.mutateAsync(file)
     setAntennaRows(preview.antenna_changes.map((row) => ({ ...row, include: true })))
-    setRecRows(preview.recommendations.map((row) => ({
-      ...row,
-      include: true,
-      title: row.title,
-      description: row.description,
-      siteId: row.matched_site_id,
-      severity: 'medium',
-    })))
+    setLotKpiRows(preview.lot_kpis.map((row) => ({ ...row, include: true })))
+    setCellKpiRows(preview.cell_kpis.map((row) => ({ ...row, include: true })))
     setTablesUnmatched(preview.tables_unmatched)
     // Best-effort suggestions (2026-09-15 follow-up) -- only fill a
     // field the engineer hasn't already typed something into, and only
@@ -352,20 +391,18 @@ function ImportWizard({
     setAntennaRows((rows) => rows.map((r, i) => (i === index ? { ...r, ...patch } : r)))
   }
 
-  function updateRec(index: number, patch: Partial<RecommendationRowState>) {
-    setRecRows((rows) => rows.map((r, i) => (i === index ? { ...r, ...patch } : r)))
+  function updateLotKpi(index: number, patch: Partial<LotKpiRowState>) {
+    setLotKpiRows((rows) => rows.map((r, i) => (i === index ? { ...r, ...patch } : r)))
+  }
+
+  function updateCellKpi(index: number, patch: Partial<CellKpiRowState>) {
+    setCellKpiRows((rows) => rows.map((r, i) => (i === index ? { ...r, ...patch } : r)))
   }
 
   async function handleConfirm() {
     setConfirmError(null)
     if (!lotName.trim()) {
       setConfirmError('Lot name is required.')
-      return
-    }
-    const includedRecs = recRows.filter((r) => r.include)
-    const missingSite = includedRecs.find((r) => !r.siteId)
-    if (missingSite) {
-      setConfirmError(`Choose a site for recommendation "${missingSite.title}" (or uncheck it) before importing.`)
       return
     }
     const payload: RfOptimizationReportCreate = {
@@ -386,12 +423,21 @@ function ImportWizard({
         antenna_shared_with: r.antenna_shared_with,
         raw_row: r.raw_row,
       })),
-      recommendations: includedRecs.map((r) => ({
-        site: r.siteId as string,
+      lot_kpis: lotKpiRows.filter((r) => r.include).map((r) => ({
+        kpi_name: r.kpi_name,
+        target: r.target,
+        pre_value: r.pre_value,
+        post_value: r.post_value,
+        remark: r.remark,
+      })),
+      cell_kpis: cellKpiRows.filter((r) => r.include).map((r) => ({
+        enb_id: r.enb_id,
+        enodeb_name: r.enodeb_name,
+        cell_name: r.cell_name,
         sector: r.matched_sector_id,
-        title: r.title,
-        description: r.description,
-        severity: r.severity,
+        metric_name: r.metric_name,
+        pre_value: r.pre_value,
+        post_value: r.post_value,
       })),
     }
     let created: RfOptimizationReport
@@ -423,7 +469,7 @@ function ImportWizard({
     onDone()
   }
 
-  const hasPreview = antennaRows.length > 0 || recRows.length > 0
+  const hasPreview = antennaRows.length > 0 || lotKpiRows.length > 0 || cellKpiRows.length > 0
 
   return (
     <section style={{ marginTop: 16, marginBottom: 24 }}>
@@ -483,7 +529,7 @@ function ImportWizard({
           {tablesUnmatched.length > 0 && (
             <details style={{ marginBottom: 12 }}>
               <summary className="muted">
-                {tablesUnmatched.length} table{tablesUnmatched.length === 1 ? '' : 's'} looked recommendation-like but weren't fully recognized
+                {tablesUnmatched.length} table{tablesUnmatched.length === 1 ? '' : 's'} weren't fully recognized
                 {' — '}{tablesUnmatched.filter((t) => t.parsed).length} parsed anyway, {tablesUnmatched.filter((t) => !t.parsed).length} skipped (click to see headers)
               </summary>
               <ul className="plain-list">
@@ -537,57 +583,73 @@ function ImportWizard({
             </table>
           </div>
 
-          <h3>Recommendations ({recRows.filter((r) => r.include).length} of {recRows.length} included)</h3>
-          <p className="muted">
-            Each included row becomes an Issue — a site is required for every one. For a brand-new site
-            proposal there's no real "existing" site yet, so this just anchors the Issue to the nearest
-            real site for tracking; the nearest one is pre-selected by distance when found, but always
-            double-check and change it if it's not the right one.
-          </p>
+          <h3>Lot-wise OSS KPI ({lotKpiRows.filter((r) => r.include).length} of {lotKpiRows.length} included)</h3>
           <div style={{ overflowX: 'auto' }}>
             <table className="admin-table">
               <thead>
                 <tr>
                   <th />
-                  <th>Title</th>
-                  <th>Description</th>
-                  <th>Site (required)</th>
-                  <th>Severity</th>
+                  <th>KPI</th>
+                  <th>Target</th>
+                  <th>Pre</th>
+                  <th>Post</th>
+                  <th>Remark</th>
                 </tr>
               </thead>
               <tbody>
-                {recRows.map((row, i) => (
+                {lotKpiRows.map((row, i) => (
                   <tr key={i}>
-                    <td><input type="checkbox" checked={row.include} onChange={(e) => updateRec(i, { include: e.target.checked })} /></td>
-                    <td><input type="text" value={row.title} onChange={(e) => updateRec(i, { title: e.target.value })} /></td>
-                    <td><textarea rows={2} value={row.description} onChange={(e) => updateRec(i, { description: e.target.value })} /></td>
-                    <td style={{ minWidth: 220 }}>
-                      <SearchableSelect
-                        value={siteLabelFromId(row.siteId)}
-                        onChange={(label) => updateRec(i, { siteId: siteIdFromLabel(label) })}
-                        options={siteOptions}
-                        placeholder="Choose a site…"
-                        searchPlaceholder="Search sites…"
-                        ariaLabel="Site"
-                      />
-                      {row.site_match_type === 'exact' && <div className="muted">matched by name</div>}
-                      {row.site_match_type === 'nearest' && (
-                        <div className="muted">
-                          nearest{row.site_match_distance_km != null ? ` — ~${row.site_match_distance_km} km away` : ''}, please confirm
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <select value={row.severity} onChange={(e) => updateRec(i, { severity: e.target.value as IssueSeverity })}>
-                        {ISSUE_SEVERITY_ORDER.map((value) => (
-                          <option key={value} value={value}>{ISSUE_SEVERITY_LABELS[value]}</option>
-                        ))}
-                      </select>
-                    </td>
+                    <td><input type="checkbox" checked={row.include} onChange={(e) => updateLotKpi(i, { include: e.target.checked })} /></td>
+                    <td><input type="text" value={row.kpi_name} onChange={(e) => updateLotKpi(i, { kpi_name: e.target.value })} /></td>
+                    <td><input type="text" value={row.target} onChange={(e) => updateLotKpi(i, { target: e.target.value })} /></td>
+                    <td><input type="text" value={row.pre_value} onChange={(e) => updateLotKpi(i, { pre_value: e.target.value })} /></td>
+                    <td><input type="text" value={row.post_value} onChange={(e) => updateLotKpi(i, { post_value: e.target.value })} /></td>
+                    <td><input type="text" value={row.remark} onChange={(e) => updateLotKpi(i, { remark: e.target.value })} /></td>
                   </tr>
                 ))}
-                {!recRows.length && (
-                  <tr><td colSpan={5} className="page-status">No recommendation table was found in this document.</td></tr>
+                {!lotKpiRows.length && (
+                  <tr><td colSpan={6} className="page-status">No Lot-wise OSS KPI table was found in this document.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Worst-Cell KPI ({cellKpiRows.filter((r) => r.include).length} of {cellKpiRows.length} included)</h3>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th />
+                  <th>eNBID</th>
+                  <th>eNodeB Name</th>
+                  <th>Cell Name</th>
+                  <th>Match</th>
+                  <th>Metric</th>
+                  <th>Pre</th>
+                  <th>Post</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cellKpiRows.map((row, i) => (
+                  <tr key={i}>
+                    <td><input type="checkbox" checked={row.include} onChange={(e) => updateCellKpi(i, { include: e.target.checked })} /></td>
+                    <td><input type="text" value={row.enb_id} onChange={(e) => updateCellKpi(i, { enb_id: e.target.value })} /></td>
+                    <td><input type="text" value={row.enodeb_name} onChange={(e) => updateCellKpi(i, { enodeb_name: e.target.value })} /></td>
+                    <td><input type="text" value={row.cell_name} onChange={(e) => updateCellKpi(i, { cell_name: e.target.value })} /></td>
+                    <td>
+                      {row.matched_sector_id ? (
+                        <button type="button" className="btn-secondary btn-small" onClick={() => updateCellKpi(i, { matched_sector_id: null })}>
+                          Matched — clear
+                        </button>
+                      ) : <span className="muted">No match</span>}
+                    </td>
+                    <td><input type="text" value={row.metric_name} onChange={(e) => updateCellKpi(i, { metric_name: e.target.value })} /></td>
+                    <td><input type="text" value={row.pre_value} onChange={(e) => updateCellKpi(i, { pre_value: e.target.value })} /></td>
+                    <td><input type="text" value={row.post_value} onChange={(e) => updateCellKpi(i, { post_value: e.target.value })} /></td>
+                  </tr>
+                ))}
+                {!cellKpiRows.length && (
+                  <tr><td colSpan={8} className="page-status">No worst-cell optimization tables were found in this document.</td></tr>
                 )}
               </tbody>
             </table>

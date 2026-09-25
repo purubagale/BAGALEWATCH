@@ -25,6 +25,8 @@ from .models import (
     MenuPermission,
     OptimizationActivity,
     OptimizationActivitySession,
+    RfCellKpi,
+    RfKpiSummary,
     RfOptimizationReport,
     RfReportAttachment,
     Sector,
@@ -548,6 +550,10 @@ class SiteWriteSerializer(serializers.ModelSerializer):
             'id', 'sectors', 'name', 'region', 'city', 'district', 'lat', 'lng',
             'sitename1', 'palika', 'palika_type', 'ward_no', 'deployment_status',
             'operational_technologies',
+            # Tower/antenna engineering parameters (2026-09-26) -- see
+            # Site's own docstring in models.py.
+            'tower_type', 'tower_height_m', 'building_height', 'tower_height_tssr',
+            'antenna_device', 'tower_remark',
             'type', 'tech', 'status', 'status_2g', 'status_3g', 'rssi', 'load',
             'kpi_entered', 'kpi_entered_2g', 'kpi_entered_3g', 'kpi_date',
             'rrc', 'erab', 'call_setup', 'call_drop', 'svc_drop', 'intra_ho', 'inter_ho',
@@ -1275,57 +1281,64 @@ class _AntennaChangeInputSerializer(serializers.Serializer):
     raw_row = serializers.JSONField(required=False, allow_null=True, default=None)
 
 
-class _RecommendationInputSerializer(serializers.Serializer):
-    """Write-only shape for one reviewed recommendation row -- becomes
-    one Issue with `source_report` set to this import (see Issue's
-    docstring in models.py). `site` is REQUIRED here -- unlike the
-    parse-preview suggestion, which can come back null for a genuinely
-    new proposed site/sector with no existing counterpart yet -- because
-    Issue.site is a mandatory FK; the review UI must resolve every
-    recommendation row to some existing site (the nearest real one, for
-    a brand-new site proposal) before this will accept it."""
-    site = serializers.PrimaryKeyRelatedField(queryset=Site.objects.all())
+class _LotKpiInputSerializer(serializers.Serializer):
+    """Write-only shape for one reviewed Lot-wise OSS KPI summary row on
+    RfOptimizationReportSerializer.create() below (2026-09-26 -- see
+    RfKpiSummary's own docstring in models.py). Same "every text field
+    optional/blank" permissiveness as `_AntennaChangeInputSerializer` --
+    user-reviewed parse-preview data, not raw document content."""
+    kpi_name = serializers.CharField()
+    target = serializers.CharField(required=False, allow_blank=True, default='')
+    pre_value = serializers.CharField(required=False, allow_blank=True, default='')
+    post_value = serializers.CharField(required=False, allow_blank=True, default='')
+    remark = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class _CellKpiInputSerializer(serializers.Serializer):
+    """Write-only shape for one reviewed worst-cell KPI row (2026-09-26 --
+    see RfCellKpi's own docstring in models.py)."""
+    enb_id = serializers.CharField(required=False, allow_blank=True, default='')
+    enodeb_name = serializers.CharField(required=False, allow_blank=True, default='')
+    cell_name = serializers.CharField(required=False, allow_blank=True, default='')
     sector = serializers.PrimaryKeyRelatedField(queryset=Sector.objects.all(), required=False, allow_null=True, default=None)
-    title = serializers.CharField()
-    description = serializers.CharField(required=False, allow_blank=True, default='')
-    severity = serializers.ChoiceField(choices=Issue.SEVERITY_CHOICES, required=False, default='medium')
+    metric_name = serializers.CharField()
+    pre_value = serializers.CharField(required=False, allow_blank=True, default='')
+    post_value = serializers.CharField(required=False, allow_blank=True, default='')
 
 
 class RfOptimizationReportSerializer(serializers.ModelSerializer):
     """List/detail/create shape for one imported vendor RNO report (see
     RfOptimizationReport's docstring in models.py). `antenna_changes`/
-    `recommendations` are write-only nested lists on create -- the
+    `lot_kpis`/`cell_kpis` are write-only nested lists on create -- the
     frontend's reviewed parse-preview result -- and `create()` persists
-    the parent report plus every child row: antenna-change rows become
-    SectorConfigChange rows, recommendation rows each become an ordinary
-    Issue with `source_report` set to this report (2026-09-15 scope
-    decision: recommendations reuse the existing Issue tracker rather
-    than a dedicated model, so they show up on the same Issues
-    list/page everyone already uses, filterable there like any other
-    issue).
+    the parent report plus every child row as SectorConfigChange/
+    RfKpiSummary/RfCellKpi rows respectively.
 
-    On read, `antenna_changes_detail` is the real nested
-    SectorConfigChangeSerializer list. Recommendation rows are
-    deliberately NOT nested back here on read -- they're just Issue rows
-    at that point, already visible on the existing Issues page/API via
-    `source_report`, so duplicating them here would only be a second
-    place the same data could drift out of sync.
+    On read, `antenna_changes_detail`/`lot_kpis_detail`/`cell_kpis_detail`
+    are the real nested serializer lists.
+
+    **Recommendation-table parsing (new site/band additions -> Issue
+    rows) was removed 2026-09-26** ("now it is not needed") -- see this
+    module's own docstring in rf_reports.py for what to restore from
+    `git log` if a future request revives it. `Issue.source_report`
+    still exists and old recommendation-derived Issues are unaffected;
+    only this serializer's write path for creating new ones is gone.
 
     `activities` (2026-09-23, "need to relate and manage vendor provided
     RNO report") -- the OTHER direction of OptimizationActivity.source_report
     (see that field's own docstring): which optimization efforts/drive
-    tests reference THIS report directly (independent of the recommendation
-    -> Issue -> resolved_by_activity chain `recommendation_count` above
-    counts). Closes the loop so a report's own page can link straight to
-    the drives that verified each change, not just show that a change was
-    imported.
+    tests reference THIS report directly. Closes the loop so a report's
+    own page can link straight to the drives that verified each change,
+    not just show that a change was imported.
     """
     antenna_changes = _AntennaChangeInputSerializer(many=True, write_only=True, required=False)
-    recommendations = _RecommendationInputSerializer(many=True, write_only=True, required=False)
+    lot_kpis = _LotKpiInputSerializer(many=True, write_only=True, required=False)
+    cell_kpis = _CellKpiInputSerializer(many=True, write_only=True, required=False)
     antenna_changes_detail = SectorConfigChangeSerializer(source='antenna_changes', many=True, read_only=True)
+    lot_kpis_detail = serializers.SerializerMethodField()
+    cell_kpis_detail = serializers.SerializerMethodField()
     attachments = RfReportAttachmentSerializer(many=True, read_only=True)
     imported_by_name = serializers.SerializerMethodField()
-    recommendation_count = serializers.SerializerMethodField()
     activities = serializers.SerializerMethodField()
 
     class Meta:
@@ -1333,8 +1346,9 @@ class RfOptimizationReportSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'lot_name', 'title', 'vendor', 'period_covered', 'network', 'notes',
             'imported_by', 'imported_by_name', 'imported_at',
-            'antenna_changes', 'recommendations',
-            'antenna_changes_detail', 'attachments', 'recommendation_count', 'activities',
+            'antenna_changes', 'lot_kpis', 'cell_kpis',
+            'antenna_changes_detail', 'lot_kpis_detail', 'cell_kpis_detail',
+            'attachments', 'activities',
         ]
         read_only_fields = ['imported_by', 'imported_at']
 
@@ -1343,8 +1357,25 @@ class RfOptimizationReportSerializer(serializers.ModelSerializer):
             return None
         return obj.imported_by.name or obj.imported_by.username
 
-    def get_recommendation_count(self, obj):
-        return obj.recommendation_issues.count()
+    def get_lot_kpis_detail(self, obj):
+        return [
+            {
+                'id': row.id, 'kpi_name': row.kpi_name, 'target': row.target,
+                'pre_value': row.pre_value, 'post_value': row.post_value, 'remark': row.remark,
+            }
+            for row in obj.kpi_summaries.all()
+        ]
+
+    def get_cell_kpis_detail(self, obj):
+        return [
+            {
+                'id': row.id, 'enb_id': row.enb_id, 'enodeb_name': row.enodeb_name,
+                'cell_name': row.cell_name, 'metric_name': row.metric_name,
+                'pre_value': row.pre_value, 'post_value': row.post_value,
+                'matched_sector_id': row.sector_id,
+            }
+            for row in obj.cell_kpis.all()
+        ]
 
     def get_activities(self, obj):
         return [
@@ -1354,24 +1385,21 @@ class RfOptimizationReportSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         antenna_rows = validated_data.pop('antenna_changes', [])
-        recommendation_rows = validated_data.pop('recommendations', [])
+        lot_kpi_rows = validated_data.pop('lot_kpis', [])
+        cell_kpi_rows = validated_data.pop('cell_kpis', [])
         report = RfOptimizationReport.objects.create(**validated_data)
 
         if antenna_rows:
             SectorConfigChange.objects.bulk_create([
                 SectorConfigChange(report=report, **row) for row in antenna_rows
             ])
-
-        if recommendation_rows:
-            request = self.context.get('request')
-            created_by = request.user if request and request.user.is_authenticated else None
-            Issue.objects.bulk_create([
-                Issue(
-                    site=row['site'], sector=row.get('sector'), title=row['title'],
-                    description=row.get('description', ''), severity=row.get('severity', 'medium'),
-                    created_by=created_by, source_report=report,
-                )
-                for row in recommendation_rows
+        if lot_kpi_rows:
+            RfKpiSummary.objects.bulk_create([
+                RfKpiSummary(report=report, **row) for row in lot_kpi_rows
+            ])
+        if cell_kpi_rows:
+            RfCellKpi.objects.bulk_create([
+                RfCellKpi(report=report, **row) for row in cell_kpi_rows
             ])
         return report
 

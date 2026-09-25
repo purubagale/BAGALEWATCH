@@ -192,6 +192,17 @@ export interface SiteDetail extends SiteListItem {
   kpi_3g_json: Record<string, unknown> | null
   updated_at: string | null
   sectors: Sector[]
+  // Tower/antenna engineering parameters (2026-09-26, "for 4G I found
+  // more parameters with data for sectors that are also need to be
+  // managed") -- see Site's own docstring in models.py. Plain text
+  // throughout, same "carry the vendor's own value through unchanged"
+  // convention as Sector.carrier/site_band.
+  tower_type: string
+  tower_height_m: string
+  building_height: string
+  tower_height_tssr: string
+  antenna_device: string
+  tower_remark: string
 }
 
 // ── Phase 2: write payload shapes ───────────────────────────────────────
@@ -332,6 +343,20 @@ export interface SectorImportResult {
 // in `errors`, never used to create one.
 export interface KpiImportResult {
   updated: number
+  skipped: number
+  errors: string[]
+}
+
+// `kind: 'engineering_params'` import (2026-09-26) -- see
+// ImportSitesView._apply_engineering_params()'s docstring in
+// site_import.py. Plain data sync matched by Cell Name, writing to both
+// Sector (pci/azimuth/mech_tilt/elec_tilt/carrier/site_band) and that
+// sector's Site (tower_type/tower_height_m/building_height/
+// tower_height_tssr/antenna_device/tower_remark) -- explicitly not a
+// diff/audit-log system ("do not import snapshot, import data only").
+export interface EngineeringParamImportResult {
+  sectors_updated: number
+  sites_updated: number
   skipped: number
   errors: string[]
 }
@@ -935,14 +960,20 @@ export interface DtSessionDetail extends DtSessionListItem {
   attachments: DtSessionAttachment[]
 }
 
-// ── Vendor RNO report importer (2026-09-15) ──────────────────────────────
+// ── Vendor RNO report importer (2026-09-15, updated 2026-09-26) ─────────
 // See RfOptimizationReport's docstring in core/models.py for the full
 // feature: an uploaded vendor .docx is parsed for its antenna
-// change-log table and recommendation tables (parse-preview, nothing
-// saved yet), reviewed/edited in the frontend, then confirmed into one
-// RfOptimizationReport + its SectorConfigChange rows + one Issue per
-// recommendation. Minutes-of-Meeting content is NOT parsed -- it's a
-// plain RfReportAttachment (category='mom'), same as the source .docx.
+// change-log table, Lot-wise OSS KPI summary tables, and worst-cell KPI
+// tables (parse-preview, nothing saved yet), reviewed/edited in the
+// frontend, then confirmed into one RfOptimizationReport + its
+// SectorConfigChange/RfKpiSummary/RfCellKpi rows. Minutes-of-Meeting
+// content is NOT parsed -- it's a plain RfReportAttachment
+// (category='mom'), same as the source .docx.
+//
+// Recommendation-table parsing (new site/band additions -> Issue rows)
+// was removed 2026-09-26 ("now it is not needed") -- Issue.source_report
+// still exists for historical recommendation-derived Issues, but nothing
+// in this app creates new ones anymore.
 
 export type RfReportAttachmentCategory = 'source' | 'mom' | 'other'
 
@@ -963,30 +994,38 @@ export interface RfAntennaChangePreviewRow {
   matched_site_id: string | null
 }
 
-export interface RfRecommendationPreviewRow {
-  sn: number | null
-  identifier: string
-  title: string
-  description: string
-  raw_row: Record<string, string>
-  matched_sector_id: number | null
-  matched_site_id: string | null
-  // 'exact' = matched by cell/site name; 'nearest' = no name match, but
-  // a nearest-by-distance Site was suggested from coordinates found in
-  // the row (2026-09-15 follow-up, see rf_reports.py's _nearest_site) --
-  // null means matched_site_id is also null (no suggestion at all).
-  // Either way this is just a suggestion; the review UI's site picker
-  // stays fully overridable.
-  site_match_type: 'exact' | 'nearest' | null
-  site_match_distance_km: number | null
+// One Lot-wise OSS KPI summary row from parse-preview -- aggregate,
+// no per-cell identity (2026-09-26, see RfKpiSummary's docstring in
+// models.py). `target`/`pre_value`/`post_value`/`remark` are the
+// vendor's own text, never force-parsed ("66.19%(105884)", "Monitor
+// only (>=-85dbm)").
+export interface RfLotKpiPreviewRow {
+  kpi_name: string
+  target: string
+  pre_value: string
+  post_value: string
+  remark: string
 }
 
-// A near-miss table from parse-preview -- looked recommendation-ish
-// (see rf_reports.py's _looks_recommendation_ish) but wasn't classified
-// with full confidence. `parsed: true` means it still got folded into
-// `recommendations` above despite the uncertainty; `parsed: false` means
-// it has no usable identifier column and was skipped entirely -- shown
-// so a human can tell whether anything in it needs to be added by hand.
+// One worst-cell KPI row from parse-preview (2026-09-26, see
+// RfCellKpi's docstring in models.py) -- one table per metric in the
+// source document, `metric_name` already has its trailing "Pre"/"Post"
+// header token stripped server-side.
+export interface RfCellKpiPreviewRow {
+  enb_id: string
+  enodeb_name: string
+  cell_name: string
+  metric_name: string
+  pre_value: string
+  post_value: string
+  matched_sector_id: number | null
+}
+
+// A table from parse-preview that wasn't classified by any of this
+// module's detectors -- currently always empty (2026-09-26: the
+// recommendation-table importer that used to populate this was
+// removed); kept in the response shape in case a future table type
+// wants the same "visible even when not classified" reporting.
 export interface RfReportUnmatchedTable {
   header: string[]
   row_count: number
@@ -1005,7 +1044,8 @@ export interface RfReportSuggestedMetadata {
 // POST /api/v2/rf-reports/parse-preview/ response.
 export interface RfReportParsePreview {
   antenna_changes: RfAntennaChangePreviewRow[]
-  recommendations: RfRecommendationPreviewRow[]
+  lot_kpis: RfLotKpiPreviewRow[]
+  cell_kpis: RfCellKpiPreviewRow[]
   tables_scanned: number
   tables_matched: number
   tables_unmatched: RfReportUnmatchedTable[]
@@ -1027,16 +1067,26 @@ export interface RfAntennaChangeInput {
   raw_row?: Record<string, string> | null
 }
 
-// One reviewed recommendation row as sent to confirm-import -- becomes
-// one Issue with source_report set. `site` is required (unlike the
-// preview's matched_site_id, which can be null) -- see
-// _RecommendationInputSerializer's docstring in serializers.py.
-export interface RfRecommendationInput {
-  site: string
+// One reviewed Lot-wise KPI row as sent to confirm-import
+// (RfOptimizationReportCreate.lot_kpis below).
+export interface RfLotKpiInput {
+  kpi_name: string
+  target?: string
+  pre_value?: string
+  post_value?: string
+  remark?: string
+}
+
+// One reviewed worst-cell KPI row as sent to confirm-import
+// (RfOptimizationReportCreate.cell_kpis below).
+export interface RfCellKpiInput {
+  enb_id?: string
+  enodeb_name?: string
+  cell_name?: string
   sector?: number | null
-  title: string
-  description?: string
-  severity?: IssueSeverity
+  metric_name: string
+  pre_value?: string
+  post_value?: string
 }
 
 export interface SectorConfigChange {
@@ -1079,12 +1129,11 @@ export interface RfOptimizationReport {
   imported_by_name: string | null
   imported_at: string
   antenna_changes_detail: SectorConfigChange[]
+  lot_kpis_detail: (RfLotKpiPreviewRow & { id: number })[]
+  cell_kpis_detail: (RfCellKpiPreviewRow & { id: number })[]
   attachments: RfReportAttachment[]
-  recommendation_count: number
   // Which OptimizationActivity(s) reference this report directly
-  // (2026-09-23) -- the reverse of OptimizationActivity.source_report,
-  // independent of recommendation_count above (which only counts
-  // recommendation-derived Issues, not this direct link).
+  // (2026-09-23) -- the reverse of OptimizationActivity.source_report.
   activities: { id: number; name: string; session_count: number }[]
 }
 
@@ -1097,7 +1146,8 @@ export interface RfOptimizationReportCreate {
   network?: string
   notes?: string
   antenna_changes?: RfAntennaChangeInput[]
-  recommendations?: RfRecommendationInput[]
+  lot_kpis?: RfLotKpiInput[]
+  cell_kpis?: RfCellKpiInput[]
 }
 
 // GET /api/v2/dt-sessions/<id>/serving-cells/ — the distinct serving

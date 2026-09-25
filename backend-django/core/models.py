@@ -234,6 +234,26 @@ class Site(models.Model):
 
     type = models.CharField(max_length=50, blank=True, default='')
     tech = models.CharField(max_length=50, blank=True, default='')
+    # Tower/antenna engineering parameters (2026-09-26 request: "for 4G I
+    # found more parameters with data for sectors that are also need to
+    # be managed" -- from a real nationwide LTE engineering-parameter
+    # master list, ~20,000 rows). Site-level, not Sector-level -- these
+    # describe the physical tower/structure a site's antennas mount on,
+    # shared by every sector at that site, same reasoning as
+    # lat/lng/district being Site fields rather than repeated per Sector.
+    # Plain CharFields throughout, same "carry the vendor's own text
+    # through, don't force a number type onto messy source data"
+    # convention as Sector.carrier/site_band (a real "Tower height (m)"
+    # column mixes clean integers with occasional blanks/remarks).
+    # Explicitly NOT added, per the user's own exclusion list: Property
+    # ID (already this Site's own `id`), Zone, Palika (New nagarpalika/
+    # Gaunpalika) -- confirmed not wanted this round.
+    tower_type = models.CharField(max_length=50, blank=True, default='')
+    tower_height_m = models.CharField(max_length=50, blank=True, default='')
+    building_height = models.CharField(max_length=50, blank=True, default='')
+    tower_height_tssr = models.CharField(max_length=50, blank=True, default='')
+    antenna_device = models.CharField(max_length=100, blank=True, default='')
+    tower_remark = models.CharField(max_length=500, blank=True, default='')
     status = models.CharField(max_length=20, blank=True, default='nodata')
     status_2g = models.CharField(max_length=20, blank=True, default='')
     status_3g = models.CharField(max_length=20, blank=True, default='')
@@ -1050,6 +1070,83 @@ class SectorConfigChange(models.Model):
 
     def __str__(self):
         return f'{self.cell_name} ({self.report_id})'
+
+
+class RfKpiSummary(models.Model):
+    """One Lot-wise OSS KPI summary row imported from a vendor RNO
+    report (2026-09-26 request: "need to extract The Lot-Wise OSS KPI and
+    worst cell optimization also" -- the "~30 per-cell KPI pre/post
+    tables" `RfOptimizationReport`'s original 2026-09-15 scope explicitly
+    deferred). Aggregate, LOT-wide values -- no per-cell identity, unlike
+    `RfCellKpi` below. Real shapes seen (see core/rf_reports.py's
+    `_parse_lot_kpi_table`): `[S.N., KPI Parameter, Target "X", Pre,
+    Post]`, `[S.N., VoLTE KPI, Pre, Post, Remarks]`, `[S.No, ViLTE KPI
+    Parameter, Pre, Post]`, `[KPI, Target, Pre, Post, Remark]`.
+
+    `pre_value`/`post_value`/`target` are the vendor's own raw text, same
+    "never force-parse" rule `SectorConfigChange.before_change`/
+    `after_change` already uses -- real values look like
+    "66.19%(105884)" or "Monitor only (>=-85dbm)", not a clean number.
+    """
+    report = models.ForeignKey(RfOptimizationReport, on_delete=models.CASCADE, related_name='kpi_summaries')
+    kpi_name = models.CharField(max_length=255)
+    target = models.CharField(max_length=255, blank=True, default='')
+    pre_value = models.CharField(max_length=255, blank=True, default='')
+    post_value = models.CharField(max_length=255, blank=True, default='')
+    remark = models.CharField(max_length=255, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_rf_kpi_summaries'
+        ordering = ['report', 'id']
+        indexes = [
+            models.Index(fields=['report']),
+        ]
+
+    def __str__(self):
+        return f'{self.kpi_name} ({self.report_id})'
+
+
+class RfCellKpi(models.Model):
+    """One "worst cell" KPI pre/post row imported from a vendor RNO
+    report (2026-09-26 request, see `RfKpiSummary`'s own docstring for
+    the full context). Real shape seen (see core/rf_reports.py's
+    `_parse_cell_kpi_table`): one table PER METRIC, always `[eNBID,
+    eNodeB Name, Cell Name, Cell ID, <Metric>(-Pre), <Metric>-Post]` --
+    `metric_name` is the vendor's column header with the trailing "Pre"/
+    "Post" token stripped off (e.g. "RRC Setup Success Rate (%)"), so
+    every cell's rows for the same metric share one `metric_name` string
+    across however many worst-cell tables mention it.
+
+    `sector` is matched by cell name against this app's existing Sector
+    rows at import-review time, same as `SectorConfigChange.sector` --
+    can be null if no match was found or confirmed; the row is kept
+    either way. `enb_id`/`enodeb_name` are kept as the vendor's own text
+    even when `sector` resolves, purely for cross-checking against the
+    source document.
+    """
+    report = models.ForeignKey(RfOptimizationReport, on_delete=models.CASCADE, related_name='cell_kpis')
+    enb_id = models.CharField(max_length=50, blank=True, default='')
+    enodeb_name = models.CharField(max_length=255, blank=True, default='')
+    cell_name = models.CharField(max_length=255, blank=True, default='')
+    sector = models.ForeignKey(
+        'Sector', null=True, blank=True, on_delete=models.SET_NULL, related_name='worst_cell_kpis'
+    )
+    metric_name = models.CharField(max_length=255)
+    pre_value = models.CharField(max_length=255, blank=True, default='')
+    post_value = models.CharField(max_length=255, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_rf_cell_kpis'
+        ordering = ['report', 'metric_name', 'cell_name']
+        indexes = [
+            models.Index(fields=['report']),
+            models.Index(fields=['sector']),
+        ]
+
+    def __str__(self):
+        return f'{self.cell_name} {self.metric_name} ({self.report_id})'
 
 
 class Issue(models.Model):
