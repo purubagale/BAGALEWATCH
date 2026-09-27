@@ -11,7 +11,7 @@ import { useAuth } from '../auth/AuthContext'
 import { csvTextToRows } from '../lib/dtTemplateParser'
 import { readXlsxRows } from '../lib/xlsxReader'
 import {
-  parseEngineeringParamRows, parseKmlEngineeringParams, parseKpiRows, parseSectorRows,
+  parseEngineeringParamRows, parseKmlEngineeringParams, parseKpiRows, parseRfDatabaseRows, parseSectorRows,
   type ParsedEngineeringParamRow, type ParsedKpiRow, type ParsedSectorRow,
 } from '../lib/siteImportParser'
 import { resolveDistrictBackfill, type DistrictBackfillResult } from '../lib/districtBackfill'
@@ -398,6 +398,141 @@ function EngineeringParamImportSlot() {
           ref={fileInputRef}
           type="file"
           accept=".xlsx,.xls,.csv,.kml"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) handleFile(f)
+          }}
+        />
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      {result && (
+        <div className="form-success">
+          Updated {result.sectors_updated} sector{result.sectors_updated === 1 ? '' : 's'}, {result.sites_updated}{' '}
+          site{result.sites_updated === 1 ? '' : 's'}, left unchanged {result.skipped}.
+          {result.errors.length > 0 && (
+            <div style={{ marginTop: 4, color: '#eab308' }}>{result.errors.slice(0, 5).join(' ')}</div>
+          )}
+        </div>
+      )}
+      {rows && (
+        <div style={{ marginTop: 10 }}>
+          <div className="backup-summary-list" style={{ marginTop: 0 }}>
+            <div>Rows parsed: <strong>{rows.length}</strong></div>
+            <div className="muted" style={{ fontSize: 10 }}>
+              Exact matched-vs-unmatched count is determined on the server (existing sectors aren't preloaded here).
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+            <button
+              className="btn-secondary btn-small"
+              onClick={() => {
+                setRows(null)
+                setFileName('')
+                if (fileInputRef.current) fileInputRef.current.value = ''
+              }}
+            >
+              Cancel
+            </button>
+            <button className="btn-primary btn-small" onClick={confirmImport} disabled={busy}>
+              {busy ? 'Importing…' : `Import ${rows.length} row${rows.length === 1 ? '' : 's'}`}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 2G/3G RF Database import (2026-09-27, "analyse" sample/2g_3g_RF
+ * Database 10 September 2026.xlsx) — the 2G/3G equivalent of
+ * EngineeringParamImportSlot above, from a real vendor RF database
+ * workbook with separate "2G"/"3G" sheets. Same cell-name-only matching
+ * and same `kind='engineering_params'` endpoint (no `tech` needed on the
+ * request body) — deliberately NOT the per-tech `kind='sectors'`
+ * endpoint SectorImportSlot uses, since this file's own "RNC ID" column
+ * would make that endpoint's loose Site ID alias resolve to the wrong
+ * column (see siteImportParser.ts's parseRfDatabaseRows docstring for
+ * the full collision analysis). `tech` here only selects which SHEET of
+ * the uploaded workbook to read (readFileRows/readXlsxRows already
+ * picks the sheet whose name contains it, same as SectorImportSlot) —
+ * it has no effect on how the row is matched or written server-side. */
+function RfDatabaseImportSlot({ tech, label }: { tech: '2G' | '3G'; label: string }) {
+  const qc = useQueryClient()
+  const [rows, setRows] = useState<ParsedEngineeringParamRow[] | null>(null)
+  const [fileName, setFileName] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<EngineeringParamImportResult | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  async function handleFile(file: File) {
+    setError(null)
+    setResult(null)
+    try {
+      const records = parseRfDatabaseRows(await readFileRows(file, tech))
+      if (!records.length) throw new Error('No rows with a Cell Name were found in this file.')
+      setRows(records)
+      setFileName(file.name)
+    } catch (err) {
+      setRows(null)
+      setFileName('')
+      setError(err instanceof Error ? err.message : 'Could not parse this file.')
+    }
+  }
+
+  async function confirmImport() {
+    if (!rows) return
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await apiJson<EngineeringParamImportResult>('/api/v2/backup/import-sites/', {
+        method: 'POST',
+        body: JSON.stringify({ kind: 'engineering_params', rows }),
+      })
+      setResult(res)
+      setRows(null)
+      setFileName('')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      qc.invalidateQueries({ queryKey: ['backup-summary'] })
+      qc.invalidateQueries({ queryKey: ['sites'] })
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Import failed.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="backup-import-col">
+      <div className="backup-card-title" style={{ fontSize: 11, marginBottom: 6 }}>{label}</div>
+      <div className="muted" style={{ fontSize: 9, marginBottom: 8 }}>
+        Matches an existing {tech} sector by Cell Name and updates its Height/Azimuth/Tilt/Carrier
+        {tech === '3G' ? '/Scrambling Code/DL UARFCN/real transmit power (converted to dBm)' : '/BCCH/BSIC/NCC/HSN/TCH/TRX counts'},
+        Cell Active Status/Site Existence/LAC/Cell ID/CS Traffic, plus that site's tower type, tower height, building
+        height and antenna device. A row for a Cell Name with no matching sector is skipped and reported — sectors
+        are managed by the Sector Data upload above, not this one.
+      </div>
+      <div
+        className="dt-drop-zone"
+        onDragOver={(e) => {
+          e.preventDefault()
+          e.currentTarget.classList.add('drag-over')
+        }}
+        onDragLeave={(e) => e.currentTarget.classList.remove('drag-over')}
+        onDrop={(e) => {
+          e.preventDefault()
+          e.currentTarget.classList.remove('drag-over')
+          const f = e.dataTransfer.files[0]
+          if (f) handleFile(f)
+        }}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        {fileName ? <span>{fileName}</span> : <span>Drop a {tech} RF Database .xlsx/.csv here, or click to browse</span>}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".xlsx,.xls,.csv"
           style={{ display: 'none' }}
           onChange={(e) => {
             const f = e.target.files?.[0]
@@ -987,6 +1122,8 @@ export default function BackupPage() {
             <SectorImportSlot tech="3G" label="📡 3G Sector Data" />
             <SectorImportSlot tech="2G" label="📡 2G Sector Data" />
             <EngineeringParamImportSlot />
+            <RfDatabaseImportSlot tech="2G" label="📡 2G RF Database" />
+            <RfDatabaseImportSlot tech="3G" label="📡 3G RF Database" />
           </div>
         </div>
       )}

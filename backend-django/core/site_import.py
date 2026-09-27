@@ -133,13 +133,23 @@ SECTOR_FIELDS = [
 # SECTOR_FIELDS itself, so the two field sets stay easy to tell apart at
 # every call site below.
 SECTOR_UPDATE_FIELDS = SECTOR_FIELDS + ['lat', 'lng']
-_INT_FIELDS = {'local_cell_id', 'pci'}
+_INT_FIELDS = {
+    'local_cell_id', 'pci',
+    # 2G/3G RF Database fields (2026-09-27) -- see
+    # ENGINEERING_SECTOR_FIELDS's own comment below for the full list and
+    # which tech each one comes from.
+    'scrambling_code', 'bcch', 'bsic', 'ncc', 'hsn', 'total_trx', 'activated_trx', 'dl_uarfcn',
+}
 # 'beamwidth'/'radius'/'max_tx_power_dbm' (2026-09-27) -- antenna wedge
 # visualization fields, only ever populated via ENGINEERING_SECTOR_FIELDS
 # below, not SECTOR_FIELDS -- harmless to list here regardless, since
 # _coerce() only checks membership for whatever field name it's actually
-# called with.
-_FLOAT_FIELDS = {'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'beamwidth', 'radius', 'max_tx_power_dbm'}
+# called with. 'cs_traffic'/'site_traffic' (same day, 2G/3G RF Database)
+# are the same story.
+_FLOAT_FIELDS = {
+    'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'beamwidth', 'radius', 'max_tx_power_dbm',
+    'cs_traffic', 'site_traffic',
+}
 
 # 4G Site-level KPI columns this import updates (2026-08-26) — matches
 # exports.py's _build_site_kpi_workbook "KPI Data" sheet exactly, since
@@ -169,9 +179,28 @@ KPI_UPDATE_FIELDS = KPI_FIELDS + ['kpi_entered', 'kpi_date']
 # any of the three). See Sector.beamwidth/Sector.radius/
 # Sector.max_tx_power_dbm's own comments in models.py for why there's no
 # fabricated default when a row doesn't carry them.
+#
+# 2G/3G RF Database fields (2026-09-27, "analyse" sample/2g_3g_RF
+# Database...xlsx) -- 'scrambling_code'/'cell_active_status'/
+# 'site_existence' already existed on Sector (used by the ORIGINAL
+# per-tech 'sectors' import) but were never part of THIS field list; the
+# rest (lac/ci/ncc/hsn/tch/total_trx/activated_trx/cs_traffic/
+# site_traffic/dl_uarfcn) are new. This file is matched by Cell Name only
+# (same as every other engineering_params source), deliberately NOT the
+# original per-tech 'sectors'/_apply_sectors path -- its own Site ID
+# column ambiguity (an "RNC ID" column that a loose 'id' substring alias
+# would match before the real "Property ID" column) is exactly the kind
+# of silent-mismatch risk this cell-name-only path avoids entirely.
+# 3G's own "Cell Max Transmit Power(W)" is converted watts->dBm
+# client-side (siteImportParser.ts's parseRfDatabaseRows) before it ever
+# reaches this field list, so 'max_tx_power_dbm' above already covers it
+# -- no separate watts field needed.
 ENGINEERING_SECTOR_FIELDS = [
     'pci', 'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'carrier', 'site_band',
     'beamwidth', 'radius', 'max_tx_power_dbm',
+    'scrambling_code', 'bcch', 'bsic', 'cell_active_status', 'site_existence',
+    'lac', 'ci', 'ncc', 'hsn', 'tch', 'total_trx', 'activated_trx',
+    'cs_traffic', 'site_traffic', 'dl_uarfcn',
 ]
 # Site fields are plain strings, coerced inline (str().strip()) rather
 # than through `_coerce()` -- that function's int/float branches don't
@@ -232,11 +261,15 @@ class ImportSitesView(APIView):
        or {kind: 'sectors', tech: '4G'|'3G'|'2G' (optional), rows: [{site_id, cell_name,
              sector, tech, local_cell_id, lat, lng, height, azimuth, mech_tilt, elec_tilt, pci}, ...]}
        or {kind: 'engineering_params', rows: [{cell_name, pci, height, azimuth, mech_tilt,
-             elec_tilt, carrier, site_band, beamwidth, radius, max_tx_power_dbm, tower_type,
-             tower_height_m, building_height, tower_height_tssr, antenna_device,
+             elec_tilt, carrier, site_band, beamwidth, radius, max_tx_power_dbm,
+             scrambling_code, bcch, bsic, cell_active_status, site_existence, lac, ci, ncc,
+             hsn, tch, total_trx, activated_trx, cs_traffic, site_traffic, dl_uarfcn,
+             tower_type, tower_height_m, building_height, tower_height_tssr, antenna_device,
              tower_remark}, ...]} -- see `_apply_engineering_params()`'s own docstring
              (2026-09-26 addition; beamwidth/radius/max_tx_power_dbm added 2026-09-27 for
-             the antenna wedge visualization feature).
+             the antenna wedge visualization feature; the rest added the same day for the
+             2G/3G RF Database import -- every field here is optional per-row regardless of
+             which source actually carries it, same "blank means leave alone" contract).
 
     **2026-08-26, "no need to add site now" — sites are Live Site
     Directory-managed.** Confirmed via AskUserQuestion. Site identity/

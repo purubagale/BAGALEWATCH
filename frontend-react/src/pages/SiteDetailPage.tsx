@@ -144,6 +144,8 @@ const emptySector: SectorWrite = {
   pci: null, scrambling_code: null, bcch: null, bsic: null,
   kpi_json: null, kpi_date: '', lat: null, lng: null,
   carrier: '', site_band: '', cell_active_status: '', site_existence: '',
+  lac: '', ci: '', ncc: null, hsn: null, tch: '',
+  total_trx: null, activated_trx: null, cs_traffic: null, site_traffic: null, dl_uarfcn: null,
 }
 
 function siteToWrite(site: SiteDetail): SiteWrite {

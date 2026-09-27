@@ -159,6 +159,21 @@ export interface Sector {
   site_band: string
   cell_active_status: string
   site_existence: string
+  // 2G/3G RF Database engineering parameters (2026-09-27) — see each
+  // field's own comment in core/models.py, just after Sector.site_existence.
+  // lac/ci/tch are text (identifiers/channel-list, never a single number);
+  // the rest are 2G/3G-specific integers/floats, null when the imported
+  // row's source (xlsx/KML/RF database) doesn't carry that field at all.
+  lac: string
+  ci: string
+  ncc: number | null
+  hsn: number | null
+  tch: string
+  total_trx: number | null
+  activated_trx: number | null
+  cs_traffic: number | null
+  site_traffic: number | null
+  dl_uarfcn: number | null
   // Vendor-imported antenna azimuth/tilt changes against this sector
   // (2026-09-23, "need to relate and manage vendor provided RNO report")
   // -- reverse of SectorConfigChange.sector, see SectorSerializer.get_config_changes()'s

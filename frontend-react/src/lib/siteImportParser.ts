@@ -332,6 +332,25 @@ export interface ParsedEngineeringParamRow {
   max_tx_power_dbm: number | null
   carrier: string
   site_band: string
+  // 2G/3G RF Database fields (2026-09-27, parseRfDatabaseRows below) —
+  // null/'' on the 4G xlsx/KML sources, which don't carry any of these.
+  // See Sector's own field comments in models.py (just after
+  // Sector.site_existence) for what each one means.
+  scrambling_code: number | null
+  bcch: number | null
+  bsic: number | null
+  cell_active_status: string
+  site_existence: string
+  lac: string
+  ci: string
+  ncc: number | null
+  hsn: number | null
+  tch: string
+  total_trx: number | null
+  activated_trx: number | null
+  cs_traffic: number | null
+  site_traffic: number | null
+  dl_uarfcn: number | null
   tower_type: string
   tower_height_m: string
   building_height: string
@@ -396,6 +415,10 @@ export function parseEngineeringParamRows(rows: string[][]): ParsedEngineeringPa
       max_tx_power_dbm: num(row, iMaxTxPower),
       carrier: cell(row, iCarrier),
       site_band: cell(row, iSiteBand),
+      scrambling_code: null, bcch: null, bsic: null,
+      cell_active_status: '', site_existence: '',
+      lac: '', ci: '', ncc: null, hsn: null, tch: '',
+      total_trx: null, activated_trx: null, cs_traffic: null, site_traffic: null, dl_uarfcn: null,
       tower_type: cell(row, iTowerType),
       tower_height_m: cell(row, iTowerHeightM),
       building_height: cell(row, iBuildingHeight),
@@ -492,12 +515,130 @@ export function parseKmlEngineeringParams(text: string): ParsedEngineeringParamR
       max_tx_power_dbm: null, // not present anywhere in the KML's own key list
       carrier: fields.assignedcarrier ?? '',
       site_band: '',
+      scrambling_code: null, bcch: null, bsic: null,
+      cell_active_status: '', site_existence: '',
+      lac: '', ci: '', ncc: null, hsn: null, tch: '',
+      total_trx: null, activated_trx: null, cs_traffic: null, site_traffic: null, dl_uarfcn: null,
       tower_type: fields.existingtowertype ?? '',
       tower_height_m: fields.towerheightm ?? '',
       building_height: fields.buildingheight ?? '',
       tower_height_tssr: '',
       antenna_device: fields.antennadevice ?? '',
       tower_remark: fields.towerremark ?? '',
+    })
+  }
+  return records
+}
+
+// 2G/3G RF Database (2026-09-27, "analyse" sample/2g_3g_RF Database
+// 10 September 2026.xlsx) — the 2G/3G equivalent of the 4G engineering-
+// parameter sources above, from a real vendor RF database workbook with
+// separate "2G"/"3G" sheets (12,857 real 3G rows confirmed against the
+// actual file; the 2G sheet only has 3 sample rows today). ONE function
+// handles both sheets — their header text differs (2G: "Cell LAC"/
+// "Azimuth (Degree)"/"Mechnical Tilt" [real vendor typo]; 3G: "LAC"/
+// " Azimuth"/" Mech Tilt") but every alias below was checked against both
+// real header rows directly and resolves to the correct column on
+// either one (see the alias table in this feature's own plan for the
+// full collision analysis) — most notably, a bare 'ci' alias would have
+// wrongly matched the 3G sheet's "RNC ID" column (which contains "ci")
+// BEFORE ever reaching the real "Cell ID" column, since RNC ID appears
+// earlier in that sheet's header; using the fuller 'cellid'/'cellci'
+// keys resolves both sheets via an EXACT match instead, never touching
+// that risky substring path at all.
+//
+// 3G's own "Cell Max Transmit Power(W)" is the one real transmit-power
+// value in EITHER RF source (confirmed: the 4G xlsx/KML sources have
+// none) — converted watts->dBm here and unified into the same
+// max_tx_power_dbm field the 4G source already populates (per user
+// decision, 2026-09-27), rather than a second raw-watts field.
+const _WATTS_TO_DBM = (watts: number) => 10 * Math.log10(watts * 1000)
+
+/** Parses either sheet of the 2G/3G RF Database workbook (pass whichever
+ * sheet's rows readXlsxRowsForTech()/readXlsxRows() already picked out —
+ * this function doesn't need to know which tech it's looking at, the
+ * column aliases below disambiguate on their own). Requires a Cell Name
+ * column, same fail-fast contract as every other parser in this module.
+ * `district`/`zone`/`province`/`GaPaNaPa` are present in both sheets but
+ * deliberately NOT parsed — Site identity is Live Site Directory-managed,
+ * never upload-managed (same rule core/site_import.py's own module
+ * docstring already states, and the same "exclude zone and palika"
+ * precedent from the 4G engineering-params work). */
+export function parseRfDatabaseRows(rows: string[][]): ParsedEngineeringParamRow[] {
+  if (!rows || rows.length < 2) return []
+  const header = rows[0].map(normalize)
+  const iCellName = findCol(header, 'cellname')
+  const iHeight = findCol(header, 'antennaheight')
+  const iAzimuth = findCol(header, 'azimuth')
+  const iMt = findCol(header, 'mechtilt', 'mechnicaltilt')
+  const iEt = findCol(header, 'electilt', 'electricaltilt')
+  const iCarrier = findCol(header, 'assignedcarrier', 'carrier')
+  const iCellActiveStatus = findCol(header, 'cellactivestatus', 'cellactstatus')
+  const iSiteExistence = findCol(header, 'existence', 'existance')
+  const iPsc = findCol(header, 'psc')
+  const iBcch = findCol(header, 'bcch')
+  const iBsic = findCol(header, 'bsic')
+  const iNcc = findCol(header, 'ncc')
+  const iHsn = findCol(header, 'hsn')
+  const iTch = findCol(header, 'tch')
+  // 'lac'/'cellid'+'cellci' -- see this function's own docstring above
+  // for why 'ci' alone is never used as a key.
+  const iLac = findCol(header, 'lac')
+  const iCi = findCol(header, 'cellid', 'cellci')
+  const iTotalTrx = findCol(header, 'totaltrxnumber')
+  const iActivatedTrx = findCol(header, 'activatedtrxnumber')
+  const iCsTraffic = findCol(header, 'cstraffic')
+  const iSiteTraffic = findCol(header, 'sitetraffic')
+  const iDlUarfcn = findCol(header, 'dluarfcn')
+  const iMaxTxPowerW = findCol(header, 'cellmaxtransmitpowerw')
+  const iTowerType = findCol(header, 'towertype')
+  const iTowerHeightM = findCol(header, 'towerheight')
+  const iBuildingHeight = findCol(header, 'buildingheight')
+  const iAntennaDevice = findCol(header, 'antennaname')
+  const iTowerRemark = findCol(header, 'remark')
+
+  if (iCellName < 0) throw new Error('Could not find a "Cell Name" column in this file.')
+
+  const records: ParsedEngineeringParamRow[] = []
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r]
+    if (!row || !row.length) continue
+    const cellName = cell(row, iCellName)
+    if (!cellName || cellName === '—') continue
+    const watts = num(row, iMaxTxPowerW)
+    records.push({
+      cell_name: cellName,
+      pci: null, // no PCI concept on 2G/3G -- scrambling_code/bcch+bsic below are the real tech-specific identifiers
+      height: num(row, iHeight),
+      azimuth: num(row, iAzimuth),
+      mech_tilt: num(row, iMt),
+      elec_tilt: num(row, iEt),
+      beamwidth: null,
+      radius: null,
+      max_tx_power_dbm: watts != null && watts > 0 ? _WATTS_TO_DBM(watts) : null,
+      carrier: cell(row, iCarrier),
+      site_band: '',
+      scrambling_code: int(row, iPsc),
+      bcch: int(row, iBcch),
+      bsic: int(row, iBsic),
+      cell_active_status: cell(row, iCellActiveStatus),
+      site_existence: cell(row, iSiteExistence),
+      lac: cell(row, iLac),
+      ci: cell(row, iCi),
+      ncc: int(row, iNcc),
+      hsn: int(row, iHsn),
+      tch: cell(row, iTch),
+      total_trx: int(row, iTotalTrx),
+      activated_trx: int(row, iActivatedTrx),
+      cs_traffic: num(row, iCsTraffic),
+      site_traffic: num(row, iSiteTraffic),
+      dl_uarfcn: int(row, iDlUarfcn),
+      tower_type: cell(row, iTowerType),
+      tower_height_m: cell(row, iTowerHeightM),
+      building_height: cell(row, iBuildingHeight),
+      tower_height_tssr: '',
+      antenna_device: cell(row, iAntennaDevice),
+      tower_remark: cell(row, iTowerRemark),
     })
   }
   return records

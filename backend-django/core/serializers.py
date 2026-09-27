@@ -82,6 +82,11 @@ class SectorSerializer(serializers.ModelSerializer):
             # Sector.carrier/site_band/cell_active_status/site_existence's
             # docstring in models.py.
             'carrier', 'site_band', 'cell_active_status', 'site_existence',
+            # 2G/3G RF Database engineering parameters (2026-09-27) — see
+            # each field's own comment in models.py, just after
+            # Sector.site_existence.
+            'lac', 'ci', 'ncc', 'hsn', 'tch', 'total_trx', 'activated_trx',
+            'cs_traffic', 'site_traffic', 'dl_uarfcn',
             'config_changes',
         ]
 
@@ -509,6 +514,8 @@ class SectorWriteSerializer(serializers.ModelSerializer):
             'kpi_json', 'kpi_date',
             'lat', 'lng',
             'carrier', 'site_band', 'cell_active_status', 'site_existence',
+            'lac', 'ci', 'ncc', 'hsn', 'tch', 'total_trx', 'activated_trx',
+            'cs_traffic', 'site_traffic', 'dl_uarfcn',
         ]
 
 

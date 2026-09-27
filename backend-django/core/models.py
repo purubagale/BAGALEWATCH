@@ -422,6 +422,27 @@ class Sector(models.Model):
     site_band = models.CharField(max_length=255, blank=True, default='')
     cell_active_status = models.CharField(max_length=255, blank=True, default='')
     site_existence = models.CharField(max_length=255, blank=True, default='')
+    # 2G/3G RF Database engineering parameters (2026-09-27, "analyse" the
+    # sample 2g_3g_RF Database...xlsx -- the 2G/3G equivalent of the 4G
+    # LTE_Engineering_Parameter file this app already imports). lac/ci are
+    # text (identifiers, not quantities -- same reasoning as carrier/
+    # site_band above); tch is text since a real row's value is a channel
+    # LIST ("15; 50; 4; 6; 9"), never a single int. ncc/hsn/total_trx/
+    # activated_trx/dl_uarfcn are 2G/3G-specific small integers; cs_traffic/
+    # site_traffic are Erlang-style float measurements. All null=True/
+    # blank=True or blank=True/default='' matching whichever sibling field
+    # above already established that convention for its own shape -- see
+    # core/site_import.py's ENGINEERING_SECTOR_FIELDS for the import path.
+    lac = models.CharField(max_length=20, blank=True, default='')
+    ci = models.CharField(max_length=20, blank=True, default='')
+    ncc = models.IntegerField(null=True, blank=True)
+    hsn = models.IntegerField(null=True, blank=True)
+    tch = models.CharField(max_length=100, blank=True, default='')
+    total_trx = models.IntegerField(null=True, blank=True)
+    activated_trx = models.IntegerField(null=True, blank=True)
+    cs_traffic = models.FloatField(null=True, blank=True)
+    site_traffic = models.FloatField(null=True, blank=True)
+    dl_uarfcn = models.IntegerField(null=True, blank=True)
 
     class Meta:
         db_table = 'v2_sectors'
