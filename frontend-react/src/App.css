@@ -1290,6 +1290,7 @@ textarea:focus {
    anything and flex: 1 alone has nothing to grow into. */
 .site-mini-map-container { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .site-mini-map-wrap {
+  position: relative;
   flex: 1;
   min-height: 240px;
   border-radius: var(--radius-md);
@@ -1297,6 +1298,33 @@ textarea:focus {
   border: 1px solid var(--border);
 }
 .site-mini-map-wrap .leaflet-container { height: 100%; width: 100%; background: var(--bg-surface-alt); }
+/* Fullscreen toggle (2026-09-27, "allow to view location also in full
+   screen with same feature") — real Fullscreen API (see
+   SiteLocationMiniMap.tsx's toggleFullscreen), same pattern as
+   DtExploreTab.tsx's own .dt-explore-map-fullscreen. The API itself
+   makes the element cover the viewport; this rule only needs to stop
+   fighting that with the compact sidebar sizing (min-height/border-radius/
+   border) it normally carries. */
+.site-mini-map-fullscreen { width: 100vw; height: 100vh; min-height: 0; border-radius: 0; border: none; }
+.site-mini-map-fullscreen-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1000;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 17, 22, 0.75);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: var(--radius-sm);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.site-mini-map-fullscreen-btn:hover { background: rgba(15, 17, 22, 0.9); }
 .site-mini-map-empty {
   flex: 1;
   display: flex;

@@ -1,5 +1,5 @@
 import { MapContainer, Marker, Polygon, TileLayer, Tooltip, useMap } from 'react-leaflet'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { Sector } from '../api/types'
@@ -71,6 +71,33 @@ function FitToPoints({ points }: { points: MapPoint[] }) {
   return null
 }
 
+// Fullscreen toggling resizes this map's container without Leaflet ever
+// being told (same root cause DtExploreTab.tsx's own FullscreenSync
+// already documents — a stale internal Leaflet size cache from the
+// Fullscreen API's resize, not a tab-reveal). invalidateSize() on the
+// next frame plus a re-fit keeps the same site/sectors framed instead of
+// leaving the view wherever the pre-toggle 240px-tall box happened to be
+// scrolled/zoomed to.
+function FullscreenSync({ isFullscreen, points }: { isFullscreen: boolean; points: MapPoint[] }) {
+  const map = useMap()
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      map.invalidateSize()
+      if (points.length > 1) {
+        const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng] as [number, number]))
+        map.fitBounds(bounds, { padding: [28, 28] })
+      } else if (points.length === 1) {
+        map.setView([points[0].lat, points[0].lng], MINI_MAP_ZOOM)
+      }
+    })
+    return () => cancelAnimationFrame(raf)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, isFullscreen])
+
+  return null
+}
+
 export default function SiteLocationMiniMap({
   lat, lng, status, sectors = [],
 }: {
@@ -85,6 +112,25 @@ export default function SiteLocationMiniMap({
    * able to show one point per site. */
   sectors?: Sector[]
 }) {
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  function toggleFullscreen() {
+    const el = wrapRef.current
+    if (!el) return
+    if (!document.fullscreenElement) {
+      el.requestFullscreen?.()
+    } else {
+      document.exitFullscreen?.()
+    }
+  }
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+
   const points = useMemo<MapPoint[]>(() => {
     if (lat == null || lng == null) return []
     const sectorPoints = divergentSectorPoints(lat, lng, sectors)
@@ -124,8 +170,16 @@ export default function SiteLocationMiniMap({
           The note below (when present) is a SIBLING of this, not a child —
           .site-mini-map-wrap is a fixed-height overflow:hidden box for the
           map itself, which would clip anything else placed inside it. */}
-      <div className="site-mini-map-wrap">
-        <MapContainer center={[sitePoint.lat, sitePoint.lng]} zoom={MINI_MAP_ZOOM} scrollWheelZoom={false} attributionControl={false}>
+      <div ref={wrapRef} className={isFullscreen ? 'site-mini-map-wrap site-mini-map-fullscreen' : 'site-mini-map-wrap'}>
+        <button
+          type="button"
+          className="site-mini-map-fullscreen-btn"
+          onClick={toggleFullscreen}
+          title={isFullscreen ? 'Exit fullscreen' : 'View fullscreen'}
+        >
+          {isFullscreen ? '⤦' : '⤢'}
+        </button>
+        <MapContainer center={[sitePoint.lat, sitePoint.lng]} zoom={MINI_MAP_ZOOM} scrollWheelZoom={isFullscreen} attributionControl={false}>
           {/* subdomains="0123" is REQUIRED here, not cosmetic — Leaflet's
               TileLayer defaults to `subdomains="abc"` (OpenStreetMap's own
               convention) whenever the prop is omitted. Google's tile
@@ -139,6 +193,7 @@ export default function SiteLocationMiniMap({
           <TileLayer url={SATELLITE_URL} subdomains="0123" />
           <InvalidateOnResize />
           <FitToPoints points={points} />
+          <FullscreenSync isFullscreen={isFullscreen} points={points} />
           {wedgeSectors.map(({ sector: s, origin }, i) => (
             <Polygon
               key={`wedge-${s.id}`}
