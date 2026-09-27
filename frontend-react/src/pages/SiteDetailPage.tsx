@@ -186,7 +186,7 @@ function sectorIdLabel(sec: Sector | SectorWrite): string {
     return [bcch, bsic].filter(Boolean).join(' / ') || '—'
   }
   if (tech === '3G') return sec.scrambling_code != null ? `SC ${sec.scrambling_code}` : '—'
-  return sec.pci != null ? `PCI ${sec.pci}` : '—'
+  return sec.pci != null ? `${sec.pci}` : '—'
 }
 
 /** One [label / input-or-value] card, shared by the Site Identity grid
@@ -637,6 +637,25 @@ export default function SiteDetailPage() {
         />
       </div>
 
+      {/* ── Tower / Antenna Info (2026-09-27) — from the vendor
+          LTE_Engineering_Parameter/WSD RNO engineering-parameter import
+          (BackupPage.tsx's "Engineering Parameters (4G)" slot), not the
+          Live Site Directory sync — so these ARE editable here like
+          City/Site Type, not read-only like Region/District/Lat/Lng
+          above. Blank until that import has actually run for this
+          site. */}
+      <div className="site-form-section">Tower / Antenna Info</div>
+      <div className="site-form-row cols-3">
+        <FieldCard label="Tower Type" editing={editing} value={identitySource.tower_type ?? ''} onChange={(v) => setField('tower_type', v)} />
+        <FieldCard label="Tower Height (m)" editing={editing} value={identitySource.tower_height_m ?? ''} onChange={(v) => setField('tower_height_m', v)} />
+        <FieldCard label="Building Height" editing={editing} value={identitySource.building_height ?? ''} onChange={(v) => setField('building_height', v)} />
+      </div>
+      <div className="site-form-row cols-3">
+        <FieldCard label="Tower Height (TSSR)" editing={editing} value={identitySource.tower_height_tssr ?? ''} onChange={(v) => setField('tower_height_tssr', v)} />
+        <FieldCard label="Antenna Device" editing={editing} value={identitySource.antenna_device ?? ''} onChange={(v) => setField('antenna_device', v)} />
+        <FieldCard label="Tower Remark" editing={editing} value={identitySource.tower_remark ?? ''} onChange={(v) => setField('tower_remark', v)} />
+      </div>
+
       {/* ── KPI Values — tabbed 4G LTE / 3G UMTS / 2G GSM ───────────── */}
       <div className="site-form-section">
         KPI Values
@@ -831,11 +850,11 @@ export default function SiteDetailPage() {
                         <th>Tech</th>
                         <th>Sector</th>
                         <th>Local Cell ID</th>
-                        <th>Height (m)</th>
+                        <th className="sector-cell-center">Antenna Height (m)</th>
                         <th>Azimuth (°)</th>
                         <th>Mech Tilt (°)</th>
                         <th>Elec Tilt (°)</th>
-                        <th>Cell ID</th>
+                        <th className="sector-cell-center">{sectorTech === '4G' ? 'PCI' : 'Cell ID'}</th>
                         <th>Location</th>
                         {SECTOR_EXTRA_COLUMNS[sectorTech].map((col) => (
                           <th key={col.key}>{col.label}</th>
@@ -851,11 +870,11 @@ export default function SiteDetailPage() {
                           </td>
                           <td className="sector-cell-accent">{sec.sector || '—'}</td>
                           <td>{sec.local_cell_id ?? '—'}</td>
-                          <td className="sector-cell-num">{sec.height ?? '—'}</td>
+                          <td className="sector-cell-num sector-cell-center">{sec.height ?? '—'}</td>
                           <td className="sector-cell-num">{sec.azimuth !== null ? `${sec.azimuth}°` : '—'}</td>
                           <td className="sector-cell-num">{sec.mech_tilt !== null ? `${sec.mech_tilt}°` : '—'}</td>
                           <td className="sector-cell-num">{sec.elec_tilt !== null ? `${sec.elec_tilt}°` : '—'}</td>
-                          <td className="sector-cell-num">{sectorIdLabel(sec)}</td>
+                          <td className="sector-cell-num sector-cell-center">{sectorIdLabel(sec)}</td>
                           <td className="sector-cell-num">
                             {/* Optional per-sector GPS override (2026-08-09) —
                                 blank/"(site)" is the common case, meaning this

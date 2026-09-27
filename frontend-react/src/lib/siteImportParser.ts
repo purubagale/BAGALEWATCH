@@ -288,3 +288,94 @@ export function parseSectorRows(rows: string[][]): ParsedSectorRow[] {
   }
   return records
 }
+
+// Engineering-parameter row (2026-09-27) — the vendor's own nationwide
+// "Cell_Wise(Final)" master list (LTE_Engineering_Parameter_*.xlsx) and
+// the per-lot WSD RNO report's "Detail" sheet share this same column
+// family (confirmed by opening both real files directly with openpyxl):
+// Cell Name, BAND, Assigned Carrier, PCI, Antenna Height from ground
+// (AGL), Azimuth, Mech./Elec. Downtilt (these six feed the matched
+// Sector, keyed by Cell Name alone — core/site_import.py's
+// `_apply_engineering_params`), plus existing Tower type, Tower height
+// (m), Building height, existing tower height from TSSR, Antenna
+// device, Tower remark (these six feed that sector's own Site).
+// Property ID/Zone/Palika are deliberately NOT parsed here — the user's
+// own words: "property id is site id so no need and exclude zone and
+// palika".
+//
+// Column-alias note: several of the vendor's own headers collide on a
+// naive substring match ("Tower height (m)" and "existing tower height
+// from TSSR" both contain "height"; "Mech. Downtilt"/"Elec. Downtilt"
+// don't match this file's existing mech_tilt/elec_tilt aliases in
+// ParsedSectorRow at all, which were written against a different real
+// 2G/3G file's own header spelling) — every alias below was chosen
+// against the two real files' own exact header text, not guessed.
+export interface ParsedEngineeringParamRow {
+  cell_name: string
+  pci: number | null
+  height: number | null
+  azimuth: number | null
+  mech_tilt: number | null
+  elec_tilt: number | null
+  carrier: string
+  site_band: string
+  tower_type: string
+  tower_height_m: string
+  building_height: string
+  tower_height_tssr: string
+  antenna_device: string
+  tower_remark: string
+}
+
+/** Parses the engineering-parameter master-list/WSD "Detail" sheet shape
+ * described above. Requires a Cell Name column — matching happens
+ * server-side by cell_name alone (`_apply_engineering_params` looks up
+ * the Sector directly, no Site ID needed, since these source files carry
+ * no separate Site ID column of their own). A row with a blank Cell Name
+ * is skipped silently, same as a blank-spacer row anywhere else in this
+ * module. */
+export function parseEngineeringParamRows(rows: string[][]): ParsedEngineeringParamRow[] {
+  if (!rows || rows.length < 2) return []
+  const header = rows[0].map(normalize)
+  const iCellName = findCol(header, 'cellname')
+  const iPci = findCol(header, 'pci')
+  const iHeight = findCol(header, 'antennaheight')
+  const iAzimuth = findCol(header, 'azimuth')
+  const iMt = findCol(header, 'mechdowntilt')
+  const iEt = findCol(header, 'elecdowntilt')
+  const iCarrier = findCol(header, 'assignedcarrier', 'carrier')
+  const iSiteBand = findCol(header, 'band')
+  const iTowerType = findCol(header, 'towertype')
+  const iTowerHeightM = findCol(header, 'towerheightm')
+  const iBuildingHeight = findCol(header, 'buildingheight')
+  const iTowerHeightTssr = findCol(header, 'tssr')
+  const iAntennaDevice = findCol(header, 'antennadevice')
+  const iTowerRemark = findCol(header, 'towerremark')
+
+  if (iCellName < 0) throw new Error('Could not find a "Cell Name" column in this file.')
+
+  const records: ParsedEngineeringParamRow[] = []
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r]
+    if (!row || !row.length) continue
+    const cellName = cell(row, iCellName)
+    if (!cellName || cellName === '—') continue
+    records.push({
+      cell_name: cellName,
+      pci: int(row, iPci),
+      height: num(row, iHeight),
+      azimuth: num(row, iAzimuth),
+      mech_tilt: num(row, iMt),
+      elec_tilt: num(row, iEt),
+      carrier: cell(row, iCarrier),
+      site_band: cell(row, iSiteBand),
+      tower_type: cell(row, iTowerType),
+      tower_height_m: cell(row, iTowerHeightM),
+      building_height: cell(row, iBuildingHeight),
+      tower_height_tssr: cell(row, iTowerHeightTssr),
+      antenna_device: cell(row, iAntennaDevice),
+      tower_remark: cell(row, iTowerRemark),
+    })
+  }
+  return records
+}

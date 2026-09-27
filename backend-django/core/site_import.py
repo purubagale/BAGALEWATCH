@@ -150,10 +150,13 @@ KPI_UPDATE_FIELDS = KPI_FIELDS + ['kpi_entered', 'kpi_date']
 # `kind='engineering_params'` field lists (2026-09-26) -- see
 # ImportSitesView._apply_engineering_params()'s own docstring. Sector
 # fields are a SUBSET of SECTOR_FIELDS above (this source has no
-# local_cell_id/height/sector-label/tech/cell_active_status/site_existence
+# local_cell_id/sector-label/tech/cell_active_status/site_existence
 # columns) -- reuses `_coerce()` unchanged, since every field here is
 # already one of `_INT_FIELDS`/`_FLOAT_FIELDS` or a plain string.
-ENGINEERING_SECTOR_FIELDS = ['pci', 'azimuth', 'mech_tilt', 'elec_tilt', 'carrier', 'site_band']
+# 'height' confirmed present in both real source files (2026-09-27) as
+# "Antenna Height from ground (AGL)" -- same field the sector table's
+# own "Antenna Height (m)" column (SiteDetailPage.tsx) already displays.
+ENGINEERING_SECTOR_FIELDS = ['pci', 'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'carrier', 'site_band']
 # Site fields are plain strings, coerced inline (str().strip()) rather
 # than through `_coerce()` -- that function's int/float branches don't
 # apply to any of these, and "carry the vendor's own text through
@@ -212,7 +215,7 @@ class ImportSitesView(APIView):
              lic_util, cell_avail}, ...]}
        or {kind: 'sectors', tech: '4G'|'3G'|'2G' (optional), rows: [{site_id, cell_name,
              sector, tech, local_cell_id, lat, lng, height, azimuth, mech_tilt, elec_tilt, pci}, ...]}
-       or {kind: 'engineering_params', rows: [{cell_name, pci, azimuth, mech_tilt,
+       or {kind: 'engineering_params', rows: [{cell_name, pci, height, azimuth, mech_tilt,
              elec_tilt, carrier, site_band, tower_type, tower_height_m, building_height,
              tower_height_tssr, antenna_device, tower_remark}, ...]} -- see
              `_apply_engineering_params()`'s own docstring (2026-09-26 addition).
@@ -553,8 +556,8 @@ class ImportSitesView(APIView):
 
         Two field groups, written to two different models from the same
         row: `ENGINEERING_SECTOR_FIELDS` onto the matched `Sector`
-        (pci/azimuth/mech_tilt/elec_tilt/carrier/site_band -- the same
-        columns `_apply_sectors` already manages, just from this
+        (pci/height/azimuth/mech_tilt/elec_tilt/carrier/site_band -- the
+        same columns `_apply_sectors` already manages, just from this
         additional source), and `ENGINEERING_SITE_FIELDS` onto that
         sector's `Site` (tower_type/tower_height_m/building_height/
         tower_height_tssr/antenna_device/tower_remark -- physically about
