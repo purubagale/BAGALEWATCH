@@ -10,15 +10,23 @@ import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 
 // Antenna coverage wedges (2026-09-27, "how can we use its [KML] data to
 // show antenna orientation, azimuth, beam power in graphical
-// representation") — same --tech-4g/-3g/-2g palette every other
-// tech-colored element on the Site Detail page already uses (App.css),
-// duplicated as plain hex here since Leaflet's pathOptions takes a real
-// color string, not a CSS custom property. A sector only gets a wedge
-// when it has real azimuth/beamwidth/radius — never a fabricated
-// default (see Sector.beamwidth/Sector.radius's docstring in models.py).
-const TECH_WEDGE_COLOR: Record<string, string> = { '4G': '#22c55e', '3G': '#eab308', '2G': '#f97316' }
-function wedgeColorForTech(tech: string): string {
-  return TECH_WEDGE_COLOR[tech.toUpperCase()] ?? TECH_WEDGE_COLOR['4G']
+// representation"). Originally colored by tech (--tech-4g/-3g/-2g), but
+// the common real case is several co-located sectors that are ALL the
+// same tech (a typical 3- or 6-sector 4G site) — every wedge rendered
+// identically green with no way to tell one sector's cone from another's
+// (2026-09-27 follow-up, screenshot showing an all-green cluster: "only
+// green color is used... if only color is used then use different color
+// for different sectors"). Cycles through a distinct palette by each
+// sector's position in the list instead, so overlapping wedges at one
+// site are always visually distinguishable regardless of tech. A sector
+// only gets a wedge when it has real azimuth/beamwidth/radius — never a
+// fabricated default (see Sector.beamwidth/Sector.radius's docstring in
+// models.py).
+const WEDGE_COLOR_PALETTE = [
+  '#3b82f6', '#f97316', '#a855f7', '#ec4899', '#14b8a6', '#eab308', '#ef4444', '#22c55e',
+]
+function wedgeColorForIndex(i: number): string {
+  return WEDGE_COLOR_PALETTE[i % WEDGE_COLOR_PALETTE.length]
 }
 
 // Satellite/hybrid tiles (2026-08-09 follow-up: "mini map is not
@@ -131,14 +139,14 @@ export default function SiteLocationMiniMap({
           <TileLayer url={SATELLITE_URL} subdomains="0123" />
           <InvalidateOnResize />
           <FitToPoints points={points} />
-          {wedgeSectors.map(({ sector: s, origin }) => (
+          {wedgeSectors.map(({ sector: s, origin }, i) => (
             <Polygon
               key={`wedge-${s.id}`}
               positions={buildWedgePolygon(origin[0], origin[1], s.azimuth as number, s.beamwidth as number, s.radius as number)}
-              pathOptions={{ color: wedgeColorForTech(s.tech), fillColor: wedgeColorForTech(s.tech), fillOpacity: 0.3, weight: 1 }}
+              pathOptions={{ color: wedgeColorForIndex(i), fillColor: wedgeColorForIndex(i), fillOpacity: 0.3, weight: 1 }}
             >
               <Tooltip direction="top">
-                {s.cell_name || s.sector} — Az {s.azimuth}° · BW {s.beamwidth}°
+                {s.cell_name || s.sector} ({s.tech || '4G'}) — Az {s.azimuth}° · BW {s.beamwidth}°
                 {s.mech_tilt != null || s.elec_tilt != null
                   ? ` · Tilt ${s.mech_tilt ?? 0}+${s.elec_tilt ?? 0}°`
                   : ''}
