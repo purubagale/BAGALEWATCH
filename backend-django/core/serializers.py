@@ -65,6 +65,9 @@ class SectorSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'cell_name', 'sector', 'tech', 'local_cell_id',
             'height', 'azimuth', 'mech_tilt', 'elec_tilt',
+            # Antenna wedge visualization (2026-09-27) — see
+            # Sector.beamwidth/Sector.radius's docstring in models.py.
+            'beamwidth', 'radius',
             'pci', 'scrambling_code', 'bcch', 'bsic',
             'kpi_json', 'kpi_date',
             # Optional per-sector GPS override (2026-08-09) — see
@@ -500,6 +503,7 @@ class SectorWriteSerializer(serializers.ModelSerializer):
         fields = [
             'cell_name', 'sector', 'tech', 'local_cell_id',
             'height', 'azimuth', 'mech_tilt', 'elec_tilt',
+            'beamwidth', 'radius',
             'pci', 'scrambling_code', 'bcch', 'bsic',
             'kpi_json', 'kpi_date',
             'lat', 'lng',

@@ -4,8 +4,17 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { DtSample, DtServingCell, DtTech } from '../api/types'
 import { bandColor, subsampleForMap, type DtMetric } from '../lib/dtBands'
+import { buildWedgePolygon } from '../lib/sectorWedge'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 import { useDtMetrics } from '../lib/useDtMetrics'
+
+// Antenna coverage-wedge overlay under the real RSRP dots (2026-09-27,
+// "how can we use its [KML] data to show antenna orientation, azimuth,
+// beam power in graphical representation") — theoretical coverage vs.
+// actually-measured signal, side by side. Single neutral color (not
+// bandColor-driven like the dots) so it reads as "where the antenna is
+// supposed to point," never competing with the real measurement colors.
+const WEDGE_COLOR = '#60a5fa'
 
 const DEFAULT_CENTER: [number, number] = [28.3949, 84.124]
 const DEFAULT_ZOOM = 7
@@ -69,6 +78,36 @@ function FitToBounds({ bounds, onDone }: { bounds: L.LatLngBounds; onDone: () =>
     map.fitBounds(bounds, { padding: [24, 24], maxZoom: 16, animate: false })
     onDone()
   }, [map, bounds, onDone])
+
+  return null
+}
+
+/** Draws one wedge per serving cell that has azimuth/beamwidth/radius,
+ * following CoverageDots's own imperative-layer pattern below (useMap() +
+ * a manually-managed L.layerGroup, not react-leaflet's declarative
+ * <Polygon>) for consistency with this file's established style. Mounted
+ * BEFORE <CoverageDots> in the JSX below so this layer's addTo(map) runs
+ * first and the wedges sit underneath the real RSRP dots, not on top of
+ * them. A serving cell missing any of the three is skipped — no
+ * fabricated default. */
+function SectorWedgeOverlay({ servingCells }: { servingCells?: DtServingCell[] }) {
+  const map = useMap()
+
+  useEffect(() => {
+    const layer = L.layerGroup()
+    for (const cell of servingCells ?? []) {
+      if (cell.site_lat == null || cell.site_lng == null) continue
+      if (cell.azimuth == null || cell.beamwidth == null || cell.radius == null) continue
+      const positions = buildWedgePolygon(cell.site_lat, cell.site_lng, cell.azimuth, cell.beamwidth, cell.radius)
+      L.polygon(positions, { color: WEDGE_COLOR, fillColor: WEDGE_COLOR, fillOpacity: 0.25, weight: 1 })
+        .bindTooltip(`${cell.cell_name || cell.site_name} — Az ${cell.azimuth}° · BW ${cell.beamwidth}°`)
+        .addTo(layer)
+    }
+    layer.addTo(map)
+    return () => {
+      map.removeLayer(layer)
+    }
+  }, [servingCells, map])
 
   return null
 }
@@ -237,6 +276,7 @@ export default function DtCoverageMap({
               attribution="&copy; OpenStreetMap contributors"
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
+            <SectorWedgeOverlay servingCells={servingCells} />
             <CoverageDots samples={drawnSamples} metric={activeMetric} servingCells={servingCells} />
           </>
         )}
@@ -249,6 +289,12 @@ export default function DtCoverageMap({
             {activeMetric.unit}
           </span>
         ))}
+        {(servingCells ?? []).some((c) => c.azimuth != null && c.beamwidth != null && c.radius != null) && (
+          <span className="dt-legend-item">
+            <span className="dt-legend-dot" style={{ background: WEDGE_COLOR, opacity: 0.5 }} />
+            Theoretical antenna coverage
+          </span>
+        )}
       </div>
       {drawnSamples.length < withGps.length && (
         <div className="muted" style={{ fontSize: 10, marginTop: 4 }}>

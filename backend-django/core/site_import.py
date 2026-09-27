@@ -134,7 +134,12 @@ SECTOR_FIELDS = [
 # every call site below.
 SECTOR_UPDATE_FIELDS = SECTOR_FIELDS + ['lat', 'lng']
 _INT_FIELDS = {'local_cell_id', 'pci'}
-_FLOAT_FIELDS = {'height', 'azimuth', 'mech_tilt', 'elec_tilt'}
+# 'beamwidth'/'radius' (2026-09-27) -- antenna wedge visualization fields,
+# only ever populated via ENGINEERING_SECTOR_FIELDS below (the vendor KML
+# source), not SECTOR_FIELDS -- harmless to list here regardless, since
+# _coerce() only checks membership for whatever field name it's actually
+# called with.
+_FLOAT_FIELDS = {'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'beamwidth', 'radius'}
 
 # 4G Site-level KPI columns this import updates (2026-08-26) — matches
 # exports.py's _build_site_kpi_workbook "KPI Data" sheet exactly, since
@@ -156,7 +161,16 @@ KPI_UPDATE_FIELDS = KPI_FIELDS + ['kpi_entered', 'kpi_date']
 # 'height' confirmed present in both real source files (2026-09-27) as
 # "Antenna Height from ground (AGL)" -- same field the sector table's
 # own "Antenna Height (m)" column (SiteDetailPage.tsx) already displays.
-ENGINEERING_SECTOR_FIELDS = ['pci', 'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'carrier', 'site_band']
+# 'beamwidth'/'radius' (2026-09-27, antenna wedge visualization request)
+# come from a THIRD source, the vendor's own KML engineering-parameter
+# export -- not present in either xlsx source file, only parsed by
+# siteImportParser.ts's parseKmlEngineeringParams(). See Sector.beamwidth/
+# Sector.radius's own comment in models.py for why there's no fabricated
+# default when a row doesn't carry them.
+ENGINEERING_SECTOR_FIELDS = [
+    'pci', 'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'carrier', 'site_band',
+    'beamwidth', 'radius',
+]
 # Site fields are plain strings, coerced inline (str().strip()) rather
 # than through `_coerce()` -- that function's int/float branches don't
 # apply to any of these, and "carry the vendor's own text through
@@ -216,9 +230,10 @@ class ImportSitesView(APIView):
        or {kind: 'sectors', tech: '4G'|'3G'|'2G' (optional), rows: [{site_id, cell_name,
              sector, tech, local_cell_id, lat, lng, height, azimuth, mech_tilt, elec_tilt, pci}, ...]}
        or {kind: 'engineering_params', rows: [{cell_name, pci, height, azimuth, mech_tilt,
-             elec_tilt, carrier, site_band, tower_type, tower_height_m, building_height,
-             tower_height_tssr, antenna_device, tower_remark}, ...]} -- see
-             `_apply_engineering_params()`'s own docstring (2026-09-26 addition).
+             elec_tilt, carrier, site_band, beamwidth, radius, tower_type, tower_height_m,
+             building_height, tower_height_tssr, antenna_device, tower_remark}, ...]} -- see
+             `_apply_engineering_params()`'s own docstring (2026-09-26 addition; beamwidth/
+             radius added 2026-09-27 for the antenna wedge visualization feature).
 
     **2026-08-26, "no need to add site now" — sites are Live Site
     Directory-managed.** Confirmed via AskUserQuestion. Site identity/
@@ -558,7 +573,9 @@ class ImportSitesView(APIView):
         row: `ENGINEERING_SECTOR_FIELDS` onto the matched `Sector`
         (pci/height/azimuth/mech_tilt/elec_tilt/carrier/site_band -- the
         same columns `_apply_sectors` already manages, just from this
-        additional source), and `ENGINEERING_SITE_FIELDS` onto that
+        additional source -- plus beamwidth/radius, 2026-09-27, which
+        ONLY this source's KML variant carries, for the antenna wedge
+        visualization feature), and `ENGINEERING_SITE_FIELDS` onto that
         sector's `Site` (tower_type/tower_height_m/building_height/
         tower_height_tssr/antenna_device/tower_remark -- physically about
         the site, not one sector, same reasoning as Site.lat/lng/district

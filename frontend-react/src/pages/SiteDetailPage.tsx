@@ -140,6 +140,7 @@ function toNum(v: unknown): number | null {
 const emptySector: SectorWrite = {
   cell_name: '', sector: '', tech: '', local_cell_id: null,
   height: null, azimuth: null, mech_tilt: null, elec_tilt: null,
+  beamwidth: null, radius: null,
   pci: null, scrambling_code: null, bcch: null, bsic: null,
   kpi_json: null, kpi_date: '', lat: null, lng: null,
   carrier: '', site_band: '', cell_active_status: '', site_existence: '',

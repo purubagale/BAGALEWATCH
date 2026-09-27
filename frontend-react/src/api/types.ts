@@ -124,6 +124,12 @@ export interface Sector {
   azimuth: number | null
   mech_tilt: number | null
   elec_tilt: number | null
+  // Antenna beam width (degrees) / coverage radius (meters) (2026-09-27,
+  // antenna wedge visualization) — sourced from the vendor's own KML
+  // engineering-parameter export, no fabricated default when either is
+  // null (see core/models.py's Sector.beamwidth/Sector.radius docstring).
+  beamwidth: number | null
+  radius: number | null
   pci: number | null
   scrambling_code: number | null
   bcch: number | null
@@ -1164,6 +1170,12 @@ export interface DtServingCell {
   sector: string | null
   local_cell_id: number | null
   azimuth: number | null
+  // Antenna wedge visualization (2026-09-27) — see Sector.beamwidth/
+  // Sector.radius's docstring in models.py. DtCoverageMap.tsx's
+  // SectorWedgeOverlay draws a theoretical coverage wedge under the real
+  // RSRP dots only when both are non-null.
+  beamwidth: number | null
+  radius: number | null
   sample_count: number
   mean_dist_km: number | null
 }

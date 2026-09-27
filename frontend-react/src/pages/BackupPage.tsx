@@ -11,7 +11,7 @@ import { useAuth } from '../auth/AuthContext'
 import { csvTextToRows } from '../lib/dtTemplateParser'
 import { readXlsxRows } from '../lib/xlsxReader'
 import {
-  parseEngineeringParamRows, parseKpiRows, parseSectorRows,
+  parseEngineeringParamRows, parseKmlEngineeringParams, parseKpiRows, parseSectorRows,
   type ParsedEngineeringParamRow, type ParsedKpiRow, type ParsedSectorRow,
 } from '../lib/siteImportParser'
 import { resolveDistrictBackfill, type DistrictBackfillResult } from '../lib/districtBackfill'
@@ -296,19 +296,29 @@ function SectorImportSlot({ tech, label }: { tech: SectorImportTech; label: stri
  * LTE_Engineering_Parameter_20260924.xlsx is also in the folder where
  * for 4G I found more parameters with data for sectors that are also
  * need to be managed") — a single generic slot (no per-tech split like
- * SectorImportSlot, since both real source files this was built against
- * are 4G-only master lists with no tech column at all) that matches
+ * SectorImportSlot, since every real source file this was built against
+ * is a 4G-only master list with no tech column at all) that matches
  * rows to an EXISTING sector purely by Cell Name (no Site ID column in
- * either source file) and updates PCI/Antenna Height/Azimuth/Mech+Elec
- * Downtilt/Carrier/Band on that Sector, plus tower/antenna fields
- * (tower type, tower height, building height, TSSR height, antenna
- * device, tower remark) on that sector's own Site — see
+ * any of the three source files) and updates PCI/Antenna Height/Azimuth/
+ * Mech+Elec Downtilt/Carrier/Band on that Sector, plus tower/antenna
+ * fields (tower type, tower height, building height, TSSR height,
+ * antenna device, tower remark) on that sector's own Site — see
  * core/site_import.py's `_apply_engineering_params` and
  * siteImportParser.ts's `parseEngineeringParamRows` for the full field
  * list and column-alias reasoning. Plain data import only, same "update
  * only if genuinely different, otherwise skip" contract as every other
  * slot here — no separate change-tracking (2026-09-26 correction: "do
- * not import snapshot, import data only"). */
+ * not import snapshot, import data only").
+ *
+ * 2026-09-27 follow-up ("how can we use its [KML] data to show antenna
+ * orientation, azimuth, beam power in graphical representation") — a
+ * vendor KML engineering-parameter export carries two more fields
+ * neither xlsx source has (Beamwidth/Radius, feeding the antenna-wedge
+ * visualization on the Site Detail mini-map and DT Coverage Map) —
+ * .kml is parsed by an entirely different route
+ * (`parseKmlEngineeringParams`, a Placemark/description key-value scan,
+ * not a tabular header match) but lands in the same
+ * `ParsedEngineeringParamRow` shape and the same import endpoint. */
 function EngineeringParamImportSlot() {
   const qc = useQueryClient()
   const [rows, setRows] = useState<ParsedEngineeringParamRow[] | null>(null)
@@ -322,8 +332,9 @@ function EngineeringParamImportSlot() {
     setError(null)
     setResult(null)
     try {
-      const raw = await readFileRows(file, 'cell')
-      const records = parseEngineeringParamRows(raw)
+      const records = /\.kml$/i.test(file.name)
+        ? parseKmlEngineeringParams(await file.text())
+        : parseEngineeringParamRows(await readFileRows(file, 'cell'))
       if (!records.length) throw new Error('No rows with a Cell Name were found in this file.')
       setRows(records)
       setFileName(file.name)
@@ -362,8 +373,10 @@ function EngineeringParamImportSlot() {
       <div className="muted" style={{ fontSize: 9, marginBottom: 8 }}>
         Matches an existing 4G sector by Cell Name (no Site ID column in the vendor's own file) and updates its
         PCI/Antenna Height/Azimuth/Tilt/Carrier/Band, plus that site's tower type, tower height, building height,
-        TSSR height, antenna device and remark. A row for a Cell Name with no matching sector is skipped and
-        reported — sectors are managed by the Sector Data upload above, not this one.
+        TSSR height, antenna device and remark. A vendor KML export additionally carries Beamwidth/Radius, which
+        feed the antenna coverage-wedge diagram on a site's page and its drive tests. A row for a Cell Name with
+        no matching sector is skipped and reported — sectors are managed by the Sector Data upload above, not
+        this one.
       </div>
       <div
         className="dt-drop-zone"
@@ -380,11 +393,11 @@ function EngineeringParamImportSlot() {
         }}
         onClick={() => fileInputRef.current?.click()}
       >
-        {fileName ? <span>{fileName}</span> : <span>Drop an Engineering Parameter .xlsx/.csv here, or click to browse</span>}
+        {fileName ? <span>{fileName}</span> : <span>Drop an Engineering Parameter .xlsx/.csv/.kml here, or click to browse</span>}
         <input
           ref={fileInputRef}
           type="file"
-          accept=".xlsx,.xls,.csv"
+          accept=".xlsx,.xls,.csv,.kml"
           style={{ display: 'none' }}
           onChange={(e) => {
             const f = e.target.files?.[0]

@@ -350,6 +350,19 @@ class Sector(models.Model):
     azimuth = models.FloatField(null=True, blank=True)
     mech_tilt = models.FloatField(null=True, blank=True)
     elec_tilt = models.FloatField(null=True, blank=True)
+    # Antenna beam width (degrees) and coverage radius (meters) (2026-09-27,
+    # "how can we use its data to show antenna orientation, azimuth, beam
+    # power in graphical representation") -- sourced from the vendor's own
+    # KML engineering-parameter export (Nepal NTC_LTE
+    # engineering_parameter_*.kml), whose per-sector Placemark carries both
+    # (there's no transmit-power/dBm field anywhere in that file -- these
+    # two plus azimuth/tilt are what a coverage "wedge" is actually drawn
+    # from client-side, not a stored polygon). Same null=True/blank=True
+    # convention as azimuth/mech_tilt/elec_tilt above -- a sector with
+    # either blank just doesn't get a wedge drawn, never a fabricated
+    # default.
+    beamwidth = models.FloatField(null=True, blank=True)
+    radius = models.FloatField(null=True, blank=True)
     pci = models.IntegerField(null=True, blank=True)
     scrambling_code = models.IntegerField(null=True, blank=True)
     bcch = models.IntegerField(null=True, blank=True)

@@ -364,12 +364,15 @@ class DriveTestSessionViewSet(
         """`GET /api/v2/dt-sessions/<id>/serving-cells/` — the distinct
         serving cells this session's samples were attributed to (by
         core/dt_serving_cell.py at upload time), each joined to its
-        Site's coordinates and the Sector's azimuth. Small (~8-20 rows);
-        the coverage map loads it once and, on hovering/selecting a plot
-        point, draws a connector to `site_lat/site_lng` and shows this
-        cell's name / sector / azimuth. Empty list when the session
-        predates the attribution feature or no site directory was loaded
-        when it was uploaded (re-upload or run
+        Site's coordinates and the Sector's azimuth/beamwidth/radius.
+        Small (~8-20 rows); the coverage map loads it once and, on
+        hovering/selecting a plot point, draws a connector to
+        `site_lat/site_lng` and shows this cell's name / sector / azimuth
+        — and (2026-09-27) draws a theoretical antenna coverage wedge
+        under the real RSRP dots when azimuth/beamwidth/radius are all
+        present (see DtCoverageMap.tsx's SectorWedgeOverlay). Empty list
+        when the session predates the attribution feature or no site
+        directory was loaded when it was uploaded (re-upload or run
         `manage.py backfill_dt_serving_cells` to populate)."""
         session = self.get_object()
         groups = list(
@@ -396,6 +399,13 @@ class DriveTestSessionViewSet(
                 'sector': g['serving_sector'],
                 'local_cell_id': g['serving_local_cell_id'],
                 'azimuth': sec.azimuth if sec else None,
+                # Antenna wedge visualization (2026-09-27) -- see
+                # Sector.beamwidth/Sector.radius's docstring in models.py.
+                # The coverage map draws a wedge under its real RSRP dots
+                # only when both are present; None here just means no
+                # wedge for that serving cell (nothing fabricated).
+                'beamwidth': sec.beamwidth if sec else None,
+                'radius': sec.radius if sec else None,
                 'sample_count': g['sample_count'],
                 'mean_dist_km': round(g['mean_dist_km'], 2) if g['mean_dist_km'] is not None else None,
             })

@@ -1,11 +1,25 @@
-import { MapContainer, Marker, TileLayer, Tooltip, useMap } from 'react-leaflet'
+import { MapContainer, Marker, Polygon, TileLayer, Tooltip, useMap } from 'react-leaflet'
 import { useEffect, useMemo } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { Sector } from '../api/types'
 import { divergentSectorPoints } from '../lib/sectorLocation'
+import { buildWedgePolygon } from '../lib/sectorWedge'
 import { statusColor } from '../lib/statusColor'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
+
+// Antenna coverage wedges (2026-09-27, "how can we use its [KML] data to
+// show antenna orientation, azimuth, beam power in graphical
+// representation") — same --tech-4g/-3g/-2g palette every other
+// tech-colored element on the Site Detail page already uses (App.css),
+// duplicated as plain hex here since Leaflet's pathOptions takes a real
+// color string, not a CSS custom property. A sector only gets a wedge
+// when it has real azimuth/beamwidth/radius — never a fabricated
+// default (see Sector.beamwidth/Sector.radius's docstring in models.py).
+const TECH_WEDGE_COLOR: Record<string, string> = { '4G': '#22c55e', '3G': '#eab308', '2G': '#f97316' }
+function wedgeColorForTech(tech: string): string {
+  return TECH_WEDGE_COLOR[tech.toUpperCase()] ?? TECH_WEDGE_COLOR['4G']
+}
 
 // Satellite/hybrid tiles (2026-08-09 follow-up: "mini map is not
 // informative may be satellite view will be informative") — same Google
@@ -72,6 +86,20 @@ export default function SiteLocationMiniMap({
     ]
   }, [lat, lng, sectors])
 
+  // Wedge origin is the sector's OWN location when it diverges from the
+  // site (same per-sector GPS override the markers above already use via
+  // divergentSectorPoints), falling back to the site's point otherwise —
+  // never a second, separate notion of "where this sector is."
+  const wedgeSectors = useMemo(() => {
+    if (lat == null || lng == null) return []
+    return sectors
+      .filter((s) => s.azimuth != null && s.beamwidth != null && s.radius != null)
+      .map((s) => ({
+        sector: s,
+        origin: [s.lat ?? lat, s.lng ?? lng] as [number, number],
+      }))
+  }, [lat, lng, sectors])
+
   if (!points.length) {
     return <div className="site-mini-map-empty">No GPS coordinates recorded for this site.</div>
   }
@@ -103,6 +131,20 @@ export default function SiteLocationMiniMap({
           <TileLayer url={SATELLITE_URL} subdomains="0123" />
           <InvalidateOnResize />
           <FitToPoints points={points} />
+          {wedgeSectors.map(({ sector: s, origin }) => (
+            <Polygon
+              key={`wedge-${s.id}`}
+              positions={buildWedgePolygon(origin[0], origin[1], s.azimuth as number, s.beamwidth as number, s.radius as number)}
+              pathOptions={{ color: wedgeColorForTech(s.tech), fillColor: wedgeColorForTech(s.tech), fillOpacity: 0.3, weight: 1 }}
+            >
+              <Tooltip direction="top">
+                {s.cell_name || s.sector} — Az {s.azimuth}° · BW {s.beamwidth}°
+                {s.mech_tilt != null || s.elec_tilt != null
+                  ? ` · Tilt ${s.mech_tilt ?? 0}+${s.elec_tilt ?? 0}°`
+                  : ''}
+              </Tooltip>
+            </Polygon>
+          ))}
           {points.map((p, i) => (
             <Marker
               key={i}
