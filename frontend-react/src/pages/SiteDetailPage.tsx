@@ -621,9 +621,45 @@ export default function SiteDetailPage() {
         />
       </div>
       <div className="site-form-row cols-3">
-        <FieldCard label="Site Type" editing={editing} value={identitySource.type ?? ''} onChange={(v) => setField('type', v)} />
-        <FieldCard label="Technology" editing={editing} value={identitySource.tech ?? ''} onChange={(v) => setField('tech', v)} />
-        <FieldCard label="Status" editing={editing} value={identitySource.status ?? ''} onChange={(v) => setField('status', v)} />
+        <FieldCard
+          label="Site Type" editing={editing} value={identitySource.type ?? ''} onChange={(v) => setField('type', v)}
+          hint="Manual only — the Live Site Directory sync has no equivalent field for this"
+        />
+        <FieldCard
+          label="Technology" editing={editing} value={identitySource.tech ?? ''} onChange={(v) => setField('tech', v)}
+          hint="Manual only — see Technologies (Live) below for what the sync/Sector Data actually reports"
+        />
+        <FieldCard
+          label="Status" editing={editing} value={identitySource.status ?? ''} onChange={(v) => setField('status', v)}
+          hint="This site's own KPI-health status — see Deployment Status below for the sync's on-air state"
+        />
+      </div>
+      {/* Live Site Directory fields that DO carry real synced data but had
+          nowhere to show on this page before now (2026-09-27, "why city,
+          site type, technology and status have no data... may be in this
+          display page data are fetched from old stored type, not from
+          sync data") — confirmed exactly that: City/Site Type/Status
+          above are old manual-only columns the sync never writes at all
+          (core/live_sites.py's LIVE_SITE_FIELDS omits city/type/status
+          entirely; deployment_status is a deliberately SEPARATE concept
+          from this app's own KPI-health status). Technology's real
+          synced equivalent is `techs` (union of NetBox devices' role +
+          any uploaded Sector Data), already computed server-side
+          (SiteListSerializer.get_techs) but never rendered here. Always
+          read-only, sourced from `site` directly (never `draft`) — these
+          are sync-managed, not something this form's Save button should
+          ever send back. */}
+      <div className="site-form-row cols-2">
+        <FieldCard
+          label="Deployment Status" editing={editing} readOnly
+          hint="Synced from the Live Site Directory (NetBox's own on-air/planned state)"
+          value={site.deployment_status || ''}
+        />
+        <FieldCard
+          label="Technologies (Live)" editing={editing} readOnly
+          hint="Synced from NetBox devices + any uploaded Sector Data"
+          value={site.techs.length ? site.techs.join(', ') : ''}
+        />
       </div>
       <div className="site-form-row cols-2">
         <FieldCard
