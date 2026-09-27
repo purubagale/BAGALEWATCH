@@ -1373,7 +1373,14 @@ textarea:focus {
 .sectors-table td.sector-cell-accent { color: var(--link-accent); }
 .sectors-table td.sector-cell-num { text-align: right; color: var(--text-secondary); }
 .sectors-table td.sector-cell-actions { text-align: center; white-space: nowrap; }
-.sectors-table th.sector-cell-center, .sectors-table td.sector-cell-center { text-align: center; }
+/* Per-tech (4G LTE/3G UMTS/2G GSM) Sectors table only (2026-09-27,
+   "display all header and data with central allignment") -- every other
+   table reusing .sectors-table's base styling (Drive Tests Near This
+   Site, Antenna Change History, Site Issues) keeps its original
+   left/right alignment; this modifier is scoped to just that one
+   table. */
+.sectors-table.sectors-table-centered th,
+.sectors-table.sectors-table-centered td { text-align: center; }
 /* Per-sector GPS override display (2026-08-09) — see SiteDetailPage.tsx's
    Location column and Sector.lat/lng's docstring in models.py. */
 .sector-location-inherited { color: var(--text-faint); font-style: italic; }

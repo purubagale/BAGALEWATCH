@@ -843,18 +843,18 @@ export default function SiteDetailPage() {
             {sectorsByTech[sectorTech].length > 0 ? (
               <>
                 <div className="sectors-table-wrap">
-                  <table className="sectors-table">
+                  <table className="sectors-table sectors-table-centered">
                     <thead>
                       <tr>
                         <th>Cell Name</th>
                         <th>Tech</th>
                         <th>Sector</th>
                         <th>Local Cell ID</th>
-                        <th className="sector-cell-center">Antenna Height (m)</th>
+                        <th>Antenna Height (m)</th>
                         <th>Azimuth (°)</th>
                         <th>Mech Tilt (°)</th>
                         <th>Elec Tilt (°)</th>
-                        <th className="sector-cell-center">{sectorTech === '4G' ? 'PCI' : 'Cell ID'}</th>
+                        <th>{sectorTech === '4G' ? 'PCI' : 'Cell ID'}</th>
                         <th>Location</th>
                         {SECTOR_EXTRA_COLUMNS[sectorTech].map((col) => (
                           <th key={col.key}>{col.label}</th>
@@ -870,11 +870,11 @@ export default function SiteDetailPage() {
                           </td>
                           <td className="sector-cell-accent">{sec.sector || '—'}</td>
                           <td>{sec.local_cell_id ?? '—'}</td>
-                          <td className="sector-cell-num sector-cell-center">{sec.height ?? '—'}</td>
+                          <td className="sector-cell-num">{sec.height ?? '—'}</td>
                           <td className="sector-cell-num">{sec.azimuth !== null ? `${sec.azimuth}°` : '—'}</td>
                           <td className="sector-cell-num">{sec.mech_tilt !== null ? `${sec.mech_tilt}°` : '—'}</td>
                           <td className="sector-cell-num">{sec.elec_tilt !== null ? `${sec.elec_tilt}°` : '—'}</td>
-                          <td className="sector-cell-num sector-cell-center">{sectorIdLabel(sec)}</td>
+                          <td className="sector-cell-num">{sectorIdLabel(sec)}</td>
                           <td className="sector-cell-num">
                             {/* Optional per-sector GPS override (2026-08-09) —
                                 blank/"(site)" is the common case, meaning this
