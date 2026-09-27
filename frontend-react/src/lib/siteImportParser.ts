@@ -310,6 +310,16 @@ export function parseSectorRows(rows: string[][]): ParsedSectorRow[] {
 // ParsedSectorRow at all, which were written against a different real
 // 2G/3G file's own header spelling) — every alias below was chosen
 // against the two real files' own exact header text, not guessed.
+//
+// Antenna wedge fields (2026-09-27) — the WSD-shaped "Detail" sheet
+// (confirmed against a second real sample, RNO_Report_database.xlsx,
+// same 54-column shape) DOES carry Radius/Beamwidth/"Maximum TX Power
+// (dBm)" columns, populated on every real row — a real gap fixed here
+// after first wrongly assuming only the vendor's KML export had any of
+// the three. The OTHER xlsx source (LTE_Engineering_Parameter's
+// "Cell_Wise(Final)" sheet) genuinely has none of them, so on that file
+// these three just parse to null (same "blank means leave alone"
+// contract as every other field here) — not an error, not fabricated.
 export interface ParsedEngineeringParamRow {
   cell_name: string
   pci: number | null
@@ -317,13 +327,9 @@ export interface ParsedEngineeringParamRow {
   azimuth: number | null
   mech_tilt: number | null
   elec_tilt: number | null
-  // Antenna wedge visualization (2026-09-27) — ONLY the vendor's KML
-  // engineering-parameter export (parseKmlEngineeringParams below)
-  // carries these; both xlsx sources have no Beamwidth/Radius column at
-  // all, so parseEngineeringParamRows always sets them null (same "blank
-  // means leave alone" contract as every other field here).
   beamwidth: number | null
   radius: number | null
+  max_tx_power_dbm: number | null
   carrier: string
   site_band: string
   tower_type: string
@@ -350,6 +356,17 @@ export function parseEngineeringParamRows(rows: string[][]): ParsedEngineeringPa
   const iAzimuth = findCol(header, 'azimuth')
   const iMt = findCol(header, 'mechdowntilt')
   const iEt = findCol(header, 'elecdowntilt')
+  // Present in the WSD-shaped "Detail" sheet, absent from
+  // LTE_Engineering_Parameter's "Cell_Wise(Final)" sheet — findCol
+  // returns -1 there and num()/int() below just yield null, same as any
+  // other column this file doesn't have. 'radius' matches the bare
+  // "Radius" column by EXACT normalized equality, not the separate "Cell
+  // Radius" column also present in the WSD sheet (which normalizes to
+  // "cellradius", never equal to "radius" — findCol's exact-match pass
+  // always wins over its own substring fallback).
+  const iBeamwidth = findCol(header, 'beamwidth')
+  const iRadius = findCol(header, 'radius')
+  const iMaxTxPower = findCol(header, 'maximumtxpower')
   const iCarrier = findCol(header, 'assignedcarrier', 'carrier')
   const iSiteBand = findCol(header, 'band')
   const iTowerType = findCol(header, 'towertype')
@@ -374,8 +391,9 @@ export function parseEngineeringParamRows(rows: string[][]): ParsedEngineeringPa
       azimuth: num(row, iAzimuth),
       mech_tilt: num(row, iMt),
       elec_tilt: num(row, iEt),
-      beamwidth: null,
-      radius: null,
+      beamwidth: num(row, iBeamwidth),
+      radius: num(row, iRadius),
+      max_tx_power_dbm: num(row, iMaxTxPower),
       carrier: cell(row, iCarrier),
       site_band: cell(row, iSiteBand),
       tower_type: cell(row, iTowerType),
@@ -471,6 +489,7 @@ export function parseKmlEngineeringParams(text: string): ParsedEngineeringParamR
       elec_tilt: _kmlNum(fields, 'electricaldowntilt'),
       beamwidth: _kmlNum(fields, 'beamwidth'),
       radius: _kmlNum(fields, 'radius'),
+      max_tx_power_dbm: null, // not present anywhere in the KML's own key list
       carrier: fields.assignedcarrier ?? '',
       site_band: '',
       tower_type: fields.existingtowertype ?? '',

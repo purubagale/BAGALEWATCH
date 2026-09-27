@@ -124,12 +124,16 @@ export interface Sector {
   azimuth: number | null
   mech_tilt: number | null
   elec_tilt: number | null
-  // Antenna beam width (degrees) / coverage radius (meters) (2026-09-27,
-  // antenna wedge visualization) — sourced from the vendor's own KML
-  // engineering-parameter export, no fabricated default when either is
-  // null (see core/models.py's Sector.beamwidth/Sector.radius docstring).
+  // Antenna beam width (degrees) / coverage radius (meters) / real
+  // transmit power (dBm) (2026-09-27, antenna wedge visualization) —
+  // sourced from the vendor's KML engineering-parameter export
+  // (beamwidth/radius only) and the WSD-shaped xlsx source (all three,
+  // including the real "Maximum TX Power (dBm)" column), no fabricated
+  // default when any is null (see core/models.py's Sector.beamwidth/
+  // Sector.radius/Sector.max_tx_power_dbm docstring).
   beamwidth: number | null
   radius: number | null
+  max_tx_power_dbm: number | null
   pci: number | null
   scrambling_code: number | null
   bcch: number | null
@@ -1173,9 +1177,13 @@ export interface DtServingCell {
   // Antenna wedge visualization (2026-09-27) — see Sector.beamwidth/
   // Sector.radius's docstring in models.py. DtCoverageMap.tsx's
   // SectorWedgeOverlay draws a theoretical coverage wedge under the real
-  // RSRP dots only when both are non-null.
+  // RSRP dots only when both are non-null. max_tx_power_dbm (2026-09-27
+  // follow-up — the real "Maximum TX Power (dBm)" column, confirmed
+  // present in the WSD-shaped xlsx source) is shown in the wedge's
+  // tooltip when present, but never required to draw one.
   beamwidth: number | null
   radius: number | null
+  max_tx_power_dbm: number | null
   sample_count: number
   mean_dist_km: number | null
 }

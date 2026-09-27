@@ -406,6 +406,7 @@ class DriveTestSessionViewSet(
                 # wedge for that serving cell (nothing fabricated).
                 'beamwidth': sec.beamwidth if sec else None,
                 'radius': sec.radius if sec else None,
+                'max_tx_power_dbm': sec.max_tx_power_dbm if sec else None,
                 'sample_count': g['sample_count'],
                 'mean_dist_km': round(g['mean_dist_km'], 2) if g['mean_dist_km'] is not None else None,
             })

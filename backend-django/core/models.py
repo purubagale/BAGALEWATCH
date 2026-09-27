@@ -355,7 +355,7 @@ class Sector(models.Model):
     # power in graphical representation") -- sourced from the vendor's own
     # KML engineering-parameter export (Nepal NTC_LTE
     # engineering_parameter_*.kml), whose per-sector Placemark carries both
-    # (there's no transmit-power/dBm field anywhere in that file -- these
+    # (there's no transmit-power/dBm field anywhere in THAT file -- these
     # two plus azimuth/tilt are what a coverage "wedge" is actually drawn
     # from client-side, not a stored polygon). Same null=True/blank=True
     # convention as azimuth/mech_tilt/elec_tilt above -- a sector with
@@ -363,6 +363,14 @@ class Sector(models.Model):
     # default.
     beamwidth = models.FloatField(null=True, blank=True)
     radius = models.FloatField(null=True, blank=True)
+    # Real transmit power in dBm (2026-09-27 follow-up, "analyse" the
+    # sample RNO_Report_database.xlsx) -- the vendor's own WSD-shaped
+    # xlsx ("Maximum TX Power (dBm)") DOES carry this, missed when
+    # beamwidth/radius above were first added (that comment wrongly
+    # assumed no xlsx source had ANY of these three; Radius/Beamwidth
+    # were there all along too, just never parsed until this fix). The
+    # actual number the antenna wedge's "beam power" was always missing.
+    max_tx_power_dbm = models.FloatField(null=True, blank=True)
     pci = models.IntegerField(null=True, blank=True)
     scrambling_code = models.IntegerField(null=True, blank=True)
     bcch = models.IntegerField(null=True, blank=True)

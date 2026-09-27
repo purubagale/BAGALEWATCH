@@ -205,6 +205,7 @@ export default function SiteLocationMiniMap({
                 {s.mech_tilt != null || s.elec_tilt != null
                   ? ` · Tilt ${s.mech_tilt ?? 0}+${s.elec_tilt ?? 0}°`
                   : ''}
+                {s.max_tx_power_dbm != null ? ` · ${s.max_tx_power_dbm} dBm` : ''}
               </Tooltip>
             </Polygon>
           ))}

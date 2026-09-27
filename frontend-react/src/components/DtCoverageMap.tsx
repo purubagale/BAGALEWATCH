@@ -100,7 +100,10 @@ function SectorWedgeOverlay({ servingCells }: { servingCells?: DtServingCell[] }
       if (cell.azimuth == null || cell.beamwidth == null || cell.radius == null) continue
       const positions = buildWedgePolygon(cell.site_lat, cell.site_lng, cell.azimuth, cell.beamwidth, cell.radius)
       L.polygon(positions, { color: WEDGE_COLOR, fillColor: WEDGE_COLOR, fillOpacity: 0.25, weight: 1 })
-        .bindTooltip(`${cell.cell_name || cell.site_name} — Az ${cell.azimuth}° · BW ${cell.beamwidth}°`)
+        .bindTooltip(
+          `${cell.cell_name || cell.site_name} — Az ${cell.azimuth}° · BW ${cell.beamwidth}°`
+          + (cell.max_tx_power_dbm != null ? ` · ${cell.max_tx_power_dbm} dBm` : ''),
+        )
         .addTo(layer)
     }
     layer.addTo(map)

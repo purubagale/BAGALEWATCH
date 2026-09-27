@@ -373,10 +373,10 @@ function EngineeringParamImportSlot() {
       <div className="muted" style={{ fontSize: 9, marginBottom: 8 }}>
         Matches an existing 4G sector by Cell Name (no Site ID column in the vendor's own file) and updates its
         PCI/Antenna Height/Azimuth/Tilt/Carrier/Band, plus that site's tower type, tower height, building height,
-        TSSR height, antenna device and remark. A vendor KML export additionally carries Beamwidth/Radius, which
-        feed the antenna coverage-wedge diagram on a site's page and its drive tests. A row for a Cell Name with
-        no matching sector is skipped and reported — sectors are managed by the Sector Data upload above, not
-        this one.
+        TSSR height, antenna device and remark. The WSD-shaped vendor xlsx and a vendor KML export additionally
+        carry Beamwidth/Radius (and, xlsx-only, real transmit power in dBm), which feed the antenna coverage-wedge
+        diagram on a site's page and its drive tests. A row for a Cell Name with no matching sector is skipped
+        and reported — sectors are managed by the Sector Data upload above, not this one.
       </div>
       <div
         className="dt-drop-zone"
