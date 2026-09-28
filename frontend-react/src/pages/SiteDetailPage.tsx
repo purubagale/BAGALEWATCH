@@ -622,35 +622,48 @@ export default function SiteDetailPage() {
           value={identitySource.district ?? ''} onChange={(v) => setField('district', v)}
         />
       </div>
+      {/* Site Type/Technology/Status (2026-09-28, "for now do not display
+          these in details page") — deliberately hidden, not deleted: all
+          three are still real, still-editable fields on SiteWrite/the
+          underlying Site model (Site Type/Technology have no Live Site
+          Directory equivalent at all; Status is this app's own separate
+          KPI-health traffic light) — just not shown here for now. Bring
+          this row back by re-adding the three FieldCards from git history
+          if that changes. */}
+      {/* Live Site Directory fields that DO carry real synced data
+          (2026-09-27/28, "why city, site type, technology and status
+          have no data... Need to display the synced data from netbox in
+          that basic site details") — City stays blank on purpose: NONE
+          of these three sources write it (core/live_sites.py's
+          LIVE_SITE_FIELDS omits city entirely; the sync's own closest
+          concept is Palika, a distinct field of its own below, not a
+          substitute for City). Palika/Palika Type/Ward No are Nepal's
+          local-government tier below District — real synced data that
+          simply had nowhere to render on this page before now (Palika/
+          Ward No were already on SiteDetail's own type; Palika Type
+          needed adding — see its own comment in types.ts for why it
+          lives on SiteDetail alone, not SiteListItem, same reasoning
+          that the techs crash on /sites/KTM200 was fixed the same day
+          for). Always read-only, sourced from `site` directly (never
+          `draft`) — these are sync-managed, not something this form's
+          Save button should ever send back. */}
       <div className="site-form-row cols-3">
         <FieldCard
-          label="Site Type" editing={editing} value={identitySource.type ?? ''} onChange={(v) => setField('type', v)}
-          hint="Manual only — the Live Site Directory sync has no equivalent field for this"
+          label="Palika" editing={editing} readOnly
+          hint="Synced from the Live Site Directory"
+          value={site.palika || ''}
         />
         <FieldCard
-          label="Technology" editing={editing} value={identitySource.tech ?? ''} onChange={(v) => setField('tech', v)}
-          hint="Manual only — see Technologies (Live) below for what the sync/Sector Data actually reports"
+          label="Palika Type" editing={editing} readOnly
+          hint="Synced from the Live Site Directory"
+          value={site.palika_type || ''}
         />
         <FieldCard
-          label="Status" editing={editing} value={identitySource.status ?? ''} onChange={(v) => setField('status', v)}
-          hint="This site's own KPI-health status — see Deployment Status below for the sync's on-air state"
+          label="Ward No" editing={editing} readOnly
+          hint="Synced from the Live Site Directory"
+          value={site.ward_no != null ? String(site.ward_no) : ''}
         />
       </div>
-      {/* Live Site Directory fields that DO carry real synced data but had
-          nowhere to show on this page before now (2026-09-27, "why city,
-          site type, technology and status have no data... may be in this
-          display page data are fetched from old stored type, not from
-          sync data") — confirmed exactly that: City/Site Type/Status
-          above are old manual-only columns the sync never writes at all
-          (core/live_sites.py's LIVE_SITE_FIELDS omits city/type/status
-          entirely; deployment_status is a deliberately SEPARATE concept
-          from this app's own KPI-health status). Technology's real
-          synced equivalent is `techs` (union of NetBox devices' role +
-          any uploaded Sector Data), already computed server-side
-          (SiteListSerializer.get_techs) but never rendered here. Always
-          read-only, sourced from `site` directly (never `draft`) — these
-          are sync-managed, not something this form's Save button should
-          ever send back. */}
       <div className="site-form-row cols-2">
         <FieldCard
           label="Deployment Status" editing={editing} readOnly

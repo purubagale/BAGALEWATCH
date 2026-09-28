@@ -183,6 +183,15 @@ export interface Sector {
 }
 
 export interface SiteDetail extends SiteListItem {
+  // Live Site Directory field (2026-09-28) — on `SiteDetailSerializer`
+  // only (that one uses `fields = '__all__'`, a real model column), NOT
+  // on `SiteListSerializer`'s explicit field list — so this deliberately
+  // lives on `SiteDetail` alone, not `SiteListItem`, unlike palika/
+  // ward_no above which both serializers genuinely send. Getting this
+  // distinction wrong is exactly what caused the `techs` crash on
+  // /sites/KTM200 the same day — see SiteDetailSerializer's own comment
+  // in serializers.py.
+  palika_type: string
   kpi_date: string
   rrc: number | null
   erab: number | null
