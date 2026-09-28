@@ -482,8 +482,19 @@ function buildTrpSessions(
     // still preserves the route's full geographic extent instead of
     // favoring whichever file happened to be concatenated first.
     const chronological = [...grp.samples].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
-    const wasCapped = chronological.length > TRP_SAVE_SAMPLE_CAP
-    const samples = subsampleWithSparseMetrics(chronological, TRP_SAVE_SAMPLE_CAP)
+    // TEMPORARY diagnostic (2026-09-28, "problem of cqi and DL throughput
+    // is not solved yet. it may be due to the sampling cap. lets remove
+    // cap and try once") -- save-time capping disabled entirely (passing
+    // Infinity makes subsampleWithSparseMetrics's own `rows.length <= max`
+    // check always short-circuit to "return rows unchanged") so a real
+    // session can be re-uploaded and checked for whether CQI/DL Throughput
+    // dots actually exist in the full decoded data at all, independent of
+    // the 30% sparse-metric reservation. Revert both lines back to
+    // `chronological.length > TRP_SAVE_SAMPLE_CAP` /
+    // `subsampleWithSparseMetrics(chronological, TRP_SAVE_SAMPLE_CAP)`
+    // once this test has an answer either way.
+    const wasCapped = false
+    const samples = subsampleWithSparseMetrics(chronological, Infinity)
     const meta: DtSessionMeta = computeSessionMeta(samples, grp.files)
     const callSummary = trpaSummarizeCallEvents(grp.events)
     if (callSummary) meta.callSummary = callSummary

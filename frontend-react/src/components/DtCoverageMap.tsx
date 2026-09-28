@@ -234,7 +234,16 @@ export default function DtCoverageMap({
   // What actually gets drawn — bounds/fitBounds above still uses the FULL
   // withGps (cheap, just a min/max pass) so the map always frames the
   // real full route even when the dots themselves are subsampled.
-  const drawnSamples = useMemo(() => subsampleForMap(withGps), [withGps])
+  //
+  // TEMPORARY diagnostic (2026-09-28, "problem of cqi and DL throughput
+  // is not solved yet. it may be due to the sampling cap. lets remove cap
+  // and try once") -- draw-time capping disabled (Infinity short-circuits
+  // subsampleForMap's own `items.length <= max` check to "return items
+  // unchanged"), on top of the save-time cap already being disabled in
+  // DtUploadPage.tsx, so a re-uploaded session shows every real decoded
+  // point with no thinning at either stage. Revert to plain
+  // `subsampleForMap(withGps)` once this test has an answer either way.
+  const drawnSamples = useMemo(() => subsampleForMap(withGps, Infinity), [withGps])
   const bounds = useMemo(
     () => (withGps.length ? L.latLngBounds(withGps.map((s) => [s.lat as number, s.lng as number])) : null),
     [withGps],
