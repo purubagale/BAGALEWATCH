@@ -3233,7 +3233,10 @@ textarea:focus {
   box-shadow: var(--shadow-sm);
 }
 .sites-marker-name-label::before { display: none; }
-.sites-marker-popup { min-width: 170px; }
+/* cursor:pointer (2026-09-28) — the whole card is clickable now (see
+   MapView.tsx's ClusteredMarkers popupopen handler), not just the tiny
+   marker pin underneath it. */
+.sites-marker-popup { min-width: 170px; cursor: pointer; }
 .sites-marker-popup-title { font-weight: 700; font-size: 13px; color: var(--text-primary); margin-bottom: 2px; }
 .sites-marker-popup-id { font-size: 11px; font-weight: 600; color: var(--brand-primary); margin-bottom: 2px; }
 .sites-marker-popup-tech { font-size: 11px; font-weight: 600; color: var(--status-success-text-subtle); margin-bottom: 4px; }

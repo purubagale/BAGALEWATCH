@@ -708,91 +708,6 @@ export default function SiteDetailPage() {
         <FieldCard label="Tower Remark" editing={editing} value={identitySource.tower_remark ?? ''} onChange={(v) => setField('tower_remark', v)} />
       </div>
 
-      {/* ── KPI Values — tabbed 4G LTE / 3G UMTS / 2G GSM ───────────── */}
-      <div className="site-form-section">
-        KPI Values
-        <span className="site-form-section-hint">
-          {site.kpi_date ? `as of ${site.kpi_date}` : 'site-level averages per technology'}
-        </span>
-      </div>
-      <div className="kpi-tabs">
-        {(['4G', '3G', '2G'] as KpiTech[]).map((t) => (
-          <button
-            key={t}
-            type="button"
-            className={`kpi-tab${kpiTech === t ? ' active' : ''}`}
-            onClick={() => setKpiTech(t)}
-          >
-            {t === '4G' ? '4G LTE' : t === '3G' ? '3G UMTS' : '2G GSM'}
-          </button>
-        ))}
-      </div>
-
-      {kpiTech === '4G' && (
-        site.kpi_entered || editing ? (
-          <div className="site-form-row cols-4">
-            {KPI_FIELDS.map(([key, label]) => (
-              <FieldCard
-                key={String(key)}
-                label={label}
-                editing={editing}
-                type="number"
-                value={String((editing ? draft?.[key] : site[key]) ?? '')}
-                onChange={(v) => setNumberField(key, v)}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="kpi-pane-empty">No 4G KPI data entered for this site yet.</div>
-        )
-      )}
-
-      {kpiTech === '3G' && (
-        site.kpi_entered_3g || editing ? (
-          <div className="site-form-row cols-4">
-            {KPI_3G_FIELDS.map(([key, label]) => {
-              const source = (editing ? draft?.kpi_3g_json : site.kpi_3g_json) as Record<string, unknown> | null
-              const raw = source?.[key]
-              return (
-                <FieldCard
-                  key={key}
-                  label={label}
-                  editing={editing}
-                  type="number"
-                  value={raw === undefined || raw === null ? '' : String(raw)}
-                  onChange={(v) => setTechKpiField('3g', key, v)}
-                />
-              )
-            })}
-          </div>
-        ) : (
-          <div className="kpi-pane-empty">No 3G KPI data entered for this site yet.</div>
-        )
-      )}
-
-      {kpiTech === '2G' && (
-        site.kpi_entered_2g || editing ? (
-          <div className="site-form-row cols-4">
-            {KPI_2G_FIELDS.map(([key, label]) => {
-              const source = (editing ? draft?.kpi_2g_json : site.kpi_2g_json) as Record<string, unknown> | null
-              const raw = source?.[key]
-              return (
-                <FieldCard
-                  key={key}
-                  label={label}
-                  editing={editing}
-                  type="number"
-                  value={raw === undefined || raw === null ? '' : String(raw)}
-                  onChange={(v) => setTechKpiField('2g', key, v)}
-                />
-              )
-            })}
-          </div>
-        ) : (
-          <div className="kpi-pane-empty">No 2G KPI data entered for this site yet.</div>
-        )
-      )}
-
       </div>
 
       <aside className="site-detail-sidebar">
@@ -971,6 +886,100 @@ export default function SiteDetailPage() {
           </>
         ) : (
           <div className="kpi-pane-empty">No sectors recorded for this site yet.</div>
+        )}
+      </section>
+
+      {/* ── KPI Values — tabbed 4G LTE / 3G UMTS / 2G GSM ─────────────
+          Moved below Sector Azimuth Layout (2026-09-28, "display KPI
+          values below the sector azimuth layout in site detail page") —
+          previously lived inside the two-column site-detail-layout grid,
+          above the (full-width, outside that grid) Sectors section; now
+          full-width itself, in its own <section> matching every other
+          below-Sectors block (Drive Tests/Antenna Change History/Site
+          Issues) rather than sharing space with the 320px sidebar. */}
+      <section>
+        <div className="site-form-section">
+          KPI Values
+          <span className="site-form-section-hint">
+            {site.kpi_date ? `as of ${site.kpi_date}` : 'site-level averages per technology'}
+          </span>
+        </div>
+        <div className="kpi-tabs">
+          {(['4G', '3G', '2G'] as KpiTech[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`kpi-tab${kpiTech === t ? ' active' : ''}`}
+              onClick={() => setKpiTech(t)}
+            >
+              {t === '4G' ? '4G LTE' : t === '3G' ? '3G UMTS' : '2G GSM'}
+            </button>
+          ))}
+        </div>
+
+        {kpiTech === '4G' && (
+          site.kpi_entered || editing ? (
+            <div className="site-form-row cols-4">
+              {KPI_FIELDS.map(([key, label]) => (
+                <FieldCard
+                  key={String(key)}
+                  label={label}
+                  editing={editing}
+                  type="number"
+                  value={String((editing ? draft?.[key] : site[key]) ?? '')}
+                  onChange={(v) => setNumberField(key, v)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="kpi-pane-empty">No 4G KPI data entered for this site yet.</div>
+          )
+        )}
+
+        {kpiTech === '3G' && (
+          site.kpi_entered_3g || editing ? (
+            <div className="site-form-row cols-4">
+              {KPI_3G_FIELDS.map(([key, label]) => {
+                const source = (editing ? draft?.kpi_3g_json : site.kpi_3g_json) as Record<string, unknown> | null
+                const raw = source?.[key]
+                return (
+                  <FieldCard
+                    key={key}
+                    label={label}
+                    editing={editing}
+                    type="number"
+                    value={raw === undefined || raw === null ? '' : String(raw)}
+                    onChange={(v) => setTechKpiField('3g', key, v)}
+                  />
+                )
+              })}
+            </div>
+          ) : (
+            <div className="kpi-pane-empty">No 3G KPI data entered for this site yet.</div>
+          )
+        )}
+
+        {kpiTech === '2G' && (
+          site.kpi_entered_2g || editing ? (
+            <div className="site-form-row cols-4">
+              {KPI_2G_FIELDS.map(([key, label]) => {
+                const source = (editing ? draft?.kpi_2g_json : site.kpi_2g_json) as Record<string, unknown> | null
+                const raw = source?.[key]
+                return (
+                  <FieldCard
+                    key={key}
+                    label={label}
+                    editing={editing}
+                    type="number"
+                    value={raw === undefined || raw === null ? '' : String(raw)}
+                    onChange={(v) => setTechKpiField('2g', key, v)}
+                  />
+                )
+              })}
+            </div>
+          ) : (
+            <div className="kpi-pane-empty">No 2G KPI data entered for this site yet.</div>
+          )
         )}
       </section>
 
