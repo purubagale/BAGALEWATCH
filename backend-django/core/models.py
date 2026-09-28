@@ -234,6 +234,26 @@ class Site(models.Model):
 
     type = models.CharField(max_length=50, blank=True, default='')
     tech = models.CharField(max_length=50, blank=True, default='')
+    # Tower/antenna engineering parameters (2026-09-26 request: "for 4G I
+    # found more parameters with data for sectors that are also need to
+    # be managed" -- from a real nationwide LTE engineering-parameter
+    # master list, ~20,000 rows). Site-level, not Sector-level -- these
+    # describe the physical tower/structure a site's antennas mount on,
+    # shared by every sector at that site, same reasoning as
+    # lat/lng/district being Site fields rather than repeated per Sector.
+    # Plain CharFields throughout, same "carry the vendor's own text
+    # through, don't force a number type onto messy source data"
+    # convention as Sector.carrier/site_band (a real "Tower height (m)"
+    # column mixes clean integers with occasional blanks/remarks).
+    # Explicitly NOT added, per the user's own exclusion list: Property
+    # ID (already this Site's own `id`), Zone, Palika (New nagarpalika/
+    # Gaunpalika) -- confirmed not wanted this round.
+    tower_type = models.CharField(max_length=50, blank=True, default='')
+    tower_height_m = models.CharField(max_length=50, blank=True, default='')
+    building_height = models.CharField(max_length=50, blank=True, default='')
+    tower_height_tssr = models.CharField(max_length=50, blank=True, default='')
+    antenna_device = models.CharField(max_length=100, blank=True, default='')
+    tower_remark = models.CharField(max_length=500, blank=True, default='')
     status = models.CharField(max_length=20, blank=True, default='nodata')
     status_2g = models.CharField(max_length=20, blank=True, default='')
     status_3g = models.CharField(max_length=20, blank=True, default='')
@@ -330,6 +350,27 @@ class Sector(models.Model):
     azimuth = models.FloatField(null=True, blank=True)
     mech_tilt = models.FloatField(null=True, blank=True)
     elec_tilt = models.FloatField(null=True, blank=True)
+    # Antenna beam width (degrees) and coverage radius (meters) (2026-09-27,
+    # "how can we use its data to show antenna orientation, azimuth, beam
+    # power in graphical representation") -- sourced from the vendor's own
+    # KML engineering-parameter export (Nepal NTC_LTE
+    # engineering_parameter_*.kml), whose per-sector Placemark carries both
+    # (there's no transmit-power/dBm field anywhere in THAT file -- these
+    # two plus azimuth/tilt are what a coverage "wedge" is actually drawn
+    # from client-side, not a stored polygon). Same null=True/blank=True
+    # convention as azimuth/mech_tilt/elec_tilt above -- a sector with
+    # either blank just doesn't get a wedge drawn, never a fabricated
+    # default.
+    beamwidth = models.FloatField(null=True, blank=True)
+    radius = models.FloatField(null=True, blank=True)
+    # Real transmit power in dBm (2026-09-27 follow-up, "analyse" the
+    # sample RNO_Report_database.xlsx) -- the vendor's own WSD-shaped
+    # xlsx ("Maximum TX Power (dBm)") DOES carry this, missed when
+    # beamwidth/radius above were first added (that comment wrongly
+    # assumed no xlsx source had ANY of these three; Radius/Beamwidth
+    # were there all along too, just never parsed until this fix). The
+    # actual number the antenna wedge's "beam power" was always missing.
+    max_tx_power_dbm = models.FloatField(null=True, blank=True)
     pci = models.IntegerField(null=True, blank=True)
     scrambling_code = models.IntegerField(null=True, blank=True)
     bcch = models.IntegerField(null=True, blank=True)
@@ -381,6 +422,27 @@ class Sector(models.Model):
     site_band = models.CharField(max_length=255, blank=True, default='')
     cell_active_status = models.CharField(max_length=255, blank=True, default='')
     site_existence = models.CharField(max_length=255, blank=True, default='')
+    # 2G/3G RF Database engineering parameters (2026-09-27, "analyse" the
+    # sample 2g_3g_RF Database...xlsx -- the 2G/3G equivalent of the 4G
+    # LTE_Engineering_Parameter file this app already imports). lac/ci are
+    # text (identifiers, not quantities -- same reasoning as carrier/
+    # site_band above); tch is text since a real row's value is a channel
+    # LIST ("15; 50; 4; 6; 9"), never a single int. ncc/hsn/total_trx/
+    # activated_trx/dl_uarfcn are 2G/3G-specific small integers; cs_traffic/
+    # site_traffic are Erlang-style float measurements. All null=True/
+    # blank=True or blank=True/default='' matching whichever sibling field
+    # above already established that convention for its own shape -- see
+    # core/site_import.py's ENGINEERING_SECTOR_FIELDS for the import path.
+    lac = models.CharField(max_length=20, blank=True, default='')
+    ci = models.CharField(max_length=20, blank=True, default='')
+    ncc = models.IntegerField(null=True, blank=True)
+    hsn = models.IntegerField(null=True, blank=True)
+    tch = models.CharField(max_length=100, blank=True, default='')
+    total_trx = models.IntegerField(null=True, blank=True)
+    activated_trx = models.IntegerField(null=True, blank=True)
+    cs_traffic = models.FloatField(null=True, blank=True)
+    site_traffic = models.FloatField(null=True, blank=True)
+    dl_uarfcn = models.IntegerField(null=True, blank=True)
 
     class Meta:
         db_table = 'v2_sectors'
@@ -690,6 +752,26 @@ class DriveTestSession(models.Model):
     # everything-else-is-immutable design (see this viewset's own
     # docstring for why v2 deliberately has no update/partial_update).
     remarks = models.TextField(blank=True, default='')
+    # Which "mode" this drive was run in -- Free Mode, a specific band-lock
+    # (e.g. "B3 Lock", "B20 Lock"), Idle vs an active DL/UL session, etc.
+    # (2026-09-23 request: real drive tests for one site aren't one file,
+    # they're a matrix of mode x phase x metric -- "PCI Plot... Pre DT",
+    # "Band (Mode: Idle at B3 Lock mode)... Post DT", and so on -- and
+    # today there is no way to tell two same-site/same-tech sessions apart
+    # by which mode they were driven in). A real CharField, not a `meta`
+    # key -- this needs to be *filtered/found* by mode, which `meta` (a
+    # plain untyped JSONField, see above) has no query path for anywhere
+    # in this app, while a top-level field is trivially filterable and
+    # matches how `tech` already works. Deliberately not a `choices=`
+    # enum, same "not a real enum" convention `tech` uses -- the UI offers
+    # a curated dropdown (see DtUploadPage.tsx/
+    # DtSessionHistoryPage.tsx) but a future mode string never needs a
+    # migration to add. Editable after the fact via
+    # DriveTestSessionViewSet.mode(), mirroring remarks() immediately
+    # above/below it -- same "one dedicated action per editable field"
+    # convention, not a general update/PATCH (see this model's own
+    # viewset docstring).
+    mode = models.CharField(max_length=40, blank=True, default='')
 
     class Meta:
         db_table = 'v2_dt_sessions'
@@ -790,6 +872,32 @@ class OptimizationActivity(models.Model):
     created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # Direct link to the vendor RNO report this effort stems from
+    # (2026-09-23, "need to relate and manage vendor provided RNO
+    # report") — INDEPENDENT of Issue.source_report/resolved_by_activity
+    # below. That Issue-mediated path only ever fires for a
+    # RECOMMENDATION row (see RfOptimizationReport's own docstring); the
+    # other table the same importer already parses, SectorConfigChange
+    # (the actual antenna azimuth/tilt change-log — the thing a Pre/Post
+    # drive most often exists to verify), never gets an Issue at all, so
+    # an activity driven straight from a change-log entry had no way to
+    # reference its source report until now. 'RfOptimizationReport' is a
+    # forward reference (defined later in this file) — Django resolves
+    # the string at app-loading time same as every other quoted FK here.
+    source_report = models.ForeignKey(
+        'RfOptimizationReport', null=True, blank=True, on_delete=models.SET_NULL, related_name='activities'
+    )
+    # Which specific antenna change(s) this activity's drives verify — an
+    # activity can address more than one cell at a site in one effort, and
+    # a change can, in principle, be re-verified by more than one activity
+    # over time (e.g. a re-verify months later after a related complaint).
+    # Managed via OptimizationActivityViewSet.link_report(), not at
+    # creation — mirrors how sessions are attached any time after an
+    # activity exists, not just up front (see OptimizationActivitySession
+    # below), rather than resolve_issue_id's one-shot-at-creation rule.
+    antenna_changes = models.ManyToManyField(
+        'SectorConfigChange', blank=True, related_name='verifying_activities'
+    )
 
     class Meta:
         db_table = 'v2_optimization_activities'
@@ -1006,6 +1114,83 @@ class SectorConfigChange(models.Model):
         return f'{self.cell_name} ({self.report_id})'
 
 
+class RfKpiSummary(models.Model):
+    """One Lot-wise OSS KPI summary row imported from a vendor RNO
+    report (2026-09-26 request: "need to extract The Lot-Wise OSS KPI and
+    worst cell optimization also" -- the "~30 per-cell KPI pre/post
+    tables" `RfOptimizationReport`'s original 2026-09-15 scope explicitly
+    deferred). Aggregate, LOT-wide values -- no per-cell identity, unlike
+    `RfCellKpi` below. Real shapes seen (see core/rf_reports.py's
+    `_parse_lot_kpi_table`): `[S.N., KPI Parameter, Target "X", Pre,
+    Post]`, `[S.N., VoLTE KPI, Pre, Post, Remarks]`, `[S.No, ViLTE KPI
+    Parameter, Pre, Post]`, `[KPI, Target, Pre, Post, Remark]`.
+
+    `pre_value`/`post_value`/`target` are the vendor's own raw text, same
+    "never force-parse" rule `SectorConfigChange.before_change`/
+    `after_change` already uses -- real values look like
+    "66.19%(105884)" or "Monitor only (>=-85dbm)", not a clean number.
+    """
+    report = models.ForeignKey(RfOptimizationReport, on_delete=models.CASCADE, related_name='kpi_summaries')
+    kpi_name = models.CharField(max_length=255)
+    target = models.CharField(max_length=255, blank=True, default='')
+    pre_value = models.CharField(max_length=255, blank=True, default='')
+    post_value = models.CharField(max_length=255, blank=True, default='')
+    remark = models.CharField(max_length=255, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_rf_kpi_summaries'
+        ordering = ['report', 'id']
+        indexes = [
+            models.Index(fields=['report']),
+        ]
+
+    def __str__(self):
+        return f'{self.kpi_name} ({self.report_id})'
+
+
+class RfCellKpi(models.Model):
+    """One "worst cell" KPI pre/post row imported from a vendor RNO
+    report (2026-09-26 request, see `RfKpiSummary`'s own docstring for
+    the full context). Real shape seen (see core/rf_reports.py's
+    `_parse_cell_kpi_table`): one table PER METRIC, always `[eNBID,
+    eNodeB Name, Cell Name, Cell ID, <Metric>(-Pre), <Metric>-Post]` --
+    `metric_name` is the vendor's column header with the trailing "Pre"/
+    "Post" token stripped off (e.g. "RRC Setup Success Rate (%)"), so
+    every cell's rows for the same metric share one `metric_name` string
+    across however many worst-cell tables mention it.
+
+    `sector` is matched by cell name against this app's existing Sector
+    rows at import-review time, same as `SectorConfigChange.sector` --
+    can be null if no match was found or confirmed; the row is kept
+    either way. `enb_id`/`enodeb_name` are kept as the vendor's own text
+    even when `sector` resolves, purely for cross-checking against the
+    source document.
+    """
+    report = models.ForeignKey(RfOptimizationReport, on_delete=models.CASCADE, related_name='cell_kpis')
+    enb_id = models.CharField(max_length=50, blank=True, default='')
+    enodeb_name = models.CharField(max_length=255, blank=True, default='')
+    cell_name = models.CharField(max_length=255, blank=True, default='')
+    sector = models.ForeignKey(
+        'Sector', null=True, blank=True, on_delete=models.SET_NULL, related_name='worst_cell_kpis'
+    )
+    metric_name = models.CharField(max_length=255)
+    pre_value = models.CharField(max_length=255, blank=True, default='')
+    post_value = models.CharField(max_length=255, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_rf_cell_kpis'
+        ordering = ['report', 'metric_name', 'cell_name']
+        indexes = [
+            models.Index(fields=['report']),
+            models.Index(fields=['sector']),
+        ]
+
+    def __str__(self):
+        return f'{self.cell_name} {self.metric_name} ({self.report_id})'
+
+
 class Issue(models.Model):
     """Site/sector issue tracker (2026-09-14 request) -- a lightweight
     record of a problem noticed at a site or one of its sectors (a
@@ -1122,6 +1307,18 @@ class DriveTestSample(models.Model):
     cqi = models.SmallIntegerField(null=True, blank=True)
     dl = SignalFloatField(null=True, blank=True)
     pci = models.IntegerField(null=True, blank=True)
+    # LTE band this sample's serving cell was on (e.g. "3", "20") --
+    # already decoded and forward-filled client-side by trpAnalysis.ts
+    # (Radio.Lte.ServingCell[8].Band, on-change like pci/earfcn) but
+    # dropped when trpRowToDtSample() (DtUploadPage.tsx) built the row
+    # that actually gets saved here (2026-09-23 follow-up: real drive
+    # tests are re-run per band-lock mode -- "Band (Mode: Idle at B3 Lock
+    # mode)" -- so knowing which band a sample was actually on, not just
+    # its PCI, is real data this app already has and wasn't storing).
+    # Plain CharField, not an int/choices -- the raw TEMS band string
+    # round-trips as-is, same "carry the vendor's own value through
+    # unchanged" convention as Sector.carrier/site_band.
+    band = models.CharField(max_length=10, blank=True, default='')
     serving_site_id = models.CharField(max_length=64, blank=True, null=True)
     serving_site_name = models.CharField(max_length=255, blank=True, null=True)
     serving_sector = models.CharField(max_length=20, blank=True, null=True)

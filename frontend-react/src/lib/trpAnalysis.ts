@@ -523,7 +523,25 @@ const TRPA_TECH_FIELDS: Record<TrpaTech, TrpaTechConfig> = {
       pdschRbPct: ['Radio.Lte.ServingCell[8].Pdsch.ResourceBlocksPercentage', 'Radio.Lte.ServingCell[8].Pdsch.ResourceBlockAllocationPercentage'],
       pdschThroughput: ['Radio.Lte.ServingCell[8].Pdsch.Throughput'],
       rankIndication: ['Radio.Lte.ServingCell[8].RankIndication'],
-      cqi: ['Radio.Lte.ServingCell[8].CqiCodeword0Average', 'Radio.Lte.ServingCell[8].Stream[2].Cqi'],
+      // 2026-09-24 follow-up: CQI came through null on a real upload's
+      // plot (all samples, not just some) -- the two names below were
+      // never confirmed against a real 4G .trp with CQI actually present.
+      // User-confirmed vendor taxonomy: TEMS categorizes CQI under CSI
+      // (Channel State Information), with "Wideband CQI" being the
+      // carrier-average value -- the same concept CqiCodeword0Average was
+      // already trying to name, just possibly under one of these more
+      // TEMS-typical literal key spellings instead. Added as additional
+      // fallback candidates (first match wins, existing two candidates
+      // unchanged) rather than replacing anything -- still unverified
+      // against this specific file; see this module's own docstring on
+      // why a field only ships once confirmed against a real capture.
+      cqi: [
+        'Radio.Lte.ServingCell[8].CqiCodeword0Average',
+        'Radio.Lte.ServingCell[8].Stream[2].Cqi',
+        'Radio.Lte.ServingCell[8].WidebandCqiCodeword0',
+        'Radio.Lte.ServingCell[8].WidebandCqiCodeword0Average',
+        'Radio.Lte.ServingCell[8].WidebandCqi',
+      ],
       timingAdvance: ['Radio.Lte.ServingCell[8].TimingAdvance'],
       tac: ['Radio.Lte.ServingSystem.Tac'],
     },

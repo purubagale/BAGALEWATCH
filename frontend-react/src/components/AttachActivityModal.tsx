@@ -4,7 +4,9 @@ import {
   useAttachSessionToActivity,
   useCreateOptimizationActivity,
   useIssues,
+  useLinkActivityReport,
   useOptimizationActivities,
+  useRfReports,
 } from '../api/queries'
 import type { DtSessionListItem, OptimizationActivityRole } from '../api/types'
 import SearchableSelect from './SearchableSelect'
@@ -41,6 +43,17 @@ export default function AttachActivityModal({
   const { data: activities } = useOptimizationActivities()
   const attach = useAttachSessionToActivity()
   const createActivity = useCreateOptimizationActivity()
+  // Vendor report linking (2026-09-23, "need to relate and manage vendor
+  // provided RNO report") -- only offered in 'existing' mode with an
+  // activity actually picked, since link_report() needs a real activity
+  // id to POST to; a brand-new activity can be linked to a report the
+  // next time this modal is reopened on it in 'existing' mode.
+  const { data: reports } = useRfReports()
+  const linkReport = useLinkActivityReport()
+  const [reportId, setReportId] = useState<number | null>(null)
+  const [selectedChangeIds, setSelectedChangeIds] = useState<Set<number>>(new Set())
+  const [reportLinkError, setReportLinkError] = useState<string | null>(null)
+  const [reportLinkedMsg, setReportLinkedMsg] = useState<string | null>(null)
   // Open Issues this new activity could resolve (2026-09-14) -- only
   // fetched/shown in 'new' mode, see resolveIssueId's own comment below
   // for why this is create-only.
@@ -74,10 +87,37 @@ export default function AttachActivityModal({
   const activityOptions = useMemo(() => (activities ?? []).map(composeLabel), [activities])
   const selectedActivity = (activities ?? []).find((a) => a.id === activityId)
   const selectedLabel = selectedActivity ? composeLabel(selectedActivity) : ''
+  const selectedReport = (reports ?? []).find((r) => r.id === reportId)
 
   function chooseExisting(label: string) {
     const match = (activities ?? []).find((a) => composeLabel(a) === label)
     setActivityId(match ? match.id : null)
+  }
+
+  function toggleChange(id: number) {
+    setSelectedChangeIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function handleLinkReport() {
+    if (!selectedActivity || reportId == null) return
+    setReportLinkError(null)
+    setReportLinkedMsg(null)
+    try {
+      await linkReport.mutateAsync({
+        activityId: selectedActivity.id,
+        reportId,
+        antennaChangeIds: [...selectedChangeIds],
+      })
+      setReportLinkedMsg('Report linked.')
+      setSelectedChangeIds(new Set())
+    } catch (err) {
+      setReportLinkError(apiErrorMessage(err, 'Could not link this report.'))
+    }
   }
 
   async function handleSubmit() {
@@ -152,7 +192,55 @@ export default function AttachActivityModal({
                 />
                 {!activities?.length && <span className="muted">No activities yet — create one instead.</span>}
               </label>
-            ) : (
+            ) : null}
+
+            {/* Vendor report link (2026-09-23, "need to relate and manage
+                vendor provided RNO report") -- only offered once an
+                EXISTING activity is picked (link_report() needs a real
+                activity id); a brand-new activity created below gets its
+                report linked the next time this modal is reopened on it. */}
+            {mode === 'existing' && selectedActivity && (
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 2 }}>
+                <label style={{ marginBottom: 4 }}>
+                  Link vendor report (optional)
+                  <select value={reportId ?? ''} onChange={(e) => setReportId(e.target.value ? Number(e.target.value) : null)}>
+                    <option value="">Choose a report…</option>
+                    {(reports ?? []).map((r) => (
+                      <option key={r.id} value={r.id}>{r.lot_name}{r.network ? ` (${r.network})` : ''}</option>
+                    ))}
+                  </select>
+                  {!reports?.length && <span className="muted">No RF reports imported yet.</span>}
+                </label>
+                {selectedActivity.source_report && (
+                  <p className="muted" style={{ fontSize: 11 }}>
+                    Currently linked to <strong>{selectedActivity.source_report.lot_name}</strong>
+                    {selectedActivity.antenna_changes.length > 0 ? ` (${selectedActivity.antenna_changes.length} antenna change(s))` : ''}.
+                  </p>
+                )}
+                {selectedReport && selectedReport.antenna_changes_detail.length > 0 && (
+                  <div style={{ maxHeight: 120, overflowY: 'auto', margin: '6px 0' }}>
+                    {selectedReport.antenna_changes_detail.map((c) => (
+                      <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400, fontSize: 11 }}>
+                        <input type="checkbox" checked={selectedChangeIds.has(c.id)} onChange={() => toggleChange(c.id)} />
+                        {c.cell_name}: {c.before_change} → {c.after_change}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {reportLinkError && <div className="form-error">{reportLinkError}</div>}
+                {reportLinkedMsg && <p className="muted" style={{ fontSize: 11 }}>{reportLinkedMsg}</p>}
+                <button
+                  type="button"
+                  className="btn-secondary btn-small"
+                  disabled={reportId == null || linkReport.isPending}
+                  onClick={handleLinkReport}
+                >
+                  {linkReport.isPending ? 'Linking…' : 'Link Report'}
+                </button>
+              </div>
+            )}
+
+            {mode === 'new' && (
               <>
                 <label>
                   Name

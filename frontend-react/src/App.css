@@ -1290,6 +1290,7 @@ textarea:focus {
    anything and flex: 1 alone has nothing to grow into. */
 .site-mini-map-container { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .site-mini-map-wrap {
+  position: relative;
   flex: 1;
   min-height: 240px;
   border-radius: var(--radius-md);
@@ -1297,6 +1298,33 @@ textarea:focus {
   border: 1px solid var(--border);
 }
 .site-mini-map-wrap .leaflet-container { height: 100%; width: 100%; background: var(--bg-surface-alt); }
+/* Fullscreen toggle (2026-09-27, "allow to view location also in full
+   screen with same feature") — real Fullscreen API (see
+   SiteLocationMiniMap.tsx's toggleFullscreen), same pattern as
+   DtExploreTab.tsx's own .dt-explore-map-fullscreen. The API itself
+   makes the element cover the viewport; this rule only needs to stop
+   fighting that with the compact sidebar sizing (min-height/border-radius/
+   border) it normally carries. */
+.site-mini-map-fullscreen { width: 100vw; height: 100vh; min-height: 0; border-radius: 0; border: none; }
+.site-mini-map-fullscreen-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1000;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 17, 22, 0.75);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: var(--radius-sm);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.site-mini-map-fullscreen-btn:hover { background: rgba(15, 17, 22, 0.9); }
 .site-mini-map-empty {
   flex: 1;
   display: flex;
@@ -1373,6 +1401,14 @@ textarea:focus {
 .sectors-table td.sector-cell-accent { color: var(--link-accent); }
 .sectors-table td.sector-cell-num { text-align: right; color: var(--text-secondary); }
 .sectors-table td.sector-cell-actions { text-align: center; white-space: nowrap; }
+/* Per-tech (4G LTE/3G UMTS/2G GSM) Sectors table only (2026-09-27,
+   "display all header and data with central allignment") -- every other
+   table reusing .sectors-table's base styling (Drive Tests Near This
+   Site, Antenna Change History, Site Issues) keeps its original
+   left/right alignment; this modifier is scoped to just that one
+   table. */
+.sectors-table.sectors-table-centered th,
+.sectors-table.sectors-table-centered td { text-align: center; }
 /* Per-sector GPS override display (2026-08-09) — see SiteDetailPage.tsx's
    Location column and Sector.lat/lng's docstring in models.py. */
 .sector-location-inherited { color: var(--text-faint); font-style: italic; }
@@ -2558,6 +2594,7 @@ textarea:focus {
   text-decoration: none;
   color: inherit;
   min-height: 108px;
+  min-width: 0;
 }
 .dash-card-shortcut {
   cursor: pointer;
@@ -2630,7 +2667,13 @@ textarea:focus {
 .dash-card-value { font-size: 28px; font-weight: 700; color: var(--text-primary); line-height: 1.1; }
 .dash-card-label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .dash-card-stat .dash-card-label { color: var(--text-muted); font-weight: 500; }
-.dash-card-desc { font-size: 12px; color: var(--text-muted); }
+/* overflow-wrap (2026-09-24, a real long unbroken description --
+   "PCI/Band/RSRP/RSRQ/.../ViLTE", no spaces to wrap at -- overflowed past
+   the card's edge instead of wrapping) plus min-width: 0 on .dash-card
+   below, same "flex/grid item needs min-width:0 to actually shrink to its
+   container instead of stretching to fit an unbreakable child" fix
+   .tree-label already uses for the same class of bug. */
+.dash-card-desc { font-size: 12px; color: var(--text-muted); overflow-wrap: break-word; }
 
 .dashboard-customize { margin-top: 4px; }
 .dash-customize-list {
@@ -3190,7 +3233,10 @@ textarea:focus {
   box-shadow: var(--shadow-sm);
 }
 .sites-marker-name-label::before { display: none; }
-.sites-marker-popup { min-width: 170px; }
+/* cursor:pointer (2026-09-28) — the whole card is clickable now (see
+   MapView.tsx's ClusteredMarkers popupopen handler), not just the tiny
+   marker pin underneath it. */
+.sites-marker-popup { min-width: 170px; cursor: pointer; }
 .sites-marker-popup-title { font-weight: 700; font-size: 13px; color: var(--text-primary); margin-bottom: 2px; }
 .sites-marker-popup-id { font-size: 11px; font-weight: 600; color: var(--brand-primary); margin-bottom: 2px; }
 .sites-marker-popup-tech { font-size: 11px; font-weight: 600; color: var(--status-success-text-subtle); margin-bottom: 4px; }

@@ -133,8 +133,23 @@ SECTOR_FIELDS = [
 # SECTOR_FIELDS itself, so the two field sets stay easy to tell apart at
 # every call site below.
 SECTOR_UPDATE_FIELDS = SECTOR_FIELDS + ['lat', 'lng']
-_INT_FIELDS = {'local_cell_id', 'pci'}
-_FLOAT_FIELDS = {'height', 'azimuth', 'mech_tilt', 'elec_tilt'}
+_INT_FIELDS = {
+    'local_cell_id', 'pci',
+    # 2G/3G RF Database fields (2026-09-27) -- see
+    # ENGINEERING_SECTOR_FIELDS's own comment below for the full list and
+    # which tech each one comes from.
+    'scrambling_code', 'bcch', 'bsic', 'ncc', 'hsn', 'total_trx', 'activated_trx', 'dl_uarfcn',
+}
+# 'beamwidth'/'radius'/'max_tx_power_dbm' (2026-09-27) -- antenna wedge
+# visualization fields, only ever populated via ENGINEERING_SECTOR_FIELDS
+# below, not SECTOR_FIELDS -- harmless to list here regardless, since
+# _coerce() only checks membership for whatever field name it's actually
+# called with. 'cs_traffic'/'site_traffic' (same day, 2G/3G RF Database)
+# are the same story.
+_FLOAT_FIELDS = {
+    'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'beamwidth', 'radius', 'max_tx_power_dbm',
+    'cs_traffic', 'site_traffic',
+}
 
 # 4G Site-level KPI columns this import updates (2026-08-26) — matches
 # exports.py's _build_site_kpi_workbook "KPI Data" sheet exactly, since
@@ -146,6 +161,55 @@ KPI_FIELDS = [
     'inter_rat', 'ip_thru', 'ip_lat', 'prb', 'bearer_util', 'lic_util', 'cell_avail',
 ]
 KPI_UPDATE_FIELDS = KPI_FIELDS + ['kpi_entered', 'kpi_date']
+
+# `kind='engineering_params'` field lists (2026-09-26) -- see
+# ImportSitesView._apply_engineering_params()'s own docstring. Sector
+# fields are a SUBSET of SECTOR_FIELDS above (this source has no
+# local_cell_id/sector-label/tech/cell_active_status/site_existence
+# columns) -- reuses `_coerce()` unchanged, since every field here is
+# already one of `_INT_FIELDS`/`_FLOAT_FIELDS` or a plain string.
+# 'height' confirmed present in both real source files (2026-09-27) as
+# "Antenna Height from ground (AGL)" -- same field the sector table's
+# own "Antenna Height (m)" column (SiteDetailPage.tsx) already displays.
+# 'beamwidth'/'radius'/'max_tx_power_dbm' (2026-09-27, antenna wedge
+# visualization) -- confirmed present in the WSD-shaped xlsx source too
+# (Radius/Beamwidth/"Maximum TX Power (dBm)" columns, all populated on
+# every real row -- a real gap fixed the same day this comment was
+# written, after initially assuming only the vendor's KML export carried
+# any of the three). See Sector.beamwidth/Sector.radius/
+# Sector.max_tx_power_dbm's own comments in models.py for why there's no
+# fabricated default when a row doesn't carry them.
+#
+# 2G/3G RF Database fields (2026-09-27, "analyse" sample/2g_3g_RF
+# Database...xlsx) -- 'scrambling_code'/'cell_active_status'/
+# 'site_existence' already existed on Sector (used by the ORIGINAL
+# per-tech 'sectors' import) but were never part of THIS field list; the
+# rest (lac/ci/ncc/hsn/tch/total_trx/activated_trx/cs_traffic/
+# site_traffic/dl_uarfcn) are new. This file is matched by Cell Name only
+# (same as every other engineering_params source), deliberately NOT the
+# original per-tech 'sectors'/_apply_sectors path -- its own Site ID
+# column ambiguity (an "RNC ID" column that a loose 'id' substring alias
+# would match before the real "Property ID" column) is exactly the kind
+# of silent-mismatch risk this cell-name-only path avoids entirely.
+# 3G's own "Cell Max Transmit Power(W)" is converted watts->dBm
+# client-side (siteImportParser.ts's parseRfDatabaseRows) before it ever
+# reaches this field list, so 'max_tx_power_dbm' above already covers it
+# -- no separate watts field needed.
+ENGINEERING_SECTOR_FIELDS = [
+    'pci', 'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'carrier', 'site_band',
+    'beamwidth', 'radius', 'max_tx_power_dbm',
+    'scrambling_code', 'bcch', 'bsic', 'cell_active_status', 'site_existence',
+    'lac', 'ci', 'ncc', 'hsn', 'tch', 'total_trx', 'activated_trx',
+    'cs_traffic', 'site_traffic', 'dl_uarfcn',
+]
+# Site fields are plain strings, coerced inline (str().strip()) rather
+# than through `_coerce()` -- that function's int/float branches don't
+# apply to any of these, and "carry the vendor's own text through
+# unchanged" is the whole point (Site's own docstring in models.py).
+ENGINEERING_SITE_FIELDS = [
+    'tower_type', 'tower_height_m', 'building_height', 'tower_height_tssr',
+    'antenna_device', 'tower_remark',
+]
 
 # Mirrors frontend/src/lib/sectorLocation.ts's SAME_LOCATION_EPSILON_DEG
 # exactly (~11m at Nepal's latitude) — keeps "is this sector's coordinate
@@ -196,6 +260,16 @@ class ImportSitesView(APIView):
              lic_util, cell_avail}, ...]}
        or {kind: 'sectors', tech: '4G'|'3G'|'2G' (optional), rows: [{site_id, cell_name,
              sector, tech, local_cell_id, lat, lng, height, azimuth, mech_tilt, elec_tilt, pci}, ...]}
+       or {kind: 'engineering_params', rows: [{cell_name, pci, height, azimuth, mech_tilt,
+             elec_tilt, carrier, site_band, beamwidth, radius, max_tx_power_dbm,
+             scrambling_code, bcch, bsic, cell_active_status, site_existence, lac, ci, ncc,
+             hsn, tch, total_trx, activated_trx, cs_traffic, site_traffic, dl_uarfcn,
+             tower_type, tower_height_m, building_height, tower_height_tssr, antenna_device,
+             tower_remark}, ...]} -- see `_apply_engineering_params()`'s own docstring
+             (2026-09-26 addition; beamwidth/radius/max_tx_power_dbm added 2026-09-27 for
+             the antenna wedge visualization feature; the rest added the same day for the
+             2G/3G RF Database import -- every field here is optional per-row regardless of
+             which source actually carries it, same "blank means leave alone" contract).
 
     **2026-08-26, "no need to add site now" — sites are Live Site
     Directory-managed.** Confirmed via AskUserQuestion. Site identity/
@@ -278,8 +352,8 @@ class ImportSitesView(APIView):
         body = request.data or {}
         kind = body.get('kind')
         rows = body.get('rows')
-        if kind not in ('kpi', 'sectors'):
-            return Response({'detail': 'kind must be "kpi" or "sectors".'}, status=400)
+        if kind not in ('kpi', 'sectors', 'engineering_params'):
+            return Response({'detail': 'kind must be "kpi", "sectors", or "engineering_params".'}, status=400)
         if not isinstance(rows, list):
             return Response({'detail': 'rows must be a list.'}, status=400)
 
@@ -294,8 +368,10 @@ class ImportSitesView(APIView):
         with transaction.atomic():
             if kind == 'kpi':
                 result = self._apply_kpi(rows)
-            else:
+            elif kind == 'sectors':
                 result = self._apply_sectors(rows, tech=tech)
+            else:
+                result = self._apply_engineering_params(rows)
 
         return Response(result)
 
@@ -510,6 +586,110 @@ class ImportSitesView(APIView):
 
         return {
             'added': len(sectors_to_create), 'updated': len(sectors_to_update),
+            'skipped': skipped, 'errors': errors,
+        }
+
+    @staticmethod
+    def _apply_engineering_params(rows):
+        """`kind='engineering_params'` (2026-09-26 request: "for 4G I
+        found more parameters with data for sectors that are also need to
+        be managed", from a real nationwide LTE engineering-parameter
+        master list / a vendor RNO report's own per-cell engineering
+        snapshot). Plain data sync, matched by `cell_name` -- explicitly
+        NOT a diff/audit-log system (same-day correction: "do not import
+        snapshot, import data only"). Same "update only if actually
+        different from what's stored, otherwise skip -- never fabricate a
+        site/sector that doesn't exist" contract `_apply_sectors` already
+        uses, just keyed by cell_name alone (no site_id/tech disambiguation
+        needed here -- a cell name is already globally unique in practice,
+        and these source files carry no separate tech column to
+        disambiguate with anyway).
+
+        Two field groups, written to two different models from the same
+        row: `ENGINEERING_SECTOR_FIELDS` onto the matched `Sector`
+        (pci/height/azimuth/mech_tilt/elec_tilt/carrier/site_band -- the
+        same columns `_apply_sectors` already manages, just from this
+        additional source -- plus beamwidth/radius/max_tx_power_dbm,
+        2026-09-27, for the antenna wedge visualization feature; the
+        vendor's own WSD-shaped xlsx carries all three too, not just the
+        KML variant as first assumed), and `ENGINEERING_SITE_FIELDS` onto that
+        sector's `Site` (tower_type/tower_height_m/building_height/
+        tower_height_tssr/antenna_device/tower_remark -- physically about
+        the site, not one sector, same reasoning as Site.lat/lng/district
+        being Site fields; see Site's own docstring in models.py for what
+        was explicitly excluded from this list -- Property ID, Zone,
+        Palika).
+
+        A row's own Pre/Post antenna-change columns (present in the
+        vendor RNO report's own engineering-parameter sheet, absent from
+        the plain nationwide master list) are deliberately NOT handled
+        here -- that reuses the EXISTING SectorConfigChange/
+        RfOptimizationReport machinery instead (see rf_reports.py), the
+        same mechanism a `.docx` antenna-change-log table already feeds,
+        rather than a second change-tracking path in this module.
+        """
+        sector_by_cell = {
+            s.cell_name.strip().lower(): s
+            for s in Sector.objects.select_related('site').exclude(cell_name='')
+        }
+
+        sectors_to_update: dict[int, Sector] = {}
+        sites_to_update: dict[str, Site] = {}
+        errors = []
+        skipped = 0
+
+        for i, row in enumerate(rows):
+            row = row or {}
+            cell_name = (row.get('cell_name') or '').strip()
+            if not cell_name:
+                errors.append(f'Row {i + 1}: missing Cell Name, skipped.')
+                continue
+            sector = sector_by_cell.get(cell_name.lower())
+            if sector is None:
+                errors.append(
+                    f'Row {i + 1} ({cell_name}): no matching sector found -- sectors are managed by the '
+                    'Sector Data upload, not this import. Skipped.'
+                )
+                continue
+
+            changed = False
+            try:
+                for field in ENGINEERING_SECTOR_FIELDS:
+                    new_val = _coerce(field, row.get(field))
+                    if new_val is None:
+                        continue
+                    if getattr(sector, field) != new_val:
+                        setattr(sector, field, new_val)
+                        changed = True
+            except (TypeError, ValueError):
+                errors.append(f'Row {i + 1} ({cell_name}): invalid numeric field, skipped.')
+                continue
+            if changed:
+                sectors_to_update[sector.pk] = sector
+
+            site = sector.site
+            site_changed = False
+            for field in ENGINEERING_SITE_FIELDS:
+                raw_val = row.get(field)
+                if raw_val in (None, ''):
+                    continue
+                new_val = str(raw_val).strip()
+                if getattr(site, field) != new_val:
+                    setattr(site, field, new_val)
+                    site_changed = True
+            if site_changed:
+                sites_to_update[site.pk] = site
+
+            if not changed and not site_changed:
+                skipped += 1
+
+        if sectors_to_update:
+            Sector.objects.bulk_update(list(sectors_to_update.values()), ENGINEERING_SECTOR_FIELDS, batch_size=1000)
+        if sites_to_update:
+            Site.objects.bulk_update(list(sites_to_update.values()), ENGINEERING_SITE_FIELDS, batch_size=1000)
+
+        return {
+            'sectors_updated': len(sectors_to_update), 'sites_updated': len(sites_to_update),
             'skipped': skipped, 'errors': errors,
         }
 

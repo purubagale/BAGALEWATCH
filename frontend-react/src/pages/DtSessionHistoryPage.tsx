@@ -11,6 +11,7 @@ import {
   useDtSession,
   useDtSessions,
   useSites,
+  useUpdateDtSessionMode,
   useUpdateDtSessionRemarks,
   useUploadDtSessionAttachments,
 } from '../api/queries'
@@ -24,6 +25,7 @@ import DtCompareReportView from '../components/DtCompareReportView'
 import DtCallDownloadSummary from '../components/DtCallDownloadSummary'
 import DtCoverageMap from '../components/DtCoverageMap'
 import { assignDtCompareOrder } from '../lib/dtCompareAssignment'
+import { DriveModeSelect } from '../lib/dtDriveMode'
 import { clusterDtSessionsByArea, type DtSessionCluster } from '../lib/dtSessionClustering'
 
 // Split out of the former single-page DtDataManagerPage.tsx (2026-08-09
@@ -53,6 +55,11 @@ export default function DtSessionHistoryPage() {
   // it can reuse the exact same before/after pair Delta mode is showing.
   const [reportOpen, setReportOpen] = useState(false)
   const [historySearch, setHistorySearch] = useState('')
+  // Mode filter (2026-09-23) -- narrows the already-loaded session list to
+  // one Drive Mode, same client-side-filter approach as historySearch
+  // above (session lists are small, no backend query param needed). ''
+  // means "all modes."
+  const [modeFilter, setModeFilter] = useState('')
   // "Latest per area" clustering (2026-09-12 request: RF engineers
   // re-drive the same area repeatedly over weeks/months and the list
   // gets buried under old re-tests of the same spot). Defaults ON since
@@ -116,14 +123,25 @@ export default function DtSessionHistoryPage() {
   // nearby site's id/name, per the user's explicit ask that the ~1km tag
   // make "future search" easier.
   const searchFilteredSessions = useMemo(() => {
+    if (!sessions) return sessions
     const q = historySearch.trim().toLowerCase()
-    if (!q || !sessions) return sessions
     return sessions.filter((s) => {
+      if (modeFilter && s.mode !== modeFilter) return false
+      if (!q) return true
       if (s.name.toLowerCase().includes(q)) return true
       const ids = s.meta?.nearby_site_ids ?? []
       return ids.some((id) => id.toLowerCase().includes(q) || (siteNameById.get(id) ?? '').toLowerCase().includes(q))
     })
-  }, [sessions, historySearch, siteNameById])
+  }, [sessions, historySearch, modeFilter, siteNameById])
+
+  // Distinct modes actually present across every saved session (not just
+  // DRIVE_MODE_OPTIONS' curated list) -- so the filter dropdown also
+  // covers a custom mode string someone typed at upload/edit time.
+  const availableModes = useMemo(() => {
+    const set = new Set<string>()
+    for (const s of sessions ?? []) if (s.mode) set.add(s.mode)
+    return [...set].sort()
+  }, [sessions])
 
   // "Latest per area" clustering is computed over the SEARCH-FILTERED
   // list, not the full session list — chosen over the alternative
@@ -220,15 +238,24 @@ export default function DtSessionHistoryPage() {
   const uploadAttachments = useUploadDtSessionAttachments(selectedSessionId ?? undefined)
   const deleteAttachment = useDeleteDtSessionAttachment(selectedSessionId ?? undefined)
 
+  // Drive Mode (2026-09-23) -- same "one editable field, its own dedicated
+  // edit action" pattern as remarks above (updateMode/editingMode/
+  // modeDraft mirror updateRemarks/editingRemarks/remarksDraft exactly).
+  const [modeDraft, setModeDraft] = useState('')
+  const [editingMode, setEditingMode] = useState(false)
+  const updateMode = useUpdateDtSessionMode(selectedSessionId ?? undefined)
+
   // Reset the draft/edit state whenever the selected session changes (or
   // its remarks are refetched) rather than leaving a stale draft from a
   // previously-viewed session sitting in the textarea.
   useEffect(() => {
     setRemarksDraft(sessionDetail?.remarks ?? '')
     setEditingRemarks(false)
+    setModeDraft(sessionDetail?.mode ?? '')
+    setEditingMode(false)
     setAttachmentError(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSessionId, sessionDetail?.remarks])
+  }, [selectedSessionId, sessionDetail?.remarks, sessionDetail?.mode])
 
   // Session comparison (Phase 4d), ported from bts_monitor.html's
   // rsrpOpenCompare() — checkbox 2+ sessions, fetch each one's full
@@ -401,6 +428,19 @@ export default function DtSessionHistoryPage() {
               onChange={(e) => setHistorySearch(e.target.value)}
             />
           )}
+          {!!availableModes.length && (
+            <select
+              value={modeFilter}
+              onChange={(e) => setModeFilter(e.target.value)}
+              style={{ marginBottom: 8 }}
+              title="Filter the session list to one Drive Mode"
+            >
+              <option value="">All modes</option>
+              {availableModes.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          )}
           {!!sessions?.length && (
             // "Latest only" toggle (2026-09-12) — reuses .sites-active-toggle,
             // the same pill-switch look SitesPage.tsx's map filter panel
@@ -476,6 +516,7 @@ export default function DtSessionHistoryPage() {
                   <th></th>
                   <th>Name</th>
                   <th>Tech</th>
+                  <th>Mode</th>
                   <th>Date</th>
                   <th>Remarks</th>
                   <th>Attachments</th>
@@ -485,7 +526,7 @@ export default function DtSessionHistoryPage() {
               <tbody>
                 {!visibleSessions?.length && (
                   <tr>
-                    <td colSpan={7} className="page-status">No sessions match “{historySearch}”.</td>
+                    <td colSpan={8} className="page-status">No sessions match “{historySearch}”.</td>
                   </tr>
                 )}
                 {visibleSessions?.map((s) => {
@@ -554,6 +595,7 @@ export default function DtSessionHistoryPage() {
                       )}
                     </td>
                     <td>{s.tech}</td>
+                    <td>{s.mode || <span className="muted">—</span>}</td>
                     <td>{s.date ?? '—'}</td>
                     <td className="dt-remarks-cell" title={s.remarks || undefined}>
                       {s.remarks ? (s.remarks.length > 40 ? `${s.remarks.slice(0, 40)}…` : s.remarks) : <span className="muted">—</span>}
@@ -742,6 +784,49 @@ export default function DtSessionHistoryPage() {
                             <p className="muted" style={{ whiteSpace: 'pre-wrap' }}>
                               {sessionDetail.remarks || 'No remarks yet.'}
                             </p>
+                          )}
+                        </div>
+
+                        {/* Drive Mode (2026-09-23) -- same editable-in-place
+                            pattern as Remarks just above. */}
+                        <div className="dt-session-remarks">
+                          <div className="dt-session-remarks-header">
+                            <h3>Drive Mode</h3>
+                            {canDelete && !editingMode && (
+                              <button type="button" className="btn-secondary btn-small" onClick={() => setEditingMode(true)}>
+                                {sessionDetail.mode ? 'Edit' : 'Set mode'}
+                              </button>
+                            )}
+                          </div>
+                          {editingMode ? (
+                            <div>
+                              <DriveModeSelect value={modeDraft} onChange={setModeDraft} />
+                              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                                <button
+                                  type="button"
+                                  className="btn-primary btn-small"
+                                  disabled={updateMode.isPending}
+                                  onClick={() => updateMode.mutate(modeDraft, { onSuccess: () => setEditingMode(false) })}
+                                >
+                                  {updateMode.isPending ? 'Saving…' : 'Save'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-secondary btn-small"
+                                  onClick={() => {
+                                    setModeDraft(sessionDetail.mode ?? '')
+                                    setEditingMode(false)
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                              {updateMode.isError && (
+                                <div className="page-status page-status-error">{apiErrorMessage(updateMode.error, 'Could not save the drive mode.')}</div>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="muted">{sessionDetail.mode || 'Not set.'}</p>
                           )}
                         </div>
 

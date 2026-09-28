@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { apiErrorMessage } from '../api/client'
-import { useDtSessionCompare } from '../api/queries'
+import { useDtSessionCompare, useOptimizationActivities } from '../api/queries'
 import type { DtCompareCell, DtSessionListItem } from '../api/types'
 import { metricsForTech } from '../lib/dtBands'
 import { deadbandFor, deltaStatus, directionFor } from '../lib/dtDelta'
@@ -101,6 +101,38 @@ export default function DtCompareReportView({
     return before.activities.find((a) => afterIds.has(a.id)) ?? null
   }, [before.activities, after.activities])
 
+  // Full activity record for sharedActivity above (2026-09-23, "need to
+  // relate and manage vendor provided RNO report") -- the session-embedded
+  // DtSessionActivityTag is just {id, name, role}, not enough to show
+  // which vendor report/antenna change this comparison verifies.
+  // useOptimizationActivities() is the same small full-list fetch
+  // AttachActivityModal.tsx already uses (activities stay few per that
+  // serializer's own docstring), so this is a cache-shared lookup, not a
+  // second endpoint.
+  const { data: activities } = useOptimizationActivities()
+  const sharedActivityFull = useMemo(
+    () => (sharedActivity ? (activities ?? []).find((a) => a.id === sharedActivity.id) : null),
+    [activities, sharedActivity],
+  )
+  // Prefer the direct report link (source_report/antenna_changes, managed
+  // via link_report() -- see OptimizationActivity's own docstring in
+  // models.py) since it can name the SPECIFIC change being verified;
+  // fall back to the Issue-mediated resolved_issues path, which only ever
+  // names the report as a whole (a recommendation, not a change-log row).
+  const verifiesText = useMemo(() => {
+    if (!sharedActivityFull) return null
+    const { source_report, antenna_changes, resolved_issues } = sharedActivityFull
+    if (source_report) {
+      const changes = antenna_changes
+        .map((c) => `${c.cell_name}: ${c.before_change} → ${c.after_change}`)
+        .join('; ')
+      return `${source_report.lot_name}${changes ? ` — ${changes}` : ''}`
+    }
+    const withReport = resolved_issues.find((i) => i.source_report)
+    if (withReport?.source_report) return `${withReport.source_report.lot_name} — ${withReport.title}`
+    return null
+  }, [sharedActivityFull])
+
   return (
     <div className="modal-overlay show">
       <div className="modal-box dt-report-modal-box" style={{ maxWidth: 900 }}>
@@ -132,6 +164,11 @@ export default function DtCompareReportView({
               {sharedActivity && (
                 <p className="muted" style={{ marginTop: -6 }}>
                   Optimization Activity: <strong>{sharedActivity.name}</strong>
+                  {verifiesText && (
+                    <>
+                      {' '}— Verifies: <strong>{verifiesText}</strong>
+                    </>
+                  )}
                 </p>
               )}
               <table className="admin-table" style={{ marginBottom: 18 }}>

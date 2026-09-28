@@ -11,6 +11,7 @@ import DtCallDownloadSummary from '../components/DtCallDownloadSummary'
 import DtCoverageMap from '../components/DtCoverageMap'
 import { DT_SESSION_HISTORY_PATH } from '../constants/opaqueRoutes'
 import { MAX_MAP_DOTS, subsampleForMap } from '../lib/dtBands'
+import { DriveModeSelect } from '../lib/dtDriveMode'
 import { computeSessionMeta, csvTextToRows, haversineKm, parseTemplateRows } from '../lib/dtTemplateParser'
 import { trpaAnalyzeFile, trpaSummarizeCallEvents, trpaSummarizeDownloadEvents, type TrpaEventRow, type TrpaRow } from '../lib/trpAnalysis'
 import { readXlsxRowsForTech } from '../lib/xlsxReader'
@@ -101,6 +102,15 @@ function int(v: unknown): number | null {
   const n = num(v)
   return n != null ? Math.round(n) : null
 }
+// A TEMS Band field can come back as either a string ("3") or a number
+// (3) depending on the source file -- unlike pci/cqi above this is stored
+// as free text (DriveTestSample.band is a CharField, see its docstring),
+// so a numeric value is stringified rather than coerced with int().
+function bandStr(v: unknown): string {
+  if (typeof v === 'string') return v.trim()
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v)
+  return ''
+}
 
 // The INSTANTANEOUS measurement fields trpRowToDtSample reads per tech —
 // the ones that only make sense at the instant TEMS logged them and so
@@ -113,7 +123,19 @@ function int(v: unknown): number | null {
 // (see SERVING_FORWARD_FILL_KEYS there). Listing them here too would just
 // be a redundant, 5s-capped second pass over values already filled.
 const TRP_FILL_FORWARD_FIELDS: Record<DtTech, string[]> = {
-  '4G': ['rsrp', 'rsrq', 'sinr', 'pdschThroughput'],
+  // 'cqi' added 2026-09-24 -- a real bug, not a missing decoder: CQI IS
+  // logged straight from the .trp file (trpAnalysis.ts's TRPA_TECH_FIELDS,
+  // Radio.Lte.ServingCell[8].CqiCodeword0Average/Stream[2].Cqi), but TEMS
+  // reports it in its own record group, separate from the RSRP/RSRQ/SINR
+  // group -- without forward-filling it the same way, a CQI reading
+  // almost never lands in the same raw row as the RSRP value
+  // trpRowToDtSample() requires, so every sample's cqi came through null
+  // (confirmed live: a real upload's CQI plot showed 0 samples in every
+  // band). Same 5s-bounded carry as its rsrp/rsrq/sinr/pdschThroughput
+  // siblings, not pci/band's unbounded identity carry -- CQI is a
+  // periodic measurement, not a cell identity that stays valid until
+  // changed.
+  '4G': ['rsrp', 'rsrq', 'sinr', 'pdschThroughput', 'cqi'],
   '3G': ['rscp', 'ecno'],
   '2G': ['rssiFull', 'rssiSub', 'rxQualFull', 'rxQualSub'],
 }
@@ -201,6 +223,7 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
   let rsrq: number | null = null
   let sinr: number | null = null
   let pci: number | null = null
+  let band = ''
   let cqi: number | null = null
   let dl: number | null = null
   let rxQual: number | null = null
@@ -215,6 +238,13 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     rsrq = num(row.rsrq)
     sinr = num(row.sinr)
     pci = int(row.pci)
+    // Already decoded + forward-filled by trpAnalysis.ts
+    // (Radio.Lte.ServingCell[8].Band, on-change like pci -- see
+    // SERVING_FORWARD_FILL_KEYS there) but never carried through to the
+    // saved sample until now (2026-09-23, "Band (Mode: ... Lock mode)" —
+    // real drives re-run per band-lock, so which band a sample was
+    // actually on is real data this app already decodes).
+    band = bandStr(row.band)
     cqi = int(row.cqi)
     // Real DL throughput, when TEMS declared it — a genuine field this
     // engine confirmed against a real 4G DL capture (see trpAnalysis.ts's
@@ -239,7 +269,7 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     date: row.isoTs.slice(0, 10),
     lat, lng,
     rsrp: primary,
-    rsrq, sinr, dl, pci, cqi,
+    rsrq, sinr, dl, pci, band, cqi,
     serving_site_id: null,
     serving_site_name: null,
     serving_sector: null,
@@ -261,6 +291,14 @@ interface PendingTrpSession {
   // that computeSessionMeta's own fixed return shape doesn't declare.
   meta: DtSessionMeta
   sessionName: string
+  // Drive "mode" for this session (2026-09-23) -- editable per detected
+  // tech group, same as sessionName, since a single multi-file .trp batch
+  // can genuinely mix modes across its 4G/3G/2G groups (e.g. a 4G capture
+  // driven under "B3 Lock" alongside a 2G capture driven "Free Mode").
+  // Blank by default -- never auto-detected (unlike meta.testType, which
+  // IS inferable from the file's own events) since drive mode is operator
+  // intent, not something the capture data itself reveals.
+  mode: string
   driveTestDate: string
   sourceFiles: string[]
   // How many raw radio samples the decoder actually found across all of
@@ -324,6 +362,43 @@ interface PendingTrpSession {
 // instead of ~3m) — still fine for RF coverage viz, and the source
 // .trp files remain the full-fidelity archive.
 const TRP_SAVE_SAMPLE_CAP = MAX_MAP_DOTS
+
+// Reserves part of the save-time cap for samples carrying a "sparse"
+// measurement (dl/cqi) that TEMS reports far less often than RSRP/RSRQ/
+// SINR (2026-09-24, confirmed live: a 1,060,967-raw-row session's DL
+// Throughput plot showed only a handful of dots after the plain
+// even-stride subsampleForMap() below diluted its already-rare
+// pdschThroughput/cqi readings down to almost nothing). The comment on
+// TRP_SAVE_SAMPLE_CAP above ("every plotted metric sits at ~100% coverage
+// after fillForwardTrpRows") was true for RSRP/RSRQ/SINR/RxQual when it
+// was written -- it stopped being true once dl/cqi joined the plottable
+// metrics (2026-09-23), since neither is reported anywhere near every
+// sample even after the 5s fill-forward window.
+//
+// 30% of the cap reserved for sparse-metric rows is a starting point, not
+// a measured split -- revisit if a real session still looks too sparse
+// for one side or too route-thin for the general RSRP/PCI/Band coverage
+// on the other. 3G/2G are unaffected: dl/cqi are always null on those
+// samples (trpRowToDtSample only ever sets them in the 4G branch), so
+// `sparseRows` is empty and this behaves exactly like the plain
+// subsampleForMap() call it replaces.
+const TRP_SPARSE_METRIC_SHARE = 0.3
+const TRP_SPARSE_METRIC_FIELDS: (keyof DtSample)[] = ['dl', 'cqi']
+
+function subsampleWithSparseMetrics(rows: DtSample[], max: number): DtSample[] {
+  if (rows.length <= max) return rows
+  const sparseBudget = Math.floor(max * TRP_SPARSE_METRIC_SHARE)
+  const sparseRows = rows.filter((r) => TRP_SPARSE_METRIC_FIELDS.some((f) => r[f] != null))
+  const keptSparse = subsampleForMap(sparseRows, sparseBudget)
+  const generalBudget = max - Math.min(keptSparse.length, sparseBudget)
+  const general = subsampleForMap(rows, generalBudget)
+  // De-dup by object identity (both passes can independently pick the same
+  // row) via a Set, then restore chronological order -- both inputs are
+  // slices of the same already-chronological `rows` array, but the two
+  // independent strides interleave when merged.
+  const merged = new Set([...general, ...keptSparse])
+  return [...merged].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
+}
 
 // Auto-detects which of the standard NTC drive-test types a session is,
 // from the SAME structural event evidence trpaSummarizeCallEvents/
@@ -408,7 +483,7 @@ function buildTrpSessions(
     // favoring whichever file happened to be concatenated first.
     const chronological = [...grp.samples].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
     const wasCapped = chronological.length > TRP_SAVE_SAMPLE_CAP
-    const samples = subsampleForMap(chronological, TRP_SAVE_SAMPLE_CAP)
+    const samples = subsampleWithSparseMetrics(chronological, TRP_SAVE_SAMPLE_CAP)
     const meta: DtSessionMeta = computeSessionMeta(samples, grp.files)
     const callSummary = trpaSummarizeCallEvents(grp.events)
     if (callSummary) meta.callSummary = callSummary
@@ -420,7 +495,7 @@ function buildTrpSessions(
     const driveTestDate = dtDates.length ? dtDates.sort().pop()! : new Date().toISOString().slice(0, 10)
     const district = resolveDistrict(grp.samples, sites) ?? 'Unknown'
     const sessionName = `DT_trp_${driveTestDate.replace(/-/g, '')}_${district.replace(/\s+/g, '')}_${tech}${testType ? `_${testType}` : ''}`
-    sessions.push({ tech, samples, meta, sessionName, driveTestDate, sourceFiles: grp.files, rawDecodedCount: grp.rawDecodedCount, wasCapped })
+    sessions.push({ tech, samples, meta, sessionName, mode: '', driveTestDate, sourceFiles: grp.files, rawDecodedCount: grp.rawDecodedCount, wasCapped })
   }
   return sessions
 }
@@ -516,6 +591,13 @@ export default function DtUploadPage() {
   const [mode, setMode] = useState<UploadMode>('template')
   const [tech, setTech] = useState<DtTech>('4G')
   const [sessionName, setSessionName] = useState('')
+  // Drive "mode" this session was run in (2026-09-23) -- named `driveMode`
+  // here, NOT `mode`, to avoid colliding with this page's own unrelated
+  // `mode` state just above (the Template-vs-.trp upload-flow picker).
+  // See DriveTestSession.mode's docstring in models.py for why this is a
+  // real field. Curated dropdown + free text, optional -- blank means
+  // "not set," same as an older session that predates this field.
+  const [driveMode, setDriveMode] = useState('')
   const [uploadedFile, setUploadedFile] = useState<{ name: string } | null>(null)
   const [parsedSamples, setParsedSamples] = useState<DtSample[] | null>(null)
   const [parseErr, setParseErr] = useState<string | null>(null)
@@ -682,6 +764,7 @@ export default function DtUploadPage() {
           date: driveTestDate,
           uploaded_date: new Date().toISOString().slice(0, 10),
           meta,
+          mode: driveMode,
         },
         parsedSamples,
       )
@@ -693,6 +776,7 @@ export default function DtUploadPage() {
       navigate(`${DT_SESSION_HISTORY_PATH}?session=${created.id}`)
       resetUpload()
       setSessionName('')
+      setDriveMode('')
     } catch (e) {
       setSaveProgress(null)
       setSaveErr(apiErrorMessage(e, 'Could not save the session — if some batches already landed, the partial session is visible (and removable) from Session History rather than silently lost.'))
@@ -796,6 +880,9 @@ export default function DtUploadPage() {
   function updateActiveTrpName(name: string) {
     setTrpSessions((prev) => prev.map((s, i) => (i === trpActiveIdx ? { ...s, sessionName: name } : s)))
   }
+  function updateActiveTrpMode(mode: string) {
+    setTrpSessions((prev) => prev.map((s, i) => (i === trpActiveIdx ? { ...s, mode } : s)))
+  }
 
   // Saves ONE grouped session — via saveSessionChunked (additive-only,
   // batched for large sessions, see that function's own comment) — then
@@ -814,6 +901,7 @@ export default function DtUploadPage() {
           date: s.driveTestDate,
           uploaded_date: new Date().toISOString().slice(0, 10),
           meta: s.meta,
+          mode: s.mode,
         },
         s.samples,
       )
@@ -919,6 +1007,7 @@ export default function DtUploadPage() {
                   onChange={(e) => setSessionName(e.target.value)}
                   style={{ marginLeft: 'auto', minWidth: 220 }}
                 />
+                <DriveModeSelect value={driveMode} onChange={setDriveMode} />
                 <button className="btn-secondary btn-small" type="button" onClick={() => downloadTemplate(tech)}>
                   ⬇ Download {tech} Template
                 </button>
@@ -1062,6 +1151,7 @@ export default function DtUploadPage() {
                       onChange={(e) => updateActiveTrpName(e.target.value)}
                       style={{ marginLeft: 'auto', minWidth: 260 }}
                     />
+                    <DriveModeSelect value={trpSessions[trpActiveIdx].mode} onChange={updateActiveTrpMode} />
                   </div>
 
                   <div className="report-summary-cards" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>

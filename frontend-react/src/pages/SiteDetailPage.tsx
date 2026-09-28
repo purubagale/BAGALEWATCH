@@ -14,7 +14,7 @@ import {
 import { isAllowed } from '../api/types'
 import type { Issue, IssueSeverity, IssueStatus, Sector, SectorWrite, SiteDetail, SiteDtSession, SiteWrite } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
-import { DT_SESSION_HISTORY_PATH, SITES_PATH } from '../constants/opaqueRoutes'
+import { DT_SESSION_HISTORY_PATH, RF_REPORTS_PATH, SITES_PATH } from '../constants/opaqueRoutes'
 import { useSearchModal } from '../contexts/SearchModalContext'
 import SiteLocationMiniMap from '../components/SiteLocationMiniMap'
 import { ISSUE_SEVERITY_LABELS, ISSUE_STATUS_LABELS, ISSUE_STATUS_ORDER } from '../lib/issueLabels'
@@ -140,9 +140,12 @@ function toNum(v: unknown): number | null {
 const emptySector: SectorWrite = {
   cell_name: '', sector: '', tech: '', local_cell_id: null,
   height: null, azimuth: null, mech_tilt: null, elec_tilt: null,
+  beamwidth: null, radius: null, max_tx_power_dbm: null,
   pci: null, scrambling_code: null, bcch: null, bsic: null,
   kpi_json: null, kpi_date: '', lat: null, lng: null,
   carrier: '', site_band: '', cell_active_status: '', site_existence: '',
+  lac: '', ci: '', ncc: null, hsn: null, tch: '',
+  total_trx: null, activated_trx: null, cs_traffic: null, site_traffic: null, dl_uarfcn: null,
 }
 
 function siteToWrite(site: SiteDetail): SiteWrite {
@@ -186,7 +189,7 @@ function sectorIdLabel(sec: Sector | SectorWrite): string {
     return [bcch, bsic].filter(Boolean).join(' / ') || '—'
   }
   if (tech === '3G') return sec.scrambling_code != null ? `SC ${sec.scrambling_code}` : '—'
-  return sec.pci != null ? `PCI ${sec.pci}` : '—'
+  return sec.pci != null ? `${sec.pci}` : '—'
 }
 
 /** One [label / input-or-value] card, shared by the Site Identity grid
@@ -502,6 +505,15 @@ export default function SiteDetailPage() {
   }
   const canManageIssues = user?.role === 'superadmin' || user?.role === 'admin'
 
+  // Antenna Change History (2026-09-23, "need to relate and manage vendor
+  // provided RNO report" -- site/sector-level view, not just inside an
+  // Activity) — flattens every sector's config_changes into one list for
+  // the site-wide section below, sorted newest-first (matches every other
+  // "recent activity" list on this page).
+  const antennaChangeRows = site.sectors
+    .flatMap((sec) => sec.config_changes.map((c) => ({ ...c, cellName: sec.cell_name })))
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+
   return (
     <div className="site-detail-page">
       {fromSearch ? (
@@ -610,10 +622,59 @@ export default function SiteDetailPage() {
           value={identitySource.district ?? ''} onChange={(v) => setField('district', v)}
         />
       </div>
+      {/* Site Type/Technology/Status (2026-09-28, "for now do not display
+          these in details page") — deliberately hidden, not deleted: all
+          three are still real, still-editable fields on SiteWrite/the
+          underlying Site model (Site Type/Technology have no Live Site
+          Directory equivalent at all; Status is this app's own separate
+          KPI-health traffic light) — just not shown here for now. Bring
+          this row back by re-adding the three FieldCards from git history
+          if that changes. */}
+      {/* Live Site Directory fields that DO carry real synced data
+          (2026-09-27/28, "why city, site type, technology and status
+          have no data... Need to display the synced data from netbox in
+          that basic site details") — City stays blank on purpose: NONE
+          of these three sources write it (core/live_sites.py's
+          LIVE_SITE_FIELDS omits city entirely; the sync's own closest
+          concept is Palika, a distinct field of its own below, not a
+          substitute for City). Palika/Palika Type/Ward No are Nepal's
+          local-government tier below District — real synced data that
+          simply had nowhere to render on this page before now (Palika/
+          Ward No were already on SiteDetail's own type; Palika Type
+          needed adding — see its own comment in types.ts for why it
+          lives on SiteDetail alone, not SiteListItem, same reasoning
+          that the techs crash on /sites/KTM200 was fixed the same day
+          for). Always read-only, sourced from `site` directly (never
+          `draft`) — these are sync-managed, not something this form's
+          Save button should ever send back. */}
       <div className="site-form-row cols-3">
-        <FieldCard label="Site Type" editing={editing} value={identitySource.type ?? ''} onChange={(v) => setField('type', v)} />
-        <FieldCard label="Technology" editing={editing} value={identitySource.tech ?? ''} onChange={(v) => setField('tech', v)} />
-        <FieldCard label="Status" editing={editing} value={identitySource.status ?? ''} onChange={(v) => setField('status', v)} />
+        <FieldCard
+          label="Palika" editing={editing} readOnly
+          hint="Synced from the Live Site Directory"
+          value={site.palika || ''}
+        />
+        <FieldCard
+          label="Palika Type" editing={editing} readOnly
+          hint="Synced from the Live Site Directory"
+          value={site.palika_type || ''}
+        />
+        <FieldCard
+          label="Ward No" editing={editing} readOnly
+          hint="Synced from the Live Site Directory"
+          value={site.ward_no != null ? String(site.ward_no) : ''}
+        />
+      </div>
+      <div className="site-form-row cols-2">
+        <FieldCard
+          label="Deployment Status" editing={editing} readOnly
+          hint="Synced from the Live Site Directory (NetBox's own on-air/planned state)"
+          value={site.deployment_status || ''}
+        />
+        <FieldCard
+          label="Technologies (Live)" editing={editing} readOnly
+          hint="Synced from NetBox devices + any uploaded Sector Data"
+          value={site.techs?.length ? site.techs.join(', ') : ''}
+        />
       </div>
       <div className="site-form-row cols-2">
         <FieldCard
@@ -628,90 +689,24 @@ export default function SiteDetailPage() {
         />
       </div>
 
-      {/* ── KPI Values — tabbed 4G LTE / 3G UMTS / 2G GSM ───────────── */}
-      <div className="site-form-section">
-        KPI Values
-        <span className="site-form-section-hint">
-          {site.kpi_date ? `as of ${site.kpi_date}` : 'site-level averages per technology'}
-        </span>
+      {/* ── Tower / Antenna Info (2026-09-27) — from the vendor
+          LTE_Engineering_Parameter/WSD RNO engineering-parameter import
+          (BackupPage.tsx's "Engineering Parameters (4G)" slot), not the
+          Live Site Directory sync — so these ARE editable here like
+          City/Site Type, not read-only like Region/District/Lat/Lng
+          above. Blank until that import has actually run for this
+          site. */}
+      <div className="site-form-section">Tower / Antenna Info</div>
+      <div className="site-form-row cols-3">
+        <FieldCard label="Tower Type" editing={editing} value={identitySource.tower_type ?? ''} onChange={(v) => setField('tower_type', v)} />
+        <FieldCard label="Tower Height (m)" editing={editing} value={identitySource.tower_height_m ?? ''} onChange={(v) => setField('tower_height_m', v)} />
+        <FieldCard label="Building Height" editing={editing} value={identitySource.building_height ?? ''} onChange={(v) => setField('building_height', v)} />
       </div>
-      <div className="kpi-tabs">
-        {(['4G', '3G', '2G'] as KpiTech[]).map((t) => (
-          <button
-            key={t}
-            type="button"
-            className={`kpi-tab${kpiTech === t ? ' active' : ''}`}
-            onClick={() => setKpiTech(t)}
-          >
-            {t === '4G' ? '4G LTE' : t === '3G' ? '3G UMTS' : '2G GSM'}
-          </button>
-        ))}
+      <div className="site-form-row cols-3">
+        <FieldCard label="Tower Height (TSSR)" editing={editing} value={identitySource.tower_height_tssr ?? ''} onChange={(v) => setField('tower_height_tssr', v)} />
+        <FieldCard label="Antenna Device" editing={editing} value={identitySource.antenna_device ?? ''} onChange={(v) => setField('antenna_device', v)} />
+        <FieldCard label="Tower Remark" editing={editing} value={identitySource.tower_remark ?? ''} onChange={(v) => setField('tower_remark', v)} />
       </div>
-
-      {kpiTech === '4G' && (
-        site.kpi_entered || editing ? (
-          <div className="site-form-row cols-4">
-            {KPI_FIELDS.map(([key, label]) => (
-              <FieldCard
-                key={String(key)}
-                label={label}
-                editing={editing}
-                type="number"
-                value={String((editing ? draft?.[key] : site[key]) ?? '')}
-                onChange={(v) => setNumberField(key, v)}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="kpi-pane-empty">No 4G KPI data entered for this site yet.</div>
-        )
-      )}
-
-      {kpiTech === '3G' && (
-        site.kpi_entered_3g || editing ? (
-          <div className="site-form-row cols-4">
-            {KPI_3G_FIELDS.map(([key, label]) => {
-              const source = (editing ? draft?.kpi_3g_json : site.kpi_3g_json) as Record<string, unknown> | null
-              const raw = source?.[key]
-              return (
-                <FieldCard
-                  key={key}
-                  label={label}
-                  editing={editing}
-                  type="number"
-                  value={raw === undefined || raw === null ? '' : String(raw)}
-                  onChange={(v) => setTechKpiField('3g', key, v)}
-                />
-              )
-            })}
-          </div>
-        ) : (
-          <div className="kpi-pane-empty">No 3G KPI data entered for this site yet.</div>
-        )
-      )}
-
-      {kpiTech === '2G' && (
-        site.kpi_entered_2g || editing ? (
-          <div className="site-form-row cols-4">
-            {KPI_2G_FIELDS.map(([key, label]) => {
-              const source = (editing ? draft?.kpi_2g_json : site.kpi_2g_json) as Record<string, unknown> | null
-              const raw = source?.[key]
-              return (
-                <FieldCard
-                  key={key}
-                  label={label}
-                  editing={editing}
-                  type="number"
-                  value={raw === undefined || raw === null ? '' : String(raw)}
-                  onChange={(v) => setTechKpiField('2g', key, v)}
-                />
-              )
-            })}
-          </div>
-        ) : (
-          <div className="kpi-pane-empty">No 2G KPI data entered for this site yet.</div>
-        )
-      )}
 
       </div>
 
@@ -815,18 +810,18 @@ export default function SiteDetailPage() {
             {sectorsByTech[sectorTech].length > 0 ? (
               <>
                 <div className="sectors-table-wrap">
-                  <table className="sectors-table">
+                  <table className="sectors-table sectors-table-centered">
                     <thead>
                       <tr>
                         <th>Cell Name</th>
                         <th>Tech</th>
                         <th>Sector</th>
                         <th>Local Cell ID</th>
-                        <th>Height (m)</th>
+                        <th>Antenna Height (m)</th>
                         <th>Azimuth (°)</th>
                         <th>Mech Tilt (°)</th>
                         <th>Elec Tilt (°)</th>
-                        <th>Cell ID</th>
+                        <th>{sectorTech === '4G' ? 'PCI' : 'Cell ID'}</th>
                         <th>Location</th>
                         {SECTOR_EXTRA_COLUMNS[sectorTech].map((col) => (
                           <th key={col.key}>{col.label}</th>
@@ -894,6 +889,100 @@ export default function SiteDetailPage() {
         )}
       </section>
 
+      {/* ── KPI Values — tabbed 4G LTE / 3G UMTS / 2G GSM ─────────────
+          Moved below Sector Azimuth Layout (2026-09-28, "display KPI
+          values below the sector azimuth layout in site detail page") —
+          previously lived inside the two-column site-detail-layout grid,
+          above the (full-width, outside that grid) Sectors section; now
+          full-width itself, in its own <section> matching every other
+          below-Sectors block (Drive Tests/Antenna Change History/Site
+          Issues) rather than sharing space with the 320px sidebar. */}
+      <section>
+        <div className="site-form-section">
+          KPI Values
+          <span className="site-form-section-hint">
+            {site.kpi_date ? `as of ${site.kpi_date}` : 'site-level averages per technology'}
+          </span>
+        </div>
+        <div className="kpi-tabs">
+          {(['4G', '3G', '2G'] as KpiTech[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`kpi-tab${kpiTech === t ? ' active' : ''}`}
+              onClick={() => setKpiTech(t)}
+            >
+              {t === '4G' ? '4G LTE' : t === '3G' ? '3G UMTS' : '2G GSM'}
+            </button>
+          ))}
+        </div>
+
+        {kpiTech === '4G' && (
+          site.kpi_entered || editing ? (
+            <div className="site-form-row cols-4">
+              {KPI_FIELDS.map(([key, label]) => (
+                <FieldCard
+                  key={String(key)}
+                  label={label}
+                  editing={editing}
+                  type="number"
+                  value={String((editing ? draft?.[key] : site[key]) ?? '')}
+                  onChange={(v) => setNumberField(key, v)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="kpi-pane-empty">No 4G KPI data entered for this site yet.</div>
+          )
+        )}
+
+        {kpiTech === '3G' && (
+          site.kpi_entered_3g || editing ? (
+            <div className="site-form-row cols-4">
+              {KPI_3G_FIELDS.map(([key, label]) => {
+                const source = (editing ? draft?.kpi_3g_json : site.kpi_3g_json) as Record<string, unknown> | null
+                const raw = source?.[key]
+                return (
+                  <FieldCard
+                    key={key}
+                    label={label}
+                    editing={editing}
+                    type="number"
+                    value={raw === undefined || raw === null ? '' : String(raw)}
+                    onChange={(v) => setTechKpiField('3g', key, v)}
+                  />
+                )
+              })}
+            </div>
+          ) : (
+            <div className="kpi-pane-empty">No 3G KPI data entered for this site yet.</div>
+          )
+        )}
+
+        {kpiTech === '2G' && (
+          site.kpi_entered_2g || editing ? (
+            <div className="site-form-row cols-4">
+              {KPI_2G_FIELDS.map(([key, label]) => {
+                const source = (editing ? draft?.kpi_2g_json : site.kpi_2g_json) as Record<string, unknown> | null
+                const raw = source?.[key]
+                return (
+                  <FieldCard
+                    key={key}
+                    label={label}
+                    editing={editing}
+                    type="number"
+                    value={raw === undefined || raw === null ? '' : String(raw)}
+                    onChange={(v) => setTechKpiField('2g', key, v)}
+                  />
+                )
+              })}
+            </div>
+          ) : (
+            <div className="kpi-pane-empty">No 2G KPI data entered for this site yet.</div>
+          )
+        )}
+      </section>
+
       {/* -- Drive Tests Near This Site --------------------------------
           2026-09-12 request: surface which DT sessions were driven near
           this site right on the site page, instead of RF engineers
@@ -949,6 +1038,55 @@ export default function SiteDetailPage() {
           </div>
         ) : (
           <div className="kpi-pane-empty">No drive tests recorded near this site yet.</div>
+        )}
+      </section>
+
+      {/* -- Antenna Change History --------------------------------------
+          2026-09-23 request: "need to relate and manage vendor provided
+          RNO report" -- site/sector-level half. Sector.config_changes
+          (reverse of SectorConfigChange.sector) is flattened across every
+          sector into antennaChangeRows above. Shown even when empty, same
+          discoverable-not-hidden convention as every other section on
+          this page. Once an OptimizationActivity links to a change (Step
+          5b, AttachActivityModal.tsx's "Link vendor report" section) that
+          relationship would show here too via a future
+          verifying_activities lookup -- not added yet since this section
+          is already useful without it and that reverse lookup needs its
+          own small serializer addition. */}
+      <section>
+        <div className="site-form-section">Antenna Change History</div>
+
+        {antennaChangeRows.length > 0 ? (
+          <div className="sectors-table-wrap">
+            <table className="sectors-table">
+              <thead>
+                <tr>
+                  <th>Cell Name</th>
+                  <th>Report</th>
+                  <th>Before → After</th>
+                  <th>Result</th>
+                  <th>Antenna Type</th>
+                  <th>Imported</th>
+                </tr>
+              </thead>
+              <tbody>
+                {antennaChangeRows.map((c) => (
+                  <tr key={c.id}>
+                    <td className="sector-cell-name">{c.cellName || '—'}</td>
+                    <td>
+                      <Link to={RF_REPORTS_PATH}>{c.report.lot_name}</Link>
+                    </td>
+                    <td>{c.before_change} → {c.after_change}</td>
+                    <td>{c.result || '—'}</td>
+                    <td>{c.antenna_type || '—'}</td>
+                    <td>{new Date(c.created_at).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="kpi-pane-empty">No vendor-imported antenna changes recorded for this site's sectors yet.</div>
         )}
       </section>
 

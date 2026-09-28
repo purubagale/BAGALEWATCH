@@ -789,6 +789,25 @@ export function useUpdateDtSessionRemarks(sessionId: number | undefined) {
   })
 }
 
+// Drive "mode" (Free Mode / band-lock / Idle vs active), editable after
+// upload same as remarks above (2026-09-23) — mirrors
+// useUpdateDtSessionRemarks exactly; see DriveTestSessionViewSet.mode()'s
+// own docstring in drive_test.py.
+export function useUpdateDtSessionMode(sessionId: number | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (mode: string) =>
+      apiJson<{ mode: string }>(`/api/v2/dt-sessions/${sessionId}/mode/`, {
+        method: 'PATCH',
+        body: JSON.stringify({ mode }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dt-session', sessionId] })
+      qc.invalidateQueries({ queryKey: ['dt-sessions'] })
+    },
+  })
+}
+
 // Multiple-file upload (2026-09-07, "attaching multiple files related
 // to the saved session") — FormData, not JSON, since these are
 // arbitrary binary files; see client.ts's apiFetch for the matching
@@ -883,6 +902,29 @@ export function useDetachSessionFromActivity() {
     mutationFn: ({ activityId, linkId }: { activityId: number; linkId: number }) =>
       apiJson<void>(`/api/v2/dt-activities/${activityId}/sessions/${linkId}/`, { method: 'DELETE' }),
     onSuccess: () => invalidateDtActivities(qc),
+  })
+}
+
+// Links an activity directly to a vendor RNO report (and optionally one or
+// more of its antenna-change rows) — 2026-09-23, "need to relate and
+// manage vendor provided RNO report". See
+// OptimizationActivityViewSet.link_report()'s own docstring in
+// drive_test.py: additive on antenna_change_ids (never a wholesale
+// reset), same convention useAttachSessionToActivity above uses for
+// sessions. Also invalidates 'rf-reports' since the linked report's own
+// `activities` field changes too (RfReportsPage shows it there).
+export function useLinkActivityReport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ activityId, reportId, antennaChangeIds }: { activityId: number; reportId: number; antennaChangeIds?: number[] }) =>
+      apiJson<OptimizationActivity>(`/api/v2/dt-activities/${activityId}/link_report/`, {
+        method: 'POST',
+        body: JSON.stringify({ report: reportId, antenna_change_ids: antennaChangeIds ?? [] }),
+      }),
+    onSuccess: () => {
+      invalidateDtActivities(qc)
+      qc.invalidateQueries({ queryKey: ['rf-reports'] })
+    },
   })
 }
 

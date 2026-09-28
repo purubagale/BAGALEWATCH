@@ -25,6 +25,8 @@ from .models import (
     MenuPermission,
     OptimizationActivity,
     OptimizationActivitySession,
+    RfCellKpi,
+    RfKpiSummary,
     RfOptimizationReport,
     RfReportAttachment,
     Sector,
@@ -45,11 +47,28 @@ CRUD_MENUS = {'sites', 'rsrpmgr', 'tree', 'thresholds', 'datasource', 'backup', 
 
 
 class SectorSerializer(serializers.ModelSerializer):
+    """`config_changes` (2026-09-23, "need to relate and manage vendor
+    provided RNO report" -- site/sector-level half, the other side of
+    OptimizationActivity.source_report's docstring) -- the reverse of
+    SectorConfigChange.sector (`related_name='config_changes'`, models.py),
+    surfaced here so SiteDetailPage.tsx's "Antenna Change History" section
+    can show every vendor-imported antenna change against this sector
+    without a second endpoint. Deliberately a hand-built dict, not
+    SectorConfigChangeSerializer reused as-is -- that serializer has no
+    `report` field at all (it's nested INSIDE a report's own serializer,
+    where the parent is already known), but this direction genuinely needs
+    to name which report each change came from."""
+    config_changes = serializers.SerializerMethodField()
+
     class Meta:
         model = Sector
         fields = [
             'id', 'cell_name', 'sector', 'tech', 'local_cell_id',
             'height', 'azimuth', 'mech_tilt', 'elec_tilt',
+            # Antenna wedge visualization (2026-09-27) — see
+            # Sector.beamwidth/Sector.radius/Sector.max_tx_power_dbm's
+            # docstring in models.py.
+            'beamwidth', 'radius', 'max_tx_power_dbm',
             'pci', 'scrambling_code', 'bcch', 'bsic',
             'kpi_json', 'kpi_date',
             # Optional per-sector GPS override (2026-08-09) — see
@@ -63,6 +82,26 @@ class SectorSerializer(serializers.ModelSerializer):
             # Sector.carrier/site_band/cell_active_status/site_existence's
             # docstring in models.py.
             'carrier', 'site_band', 'cell_active_status', 'site_existence',
+            # 2G/3G RF Database engineering parameters (2026-09-27) — see
+            # each field's own comment in models.py, just after
+            # Sector.site_existence.
+            'lac', 'ci', 'ncc', 'hsn', 'tch', 'total_trx', 'activated_trx',
+            'cs_traffic', 'site_traffic', 'dl_uarfcn',
+            'config_changes',
+        ]
+
+    def get_config_changes(self, obj):
+        return [
+            {
+                'id': c.id,
+                'report': {'id': c.report_id, 'lot_name': c.report.lot_name},
+                'before_change': c.before_change,
+                'after_change': c.after_change,
+                'result': c.result,
+                'antenna_type': c.antenna_type,
+                'created_at': c.created_at,
+            }
+            for c in obj.config_changes.select_related('report').all()
         ]
 
 
@@ -148,10 +187,39 @@ class SiteScatterSerializer(serializers.ModelSerializer):
 
 class SiteDetailSerializer(serializers.ModelSerializer):
     sectors = SectorSerializer(many=True, read_only=True)
+    # `techs` (2026-09-28 fix) -- SiteDetailPage.tsx's "Technologies (Live)"
+    # field (added 2026-09-27, "why city, site type, technology and status
+    # have no data") assumed this always exists on `SiteDetail` because the
+    # TypeScript type has `SiteDetail extends SiteListItem`, which DOES
+    # declare `techs: string[]`. But that TS inheritance was never backed
+    # by a real shared serializer -- `fields = '__all__'` here only pulls
+    # in real model columns, and this class never declared its own
+    # `techs` the way SiteListSerializer above does, so the API genuinely
+    # never sent this field on GET /api/v2/sites/<id>/. Real crash:
+    # `site.techs.length` on `undefined` (`Cannot read properties of
+    # undefined (reading 'length')`), reported live on /sites/KTM200.
+    # Same union logic as SiteListSerializer.get_techs, but computed
+    # directly from `obj.sectors` here (no precomputed techs_by_site
+    # context on a single-object detail view -- one extra query is fine
+    # at this scale, unlike the ~4,700-row list view that method's own
+    # docstring is being careful about).
+    techs = serializers.SerializerMethodField()
 
     class Meta:
         model = Site
         fields = '__all__'
+
+    def get_techs(self, obj):
+        techs = set()
+        if obj.tech:
+            techs.add(obj.tech.strip().upper())
+        for t in (obj.operational_technologies or []):
+            if t:
+                techs.add(str(t).strip().upper())
+        for t in obj.sectors.exclude(tech='').values_list('tech', flat=True):
+            if t:
+                techs.add(t.strip().upper())
+        return sorted(techs)
 
 
 class MenuPermissionSerializer(serializers.ModelSerializer):
@@ -470,10 +538,13 @@ class SectorWriteSerializer(serializers.ModelSerializer):
         fields = [
             'cell_name', 'sector', 'tech', 'local_cell_id',
             'height', 'azimuth', 'mech_tilt', 'elec_tilt',
+            'beamwidth', 'radius', 'max_tx_power_dbm',
             'pci', 'scrambling_code', 'bcch', 'bsic',
             'kpi_json', 'kpi_date',
             'lat', 'lng',
             'carrier', 'site_band', 'cell_active_status', 'site_existence',
+            'lac', 'ci', 'ncc', 'hsn', 'tch', 'total_trx', 'activated_trx',
+            'cs_traffic', 'site_traffic', 'dl_uarfcn',
         ]
 
 
@@ -520,6 +591,10 @@ class SiteWriteSerializer(serializers.ModelSerializer):
             'id', 'sectors', 'name', 'region', 'city', 'district', 'lat', 'lng',
             'sitename1', 'palika', 'palika_type', 'ward_no', 'deployment_status',
             'operational_technologies',
+            # Tower/antenna engineering parameters (2026-09-26) -- see
+            # Site's own docstring in models.py.
+            'tower_type', 'tower_height_m', 'building_height', 'tower_height_tssr',
+            'antenna_device', 'tower_remark',
             'type', 'tech', 'status', 'status_2g', 'status_3g', 'rssi', 'load',
             'kpi_entered', 'kpi_entered_2g', 'kpi_entered_3g', 'kpi_date',
             'rrc', 'erab', 'call_setup', 'call_drop', 'svc_drop', 'intra_ho', 'inter_ho',
@@ -625,7 +700,7 @@ class DriveTestSampleSerializer(serializers.ModelSerializer):
     class Meta:
         model = DriveTestSample
         fields = [
-            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'cqi',
+            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band', 'cqi',
             'serving_site_id', 'serving_site_name', 'serving_sector', 'serving_cell_name',
             'serving_local_cell_id', 'serving_dist_km', 'cell_role', 'rx_qual',
             'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
@@ -642,6 +717,9 @@ _DT_SAMPLE_STR_FIELDS = {
     'serving_site_id': (64, True), 'serving_site_name': (255, True),
     'serving_sector': (20, True), 'serving_cell_name': (100, True),
     'cell_role': (10, False),
+    # (2026-09-23) — not null=True on the model (blank=True, default=''),
+    # same non-nullable convention as cell_role above.
+    'band': (10, False),
 }
 # The only fields a malformed/absent value should 400 on (matching what
 # DRF's FloatField already did) — they are what a coverage plot needs.
@@ -713,7 +791,7 @@ def _coerce_dt_sample(raw):
 # dict (+ session_id + the derived location).
 _DT_COPY_COLUMNS = (
     'session_id', 'ts', 'date', 'lat', 'lng', 'location',
-    'rsrp', 'rsrq', 'sinr', 'dl', 'pci',
+    'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band',
     'serving_site_id', 'serving_site_name', 'serving_sector', 'serving_cell_name',
     'serving_local_cell_id', 'serving_dist_km', 'cell_role', 'rx_qual',
     'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
@@ -758,7 +836,7 @@ def _bulk_insert_dt_samples(session_id, rows):
             _copy_field(r['ts']), _copy_field(r['date']),
             _copy_field(lat), _copy_field(lng), _copy_field(loc),
             _copy_field(r['rsrp']), _copy_field(r['rsrq']), _copy_field(r['sinr']),
-            _copy_field(r['dl']), _copy_field(r['pci']),
+            _copy_field(r['dl']), _copy_field(r['pci']), _copy_field(r['band']),
             _copy_field(r['serving_site_id']), _copy_field(r['serving_site_name']),
             _copy_field(r['serving_sector']), _copy_field(r['serving_cell_name']),
             _copy_field(r['serving_local_cell_id']), _copy_field(r['serving_dist_km']),
@@ -798,7 +876,7 @@ class DriveTestSamplePlotSerializer(serializers.ModelSerializer):
     class Meta:
         model = DriveTestSample
         fields = [
-            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'cqi',
+            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band', 'cqi',
             'serving_site_name', 'rx_qual', 'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
             # serving-cell attribution (dt_serving_cell.py): serving_site_id
             # keys the per-session /serving-cells/ lookup that the coverage
@@ -833,7 +911,7 @@ class DriveTestSessionListSerializer(serializers.ModelSerializer):
         model = DriveTestSession
         fields = [
             'id', 'name', 'tech', 'date', 'uploaded_date', 'saved_at',
-            'uploaded_by_name', 'meta', 'size_bytes', 'sample_count', 'remarks', 'attachment_count',
+            'uploaded_by_name', 'meta', 'size_bytes', 'sample_count', 'remarks', 'mode', 'attachment_count',
             'activities',
         ]
 
@@ -983,6 +1061,35 @@ class OptimizationActivitySessionSerializer(serializers.ModelSerializer):
         fields = ['session', 'role', 'note']
 
 
+class SectorConfigChangeSerializer(serializers.ModelSerializer):
+    """Read shape for one SectorConfigChange row -- nested (read-only)
+    inside RfOptimizationReportSerializer below, and (2026-09-23) inside
+    OptimizationActivitySerializer's `antenna_changes` above it in this
+    file -- moved up here (was originally defined right before
+    RfOptimizationReportSerializer) so that class can reference it without
+    a forward-reference NameError, since Python evaluates a class body's
+    field assignments at import time, top to bottom."""
+    sector_label = serializers.SerializerMethodField()
+    site_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SectorConfigChange
+        fields = [
+            'id', 'sn', 'cell_name', 'sector', 'sector_label', 'site_id',
+            'before_change', 'after_change', 'result', 'antenna_type',
+            'antenna_shared_with', 'raw_row', 'created_at',
+        ]
+        read_only_fields = fields
+
+    def get_sector_label(self, obj):
+        if not obj.sector_id:
+            return None
+        return obj.sector.cell_name or obj.sector.sector
+
+    def get_site_id(self, obj):
+        return obj.sector.site_id if obj.sector_id else None
+
+
 class OptimizationActivitySerializer(serializers.ModelSerializer):
     """List/detail/create shape for one OptimizationActivity (2026-09-12
     — grouping a set of DriveTestSession rows into one named RF
@@ -1025,12 +1132,26 @@ class OptimizationActivitySerializer(serializers.ModelSerializer):
         queryset=Issue.objects.all(), source='resolve_issue', write_only=True, required=False,
         allow_null=True,
     )
+    # Read-only trace back to the vendor RNO report this activity resolves
+    # or verifies (2026-09-23, "need to relate and manage vendor provided
+    # RNO report") -- two independent paths, both surfaced here:
+    # `resolved_issues` (reverse of Issue.resolved_by_activity, only ever
+    # populated for a RECOMMENDATION-derived Issue) and `source_report`/
+    # `antenna_changes` (the direct link managed by
+    # OptimizationActivityViewSet.link_report(), for the more common
+    # change-log case that never goes through an Issue at all). Neither is
+    # writable here -- `resolved_issues` is set via resolve_issue_id
+    # above/a direct IssueSerializer PATCH, and source_report/
+    # antenna_changes only via link_report().
+    resolved_issues = serializers.SerializerMethodField()
+    source_report = serializers.SerializerMethodField()
+    antenna_changes = SectorConfigChangeSerializer(many=True, read_only=True)
 
     class Meta:
         model = OptimizationActivity
         fields = [
             'id', 'name', 'notes', 'created_by', 'created_at', 'updated_at', 'sessions',
-            'resolve_issue_id',
+            'resolve_issue_id', 'resolved_issues', 'source_report', 'antenna_changes',
         ]
 
     def create(self, validated_data):
@@ -1062,6 +1183,28 @@ class OptimizationActivitySerializer(serializers.ModelSerializer):
             }
             for link in links
         ]
+
+    def get_resolved_issues(self, obj):
+        return [
+            {
+                'id': issue.id,
+                'title': issue.title,
+                'source_report': (
+                    {'id': issue.source_report_id, 'lot_name': issue.source_report.lot_name}
+                    if issue.source_report_id else None
+                ),
+            }
+            for issue in obj.resolved_issues.select_related('source_report').all()
+        ]
+
+    def get_source_report(self, obj):
+        if not obj.source_report_id:
+            return None
+        return {
+            'id': obj.source_report_id,
+            'lot_name': obj.source_report.lot_name,
+            'network': obj.source_report.network,
+        }
 
 
 class IssueSerializer(serializers.ModelSerializer):
@@ -1131,30 +1274,6 @@ class IssueSerializer(serializers.ModelSerializer):
         return {'id': obj.resolved_by_activity_id, 'name': obj.resolved_by_activity.name}
 
 
-class SectorConfigChangeSerializer(serializers.ModelSerializer):
-    """Read shape for one SectorConfigChange row -- nested (read-only)
-    inside RfOptimizationReportSerializer below."""
-    sector_label = serializers.SerializerMethodField()
-    site_id = serializers.SerializerMethodField()
-
-    class Meta:
-        model = SectorConfigChange
-        fields = [
-            'id', 'sn', 'cell_name', 'sector', 'sector_label', 'site_id',
-            'before_change', 'after_change', 'result', 'antenna_type',
-            'antenna_shared_with', 'raw_row', 'created_at',
-        ]
-        read_only_fields = fields
-
-    def get_sector_label(self, obj):
-        if not obj.sector_id:
-            return None
-        return obj.sector.cell_name or obj.sector.sector
-
-    def get_site_id(self, obj):
-        return obj.sector.site_id if obj.sector_id else None
-
-
 class RfReportAttachmentSerializer(serializers.ModelSerializer):
     """Read shape for one RfReportAttachment -- same pattern as
     DriveTestSessionAttachmentSerializer above. `url` points at
@@ -1203,56 +1322,74 @@ class _AntennaChangeInputSerializer(serializers.Serializer):
     raw_row = serializers.JSONField(required=False, allow_null=True, default=None)
 
 
-class _RecommendationInputSerializer(serializers.Serializer):
-    """Write-only shape for one reviewed recommendation row -- becomes
-    one Issue with `source_report` set to this import (see Issue's
-    docstring in models.py). `site` is REQUIRED here -- unlike the
-    parse-preview suggestion, which can come back null for a genuinely
-    new proposed site/sector with no existing counterpart yet -- because
-    Issue.site is a mandatory FK; the review UI must resolve every
-    recommendation row to some existing site (the nearest real one, for
-    a brand-new site proposal) before this will accept it."""
-    site = serializers.PrimaryKeyRelatedField(queryset=Site.objects.all())
+class _LotKpiInputSerializer(serializers.Serializer):
+    """Write-only shape for one reviewed Lot-wise OSS KPI summary row on
+    RfOptimizationReportSerializer.create() below (2026-09-26 -- see
+    RfKpiSummary's own docstring in models.py). Same "every text field
+    optional/blank" permissiveness as `_AntennaChangeInputSerializer` --
+    user-reviewed parse-preview data, not raw document content."""
+    kpi_name = serializers.CharField()
+    target = serializers.CharField(required=False, allow_blank=True, default='')
+    pre_value = serializers.CharField(required=False, allow_blank=True, default='')
+    post_value = serializers.CharField(required=False, allow_blank=True, default='')
+    remark = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class _CellKpiInputSerializer(serializers.Serializer):
+    """Write-only shape for one reviewed worst-cell KPI row (2026-09-26 --
+    see RfCellKpi's own docstring in models.py)."""
+    enb_id = serializers.CharField(required=False, allow_blank=True, default='')
+    enodeb_name = serializers.CharField(required=False, allow_blank=True, default='')
+    cell_name = serializers.CharField(required=False, allow_blank=True, default='')
     sector = serializers.PrimaryKeyRelatedField(queryset=Sector.objects.all(), required=False, allow_null=True, default=None)
-    title = serializers.CharField()
-    description = serializers.CharField(required=False, allow_blank=True, default='')
-    severity = serializers.ChoiceField(choices=Issue.SEVERITY_CHOICES, required=False, default='medium')
+    metric_name = serializers.CharField()
+    pre_value = serializers.CharField(required=False, allow_blank=True, default='')
+    post_value = serializers.CharField(required=False, allow_blank=True, default='')
 
 
 class RfOptimizationReportSerializer(serializers.ModelSerializer):
     """List/detail/create shape for one imported vendor RNO report (see
     RfOptimizationReport's docstring in models.py). `antenna_changes`/
-    `recommendations` are write-only nested lists on create -- the
+    `lot_kpis`/`cell_kpis` are write-only nested lists on create -- the
     frontend's reviewed parse-preview result -- and `create()` persists
-    the parent report plus every child row: antenna-change rows become
-    SectorConfigChange rows, recommendation rows each become an ordinary
-    Issue with `source_report` set to this report (2026-09-15 scope
-    decision: recommendations reuse the existing Issue tracker rather
-    than a dedicated model, so they show up on the same Issues
-    list/page everyone already uses, filterable there like any other
-    issue).
+    the parent report plus every child row as SectorConfigChange/
+    RfKpiSummary/RfCellKpi rows respectively.
 
-    On read, `antenna_changes_detail` is the real nested
-    SectorConfigChangeSerializer list. Recommendation rows are
-    deliberately NOT nested back here on read -- they're just Issue rows
-    at that point, already visible on the existing Issues page/API via
-    `source_report`, so duplicating them here would only be a second
-    place the same data could drift out of sync.
+    On read, `antenna_changes_detail`/`lot_kpis_detail`/`cell_kpis_detail`
+    are the real nested serializer lists.
+
+    **Recommendation-table parsing (new site/band additions -> Issue
+    rows) was removed 2026-09-26** ("now it is not needed") -- see this
+    module's own docstring in rf_reports.py for what to restore from
+    `git log` if a future request revives it. `Issue.source_report`
+    still exists and old recommendation-derived Issues are unaffected;
+    only this serializer's write path for creating new ones is gone.
+
+    `activities` (2026-09-23, "need to relate and manage vendor provided
+    RNO report") -- the OTHER direction of OptimizationActivity.source_report
+    (see that field's own docstring): which optimization efforts/drive
+    tests reference THIS report directly. Closes the loop so a report's
+    own page can link straight to the drives that verified each change,
+    not just show that a change was imported.
     """
     antenna_changes = _AntennaChangeInputSerializer(many=True, write_only=True, required=False)
-    recommendations = _RecommendationInputSerializer(many=True, write_only=True, required=False)
+    lot_kpis = _LotKpiInputSerializer(many=True, write_only=True, required=False)
+    cell_kpis = _CellKpiInputSerializer(many=True, write_only=True, required=False)
     antenna_changes_detail = SectorConfigChangeSerializer(source='antenna_changes', many=True, read_only=True)
+    lot_kpis_detail = serializers.SerializerMethodField()
+    cell_kpis_detail = serializers.SerializerMethodField()
     attachments = RfReportAttachmentSerializer(many=True, read_only=True)
     imported_by_name = serializers.SerializerMethodField()
-    recommendation_count = serializers.SerializerMethodField()
+    activities = serializers.SerializerMethodField()
 
     class Meta:
         model = RfOptimizationReport
         fields = [
             'id', 'lot_name', 'title', 'vendor', 'period_covered', 'network', 'notes',
             'imported_by', 'imported_by_name', 'imported_at',
-            'antenna_changes', 'recommendations',
-            'antenna_changes_detail', 'attachments', 'recommendation_count',
+            'antenna_changes', 'lot_kpis', 'cell_kpis',
+            'antenna_changes_detail', 'lot_kpis_detail', 'cell_kpis_detail',
+            'attachments', 'activities',
         ]
         read_only_fields = ['imported_by', 'imported_at']
 
@@ -1261,29 +1398,49 @@ class RfOptimizationReportSerializer(serializers.ModelSerializer):
             return None
         return obj.imported_by.name or obj.imported_by.username
 
-    def get_recommendation_count(self, obj):
-        return obj.recommendation_issues.count()
+    def get_lot_kpis_detail(self, obj):
+        return [
+            {
+                'id': row.id, 'kpi_name': row.kpi_name, 'target': row.target,
+                'pre_value': row.pre_value, 'post_value': row.post_value, 'remark': row.remark,
+            }
+            for row in obj.kpi_summaries.all()
+        ]
+
+    def get_cell_kpis_detail(self, obj):
+        return [
+            {
+                'id': row.id, 'enb_id': row.enb_id, 'enodeb_name': row.enodeb_name,
+                'cell_name': row.cell_name, 'metric_name': row.metric_name,
+                'pre_value': row.pre_value, 'post_value': row.post_value,
+                'matched_sector_id': row.sector_id,
+            }
+            for row in obj.cell_kpis.all()
+        ]
+
+    def get_activities(self, obj):
+        return [
+            {'id': activity.id, 'name': activity.name, 'session_count': activity.session_links.count()}
+            for activity in obj.activities.all()
+        ]
 
     def create(self, validated_data):
         antenna_rows = validated_data.pop('antenna_changes', [])
-        recommendation_rows = validated_data.pop('recommendations', [])
+        lot_kpi_rows = validated_data.pop('lot_kpis', [])
+        cell_kpi_rows = validated_data.pop('cell_kpis', [])
         report = RfOptimizationReport.objects.create(**validated_data)
 
         if antenna_rows:
             SectorConfigChange.objects.bulk_create([
                 SectorConfigChange(report=report, **row) for row in antenna_rows
             ])
-
-        if recommendation_rows:
-            request = self.context.get('request')
-            created_by = request.user if request and request.user.is_authenticated else None
-            Issue.objects.bulk_create([
-                Issue(
-                    site=row['site'], sector=row.get('sector'), title=row['title'],
-                    description=row.get('description', ''), severity=row.get('severity', 'medium'),
-                    created_by=created_by, source_report=report,
-                )
-                for row in recommendation_rows
+        if lot_kpi_rows:
+            RfKpiSummary.objects.bulk_create([
+                RfKpiSummary(report=report, **row) for row in lot_kpi_rows
+            ])
+        if cell_kpi_rows:
+            RfCellKpi.objects.bulk_create([
+                RfCellKpi(report=report, **row) for row in cell_kpi_rows
             ])
         return report
 
@@ -1382,7 +1539,7 @@ class DriveTestSessionWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DriveTestSession
-        fields = ['id', 'name', 'tech', 'date', 'uploaded_date', 'meta', 'samples', 'remarks']
+        fields = ['id', 'name', 'tech', 'date', 'uploaded_date', 'meta', 'samples', 'remarks', 'mode']
         read_only_fields = ['id']
 
     def validate_samples(self, value):

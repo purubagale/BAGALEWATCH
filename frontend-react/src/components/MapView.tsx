@@ -328,6 +328,22 @@ function ClusteredMarkers({
           el._hoverBound = true
           L.DomEvent.on(el, 'mouseenter', cancelClose)
           L.DomEvent.on(el, 'mouseleave', scheduleClose)
+          // Clicking the popup card navigates to the site's detail page
+          // (2026-09-28, "when hover is on, if i need to click the site to
+          // view site detail, i need to click on exact coordinate which
+          // will be tedious, make the hover clickable") — previously only
+          // the marker's own small pin icon underneath the popup was
+          // clickable, so dismissing this much larger informational card
+          // to land a precise click on the pin was the exact friction
+          // being reported. Excludes Leaflet's own close ("×") button, and
+          // stops the click from bubbling to the map itself so add-mode's
+          // onMapClick doesn't also fire for what's really a navigation.
+          L.DomEvent.on(el, 'click', (evt: Event) => {
+            if ((evt.target as HTMLElement).closest('.leaflet-popup-close-button')) return
+            L.DomEvent.stopPropagation(evt)
+            pinned = true
+            onSelect(s.id)
+          })
         }
       })
       marker.on('popupclose', () => {

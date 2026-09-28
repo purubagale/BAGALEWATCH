@@ -31,7 +31,9 @@ from .models import (
     DriveTestSessionAttachment,
     OptimizationActivity,
     OptimizationActivitySession,
+    RfOptimizationReport,
     Sector,
+    SectorConfigChange,
     Site,
 )
 from .serializers import (
@@ -61,7 +63,10 @@ from .views import IsAdminOrSuperadmin
 DT_COMPARE_METRICS = {
     '2G': ['rsrp', 'rx_qual'],
     '3G': ['rsrp', 'ecno'],
-    '4G': ['rsrp', 'rsrq', 'sinr', 'cqi'],
+    # 'dl' (DL throughput, Mbps) added 2026-09-23 alongside
+    # dtBands.ts's metricsForTech('4G') gaining a matching entry -- must
+    # stay in sync with that function per this module's own comment below.
+    '4G': ['rsrp', 'rsrq', 'sinr', 'cqi', 'dl'],
 }
 
 # Direction each metric improves in: +1 means "higher is better" (every
@@ -88,7 +93,13 @@ DT_COMPARE_DIRECTION = {'rx_qual': -1}
 # No DT_COMPARE_DIRECTION entry needed for cqi -- higher is better, same
 # as every metric except rx_qual, and directionFor()'s fallback already
 # defaults to +1 for anything not in that dict.
-DT_COMPARE_DEADBAND = {'rx_qual': 1.0, 'cqi': 1.0}
+# `dl` (Mbps) gets its own 1.0 deadband -- the default 2.0 (sized for
+# dB-scale RF metrics) is the wrong order of magnitude for a throughput
+# reading that can swing several Mbps between two otherwise-similar drives
+# just from radio scheduling noise; 1.0 Mbps is a starting point, not a
+# vendor-verified figure -- revisit once real before/after DL comparisons
+# show whether it over/under-reports "changed."
+DT_COMPARE_DEADBAND = {'rx_qual': 1.0, 'cqi': 1.0, 'dl': 1.0}
 DT_COMPARE_DEFAULT_DEADBAND = 2.0
 
 
@@ -204,7 +215,7 @@ class DriveTestSessionViewSet(
         return DriveTestSessionListSerializer
 
     def get_permissions(self):
-        if self.action in ('create', 'destroy', 'samples', 'remarks'):
+        if self.action in ('create', 'destroy', 'samples', 'remarks', 'mode'):
             return [IsAuthenticated(), IsAdminOrSuperadmin()]
         if self.action == 'attachments':
             # GET (list) is read-only, same tier as retrieve/list below;
@@ -287,6 +298,25 @@ class DriveTestSessionViewSet(
         session.save(update_fields=['remarks'])
         return Response({'remarks': session.remarks})
 
+    @action(detail=True, methods=['patch'])
+    def mode(self, request, pk=None):
+        """`PATCH /api/v2/dt-sessions/<id>/mode/` — the drive "mode" this
+        session was run in (Free Mode, a band-lock like B3/B20, Idle vs an
+        active DL/UL session, ...), editable after the fact exactly like
+        remarks() immediately above -- same "one dedicated action per
+        editable field on an otherwise-immutable session" convention, not
+        a general update/partial_update (see this viewset's own
+        docstring). See DriveTestSession.mode's own docstring in models.py
+        for why this is a real field, not a `meta` key.
+        """
+        session = self.get_object()
+        mode = request.data.get('mode')
+        if mode is None or not isinstance(mode, str):
+            return Response({'mode': ['This field is required and must be a string.']}, status=400)
+        session.mode = mode
+        session.save(update_fields=['mode'])
+        return Response({'mode': session.mode})
+
     @action(detail=True, methods=['get', 'post'], url_path='attachments')
     def attachments(self, request, pk=None):
         """`GET /api/v2/dt-sessions/<id>/attachments/` — list this
@@ -334,12 +364,15 @@ class DriveTestSessionViewSet(
         """`GET /api/v2/dt-sessions/<id>/serving-cells/` — the distinct
         serving cells this session's samples were attributed to (by
         core/dt_serving_cell.py at upload time), each joined to its
-        Site's coordinates and the Sector's azimuth. Small (~8-20 rows);
-        the coverage map loads it once and, on hovering/selecting a plot
-        point, draws a connector to `site_lat/site_lng` and shows this
-        cell's name / sector / azimuth. Empty list when the session
-        predates the attribution feature or no site directory was loaded
-        when it was uploaded (re-upload or run
+        Site's coordinates and the Sector's azimuth/beamwidth/radius.
+        Small (~8-20 rows); the coverage map loads it once and, on
+        hovering/selecting a plot point, draws a connector to
+        `site_lat/site_lng` and shows this cell's name / sector / azimuth
+        — and (2026-09-27) draws a theoretical antenna coverage wedge
+        under the real RSRP dots when azimuth/beamwidth/radius are all
+        present (see DtCoverageMap.tsx's SectorWedgeOverlay). Empty list
+        when the session predates the attribution feature or no site
+        directory was loaded when it was uploaded (re-upload or run
         `manage.py backfill_dt_serving_cells` to populate)."""
         session = self.get_object()
         groups = list(
@@ -366,6 +399,14 @@ class DriveTestSessionViewSet(
                 'sector': g['serving_sector'],
                 'local_cell_id': g['serving_local_cell_id'],
                 'azimuth': sec.azimuth if sec else None,
+                # Antenna wedge visualization (2026-09-27) -- see
+                # Sector.beamwidth/Sector.radius's docstring in models.py.
+                # The coverage map draws a wedge under its real RSRP dots
+                # only when both are present; None here just means no
+                # wedge for that serving cell (nothing fabricated).
+                'beamwidth': sec.beamwidth if sec else None,
+                'radius': sec.radius if sec else None,
+                'max_tx_power_dbm': sec.max_tx_power_dbm if sec else None,
                 'sample_count': g['sample_count'],
                 'mean_dist_km': round(g['mean_dist_km'], 2) if g['mean_dist_km'] is not None else None,
             })
@@ -638,7 +679,7 @@ class OptimizationActivityViewSet(
     serializer_class = OptimizationActivitySerializer
 
     def get_permissions(self):
-        if self.action in ('create', 'destroy', 'sessions'):
+        if self.action in ('create', 'destroy', 'sessions', 'link_report'):
             return [IsAuthenticated(), IsAdminOrSuperadmin()]
         return [IsAuthenticated()]
 
@@ -676,6 +717,42 @@ class OptimizationActivityViewSet(
             note=link_serializer.validated_data.get('note', ''),
         )
         return Response(OptimizationActivitySerializer(activity).data, status=201)
+
+    @action(detail=True, methods=['post'], url_path='link_report')
+    def link_report(self, request, pk=None):
+        """`POST /api/v2/dt-activities/<id>/link_report/` (2026-09-23,
+        "need to relate and manage vendor provided RNO report") — records
+        that this activity's drives verify a vendor RNO report's antenna
+        change-log entry (or entries), independent of the Issue-mediated
+        `resolve_issue_id` path (which only ever covers a RECOMMENDATION
+        row — see OptimizationActivity.source_report's own docstring in
+        models.py for why the change-log needs its own direct link).
+
+        Body: `{report: <id>, antenna_change_ids?: [<id>, ...]}`.
+        `source_report` is SET (replaced, like any other single-value
+        field) to the given report; `antenna_change_ids` (optional) are
+        ADDED to `antenna_changes` — additive, not a replace, matching
+        `sessions()` above's own "attach any time, never a wholesale
+        reset" convention (an activity can verify a second cell's change
+        discovered partway through the same effort without losing the
+        first one). Every id in `antenna_change_ids` must belong to the
+        given report — cross-report ids are silently ignored rather than
+        erroring, since that's most likely a stale id from switching which
+        report is selected in the picker, not a real request to link an
+        unrelated report's row.
+        """
+        activity = self.get_object()
+        report_id = request.data.get('report')
+        report = RfOptimizationReport.objects.filter(pk=report_id).first()
+        if report is None:
+            return Response({'report': ['A valid report id is required.']}, status=400)
+        activity.source_report = report
+        activity.save(update_fields=['source_report'])
+        change_ids = request.data.get('antenna_change_ids') or []
+        if change_ids:
+            changes = SectorConfigChange.objects.filter(pk__in=change_ids, report=report)
+            activity.antenna_changes.add(*changes)
+        return Response(OptimizationActivitySerializer(activity).data)
 
 
 class OptimizationActivitySessionDetailView(APIView):

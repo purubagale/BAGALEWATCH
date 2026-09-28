@@ -91,6 +91,7 @@ const RescueLookupPage = lazy(() => import('./pages/RescueLookupPage'))
 const RescuePolicyPage = lazy(() => import('./pages/RescuePolicyPage'))
 const IssuesPage = lazy(() => import('./pages/IssuesPage'))
 const RfReportsPage = lazy(() => import('./pages/RfReportsPage'))
+const DtPlotCatalogPage = lazy(() => import('./pages/DtPlotCatalogPage'))
 
 // Reflects customized branding (2026-08-08 follow-up) into the two
 // things that live outside React's own render tree — the document
@@ -268,6 +269,7 @@ function App() {
         {withOpaqueSection('/rescue-policy', <RescuePolicyPage />)}
         {withOpaqueSection('/issues', <IssuesPage />)}
         {withOpaqueSection('/rf-reports', <RfReportsPage />)}
+        {withOpaqueSection('/dt-plot-catalog', <DtPlotCatalogPage />)}
         {/* /topology retired 2026-08-05 — its "scope: all/region/district"
             concept was folded directly into the Sites map/tree (see
             SitesPage.tsx/SidebarTree.tsx), so a separate page/route is no

@@ -4,12 +4,40 @@ request: "How can we utilize this report or data of this report in our
 application for network optimization and repository").
 
 Two real vendor reports were used to design this (LOT2 at 218MB, LOT6 at
-528MB) -- each a Word document containing, alongside ~30 per-cell KPI
-pre/post tables, an antenna azimuth/tilt CHANGE LOG table and one or more
-open RECOMMENDATION tables (new site/band additions). Scope, per the
-user's own explicit choice when this was proposed ("yes scope and build
-the importer"): only those two table shapes are extracted here -- the
-per-cell KPI tables are a separate, larger follow-up if ever needed.
+528MB) -- each a Word document containing an antenna azimuth/tilt CHANGE
+LOG table, one or more Lot-wise OSS KPI summary tables, and ~30 per-cell
+"worst cell" KPI pre/post tables (one per metric -- RRC/E-RAB/CSFB/HOSR/
+throughput/VoLTE/etc).
+
+**Recommendation tables (new site/band additions) were parsed here from
+2026-09-15 through 2026-09-26, then removed** (2026-09-26 request: "now
+it is not needed"). Issue rows created by that importer while it existed
+are untouched -- `Issue.source_report` stays a valid field for that
+historical data (`related_name='recommendation_issues'`, models.py) --
+only the .docx table parser that CREATED new ones is gone. If a future
+request revives this, `git log` on this file has the original
+`_is_recommendation_table`/`_looks_recommendation_ish`/
+`_parse_recommendation_table`/`_extract_coords`/`_nearest_site`
+implementation to restore rather than reinventing the nearest-site
+distance-suggestion logic from scratch.
+
+**Lot-wise OSS KPI / worst-cell KPI tables (2026-09-26)** -- the "~30
+per-cell KPI pre/post tables" the original 2026-09-15 scope explicitly
+deferred ("a separate, larger follow-up if ever needed"). Two distinct
+shapes, confirmed against a real LOT2 upload's 123 tables:
+  - Lot-wise OSS KPI: aggregate, no per-cell identity -- `[KPI Parameter/
+    VoLTE KPI/ViLTE KPI Parameter/KPI, (Target,) Pre, Post, (Remark)]`.
+    See `_is_lot_kpi_table`.
+  - Worst-cell KPI: one table PER METRIC, always 6 columns -- `[eNBID,
+    eNodeB Name, Cell Name, Cell ID, <Metric>(-Pre), <Metric>-Post]`, Pre
+    always column 5 and Post always column 6 BY POSITION (a real table
+    was seen where column 5's header omits any "-Pre" suffix at all).
+    See `_is_cell_kpi_table`.
+  Both are deliberately excluded from matching the same headerless
+  chart-support tables real reports are full of (`['Pre','Pre','Pre',
+  'Color','Post','Post','Post']`, `['Counter','Pre','Post']` -- these
+  back embedded charts and have no real per-row identifier, just a
+  numeric bucket index or the literal word "Counter").
 
 Minutes-of-Meeting content (2026-09-15 follow-up: "a mom is done
 including the reasons not meeting KPI threshold... should be handled
@@ -22,11 +50,11 @@ the source .docx itself.
 RfOptimizationReport's own docstring): a vendor report's table COUNT
 shifts between lots depending on how many KPI sections that particular
 lot's write-up includes -- confirmed directly: LOT2 and LOT6 do not
-place their change-log/recommendation tables at the same table index.
-Every function below identifies a table by what its header ROW says,
-normalized (lowercased, whitespace collapsed), never by position in the
-document, so the next lot's report having a different table count ahead
-of the one this cares about doesn't silently break the import.
+place their change-log tables at the same table index. Every function
+below identifies a table by what its header ROW says, normalized
+(lowercased, whitespace collapsed), never by position in the document,
+so the next lot's report having a different table count ahead of the one
+this cares about doesn't silently break the import.
 
 **2026-09-15 follow-up round, after the first real live test** (see
 each helper's own docstring for detail):
@@ -36,22 +64,6 @@ each helper's own docstring for detail):
     narrative paragraphs, instead of always requiring manual entry.
     Confirmed via AskUserQuestion that this metadata lives on the title
     page, not a cover table or page header/footer.
-  - `_looks_recommendation_ish` -- any table that doesn't match the
-    strict recommendation-table shape but LOOKS like one (has a
-    recommend/remark/propose-ish header) is now still parsed if it has
-    a usable identifier column, and always reported back in
-    `tables_unmatched` either way -- confirmed via AskUserQuestion that
-    the real report has more recommendation-style content than the
-    strict matcher alone was catching, without knowing the exact extra
-    header shape yet. This makes what's NOT being parsed visible instead
-    of silently dropped, so the next real upload can refine the strict
-    matcher with an exact header string instead of a guess.
-  - `_extract_coords` / `_nearest_site` -- a recommendation row with no
-    exact Site/cell-name match (the normal case for a brand-new-site
-    proposal) now gets the nearest real Site suggested automatically,
-    by distance, using coordinates already present in the row -- still
-    fully overridable in the review UI. Confirmed via AskUserQuestion
-    ("Yes, auto-suggest nearest").
   - Attachment uploads (RfOptimizationReportViewSet.attachments) are now
     gzip-compressed server-side, and a new flat download endpoint
     (`RfReportAttachmentDetailView`, registered in urls.py) decompresses
@@ -69,22 +81,18 @@ guessed at, matching this codebase's own established pattern of raising
 these numbers from a real observed failure, not a hypothetical one.
 
 **Flow**: `RfReportParsePreviewView` (POST, multipart) parses an
-uploaded .docx and returns candidate rows with best-effort Site/Sector
-match suggestions -- nothing is saved. The frontend review UI lets an
-engineer correct/drop rows and must resolve every recommendation row to
-a real Site before submitting. `RfOptimizationReportViewSet.create`
-(via `RfOptimizationReportSerializer`) then persists the reviewed rows
-as one RfOptimizationReport + its SectorConfigChange rows + one Issue
-per recommendation (source_report set) -- see that serializer's
-docstring in serializers.py.
+uploaded .docx and returns candidate rows with best-effort Sector match
+suggestions -- nothing is saved. The frontend review UI lets an
+engineer correct/drop rows before submitting. `RfOptimizationReportViewSet.create`
+(via `RfOptimizationReportSerializer`) then persists the reviewed rows as
+one RfOptimizationReport + its SectorConfigChange/RfKpiSummary/RfCellKpi
+rows -- see that serializer's docstring in serializers.py.
 """
 import gzip
 import mimetypes
 import re
 import tempfile
 
-from django.contrib.gis.db.models.functions import Distance
-from django.contrib.gis.geos import Point
 from django.core.files.base import File
 from django.http import FileResponse
 from docx import Document
@@ -95,7 +103,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import RfOptimizationReport, RfReportAttachment, Sector, Site
+from .models import RfOptimizationReport, RfReportAttachment, Sector
 from .serializers import RfOptimizationReportSerializer, RfReportAttachmentSerializer
 from .views import IsAdminOrSuperadmin
 
@@ -143,107 +151,116 @@ def _is_antenna_change_table(header):
     )
 
 
-def _is_recommendation_table(header):
-    joined = ' '.join(header)
-    # Three real shapes seen: "Cell Name" + "Recommendation" (simple);
-    # "Existing Cell" + "Recommended Band" (band upgrade); and the
-    # detailed new-site variant, which always carries both Latitude and
-    # Longitude alongside one of those same identifying columns.
-    if 'cell name' in joined and 'recommendation' in joined:
-        return True
-    if 'existing cell' in joined and 'recommended band' in joined:
-        return True
-    if 'latitude' in joined and 'longitude' in joined and ('site name' in joined or 'existing cell' in joined or 'cell name' in joined):
-        return True
-    return False
+# Known identifier-column names for a Lot-wise OSS KPI summary table
+# (2026-09-26) -- deliberately a short, extend-as-verified list (same
+# "header-matching over table position, extended only from real evidence"
+# convention as every other detector in this module), not a broad
+# heuristic. A broad "any table with Pre+Post columns" match would
+# misclassify the headerless chart-support tables real reports are full
+# of (`['Pre','Pre','Pre','Color','Post','Post','Post']`,
+# `['Counter','Pre','Post']`) -- those back embedded charts and their only
+# non-Pre/Post column is a numeric bucket index or the literal word
+# "Counter", never a real KPI name.
+_LOT_KPI_IDENTIFIER_COLUMNS = ('kpi parameter', 'volte kpi', 'vilte kpi parameter', 'kpi', 'issue', 'problem type')
 
 
-def _looks_recommendation_ish(header):
-    """Looser near-miss check for a table the strict `_is_recommendation_
-    table` above didn't classify but might still be real recommendation/
-    remark content (2026-09-15 follow-up: "there are so many
-    optimization remarks and recommendation in report. can we use those
-    also?" -- confirmed via AskUserQuestion that the real report has
-    more recommendation-style tables than what was being captured,
-    without a known exact header string to match yet). Deliberately
-    broader than `_is_recommendation_table` -- every hit here is
-    reported back in the parse-preview response's `tables_unmatched`
-    (and actually parsed too, if it has a usable identifier column), so
-    what this catches is visible for review rather than a silent guess
-    baked into whether data gets used at all."""
-    joined = ' '.join(header)
-    keywords = ('recommend', 'remark', 'propose', 'suggest', 'optimi', 'action item', 'new site')
-    return any(k in joined for k in keywords)
+def _is_lot_kpi_table(header):
+    has_identifier = any(any(name in h for name in _LOT_KPI_IDENTIFIER_COLUMNS) for h in header)
+    has_pre = any(h == 'pre' or h.startswith('pre') for h in header)
+    has_post = any(h == 'post' or h.startswith('post') for h in header)
+    return has_identifier and has_pre and has_post
 
 
-# NOTE: this is a raw string but the degree sign below is the literal
-# UTF-8 character (°), not a \u escape -- ° would NOT be
-# interpreted inside r'...' and would match six literal backslash/u/0/0/
-# b/0 characters instead of a degree sign.
-_COORD_PAIR_RE = re.compile(r'(-?\d{1,3}\.\d{3,})\s*°?\s*,\s*(-?\d{1,3}\.\d{3,})\s*°?')
-# Nepal's own rough lat/lng extent -- used only to reject an unrelated
-# pair of decimals (antenna height/azimuth/etc. already on the same row)
-# from masquerading as a coordinate, never to validate a real GPS fix.
-_LAT_RANGE = (26.0, 31.0)
-_LNG_RANGE = (80.0, 89.0)
-
-
-def _in_nepal(lat, lng):
-    return _LAT_RANGE[0] <= lat <= _LAT_RANGE[1] and _LNG_RANGE[0] <= lng <= _LNG_RANGE[1]
-
-
-def _extract_coords(header, raw_header, cells):
-    """Best-effort (lat, lng) for one recommendation row, used only to
-    suggest the nearest existing Site for a brand-new-site proposal
-    (2026-09-15 follow-up, confirmed via AskUserQuestion: "Yes,
-    auto-suggest nearest"). Tries dedicated Latitude/Longitude columns
-    first (the "detailed new-site variant" shape --
-    `_is_recommendation_table`'s own docstring); falls back to scanning
-    every cell's text for an embedded "26.877579, 87.252231"-style pair,
-    since a real recommendation row was seen with coordinates folded
-    into a Recommendation-column sentence rather than their own
-    columns. Returns (None, None) if nothing plausible is found --
-    exactly like no match at all, so this can only ever add a
-    suggestion, never break the existing exact-match behavior."""
-    idx_lat = _find_col(header, 'latitude')
-    idx_lng = _find_col(header, 'longitude')
-    if idx_lat is not None and idx_lng is not None:
-        try:
-            lat, lng = float(_cell(cells, idx_lat)), float(_cell(cells, idx_lng))
-            if _in_nepal(lat, lng):
-                return lat, lng
-        except (TypeError, ValueError):
-            pass
-
-    for value in cells:
-        for match in _COORD_PAIR_RE.finditer(value or ''):
-            try:
-                a, b = float(match.group(1)), float(match.group(2))
-            except ValueError:
-                continue
-            if _in_nepal(a, b):
-                return a, b
-    return None, None
-
-
-def _nearest_site(lat, lng):
-    """Nearest Site to (lat, lng), using the same PostGIS `location`
-    geography column/distance annotation as `_nearby_site_ids` in
-    serializers.py -- real meters over the whole country's extent, no
-    manual haversine. Returns (site, distance_km) or (None, None) if no
-    site has a location at all (e.g. an empty/test database)."""
-    if lat is None or lng is None:
-        return None, None
-    point = Point(lng, lat, srid=4326)
-    site = (
-        Site.objects.filter(location__isnull=False)
-        .annotate(distance=Distance('location', point))
-        .order_by('distance')
-        .first()
+def _parse_lot_kpi_table(table):
+    """One row per Lot-wise OSS KPI table row (2026-09-26) -- real shapes
+    confirmed against a LOT2 upload: `[S.N., KPI Parameter, Target "X",
+    Pre, Post]`, `[S.N., VoLTE KPI, Pre, Post, Remarks]`, `[S.No, ViLTE
+    KPI Parameter, Pre, Post]`, `[KPI, Target, Pre, Post, Remark]`. Values
+    are the vendor's own text, never force-parsed into a number
+    ("66.19%(105884)", "Monitor only (>=-85dbm)") -- same rule
+    SectorConfigChange.before_change/after_change already uses."""
+    header = _table_header(table)
+    idx_name = next(
+        (i for i, h in enumerate(header) if any(n in h for n in _LOT_KPI_IDENTIFIER_COLUMNS)), None
     )
-    if not site:
-        return None, None
-    return site, round(site.distance.km, 2)
+    idx_target = _find_col(header, 'target')
+    idx_pre = _find_col(header, 'pre')
+    idx_post = _find_col(header, 'post')
+    idx_remark = _find_col(header, 'remark')
+
+    rows = []
+    for row in table.rows[1:]:
+        cells = _row_text(row.cells)
+        if not any(cells):
+            continue
+        kpi_name = _cell(cells, idx_name)
+        if not kpi_name:
+            continue
+        rows.append({
+            'kpi_name': kpi_name,
+            'target': _cell(cells, idx_target),
+            'pre_value': _cell(cells, idx_pre),
+            'post_value': _cell(cells, idx_post),
+            'remark': _cell(cells, idx_remark),
+        })
+    return rows
+
+
+def _is_cell_kpi_table(header):
+    joined = ' '.join(header)
+    has_enb = 'enbid' in joined
+    has_enodeb = 'enodeb name' in joined or 'enodebname' in joined
+    has_cell_name = 'cell name' in joined
+    has_cell_id = 'cell id' in joined
+    return has_enb and has_enodeb and has_cell_name and has_cell_id and len(header) == 6
+
+
+# Strips a trailing "Pre"/"Post" token (with or without a leading hyphen/
+# space) off a worst-cell KPI table's column-5/6 header text, to recover
+# the bare metric name -- e.g. "RRC Setup Success Rate (%) Post" ->
+# "RRC Setup Success Rate (%)". A real LOT2 table has column 5's header
+# with NO suffix at all (implicitly "Pre") while column 6 says "... Post"
+# -- position (column 5 is always pre, column 6 always post), not label
+# text, is what decides which value is which; this only cleans up the
+# display name.
+_TRAILING_PRE_POST_RE = re.compile(r'[\s\-]*\b(pre|post)\b\s*$', re.IGNORECASE)
+
+
+def _cell_kpi_metric_name(pre_header, post_header):
+    stripped = _TRAILING_PRE_POST_RE.sub('', post_header).strip()
+    return stripped or _TRAILING_PRE_POST_RE.sub('', pre_header).strip() or post_header
+
+
+def _parse_cell_kpi_table(table, sector_by_cell):
+    """One row per worst-cell KPI table row (2026-09-26) -- real shape
+    confirmed against a LOT2 upload, always 6 columns: `[eNBID, eNodeB
+    Name, Cell Name, Cell ID, <Metric>(-Pre), <Metric>-Post]`, repeated
+    once per metric (~30 such tables in a real report -- RRC/E-RAB/CSFB/
+    HOSR/throughput/VoLTE/QCI1/etc). `sector_by_cell` is the same lookup
+    `_parse_antenna_change_table` already builds/uses."""
+    header = _table_header(table)
+    raw_header = _row_text(table.rows[0].cells)
+    metric_name = _cell_kpi_metric_name(raw_header[4], raw_header[5])
+
+    rows = []
+    for row in table.rows[1:]:
+        cells = _row_text(row.cells)
+        if not any(cells):
+            continue
+        cell_name = _cell(cells, 2)
+        if not cell_name:
+            continue
+        match = sector_by_cell.get(cell_name.lower())
+        rows.append({
+            'enb_id': _cell(cells, 0),
+            'enodeb_name': _cell(cells, 1),
+            'cell_name': cell_name,
+            'metric_name': metric_name,
+            'pre_value': _cell(cells, 4),
+            'post_value': _cell(cells, 5),
+            'matched_sector_id': match.id if match else None,
+        })
+    return rows
 
 
 def _parse_antenna_change_table(table, sector_by_cell):
@@ -284,67 +301,6 @@ def _parse_antenna_change_table(table, sector_by_cell):
     return rows
 
 
-def _parse_recommendation_table(table, sector_by_cell, site_by_name):
-    header = _table_header(table)
-    raw_header = _row_text(table.rows[0].cells)
-    idx_identifier = _find_col(header, 'cell name', 'existing cell', 'site name', 'cell id')
-    idx_sn = _find_col(header, 'sn', 's n', 's no')
-
-    rows = []
-    for row in table.rows[1:]:
-        cells = _row_text(row.cells)
-        if not any(cells):
-            continue
-        identifier = _cell(cells, idx_identifier)
-        if not identifier:
-            continue
-        sn_raw = _cell(cells, idx_sn)
-        sn_digits = re.sub(r'\D', '', sn_raw)
-        sn = int(sn_digits) if sn_digits else None
-        match_sector = sector_by_cell.get(identifier.lower())
-        match_site = match_sector.site if match_sector else site_by_name.get(identifier.lower())
-
-        # Site suggestion: an exact cell-name/site-name match wins
-        # outright ('exact'); otherwise, fall back to the nearest real
-        # Site by distance using whatever coordinates this row carries
-        # ('nearest') -- 2026-09-15 follow-up, see _nearest_site's own
-        # docstring. Either way this only ever SUGGESTS a value into the
-        # review UI's site dropdown -- still fully overridable, and
-        # confirm-import still requires a site to be chosen.
-        suggested_site_id = match_site.id if match_site else None
-        site_match_type = 'exact' if match_site else None
-        site_match_distance_km = None
-        if not match_site:
-            lat, lng = _extract_coords(header, raw_header, cells)
-            nearest_site, distance_km = _nearest_site(lat, lng)
-            if nearest_site:
-                suggested_site_id = nearest_site.id
-                site_match_type = 'nearest'
-                site_match_distance_km = distance_km
-
-        # Description text excludes the S.N. column (2026-09-15
-        # follow-up: "sn. is no need to fetch in description") -- it's
-        # already carried on the row as its own `sn` field, so repeating
-        # it as the first line of a free-text description an engineer
-        # then has to read past was pure noise.
-        description = '\n'.join(
-            f'{h}: {v}' for i, (h, v) in enumerate(zip(raw_header, cells))
-            if v.strip() and i != idx_sn
-        )
-        rows.append({
-            'sn': sn,
-            'identifier': identifier,
-            'title': f'Vendor recommendation: {identifier}',
-            'description': description,
-            'matched_sector_id': match_sector.id if match_sector else None,
-            'matched_site_id': suggested_site_id,
-            'site_match_type': site_match_type,
-            'site_match_distance_km': site_match_distance_km,
-            'raw_row': dict(zip(raw_header, cells)),
-        })
-    return rows
-
-
 _LOT_RE = re.compile(r'\bLOT[\s\-_]*0*(\d+)\b', re.IGNORECASE)
 _NETWORK_RE = re.compile(r'\bNetwork[\s\-]*([IVXLCDM]+|\d+)\b', re.IGNORECASE)
 _PHASE_RE = re.compile(r'\bPhase[\s\-]*([IVXLCDM]+|\d+)\b', re.IGNORECASE)
@@ -358,7 +314,7 @@ def _extract_report_metadata(document):
     auto retrieved by using uploaded report" -- confirmed via
     AskUserQuestion that this text lives on the title page / first
     heading, not a separate cover table or page header/footer). Always
-    a SUGGESTION, exactly like every Site/Sector match elsewhere in this
+    a SUGGESTION, exactly like every Sector match elsewhere in this
     module -- the review UI keeps every one of these three fields
     editable regardless of what's found here, and an empty string here
     just means "nothing recognized, type it in as before"."""
@@ -395,10 +351,8 @@ _REMARK_HEADING_RE = re.compile(
 def _extract_narrative_notes(document, max_chars=2000):
     """Best-effort narrative-remarks suggestion for the report's `notes`
     field (2026-09-15 follow-up: "there are so many optimization
-    remarks and recommendation in report. can we use those also?" --
-    table-shaped remarks/recommendations are already captured by
-    `_parse_recommendation_table` above; this instead walks the
-    document's own PROSE paragraphs (python-docx's `document.paragraphs`
+    remarks and recommendation in report. can we use those also?") --
+    walks the document's own PROSE paragraphs (python-docx's `document.paragraphs`
     never includes table cell text, so this can't double up with the
     table parser) looking for a heading-like line naming remarks/
     conclusions/observations, then collects whatever immediately
@@ -454,15 +408,18 @@ def _save_compressed(uploaded_file):
 
 class RfReportParsePreviewView(APIView):
     """`POST /api/v2/rf-reports/parse-preview/` -- accepts one uploaded
-    vendor .docx (multipart, field name `file`) and returns every
-    antenna change-log row and recommendation row this module's header
-    matching found, each with a best-effort Site/Sector match
-    suggestion, plus a best-effort `suggested_metadata`/`suggested_notes`
-    and a `tables_unmatched` list of any table that looked
-    recommendation-ish but wasn't classified with full confidence (see
-    `_looks_recommendation_ish`'s docstring). Nothing is saved here --
-    see this module's own docstring for the full parse-preview -> review
-    -> confirm-import flow.
+    vendor .docx (multipart, field name `file`) and returns every antenna
+    change-log row (with a best-effort Sector match), Lot-wise OSS KPI
+    row, and worst-cell KPI row this module's header matching found, plus
+    a best-effort `suggested_metadata`/`suggested_notes`. `tables_unmatched`
+    is currently always empty (2026-09-26 -- the recommendation-table
+    importer that used to populate it, for tables that looked
+    recommendation-ish but weren't classified with full confidence, was
+    removed; kept in the response shape rather than dropped in case a
+    future table type wants the same "visible even when not fully
+    classified" reporting this list originally provided). Nothing is
+    saved here -- see this module's own docstring for the full
+    parse-preview -> review -> confirm-import flow.
 
     Admin/superadmin only (same tier as every other write-adjacent
     action on this feature) -- this reads the entire uploaded document
@@ -487,10 +444,10 @@ class RfReportParsePreviewView(APIView):
             s.cell_name.strip().lower(): s
             for s in Sector.objects.select_related('site').exclude(cell_name='')
         }
-        site_by_name = {s.name.strip().lower(): s for s in Site.objects.exclude(name='')}
 
         antenna_changes = []
-        recommendations = []
+        lot_kpis = []
+        cell_kpis = []
         tables_matched = 0
         tables_unmatched = []
         for table in document.tables:
@@ -500,28 +457,17 @@ class RfReportParsePreviewView(APIView):
             if _is_antenna_change_table(header):
                 antenna_changes.extend(_parse_antenna_change_table(table, sector_by_cell))
                 tables_matched += 1
-            elif _is_recommendation_table(header):
-                recommendations.extend(_parse_recommendation_table(table, sector_by_cell, site_by_name))
+            elif _is_lot_kpi_table(header):
+                lot_kpis.extend(_parse_lot_kpi_table(table))
                 tables_matched += 1
-            elif _looks_recommendation_ish(header):
-                raw_header = _row_text(table.rows[0].cells)
-                idx_identifier = _find_col(header, 'cell name', 'existing cell', 'site name', 'cell id')
-                parsed = False
-                if idx_identifier is not None:
-                    new_rows = _parse_recommendation_table(table, sector_by_cell, site_by_name)
-                    if new_rows:
-                        recommendations.extend(new_rows)
-                        tables_matched += 1
-                        parsed = True
-                tables_unmatched.append({
-                    'header': raw_header,
-                    'row_count': max(len(table.rows) - 1, 0),
-                    'parsed': parsed,
-                })
+            elif _is_cell_kpi_table(header):
+                cell_kpis.extend(_parse_cell_kpi_table(table, sector_by_cell))
+                tables_matched += 1
 
         return Response({
             'antenna_changes': antenna_changes,
-            'recommendations': recommendations,
+            'lot_kpis': lot_kpis,
+            'cell_kpis': cell_kpis,
             'tables_scanned': len(document.tables),
             'tables_matched': tables_matched,
             'tables_unmatched': tables_unmatched,
@@ -534,9 +480,8 @@ class RfOptimizationReportViewSet(viewsets.ModelViewSet):
     """`/api/v2/rf-reports/` -- list/retrieve/create/delete for imported
     vendor RNO reports. `create` is really "confirm the reviewed
     parse-preview result" -- see RfOptimizationReportSerializer's
-    docstring for the nested antenna_changes/recommendations write shape
-    and why recommendations become ordinary Issue rows rather than a
-    second nested table on this model.
+    docstring for the nested antenna_changes/lot_kpis/cell_kpis write
+    shape.
 
     Read (list/retrieve): admin/superadmin only, unlike the read-open
     Issue tracker -- an imported report can carry uploaded vendor
