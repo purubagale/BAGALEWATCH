@@ -187,10 +187,39 @@ class SiteScatterSerializer(serializers.ModelSerializer):
 
 class SiteDetailSerializer(serializers.ModelSerializer):
     sectors = SectorSerializer(many=True, read_only=True)
+    # `techs` (2026-09-28 fix) -- SiteDetailPage.tsx's "Technologies (Live)"
+    # field (added 2026-09-27, "why city, site type, technology and status
+    # have no data") assumed this always exists on `SiteDetail` because the
+    # TypeScript type has `SiteDetail extends SiteListItem`, which DOES
+    # declare `techs: string[]`. But that TS inheritance was never backed
+    # by a real shared serializer -- `fields = '__all__'` here only pulls
+    # in real model columns, and this class never declared its own
+    # `techs` the way SiteListSerializer above does, so the API genuinely
+    # never sent this field on GET /api/v2/sites/<id>/. Real crash:
+    # `site.techs.length` on `undefined` (`Cannot read properties of
+    # undefined (reading 'length')`), reported live on /sites/KTM200.
+    # Same union logic as SiteListSerializer.get_techs, but computed
+    # directly from `obj.sectors` here (no precomputed techs_by_site
+    # context on a single-object detail view -- one extra query is fine
+    # at this scale, unlike the ~4,700-row list view that method's own
+    # docstring is being careful about).
+    techs = serializers.SerializerMethodField()
 
     class Meta:
         model = Site
         fields = '__all__'
+
+    def get_techs(self, obj):
+        techs = set()
+        if obj.tech:
+            techs.add(obj.tech.strip().upper())
+        for t in (obj.operational_technologies or []):
+            if t:
+                techs.add(str(t).strip().upper())
+        for t in obj.sectors.exclude(tech='').values_list('tech', flat=True):
+            if t:
+                techs.add(t.strip().upper())
+        return sorted(techs)
 
 
 class MenuPermissionSerializer(serializers.ModelSerializer):

@@ -660,7 +660,7 @@ export default function SiteDetailPage() {
         <FieldCard
           label="Technologies (Live)" editing={editing} readOnly
           hint="Synced from NetBox devices + any uploaded Sector Data"
-          value={site.techs.length ? site.techs.join(', ') : ''}
+          value={site.techs?.length ? site.techs.join(', ') : ''}
         />
       </div>
       <div className="site-form-row cols-2">
