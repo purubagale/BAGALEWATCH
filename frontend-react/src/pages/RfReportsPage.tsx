@@ -265,7 +265,7 @@ function ReportDetail({ report }: { report: RfOptimizationReport }) {
                   <td>{row.enb_id}</td>
                   <td>{row.enodeb_name}</td>
                   <td>{row.cell_name}</td>
-                  <td>{row.matched_sector_id ? 'Matched' : <span className="muted">No match</span>}</td>
+                  <td>{row.matched_sector_id ? `Matched → ${row.matched_site_id}` : <span className="muted">No match</span>}</td>
                   <td>{row.metric_name}</td>
                   <td>{row.pre_value}</td>
                   <td>{row.post_value}</td>
@@ -519,7 +519,7 @@ function ImportWizard({
             </label>
             <label>
               Notes (optional)
-              <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+              <textarea rows={8} value={notes} onChange={(e) => setNotes(e.target.value)} />
             </label>
           </div>
           <p className="muted">
@@ -565,7 +565,7 @@ function ImportWizard({
                     <td>
                       {row.matched_sector_id ? (
                         <button type="button" className="btn-secondary btn-small" onClick={() => updateAntenna(i, { matched_sector_id: null, matched_site_id: null })}>
-                          Matched — clear
+                          Matched → {row.matched_site_id} — clear
                         </button>
                       ) : <span className="muted">No match</span>}
                     </td>
@@ -639,7 +639,7 @@ function ImportWizard({
                     <td>
                       {row.matched_sector_id ? (
                         <button type="button" className="btn-secondary btn-small" onClick={() => updateCellKpi(i, { matched_sector_id: null })}>
-                          Matched — clear
+                          Matched → {row.matched_site_id} — clear
                         </button>
                       ) : <span className="muted">No match</span>}
                     </td>

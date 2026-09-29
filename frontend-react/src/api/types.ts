@@ -1053,6 +1053,10 @@ export interface RfCellKpiPreviewRow {
   pre_value: string
   post_value: string
   matched_sector_id: number | null
+  // 2026-09-29 addition ("with what value it is matched?") — same field
+  // RfAntennaChangePreviewRow already has, so the review table can show
+  // which site a "Matched" row resolved to.
+  matched_site_id: string | null
 }
 
 // A table from parse-preview that wasn't classified by any of this

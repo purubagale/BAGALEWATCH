@@ -259,6 +259,11 @@ def _parse_cell_kpi_table(table, sector_by_cell):
             'pre_value': _cell(cells, 4),
             'post_value': _cell(cells, 5),
             'matched_sector_id': match.id if match else None,
+            # 2026-09-29 addition ("with what value it is matched?") -- same
+            # field _parse_antenna_change_table already returns, so the
+            # review table can show WHICH site a "Matched" row resolved to,
+            # not just that a match exists.
+            'matched_site_id': match.site_id if match else None,
         })
     return rows
 
@@ -348,7 +353,7 @@ _REMARK_HEADING_RE = re.compile(
 )
 
 
-def _extract_narrative_notes(document, max_chars=2000):
+def _extract_narrative_notes(document, max_chars=20000):
     """Best-effort narrative-remarks suggestion for the report's `notes`
     field (2026-09-15 follow-up: "there are so many optimization
     remarks and recommendation in report. can we use those also?") --
@@ -358,7 +363,18 @@ def _extract_narrative_notes(document, max_chars=2000):
     conclusions/observations, then collects whatever immediately
     follows it until the next heading. Heuristic and best-effort like
     every other suggestion in this module -- always reviewable/editable
-    in the form before confirm-import, never trusted blind."""
+    in the form before confirm-import, never trusted blind.
+
+    `max_chars` is a soft target checked only AFTER a whole paragraph is
+    appended, never a hard slice -- a real report's remarks section can
+    run through several "Case N:" narratives spanning many paragraphs,
+    and a mid-string cut (`text[:max_chars]`, the original 2026-09-15
+    version) chopped it off mid-sentence (found 2026-09-29, "i think
+    sentence is not terminated. so complete data is not displayed").
+    `Site.notes`/`RfOptimizationReport.notes` are both plain unbounded
+    TextFields, so there's no real reason to cap this tightly at all --
+    20000 is generous headroom over any real report seen so far, not a
+    hard ceiling this is expected to hit."""
     collected = []
     capturing = False
     for para in document.paragraphs:
@@ -381,7 +397,7 @@ def _extract_narrative_notes(document, max_chars=2000):
         if sum(len(t) for t in collected) >= max_chars:
             break
 
-    return '\n'.join(collected).strip()[:max_chars]
+    return '\n'.join(collected).strip()
 
 
 def _save_compressed(uploaded_file):

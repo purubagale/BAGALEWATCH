@@ -1414,8 +1414,11 @@ class RfOptimizationReportSerializer(serializers.ModelSerializer):
                 'cell_name': row.cell_name, 'metric_name': row.metric_name,
                 'pre_value': row.pre_value, 'post_value': row.post_value,
                 'matched_sector_id': row.sector_id,
+                # 2026-09-29 addition ("with what value it is matched?") --
+                # select_related('sector') below avoids an N+1 for this.
+                'matched_site_id': row.sector.site_id if row.sector_id else None,
             }
-            for row in obj.cell_kpis.all()
+            for row in obj.cell_kpis.select_related('sector').all()
         ]
 
     def get_activities(self, obj):
