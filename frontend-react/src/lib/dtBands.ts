@@ -156,6 +156,12 @@ export interface DtMetric {
   label: string
   unit: string
   bands: Band[]
+  // Optional short disclaimer shown alongside this metric's tab/legend
+  // (2026-09-29) — only set for 'cqi': real .trp captures never log a raw
+  // CQI value (confirmed against two real 4G DL files — see
+  // cqiFromSinr.ts), so this metric is derived from SINR, not measured
+  // directly, and every place it's shown needs to say so.
+  note?: string
 }
 
 // Every tech's list of plottable metrics, primary signal first — mirrors
@@ -180,7 +186,10 @@ export function metricsForTech(tech: DtTech): DtMetric[] {
     { key: 'rsrp', label: 'RSRP', unit: ' dBm', bands: RSRP_BANDS },
     { key: 'rsrq', label: 'RSRQ', unit: ' dB', bands: RSRQ_BANDS },
     { key: 'sinr', label: 'SINR', unit: ' dB', bands: SINR_BANDS },
-    { key: 'cqi', label: 'CQI', unit: '', bands: CQI_BANDS },
+    {
+      key: 'cqi', label: 'CQI', unit: '', bands: CQI_BANDS,
+      note: 'Derived from SINR (no real .trp capture logs a raw CQI value) — an estimate, not a direct measurement.',
+    },
     // DL Throughput (2026-09-23, "Download Plot from PDCP") -- DriveTestSample.dl
     // already stored/returned per sample and already flows through
     // compare()/DtCompareReportView (see DT_COMPARE_METRICS in

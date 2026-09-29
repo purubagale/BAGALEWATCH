@@ -275,6 +275,7 @@ export default function DtCoverageMap({
           </button>
         ))}
       </div>
+      {activeMetric.note && <div className="muted" style={{ fontSize: 10, marginBottom: 6 }}>{activeMetric.note}</div>}
       <MapContainer key={mapKey} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
         <InvalidateOnResize />
         {bounds && !viewReady && <FitToBounds bounds={bounds} onDone={() => setViewReady(true)} />}

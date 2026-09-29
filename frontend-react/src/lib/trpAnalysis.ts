@@ -34,6 +34,14 @@
 // per-fix comments below for which behaviours are shared vs. scoped to
 // one caller (e.g. the serving-identity forward-fill here is relied on by
 // the session path's coverage-plot cell attribution).
+//
+// One deliberate exception to "fully self-contained, no shared code"
+// above (2026-09-29): cqiFromSinr.ts. CQI is a SINR-derived quantity by
+// definition (see that file's own docstring for the real-file evidence
+// and citation), not a low-level ZIP/protobuf primitive, so importing it
+// here doesn't couple this module to another PARSER the way the module
+// docstring above is being careful to avoid.
+import { deriveCqiFromSinr } from './cqiFromSinr'
 
 // ── Low-level primitives (v1 lines ~9184-9411) ──────────────────────────
 
@@ -1231,6 +1239,16 @@ export async function trpaAnalyzeFile(buffer: ArrayBuffer, fileName: string, opt
       if (sk) for (const key of sk) srv[key] = val
       const nk = neighborKeysByPath.get(path)
       if (nk) for (const key of nk) nbr[key] = val
+    }
+    // CQI derivation from SINR (2026-09-29) — see cqiFromSinr.ts's own
+    // docstring for the real-file evidence that no raw CQI field exists
+    // in these captures at all. Only fills a genuinely missing `cqi` for
+    // THIS row (never overwrites a real declared value, on the off
+    // chance some other device/TEMS config someday does report one) and
+    // only when this row actually has a real sinr reading to derive
+    // from — never fabricated when sinr itself is missing too.
+    if (chosenTech === '4G' && srv.cqi == null && typeof srv.sinr === 'number') {
+      srv.cqi = deriveCqiFromSinr(srv.sinr)
     }
     if (Object.keys(srv).length) servingRows.push({ ts: s.ts, isoTs, lat, lon, ...srv })
     if (Object.keys(nbr).length) neighborRows.push({ ts: s.ts, isoTs, lat, lon, ...nbr })
