@@ -1026,6 +1026,15 @@ export interface RfAntennaChangePreviewRow {
   raw_row: Record<string, string>
   matched_sector_id: number | null
   matched_site_id: string | null
+  // 2026-09-29 addition ("comparison should be done with both before and
+  // after... it is only for analysis before save import") — the matched
+  // Sector's CURRENT azimuth/mech_tilt/elec_tilt, purely for the review
+  // table's own before_change/after_change comparison (see
+  // antennaChangeMatch.ts). Never sent back on confirm-import; nothing
+  // here is stored anywhere new.
+  current_azimuth: number | null
+  current_mech_tilt: number | null
+  current_elec_tilt: number | null
 }
 
 // One Lot-wise OSS KPI summary row from parse-preview -- aggregate,

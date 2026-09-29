@@ -302,6 +302,17 @@ def _parse_antenna_change_table(table, sector_by_cell):
             'raw_row': dict(zip(raw_header, cells)),
             'matched_sector_id': match.id if match else None,
             'matched_site_id': match.site_id if match else None,
+            # 2026-09-29 addition ("comparison should be done with both
+            # before and after... it is only for analysis before save
+            # import") -- the matched Sector's CURRENT azimuth/mech_tilt/
+            # elec_tilt, returned purely for the frontend's own review-time
+            # comparison against before_change/after_change. Nothing here
+            # is stored anywhere new -- this just reflects data already in
+            # the database back into the parse-preview response so the
+            # review table can show it before anything is saved.
+            'current_azimuth': match.azimuth if match else None,
+            'current_mech_tilt': match.mech_tilt if match else None,
+            'current_elec_tilt': match.elec_tilt if match else None,
         })
     return rows
 
