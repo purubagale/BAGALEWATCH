@@ -36,11 +36,28 @@ from .views import get_visible_menu_items
 # admin-page action. Shortcut cards (built from MenuItem in
 # DashboardView._catalog) are what a superadmin can actually add to
 # without touching Python.
+#
+# `default_visible` (2026-09-29, "initially do not display critical
+# sites and warning sites count in default") -- only affects a user who
+# has never touched their OWN Customize layout for that specific card
+# (DashboardView.get()'s `cfg.visible if cfg else default_visible`); a
+# user who already saved an explicit preference, hidden or shown, is
+# never overridden by a change here. Omitted entirely = visible by
+# default, same as before this existed.
 STAT_CARDS = [
     {'key': 'stat-total-sites', 'label': 'Total Sites', 'icon': '🗼'},
-    {'key': 'stat-sites-crit', 'label': 'Critical Sites', 'icon': '🔴'},
-    {'key': 'stat-sites-warn', 'label': 'Warning Sites', 'icon': '🟠'},
+    {'key': 'stat-sites-crit', 'label': 'Critical Sites', 'icon': '🔴', 'default_visible': False},
+    {'key': 'stat-sites-warn', 'label': 'Warning Sites', 'icon': '🟠', 'default_visible': False},
     {'key': 'stat-dt-sessions', 'label': 'Drive-Test Sessions', 'icon': '🚗'},
+    # 2026-09-29 addition ("display active site count, planned site
+    # count and decommisioning site count") -- Site.deployment_status is
+    # the Live Site Directory sync's own real NetBox on-air/planned/etc
+    # state (core/live_sites.py), a separate concept from `status` (this
+    # app's own KPI-health traffic light) that stat-sites-crit/warn above
+    # already read.
+    {'key': 'stat-sites-active', 'label': 'Active Sites', 'icon': '🟢'},
+    {'key': 'stat-sites-planned', 'label': 'Planned Sites', 'icon': '🧭'},
+    {'key': 'stat-sites-decommissioning', 'label': 'Decommissioning Sites', 'icon': '🚧'},
 ]
 
 
@@ -69,7 +86,15 @@ class DashboardView(APIView):
         ]
         visible_top, _ = get_visible_menu_items(user)
         for item in visible_top:
-            if item.path == '/dashboard':
+            # '/m4h8qz' is '/dashboard's own obfuscated form (migration
+            # 0019_obfuscate_dashboard_sites_paths) -- this check used to
+            # compare against the plain '/dashboard' string and silently
+            # stopped matching anything the moment that migration ran,
+            # so the Dashboard menu item stopped being excluded and
+            # showed up as a shortcut card linking to itself (found
+            # 2026-09-29, "do not display dashboard tab inside
+            # dashboard, i think it is not needed").
+            if item.path == '/m4h8qz':
                 continue
             cards.append({
                 'key': f'menu-{item.id}',
@@ -96,6 +121,12 @@ class DashboardView(APIView):
             return Site.objects.filter(status='warn').count()
         if key == 'stat-dt-sessions':
             return DriveTestSession.objects.count()
+        if key == 'stat-sites-active':
+            return Site.objects.filter(deployment_status__iexact='Active').count()
+        if key == 'stat-sites-planned':
+            return Site.objects.filter(deployment_status__iexact='Planned').count()
+        if key == 'stat-sites-decommissioning':
+            return Site.objects.filter(deployment_status__iexact='Decommissioning').count()
         return None
 
     def get(self, request):
@@ -105,6 +136,10 @@ class DashboardView(APIView):
         out = []
         for i, card in enumerate(catalog):
             cfg = saved.get(card['key'])
+            # Popped rather than left in `card` -- it's an input to this
+            # loop's own default-visibility decision, not part of the
+            # card shape the frontend's DashboardCard type expects back.
+            default_visible = card.pop('default_visible', True)
             out.append({
                 **card,
                 'value': self._stat_value(card['key']) if card['type'] == 'stat' else None,
@@ -113,7 +148,7 @@ class DashboardView(APIView):
                 # everything else — same spacing convention as MenuItem's
                 # seeded `order` values (10, 20, 30, ...).
                 'order': cfg.order if cfg else i * 10,
-                'visible': cfg.visible if cfg else True,
+                'visible': cfg.visible if cfg else default_visible,
             })
         out.sort(key=lambda c: (c['order'], c['key']))
         return Response(out)
