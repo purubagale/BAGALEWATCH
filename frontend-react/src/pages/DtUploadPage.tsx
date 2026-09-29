@@ -250,7 +250,18 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     // engine confirmed against a real 4G DL capture (see trpAnalysis.ts's
     // module comment), not the never-verified extraction CLAUDE.md flags
     // as broken in v1's own binary decoder.
-    dl = num(row.pdschThroughput)
+    //
+    // Unit fix (2026-09-29, "DL throughput plot 66515/80703 Mbps is
+    // wrong, grey dots"): the raw field is kbps, not Mbps — its own
+    // declared valid range in declarations.cdf tops out at 350000 (a real
+    // LTE DL max, ~350 Mbps, only makes sense as 350000 kbps; 350000 Mbps
+    // is physically impossible). Passing it through unconverted inflated
+    // every reading 1000x (66515 kbps really is a normal ~66.5 Mbps),
+    // which then fell outside THROUGHPUT_BANDS' top band (max: 9999) and
+    // rendered as bandColor()'s "no match" grey fallback — the exact grey
+    // dots reported.
+    const pdschThroughputKbps = num(row.pdschThroughput)
+    dl = pdschThroughputKbps != null ? pdschThroughputKbps / 1000 : null
   } else if (tech === '3G') {
     primary = num(row.rscp)
     rscp = primary
