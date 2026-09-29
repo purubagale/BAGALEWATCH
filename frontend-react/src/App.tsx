@@ -92,6 +92,16 @@ const RescuePolicyPage = lazy(() => import('./pages/RescuePolicyPage'))
 const IssuesPage = lazy(() => import('./pages/IssuesPage'))
 const RfReportsPage = lazy(() => import('./pages/RfReportsPage'))
 const DtPlotCatalogPage = lazy(() => import('./pages/DtPlotCatalogPage'))
+// nt-frontend skill trial (2026-09-29, "lets test this frontend in our
+// application locally first, will decide later to use it or not") --
+// deliberately not in the sidebar/menu tree at all (see MenuAdminPage/
+// MenuItem — this has no MenuItem row), reachable only by navigating to
+// /style-test directly. See styleTest/StyleTestPage.tsx's own docstring
+// for the full scope of what this trial covers and why it's a full-
+// viewport overlay rather than sitting inside this app's real Layout
+// chrome. Removing this trial later is deleting src/styleTest/ plus this
+// import and its one <Route> below.
+const StyleTestPage = lazy(() => import('./styleTest/StyleTestPage'))
 
 // Reflects customized branding (2026-08-08 follow-up) into the two
 // things that live outside React's own render tree — the document
@@ -270,6 +280,9 @@ function App() {
         {withOpaqueSection('/issues', <IssuesPage />)}
         {withOpaqueSection('/rf-reports', <RfReportsPage />)}
         {withOpaqueSection('/dt-plot-catalog', <DtPlotCatalogPage />)}
+        {/* nt-frontend skill trial — no MenuSectionGate/opaque alias, this
+            is a dev-only style test, not a real feature route. */}
+        <Route path="/style-test" element={<ProtectedRoute><StyleTestPage /></ProtectedRoute>} />
         {/* /topology retired 2026-08-05 — its "scope: all/region/district"
             concept was folded directly into the Sites map/tree (see
             SitesPage.tsx/SidebarTree.tsx), so a separate page/route is no
