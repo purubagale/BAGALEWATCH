@@ -6,6 +6,7 @@ import { useBranding, useMenuTree, useSiteSearch } from '../api/queries'
 import type { MenuTreeNode, SiteSearchParams } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { canonicalSection } from '../constants/opaqueRoutes'
+import { DtExploreStateProvider } from '../contexts/DtExploreStateContext'
 import { SearchModalContext } from '../contexts/SearchModalContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { useTreeStore } from '../store/treeStore'
@@ -420,7 +421,9 @@ export default function Layout({ children }: { children: ReactNode }) {
             </div>
           </header>
         )}
-        <main className="app-main">{children}</main>
+        <main className="app-main">
+          <DtExploreStateProvider>{children}</DtExploreStateProvider>
+        </main>
       </div>
 
       {searchOpen && (
