@@ -14,7 +14,7 @@ import {
 import { isAllowed } from '../api/types'
 import type { Issue, IssueSeverity, IssueStatus, Sector, SectorWrite, SiteDetail, SiteDtSession, SiteWrite } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
-import { DT_SESSION_HISTORY_PATH, RF_REPORTS_PATH, SITES_PATH } from '../constants/opaqueRoutes'
+import { DT_EXPLORE_PATH, DT_SESSION_HISTORY_PATH, RF_REPORTS_PATH, SITES_PATH } from '../constants/opaqueRoutes'
 import { useSearchModal } from '../contexts/SearchModalContext'
 import SiteLocationMiniMap from '../components/SiteLocationMiniMap'
 import { ISSUE_SEVERITY_LABELS, ISSUE_STATUS_LABELS, ISSUE_STATUS_ORDER } from '../lib/issueLabels'
@@ -248,6 +248,13 @@ export default function SiteDetailPage() {
   // this tab is on this exact site URL, and stripping it would mean a
   // page refresh silently reverting to "← Back to sites" instead.
   const fromSearch = searchParams.get('fromSearch') === '1'
+  // Set by DtExploreTab's "Open site detail →" quickview button
+  // (2026-09-30, "back to site redirects to site topology home page, but
+  // i need back to where i came from... explore of dtmanager"). Same URL-
+  // param convention as fromSearch above, for the same reason (survives a
+  // refresh). Checked after fromSearch below since the two are mutually
+  // exclusive entry points into this page.
+  const fromDtExplore = searchParams.get('from') === 'dt-explore'
   const { data: site, isLoading, error } = useSite(id)
   const { data: nearbyDtSessions } = useSiteDtSessions(id)
   const updateSite = useUpdateSite(id || '')
@@ -537,6 +544,10 @@ export default function SiteDetailPage() {
         >
           ← Back to search results
         </button>
+      ) : fromDtExplore ? (
+        <Link to={DT_EXPLORE_PATH} className="back-link">
+          ← Back to DT Explore
+        </Link>
       ) : (
         <Link to={SITES_PATH} className="back-link">
           ← Back to sites
