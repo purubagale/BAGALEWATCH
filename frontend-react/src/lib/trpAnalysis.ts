@@ -704,6 +704,45 @@ function trpaFormatRawValue(val: number | Uint8Array | null): string | number | 
   return String(val)
 }
 
+// Real 3GPP TS 36.101 Table 5.7.3-1 DL EARFCN ranges, band 1-48 — used to
+// derive the true LTE band from a sample's own EARFCN (2026-09-30, "band
+// plot shows band 6 and band 40, but i think it is band 3 and band 20").
+// Two real 4G DL .trp files (0610165456.trp, 0611101538.trp) were decoded
+// with a standalone debug build of this module (dumping the raw wire
+// bytes behind `Radio.Lte.ServingCell[8].Band` directly) and BOTH showed
+// the exact same fault: the raw decoded Band value is precisely 2x the
+// band its own EARFCN unambiguously maps to for that same sample (EARFCN
+// 1300 → 1815 MHz, squarely inside Band 3's DL range, while the file's
+// Band field read 6; EARFCN 6375 → 813.5 MHz, squarely inside Band 20's
+// DL range, while the file's Band field read 40) — sustained across tens
+// or hundreds of thousands of consecutive samples in each phase, not a
+// transient blip, so this isn't real network behaviour (no UE hops
+// between a real Band 6, which has no valid LTE EARFCN allocation at
+// all, and Band 40 at 2300 MHz TDD, while staying on one fixed EARFCN).
+// EARFCN is a plain declared numeric field with no such discrepancy, so
+// deriving Band from it is strictly more trustworthy than the raw
+// decoded enum for this specific field.
+const LTE_BAND_DL_EARFCN: [band: number, lo: number, hi: number][] = [
+  [1, 0, 599], [2, 600, 1199], [3, 1200, 1949], [4, 1950, 2399], [5, 2400, 2649],
+  [6, 2650, 2749], [7, 2750, 3449], [8, 3450, 3799], [9, 3800, 4149], [10, 4150, 4749],
+  [11, 4750, 4949], [12, 5010, 5179], [13, 5180, 5279], [14, 5280, 5379],
+  [17, 5730, 5849], [18, 5850, 5999], [19, 6000, 6149], [20, 6150, 6449],
+  [21, 6450, 6599], [22, 6600, 7399], [23, 7500, 7699], [24, 7700, 8039],
+  [25, 8040, 8689], [26, 8690, 9039], [27, 9040, 9209], [28, 9210, 9659],
+  [29, 9660, 9769], [30, 9770, 9869], [31, 9870, 9919], [32, 9920, 10359],
+  [33, 36000, 36199], [34, 36200, 36349], [35, 36350, 36949], [36, 36950, 37549],
+  [37, 37550, 37749], [38, 37750, 38249], [39, 38250, 38649], [40, 38650, 39649],
+  [41, 39650, 41589], [42, 41590, 43589], [43, 43590, 45589], [44, 45590, 46589],
+  [45, 46590, 46789], [46, 46790, 54539], [47, 54540, 55239], [48, 55240, 56739],
+]
+
+function lteBandFromEarfcn(earfcn: number): number | null {
+  for (const [band, lo, hi] of LTE_BAND_DL_EARFCN) {
+    if (earfcn >= lo && earfcn <= hi) return band
+  }
+  return null
+}
+
 // ── Compound event extraction (2026-08-14, "detect and store... events
 // for which the log is taken like fallback events from fallback log,
 // download success event from DL log etc") ──────────────────────────────
@@ -1249,6 +1288,16 @@ export async function trpaAnalyzeFile(buffer: ArrayBuffer, fileName: string, opt
     // from — never fabricated when sinr itself is missing too.
     if (chosenTech === '4G' && srv.cqi == null && typeof srv.sinr === 'number') {
       srv.cqi = deriveCqiFromSinr(srv.sinr)
+    }
+    // Band correction (2026-09-30) — see LTE_BAND_DL_EARFCN's comment
+    // above for the real-file evidence that the raw decoded Band field is
+    // unreliable (proven exactly 2x off in both real 4G DL captures
+    // checked). EARFCN is a plain numeric field with no such issue, so it
+    // replaces the raw enum value here rather than only filling a gap —
+    // this is a correction, not a fallback for missing data.
+    if (chosenTech === '4G' && typeof srv.earfcn === 'number') {
+      const derivedBand = lteBandFromEarfcn(srv.earfcn)
+      if (derivedBand != null) srv.band = derivedBand
     }
     if (Object.keys(srv).length) servingRows.push({ ts: s.ts, isoTs, lat, lon, ...srv })
     if (Object.keys(nbr).length) neighborRows.push({ ts: s.ts, isoTs, lat, lon, ...nbr })
