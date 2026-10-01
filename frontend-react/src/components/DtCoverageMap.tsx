@@ -234,6 +234,11 @@ export default function DtCoverageMap({
   // What actually gets drawn — bounds/fitBounds above still uses the FULL
   // withGps (cheap, just a min/max pass) so the map always frames the
   // real full route even when the dots themselves are subsampled.
+  //
+  // 2026-09-29: draw-time capping was temporarily disabled to test
+  // whether it was the cause of CQI/DL Throughput showing sparse/empty
+  // (see git history) -- confirmed live: same result with or without
+  // the cap, so restored to the real cap.
   const drawnSamples = useMemo(() => subsampleForMap(withGps), [withGps])
   const bounds = useMemo(
     () => (withGps.length ? L.latLngBounds(withGps.map((s) => [s.lat as number, s.lng as number])) : null),
@@ -270,6 +275,7 @@ export default function DtCoverageMap({
           </button>
         ))}
       </div>
+      {activeMetric.note && <div className="muted" style={{ fontSize: 10, marginBottom: 6 }}>{activeMetric.note}</div>}
       <MapContainer key={mapKey} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
         <InvalidateOnResize />
         {bounds && !viewReady && <FitToBounds bounds={bounds} onDone={() => setViewReady(true)} />}

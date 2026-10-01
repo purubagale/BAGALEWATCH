@@ -1,0 +1,91 @@
+/* nt-frontend skill trial (2026-09-29) -- only StyleTestPage.tsx imports
+   this file, so its Tailwind output never reaches any other route. See
+   tailwind.config.ts for why preflight is disabled and `content` is
+   scoped to this folder alone.
+
+   Token values below are a direct port of nt-frontend.skill's Section 3
+   table, under `--nt-*` names (see tailwind.config.ts's own comment for
+   why not the skill's bare `--primary`/`--background` names). Values the
+   skill's table left blank for dark mode (Primary Hover: "—") just reuse
+   the same-mode value they'd otherwise fall back to. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.nt-style-test {
+  --nt-background: 0 0% 100%;
+  --nt-foreground: 222.2 84% 4.9%;
+  --nt-primary: 209 100% 32%;
+  --nt-primary-hover: 209 100% 28%;
+  --nt-primary-foreground: 0 0% 98%;
+  --nt-secondary: 210 40% 96.1%;
+  --nt-secondary-foreground: 222.2 47.4% 11.2%;
+  --nt-muted: 210 40% 96.1%;
+  --nt-muted-foreground: 215.4 16.3% 46.9%;
+  --nt-accent: 209 100% 32%;
+  --nt-accent-foreground: 0 0% 98%;
+  --nt-destructive: 0 84.2% 60.2%;
+  --nt-destructive-foreground: 210 40% 98%;
+  --nt-border: 214.3 31.8% 91.4%;
+  --nt-input: 214.3 31.8% 91.4%;
+  --nt-ring: 209 100% 32%;
+  --nt-card: 0 0% 100%;
+  --nt-radius: 0.5rem;
+
+  /* Sidebar tokens (Section 4A) */
+  --nt-sidebar-background: 0 0% 98%;
+  --nt-sidebar-border: 220 13% 91%;
+  --nt-sidebar-foreground: 222.2 84% 4.9%;
+  --nt-sidebar-accent: 209 100% 32%;
+  --nt-sidebar-accent-foreground: 0 0% 98%;
+
+  /* Login gradient background (Section 5B) */
+  --nt-gradient-color-1: 209 100% 32%;
+  --nt-gradient-color-2: 209 100% 28%;
+  --nt-gradient-color-3: 210 50% 93%;
+}
+
+.nt-style-test.dark {
+  --nt-background: 224 71% 4%;
+  --nt-foreground: 213 31% 91%;
+  --nt-primary: 210 40% 98%;
+  --nt-primary-hover: 210 40% 98%;
+  --nt-primary-foreground: 222.2 47.4% 11.2%;
+  --nt-secondary: 222.2 47.4% 11.2%;
+  --nt-secondary-foreground: 210 40% 98%;
+  --nt-muted: 223 47% 11%;
+  --nt-muted-foreground: 215.4 16.3% 46.9%;
+  --nt-accent: 216 34% 17%;
+  --nt-accent-foreground: 210 40% 98%;
+  --nt-destructive: 0 63% 31%;
+  --nt-destructive-foreground: 210 40% 98%;
+  --nt-border: 216 34% 17%;
+  --nt-input: 216 34% 17%;
+  --nt-ring: 216 34% 17%;
+  --nt-card: 224 71% 4%;
+
+  --nt-sidebar-background: 224 71% 4%;
+  --nt-sidebar-border: 216 34% 17%;
+  --nt-sidebar-foreground: 213 31% 91%;
+  --nt-sidebar-accent: 210 40% 98%;
+  --nt-sidebar-accent-foreground: 222.2 47.4% 11.2%;
+}
+
+/* Section 5B: sliding animated gradient background, for the login-style
+   demo panel. */
+.nt-gradient-background {
+  background: linear-gradient(
+    -45deg,
+    hsl(var(--nt-gradient-color-1)),
+    hsl(var(--nt-gradient-color-2)),
+    hsl(var(--nt-gradient-color-3)),
+    hsl(var(--nt-gradient-color-2))
+  );
+  background-size: 400% 400%;
+  animation: nt-gradient-shift 15s ease infinite;
+}
+@keyframes nt-gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}

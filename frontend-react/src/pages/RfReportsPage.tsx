@@ -10,6 +10,7 @@ import type {
   RfOptimizationReportCreate, RfReportAttachmentCategory, RfReportUnmatchedTable,
 } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
+import { compareAntennaChange } from '../lib/antennaChangeMatch'
 import { DT_SESSION_HISTORY_PATH } from '../constants/opaqueRoutes'
 
 // Vendor RNO (Radio Network Optimization) report importer (2026-09-15
@@ -44,6 +45,21 @@ const ATTACHMENT_CATEGORY_LABELS: Record<RfReportAttachmentCategory, string> = {
   source: 'Source report',
   mom: 'Minutes of Meeting',
   other: 'Other',
+}
+
+// "Before in Application" column (2026-09-29, "comparison should be done
+// with both before and after... mark it with green... if matched and red
+// with data if not matched") — review-time only, never sent back on
+// confirm-import. See antennaChangeMatch.ts's own docstring for the
+// comparison logic; this just renders whichever status it returns.
+function renderAntennaMatchBadge(row: AntennaRowState) {
+  const cmp = compareAntennaChange(row.current_azimuth, row.current_mech_tilt, row.current_elec_tilt, row.before_change, row.after_change)
+  if (cmp.status === 'no-current-data') return <span className="muted">No data</span>
+  if (cmp.status === 'mismatch') return <span className="report-badge report-badge-fail">{cmp.currentText}</span>
+  const label = cmp.status === 'matched-both' ? 'Matched with Before & After'
+    : cmp.status === 'matched-before' ? 'Matched with Before'
+    : 'Matched with After'
+  return <span className="report-badge report-badge-pass">{label}</span>
 }
 
 export default function RfReportsPage() {
@@ -265,7 +281,7 @@ function ReportDetail({ report }: { report: RfOptimizationReport }) {
                   <td>{row.enb_id}</td>
                   <td>{row.enodeb_name}</td>
                   <td>{row.cell_name}</td>
-                  <td>{row.matched_sector_id ? 'Matched' : <span className="muted">No match</span>}</td>
+                  <td>{row.matched_sector_id ? `Matched → ${row.matched_site_id}` : <span className="muted">No match</span>}</td>
                   <td>{row.metric_name}</td>
                   <td>{row.pre_value}</td>
                   <td>{row.post_value}</td>
@@ -519,7 +535,7 @@ function ImportWizard({
             </label>
             <label>
               Notes (optional)
-              <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+              <textarea rows={8} value={notes} onChange={(e) => setNotes(e.target.value)} />
             </label>
           </div>
           <p className="muted">
@@ -552,6 +568,7 @@ function ImportWizard({
                   <th>Match</th>
                   <th>Before (Azimuth/MT/ET)</th>
                   <th>After (Azimuth/MT/ET)</th>
+                  <th>Before in Application</th>
                   <th>Result</th>
                   <th>Antenna Type</th>
                   <th>Shared With</th>
@@ -565,19 +582,20 @@ function ImportWizard({
                     <td>
                       {row.matched_sector_id ? (
                         <button type="button" className="btn-secondary btn-small" onClick={() => updateAntenna(i, { matched_sector_id: null, matched_site_id: null })}>
-                          Matched — clear
+                          Matched → {row.matched_site_id} — clear
                         </button>
                       ) : <span className="muted">No match</span>}
                     </td>
                     <td><input type="text" value={row.before_change} onChange={(e) => updateAntenna(i, { before_change: e.target.value })} /></td>
                     <td><input type="text" value={row.after_change} onChange={(e) => updateAntenna(i, { after_change: e.target.value })} /></td>
+                    <td>{renderAntennaMatchBadge(row)}</td>
                     <td><input type="text" value={row.result} onChange={(e) => updateAntenna(i, { result: e.target.value })} /></td>
                     <td><input type="text" value={row.antenna_type} onChange={(e) => updateAntenna(i, { antenna_type: e.target.value })} /></td>
                     <td><input type="text" value={row.antenna_shared_with} onChange={(e) => updateAntenna(i, { antenna_shared_with: e.target.value })} /></td>
                   </tr>
                 ))}
                 {!antennaRows.length && (
-                  <tr><td colSpan={8} className="page-status">No antenna change table was found in this document.</td></tr>
+                  <tr><td colSpan={9} className="page-status">No antenna change table was found in this document.</td></tr>
                 )}
               </tbody>
             </table>
@@ -639,7 +657,7 @@ function ImportWizard({
                     <td>
                       {row.matched_sector_id ? (
                         <button type="button" className="btn-secondary btn-small" onClick={() => updateCellKpi(i, { matched_sector_id: null })}>
-                          Matched — clear
+                          Matched → {row.matched_site_id} — clear
                         </button>
                       ) : <span className="muted">No match</span>}
                     </td>

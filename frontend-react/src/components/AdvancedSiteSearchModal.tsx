@@ -13,14 +13,18 @@ import RowLimitSelect from './RowLimitSelect'
 // always-available search reachable from the top nav (see the trigger
 // button added to Layout.tsx), not scoped to any one page.
 //
-// Deliberate deviation from v1, #1: the Region/Tech/Type/Status dropdowns
-// are NOT v1's hardcoded option lists. v1 assumed Type had 4 values
-// (Macro/Micro/Indoor/Outdoor); the real v2 data has exactly one
-// (`Macro-BTS`) for every site. Per the user's explicit "only the
+// Deliberate deviation from v1, #1: the Region/Tech/Status dropdowns are
+// NOT v1's hardcoded option lists. Per the user's explicit "only the
 // parameters that are available in the system" request, every dropdown
 // here is built from the real distinct values in the already-cached
 // `useSites()` list (same `[...new Set(...)].sort()` idiom
-// SlaTrackerPage.tsx already uses for its Region filter).
+// SlaTrackerPage.tsx already uses for its Region filter). v1 assumed Type
+// had 4 values (Macro/Micro/Indoor/Outdoor); real v2 Site.type turned out
+// to be entirely dead (confirmed 2026-09-30: 0 of 5,327 sites have it set
+// — no import path has ever written to it), so the "Type" filter/dropdown
+// now reads Site.tower_type instead (GBT/RTP/RTT/wall mount/etc, from the
+// LTE Engineering Parameter import — genuinely populated, 4,183 of 5,327)
+// and is labeled "Tower Type" to match.
 //
 // Deliberate deviation from v1, #2 (2026-08-06 follow-up): v1's 5
 // KPI-threshold fields (RRC/Drop/Avail/PRB/Thru) are gone. Per "since
@@ -107,13 +111,24 @@ export default function AdvancedSiteSearchModal({
   const [error, setError] = useState<string | null>(null)
 
   const regionOptions = useMemo(() => [...new Set((sites ?? []).map((s) => s.region).filter(Boolean))].sort(), [sites])
+  // Deployment Status (2026-09-30, "update search parameters also as our
+  // application also updated") — same real-distinct-values convention as
+  // regionOptions above, not a hardcoded list, since the Live Site
+  // Directory sync's own vocabulary for this isn't something to guess at.
+  const deploymentStatusOptions = useMemo(
+    () => [...new Set((sites ?? []).map((s) => s.deployment_status).filter(Boolean))].sort(),
+    [sites],
+  )
   // Unioned with a fixed ['2G', '3G'] — see the module comment above for
   // why those two wouldn't reliably appear from real Site.tech values alone.
   const techOptions = useMemo(
     () => [...new Set([...(sites ?? []).map((s) => s.tech).filter(Boolean), '2G', '3G'])].sort(),
     [sites],
   )
-  const typeOptions = useMemo(() => [...new Set((sites ?? []).map((s) => s.type).filter(Boolean))].sort(), [sites])
+  // Tower Type (2026-09-30, "Site.type is dead -- wire it to Tower Type")
+  // — real distinct values from Site.tower_type (GBT/RTP/RTT/wall mount/
+  // etc), not the never-populated Site.type this used to read.
+  const towerTypeOptions = useMemo(() => [...new Set((sites ?? []).map((s) => s.tower_type).filter(Boolean))].sort(), [sites])
 
   function set<K extends keyof SiteSearchParams>(key: K, value: string) {
     setForm((f) => ({ ...f, [key]: value }))
@@ -198,10 +213,13 @@ export default function AdvancedSiteSearchModal({
     }
     // 'Status' (plain site-level ok/warn/crit) is dropped — it was never
     // shown in the results table below either, and the filter for it was
-    // explicitly removed (2026-08-10). Status 2G/3G stay: they ARE shown
-    // as the table's "2G"/"3G" columns — those are display fields, not
-    // the removed search filter, and CSV export should match the table.
-    const header = ['Site ID', 'Name', 'Region', 'District', 'City', 'Tech', 'Status 2G', 'Status 3G', 'Sectors', 'Has Drive Test Data']
+    // explicitly removed (2026-08-10). Status 2G/3G (2026-09-30, "for now
+    // donot use kpi related search or display... if needed in future will
+    // again use") — dropped from CSV export too, matching the table below;
+    // the underlying `status_2g`/`status_3g` fields are untouched on
+    // SiteSearchResult/the API response, only this export/display stopped
+    // reading them. Restore both columns from git history if that changes.
+    const header = ['Site ID', 'Name', 'Region', 'District', 'City', 'Tech', 'Sectors', 'Has Drive Test Data']
     const rows = results.map((r: SiteSearchResult) => [
       r.id,
       r.name,
@@ -209,8 +227,6 @@ export default function AdvancedSiteSearchModal({
       r.district,
       r.city,
       r.tech,
-      r.status_2g,
-      r.status_3g,
       String(r.sector_count),
       r.has_dt ? 'Yes' : 'No',
     ])
@@ -260,6 +276,36 @@ export default function AdvancedSiteSearchModal({
               City / District
               <input value={form.city ?? ''} onChange={(e) => set('city', e.target.value)} placeholder="e.g. Kathmandu" />
             </label>
+            {/* Deployment Status / Palika / Ward No. (2026-09-30, "update
+                search parameters also as our application also updated") —
+                real Live Site Directory fields with no search filter
+                until now (deployment_status already drives the
+                Dashboard's Active/Planned/Decommissioning tiles; palika/
+                ward_no are already shown on the Sites page's Table view). */}
+            <label>
+              Deployment Status
+              <select value={form.deployment_status ?? ''} onChange={(e) => set('deployment_status', e.target.value)}>
+                <option value="">Any</option>
+                {deploymentStatusOptions.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Palika
+              <input value={form.palika ?? ''} onChange={(e) => set('palika', e.target.value)} placeholder="e.g. Kathmandu Metropolitan City" />
+            </label>
+            <label>
+              Ward No.
+              <input
+                type="number"
+                value={form.ward_no ?? ''}
+                onChange={(e) => set('ward_no', e.target.value)}
+                placeholder="e.g. 9"
+              />
+            </label>
             <label>
               Tech
               <select value={form.tech ?? ''} onChange={(e) => set('tech', e.target.value)}>
@@ -272,10 +318,10 @@ export default function AdvancedSiteSearchModal({
               </select>
             </label>
             <label>
-              Type
-              <select value={form.type ?? ''} onChange={(e) => set('type', e.target.value)}>
+              Tower Type
+              <select value={form.tower_type ?? ''} onChange={(e) => set('tower_type', e.target.value)}>
                 <option value="">Any</option>
-                {typeOptions.map((t) => (
+                {towerTypeOptions.map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>
@@ -439,8 +485,18 @@ export default function AdvancedSiteSearchModal({
                         <th>Region</th>
                         <th>District</th>
                         <th>Tech</th>
-                        <th>2G</th>
-                        <th>3G</th>
+                        {/* Status 2G/3G KPI columns removed (2026-09-30,
+                            "for now donot use kpi related search or
+                            display... if needed in future will again
+                            use") — these briefly existed here relabeled as
+                            "2G KPI"/"3G KPI" (see the 2026-08-06/2026-09-30
+                            history in git) after a report that bare "2G"/
+                            "3G" headers were confused for a tech-presence
+                            column. Dropped outright per this request
+                            rather than kept relabeled; `status_2g`/
+                            `status_3g` are untouched on SiteSearchResult/
+                            the API, only this display stopped reading
+                            them. Restore from git history if needed. */}
                         <th>Sectors</th>
                         <th>DT Data</th>
                         <th>Location</th>
@@ -460,8 +516,6 @@ export default function AdvancedSiteSearchModal({
                           <td>{r.region}</td>
                           <td>{r.district || r.city}</td>
                           <td>{r.tech}</td>
-                          <td>{r.status_2g || '—'}</td>
-                          <td>{r.status_3g || '—'}</td>
                           <td>{r.sector_count}</td>
                           <td>{r.has_dt ? 'Yes' : 'No'}</td>
                           <td>

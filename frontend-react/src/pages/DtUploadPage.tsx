@@ -250,7 +250,18 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     // engine confirmed against a real 4G DL capture (see trpAnalysis.ts's
     // module comment), not the never-verified extraction CLAUDE.md flags
     // as broken in v1's own binary decoder.
-    dl = num(row.pdschThroughput)
+    //
+    // Unit fix (2026-09-29, "DL throughput plot 66515/80703 Mbps is
+    // wrong, grey dots"): the raw field is kbps, not Mbps — its own
+    // declared valid range in declarations.cdf tops out at 350000 (a real
+    // LTE DL max, ~350 Mbps, only makes sense as 350000 kbps; 350000 Mbps
+    // is physically impossible). Passing it through unconverted inflated
+    // every reading 1000x (66515 kbps really is a normal ~66.5 Mbps),
+    // which then fell outside THROUGHPUT_BANDS' top band (max: 9999) and
+    // rendered as bandColor()'s "no match" grey fallback — the exact grey
+    // dots reported.
+    const pdschThroughputKbps = num(row.pdschThroughput)
+    dl = pdschThroughputKbps != null ? pdschThroughputKbps / 1000 : null
   } else if (tech === '3G') {
     primary = num(row.rscp)
     rscp = primary
@@ -482,6 +493,13 @@ function buildTrpSessions(
     // still preserves the route's full geographic extent instead of
     // favoring whichever file happened to be concatenated first.
     const chronological = [...grp.samples].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
+    // 2026-09-29: the save/draw-time sample caps were temporarily
+    // disabled to test whether they were the cause of CQI/DL Throughput
+    // showing sparse/empty (see git history for that diagnostic commit,
+    // reverted here) -- confirmed live: same result with or without the
+    // cap, so sampling was never the cause. Restored to the real cap;
+    // the CQI emptiness itself is still the separate, unconfirmed
+    // internal field-name issue deferred earlier ("will deal it later").
     const wasCapped = chronological.length > TRP_SAVE_SAMPLE_CAP
     const samples = subsampleWithSparseMetrics(chronological, TRP_SAVE_SAMPLE_CAP)
     const meta: DtSessionMeta = computeSessionMeta(samples, grp.files)
@@ -528,28 +546,49 @@ type DupAction = 'cancel' | 'keep' | 'replace'
 //    Scrambling Code / BCCH / BSIC dropped from the 3G/2G templates since
 //    the user's real reference format doesn't carry them — still parsed
 //    if present in a real upload (optional fields), just not shown here.
+// PCI / ScramblingCode / BCCH+BSIC columns (2026-09-30, "include Column in
+// Excel template for upload drive test") — these were previously only
+// documented in chat, never actually added to the downloadable templates
+// (dtTemplateParser.ts always supported them via findCol('pci')/
+// findCol('scramblingcode', 'scrcode', 'scrambling')/findCol('bcch')+
+// findCol('bsic'), but no template header ever showed a real user where
+// to put them). Without one of these, core/dt_serving_cell.py's serving-
+// site matching has no physical-cell id to key off and every uploaded
+// sample stays unattributed (no site name on the coverage map) — same
+// matching this app already does for real .trp uploads, just never
+// reachable from the Excel/CSV path until a user happened to already know
+// the exact hidden column name to type in. Optional, not required (upload
+// still succeeds with them blank — see parseTemplateRows' own fail-fast
+// contract, which only throws for missing Lat/Long/primary-signal), so
+// added as trailing columns rather than reordering the existing required
+// ones a real vendor export might already match positionally.
+//
+// CQI (2026-09-30 follow-up, "include CQI column also in 4g template
+// before PCI") — same optional-column treatment, findCol('cqi'), placed
+// right before PCI per the request rather than at the very end like the
+// others above.
 const TEMPLATES: Record<DtTech, { header: string[]; sample: string[][]; fname: string }> = {
   '4G': {
-    header: ['S.N', 'Time', 'Date', 'Latitude', 'Longitude', 'Serving Cell RSRP (dBm)', 'Serving Cell RSRQ (dB)', 'Serving Cell RS SINR (dB)'],
+    header: ['S.N', 'Time', 'Date', 'Latitude', 'Longitude', 'Serving Cell RSRP (dBm)', 'Serving Cell RSRQ (dB)', 'Serving Cell RS SINR (dB)', 'CQI', 'PCI'],
     sample: [
-      ['1', '4:24:57.000', '6/12/2026', '27.0234980', '84.8843140', '-74.9', '-8.0', '10.0'],
-      ['2', '4:24:59.000', '6/12/2026', '27.0234980', '84.8843140', '-74.8', '-8.7', '10.2'],
+      ['1', '4:24:57.000', '6/12/2026', '27.0234980', '84.8843140', '-74.9', '-8.0', '10.0', '11', '134'],
+      ['2', '4:24:59.000', '6/12/2026', '27.0234980', '84.8843140', '-74.8', '-8.7', '10.2', '11', '134'],
     ],
     fname: 'dt_import_template_4g.csv',
   },
   '3G': {
-    header: ['S.N', 'Time', 'Date', 'Latitude', 'Longitude', 'Agg. Active RSCP (dBm)', 'Agg. Active Ec/Io (dB)'],
+    header: ['S.N', 'Time', 'Date', 'Latitude', 'Longitude', 'Agg. Active RSCP (dBm)', 'Agg. Active Ec/Io (dB)', 'ScramblingCode'],
     sample: [
-      ['1', '12:59:07.500', '6/11/2026', '28.22957075', '83.94927798', '-101.33', '-10.13'],
-      ['2', '12:59:08.500', '6/11/2026', '28.22957075', '83.94927798', '-102.75', '-11.55'],
+      ['1', '12:59:07.500', '6/11/2026', '28.22957075', '83.94927798', '-101.33', '-10.13', '234'],
+      ['2', '12:59:08.500', '6/11/2026', '28.22957075', '83.94927798', '-102.75', '-11.55', '234'],
     ],
     fname: 'dt_import_template_3g.csv',
   },
   '2G': {
-    header: ['S.N', 'Time', 'Date', 'Latitude', 'Longitude', 'RxLevSub (dBm) - .Server', 'RxQual Sub'],
+    header: ['S.N', 'Time', 'Date', 'Latitude', 'Longitude', 'RxLevSub (dBm) - .Server', 'RxQual Sub', 'BCCH', 'BSIC'],
     sample: [
-      ['1', '17:53:39.000', '7/2/2026', '27.6790895', '85.3496500', '-68.2', '5'],
-      ['2', '17:53:41.000', '7/2/2026', '27.6790540', '85.3496300', '-65.9', '5'],
+      ['1', '17:53:39.000', '7/2/2026', '27.6790895', '85.3496500', '-68.2', '5', '75', '42'],
+      ['2', '17:53:41.000', '7/2/2026', '27.6790540', '85.3496300', '-65.9', '5', '75', '42'],
     ],
     fname: 'dt_import_template_2g.csv',
   },

@@ -1594,6 +1594,17 @@ class BrandingSettings(models.Model):
     # own 0-means-off convention. See BrandingSettingsView.get/put for how
     # this is merged with the env value and validated.
     idle_timeout_minutes = models.PositiveIntegerField(null=True, blank=True, default=None)
+    # App-wide footer text (2026-09-30, "use... footer as style-test in
+    # all with superadmin controlled text configuration in branding") --
+    # same blank-means-default convention as every field above. Rendered
+    # by Layout.tsx (every authenticated page) and LoginPage.tsx (pre-
+    # login) via a shared FooterLine.tsx component, so both places show
+    # the SAME configured text rather than two independently-hardcoded
+    # copies drifting apart. `footer_text` is the copyright/org line;
+    # `footer_developed_by` is optional and, when blank, the whole
+    # "Developed By" line is omitted rather than rendered empty.
+    footer_text = models.CharField(max_length=200, blank=True, default='')
+    footer_developed_by = models.CharField(max_length=200, blank=True, default='')
 
     class Meta:
         db_table = 'v2_branding_settings'
@@ -2356,6 +2367,89 @@ class RescueConsentPolicyChangeLog(models.Model):
 
     def __str__(self):
         return f'{self.changed_by} -> {self.mode} @ {self.changed_at}'
+
+
+# ── Login / access audit trail (2026-10-01) ─────────────────────────────
+
+class AuthEventLog(models.Model):
+    """Audit trail for every sign-in attempt, local or SSO, successful or
+    not (2026-10-01, "create one menu item to display current log or
+    history of the application with user or any unauthentic access
+    tried... add this feature with efficient tracking"). Same
+    "log it whether or not it succeeded" posture as RescueLocationAccessLog
+    above — this table is what answers "did anyone try to log in as X" on
+    its own, independent of whether that attempt ever became a real
+    session.
+
+    `username` is the raw value TYPED (or, for an SSO failure before the
+    local account is even resolved, the IdP's own preferred_username/email
+    claim when available) — kept even when it never resolves to a real
+    `User`, since an unknown-username attempt is exactly the kind of
+    "unauthentic access tried" this exists to surface (e.g. a brute-force
+    scan trying usernames that don't exist here at all). `user` is only
+    set once a real account is identified — null for every attempt against
+    a nonexistent username, same SET_NULL-on-delete convention as
+    RescueLocationAccessLog.looked_up_by (losing the FK on a later account
+    deletion shouldn't delete the audit row).
+
+    `event` distinguishes success from the specific REASON a given attempt
+    failed (wrong password vs. locked-out vs. disabled account vs. an SSO-
+    specific rejection code) — see EVENT_CHOICES. `detail` carries any
+    extra free-text context (e.g. the SSO rejection's own exc.code, for a
+    failure code EVENT_CHOICES doesn't already encode as its own distinct
+    event).
+
+    "Efficient tracking": one row per attempt (not per request), two
+    indexed columns (`created_at` for the default newest-first list,
+    `username` for "show me every attempt against this account"), no
+    joins needed to render the list (the serializer reads `user_id`'s
+    cached label off the row itself in `user_display`, falling back to
+    the raw `username` when there's no account to join). No background
+    job, no raw-request logging of every API call — only the handful of
+    real decision points inside LoginView/SSOCallbackView ever write a
+    row, matching v1/this app's existing "log at the point of decision,
+    not via middleware" convention (see RescueLocationAccessLog's own
+    "every RescueLookupView call" framing)."""
+
+    EVENT_LOGIN_SUCCESS = 'login_success'
+    EVENT_LOGIN_FAILED = 'login_failed'
+    EVENT_LOGIN_LOCKED = 'login_locked'
+    EVENT_LOGIN_DISABLED = 'login_disabled'
+    EVENT_SSO_LOGIN_SUCCESS = 'sso_login_success'
+    EVENT_SSO_LOGIN_FAILED = 'sso_login_failed'
+    EVENT_LOGOUT = 'logout'
+    EVENT_CHOICES = [
+        (EVENT_LOGIN_SUCCESS, 'Local login succeeded'),
+        (EVENT_LOGIN_FAILED, 'Local login failed (bad credentials)'),
+        (EVENT_LOGIN_LOCKED, 'Local login blocked (too many attempts)'),
+        (EVENT_LOGIN_DISABLED, 'Local login blocked (account disabled)'),
+        (EVENT_SSO_LOGIN_SUCCESS, 'SSO login succeeded'),
+        (EVENT_SSO_LOGIN_FAILED, 'SSO login failed'),
+        (EVENT_LOGOUT, 'Signed out'),
+    ]
+    # Events that represent a real, successful session — everything else
+    # in EVENT_CHOICES is either a failure or a logout. Used by the
+    # serializer/frontend to color-code success vs. failure rather than
+    # hand-maintaining a second copy of "which of these are the good
+    # ones" wherever that distinction is needed.
+    SUCCESS_EVENTS = (EVENT_LOGIN_SUCCESS, EVENT_SSO_LOGIN_SUCCESS, EVENT_LOGOUT)
+
+    event = models.CharField(max_length=20, choices=EVENT_CHOICES, db_index=True)
+    username = models.CharField(max_length=150, blank=True, default='', db_index=True)
+    user = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='auth_events'
+    )
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=255, blank=True, default='')
+    detail = models.CharField(max_length=200, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'v2_auth_event_log'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.event}: {self.username or self.user} @ {self.created_at}'
 
 
 # ── Continuous coverage-bin rollup (2026-09-01) ─────────────────────────

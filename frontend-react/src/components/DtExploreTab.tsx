@@ -13,6 +13,7 @@ import { haversineKm } from '../lib/dtTemplateParser'
 import { pointInPolygon, polygonAverageCenter, polygonBoundingRadiusKm, type LatLng } from '../lib/geo'
 import { NEPAL_DISTRICT_BOUNDARIES } from '../lib/nepalDistrictBoundaries'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
+import { useDtExploreState } from '../contexts/DtExploreStateContext'
 
 // Sentinel metricTag value for the PCI Plot tab (2026-09-23) — never a
 // real TaggedMetric.tag (those are always "<Label>:<Tech>", e.g.
@@ -764,36 +765,26 @@ function exportKml(
 
 export default function DtExploreTab() {
   const navigate = useNavigate()
-  const [inputText, setInputText] = useState('')
-  const [radiusKm, setRadiusKm] = useState(2)
-  const [techFilter, setTechFilter] = useState<Set<DtTech>>(new Set(ALL_TECHS))
-  const [point, setPoint] = useState<{ lat: number; lng: number } | null>(null)
-  const [pointLabel, setPointLabel] = useState('')
-  const [shape, setShape] = useState<SearchShape>({ type: 'circle' })
+  // Search/selection state lives in Layout (see DtExploreStateContext's
+  // own comment) so it survives navigating to a site's detail page and
+  // back, instead of resetting every time this component unmounts.
+  const {
+    inputText, setInputText,
+    radiusKm, setRadiusKm,
+    techFilter, setTechFilter,
+    point, setPoint,
+    pointLabel, setPointLabel,
+    shape, setShape,
+    latestOnly, setLatestOnly,
+    selectedSite, setSelectedSite,
+    metricTag, setMetricTag,
+    mapLayer, setMapLayer,
+  } = useDtExploreState()
   const [error, setError] = useState<string | null>(null)
   const [sitesExpanded, setSitesExpanded] = useState(false)
   const [sessionsExpanded, setSessionsExpanded] = useState(false)
-  // "Latest per area" clustering, reused as-is from DT Session History
-  // (2026-09-13 follow-up to that page's 2026-09-12 feature -- same
-  // union-find grouping over meta.nearby_site_ids, see
-  // lib/dtSessionClustering.ts). Defaults OFF here, unlike History's
-  // default-ON: History's list spans every saved session across every
-  // area, where re-tests of one spot get buried among many unrelated
-  // areas' sessions. Explore's "Nearby Sessions" list is already scoped
-  // to one searched point/radius, so it's normally a small, already-
-  // relevant set an engineer wants to see in full -- clustering here is
-  // an opt-in for the busy, repeatedly-re-driven spot rather than the
-  // default.
-  const [latestOnly, setLatestOnly] = useState(false)
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set())
-  // "Open site detail" quickview (2026-08-05) — set by clicking either a
-  // site marker on the map (NearSitesLayer's onSelect) or a row in the
-  // "Nearby Sites" list below; same `.site-quickview` card SitesPage
-  // uses, minus its Delete button (Explore doesn't own site CRUD).
-  const [selectedSite, setSelectedSite] = useState<SiteListItem | null>(null)
   const { allMetrics } = useDtMetrics()
-  const [metricTag, setMetricTag] = useState(allMetrics[0].tag)
-  const [mapLayer, setMapLayer] = useState<'street' | 'satellite'>('street')
   const [isFullscreen, setIsFullscreen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
 
@@ -1203,7 +1194,11 @@ export default function DtExploreTab() {
                   {selectedSite.id} · {selectedSite.district}, {selectedSite.region}
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={() => navigate(`/sites/${selectedSite.id}`)}>Open site detail →</button>
+                  {/* ?from=dt-explore (2026-09-30) -- lets SiteDetailPage's
+                      back link return here instead of defaulting to Sites
+                      Topology ("back to site redirects to site topology
+                      home page, but i need back to where i came from"). */}
+                  <button onClick={() => navigate(`/sites/${selectedSite.id}?from=dt-explore`)}>Open site detail →</button>
                   <button className="btn-secondary btn-small" onClick={() => setSelectedSite(null)}>✕</button>
                 </div>
               </div>

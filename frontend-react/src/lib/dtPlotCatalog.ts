@@ -8,6 +8,14 @@
 // needed to build it -- see the "Working from real sample files" section
 // of the drive-test plotting plan for the process that flips a row from
 // 'needs-sample' to 'available' once that sample arrives.
+//
+// 2026-09-30: rows 2.4.29/30 (PS Setup Success Rate & PS Drop rate),
+// 2.4.31-34 (HOSR-Intra-Freq, tech-mode and band variants), and 2.4.37/38
+// (ViLTE AMR Codec) were removed on the user's explicit instruction ("All
+// these are not necessary to store and plot, can exclude these") — not
+// dropped for a technical reason like the other 'needs-sample' rows here.
+// The id gaps (29-34, 37-38 missing) are expected; the remaining ids keep
+// the original checklist's numbering rather than being renumbered.
 
 export type DtPlotPhase = 'pre' | 'post'
 export type DtPlotStatus = 'available' | 'needs-sample'
@@ -66,36 +74,6 @@ export const DT_PLOT_CATALOG: DtPlotCatalogEntry[] = [
     note: 'Same gap as 2.4.27 above.',
   },
   {
-    id: '2.4.29', title: 'PS Setup Success Rate and PS Drop rate plot', phase: 'pre', view: null,
-    status: 'needs-sample',
-    note: 'Partial: attempted/succeeded/failed counts are already captured per-session in meta.downloadSummary at upload time (trpaSummarizeDownloadEvents, shown by DtCallDownloadSummary.tsx during review) -- not yet surfaced as its own Pre/Post comparison view. Needs a decision on whether that\'s a real "drop rate" or just a download-attempt outcome tally before building the plot.',
-  },
-  {
-    id: '2.4.30', title: 'PS Setup Success Rate and PS Drop rate plot', phase: 'post', view: null,
-    status: 'needs-sample',
-    note: 'Same gap as 2.4.29 above.',
-  },
-  {
-    id: '2.4.31', title: 'HOSR-Intra-Freq With Tech Mode From FREE MODE DL', phase: 'pre', view: null,
-    status: 'needs-sample',
-    note: 'Only a coverage-overlap heuristic exists ("handover candidate present" -- a neighbor stronger than serving), not real handover attempt/success event counting. Needs a real 4G .trp with genuine handover events to decode and verify a HOSR field mapping against.',
-  },
-  {
-    id: '2.4.32', title: 'HOSR-Intra-Freq With Tech Mode From FREE MODE DL', phase: 'post', view: null,
-    status: 'needs-sample',
-    note: 'Same gap as 2.4.31 above.',
-  },
-  {
-    id: '2.4.33', title: 'HOSR-Intra-Freq with Band From FREE MODE DL', phase: 'pre', view: null,
-    status: 'needs-sample',
-    note: 'Same gap as 2.4.31 above, plus needs the per-handover target band recorded, not just success/failure.',
-  },
-  {
-    id: '2.4.34', title: 'HOSR-Intra-Freq with Band From FREE MODE DL', phase: 'post', view: null,
-    status: 'needs-sample',
-    note: 'Same gap as 2.4.33 above.',
-  },
-  {
     id: '2.4.35', title: 'VoLTE MOS', phase: 'pre', view: null,
     status: 'needs-sample',
     note: 'No MOS field is parsed anywhere in trpAnalysis.ts today -- this is a new TEMS field family from scratch. Needs a real VoLTE-call .trp capture to find and verify its MOS field path against.',
@@ -104,15 +82,5 @@ export const DT_PLOT_CATALOG: DtPlotCatalogEntry[] = [
     id: '2.4.36', title: 'VoLTE MOS', phase: 'post', view: null,
     status: 'needs-sample',
     note: 'Same gap as 2.4.35 above.',
-  },
-  {
-    id: '2.4.37', title: 'ViLTE AMR Codec Plot', phase: 'pre', view: null,
-    status: 'needs-sample',
-    note: 'No codec field is parsed anywhere in trpAnalysis.ts today. Needs a real ViLTE-call .trp capture to find and verify its codec field path against.',
-  },
-  {
-    id: '2.4.38', title: 'ViLTE AMR Codec Plot', phase: 'post', view: null,
-    status: 'needs-sample',
-    note: 'Same gap as 2.4.37 above.',
   },
 ]
