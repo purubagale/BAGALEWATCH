@@ -62,6 +62,17 @@
      color per theme. */
   --brand-primary-soft: rgba(var(--brand-primary-rgb), 0.16);
   --brand-primary-soft-strong: rgba(var(--brand-primary-rgb), 0.32);
+  /* Faint gold wash (2026-10-01, "change header color to faint gold";
+     follow-up "increase the hardness of color littlebit") -- same alpha-
+     over-brand-color idiom as --brand-primary-soft above, just over the
+     gold accent instead of the blue. Started at 0.08 (lower than
+     --brand-primary-soft's 0.16, since this tints a surface with a lot of
+     text/icons on it, not a small badge/selected-row fill), bumped to
+     0.14 per the follow-up -- still a wash, not a solid fill, just more
+     noticeably gold than the first pass. Same value in both themes (no
+     `[data-theme='light']` override), matching how --brand-accent itself
+     is never re-tinted per theme either. */
+  --brand-accent-soft: rgba(var(--brand-accent-rgb), 0.14);
 
   /* nt-frontend.skill's animated gradient (2026-10-01) -- moved to :root
      (was scoped to `.login-page` alone as `--login-grad-*`) so the shared
@@ -300,6 +311,30 @@ textarea:focus {
   padding: 18px 12px;
   flex-shrink: 0;
   white-space: nowrap;
+  /* Gold separator (2026-10-01, "use golden seperator for logo, menu and
+     pin section as right border") -- matches the sidebar's own existing
+     `border-right: 2px solid var(--brand-accent)` exactly, so all three
+     sections (logo, menu, pin) end up framed by the same gold line, not
+     just the sidebar's outer edge. */
+  border-bottom: 2px solid var(--brand-accent);
+}
+/* Collapsed-rail centering (2026-10-01, "when unpinned, logo is not
+   seemed to be centrally displayed as home displayed below") -- the
+   18px/12px padding above is sized for the EXPANDED 240px row (logo +
+   name + version chip) and was never overridden for the collapsed 64px
+   rail, where only the 48px logo renders (see Layout.tsx: the text/chip
+   block is conditionally omitted, not just hidden, when collapsed).
+   48px logo + 12px left + 12px right = 72px of flex-start-anchored
+   content inside a 64px box -- the logo sits 12px from the left but only
+   4px from the right, reading as shifted toward the gold border instead
+   of centered the way the nav icons below it are. Centering the single
+   remaining child directly fixes this without touching the expanded
+   layout at all (the text block's own presence pushes the row back to
+   its normal flex-start flow once it reappears). */
+.app-sidebar:not(.expanded) .app-sidebar-brand {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
 }
 /* Circular "badge" logo (2026-08-08 follow-up — "will it look better if
    both top and bottom exceeded"). A negative vertical margin equal on
@@ -351,6 +386,15 @@ textarea:focus {
   gap: 2px;
 }
 
+/* Per-item gold separator -- tried 2026-10-01 (full-width border, then a
+   short centered tick), reported "not looking good styled" the same day.
+   Removed outright rather than tweaked further: a line repeated between
+   every single row read as clutter regardless of its exact shape/length.
+   `.app-sidebar-nav`'s own `gap: 2px` above still gives rows breathing
+   room, and the active item's own `box-shadow: inset 3px 0 0
+   var(--brand-accent)` (below, on `.app-sidebar-link.active`) is the
+   gold accent that actually carries meaning here -- which item you're
+   on -- rather than a decorative line every row would have shared. */
 .app-sidebar-row { display: flex; align-items: center; }
 .app-sidebar-link {
   display: flex;
@@ -443,7 +487,10 @@ textarea:focus {
 .app-sidebar-footer {
   flex-shrink: 0;
   padding: 8px;
-  border-top: 1px solid var(--header-hover-bg);
+  /* Gold separator (2026-10-01) -- was a muted 1px line; matches
+     .app-sidebar-brand's own new border-bottom and the sidebar's existing
+     outer border-right, same reasoning as that rule's comment. */
+  border-top: 2px solid var(--brand-accent);
 }
 .app-sidebar-pin-btn {
   width: 100%;
@@ -471,16 +518,21 @@ textarea:focus {
   flex-direction: column;
   height: 100vh;
 }
-/* Breadcrumb bar — deliberately a plain neutral surface (not the bold
-   brand-colored bg the old horizontal header used), since that color
-   now lives on the sidebar; a colored bar here too would compete with it
-   and add no information of its own. */
+/* Breadcrumb bar — was a plain neutral surface (not the bold brand-
+   colored bg the old horizontal header used), since that color lived on
+   the sidebar and a colored bar here too would have competed with it.
+   2026-10-01 ("change header color to faint gold"): a faint gold wash
+   instead -- layered over `--bg-surface` (not a bare translucent
+   `--brand-accent-soft` alone) so the result is a consistent, opaque-
+   looking tint regardless of theme or whatever happens to render behind
+   this element, the same layering trick used wherever this app needs a
+   translucent color wash to look solid. */
 .app-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 18px;
-  background: var(--bg-surface);
+  background: linear-gradient(var(--brand-accent-soft), var(--brand-accent-soft)), var(--bg-surface);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   min-height: 48px;
