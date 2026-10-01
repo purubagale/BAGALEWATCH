@@ -486,6 +486,21 @@ export type MenuVisibilityMatrix = Record<string, Record<string, boolean>>
  * (core/views.py) for why Live Site Sync's own per-source state is NOT
  * part of this shape (SystemHealthPage.tsx calls useLiveSiteSources()
  * directly instead, to avoid a second source of truth for it). */
+/** GET /api/v2/system-doc/ (2026-10-01) -- "Generate Current System
+ * State" button on DocumentationPage.tsx. Same {markdown, meta} shape as
+ * MonthlyReport -- generated fresh server-side on every request, by
+ * introspecting the live model registry/menu tree/roles, not bundled at
+ * build time like the rest of that page's docs. */
+export interface SystemDocResponse {
+  markdown: string
+  meta: {
+    generated_at: string
+    version: string
+    build_tag: string
+    git_sha: string
+  }
+}
+
 export interface SystemHealthPayload {
   database: { status: 'ok' | 'down'; error: string | null }
   redis: { status: 'ok' | 'down'; error: string | null }

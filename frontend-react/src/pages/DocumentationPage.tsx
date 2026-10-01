@@ -1,5 +1,7 @@
 import { marked } from 'marked'
 import { useMemo, useState } from 'react'
+import { apiErrorMessage } from '../api/client'
+import { fetchSystemDoc } from '../api/queries'
 import { useAuth } from '../auth/AuthContext'
 
 // In-app Documentation (2026-10-01, "idea and plan" follow-up to the UTS
@@ -57,14 +59,58 @@ const DOCS: DocEntry[] = [
 
 const CATEGORY_ORDER = ['Architecture & Ops', 'Developer Docs', 'Decision Records', 'Deployment & Migration', 'Audits']
 
+// Generate Current System State (2026-10-01, "prepare documentation of
+// only current final state of application... after it is in live also")
+// -- unlike every DocEntry above (bundled at build time from docs/*.md,
+// historical/narrative), this content comes from GET /api/v2/system-doc/
+// (core/system_doc.py), generated fresh server-side on every click by
+// introspecting the live model registry/menu tree/roles -- so it stays
+// accurate after a production deploy with no manual upkeep, which is the
+// whole reason this is a button and not another bundled file.
+const GENERATED_CATEGORY = 'Current System State'
+
+function downloadBlob(blob: Blob, filename: string) {
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
 export default function DocumentationPage() {
   const { user: me } = useAuth()
   const [search, setSearch] = useState('')
   const [openDoc, setOpenDoc] = useState<DocEntry | null>(null)
+  const [generating, setGenerating] = useState(false)
+  const [generateError, setGenerateError] = useState<string | null>(null)
 
   const renderedHtml = useMemo(() => (openDoc ? marked.parse(openDoc.content, { async: false }) : ''), [openDoc])
 
   if (!me) return null
+
+  async function handleGenerate() {
+    setGenerateError(null)
+    setGenerating(true)
+    try {
+      const { markdown } = await fetchSystemDoc()
+      setOpenDoc({
+        category: GENERATED_CATEGORY,
+        title: 'Current System State',
+        description: 'Generated just now from the live database schema, menu configuration, and role setup.',
+        content: markdown,
+      })
+    } catch (err) {
+      setGenerateError(apiErrorMessage(err, 'Could not generate the current-state document.'))
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  function handleDownload() {
+    if (!openDoc) return
+    const blob = new Blob([openDoc.content], { type: 'text/markdown' })
+    downloadBlob(blob, `dtwatch_${openDoc.category === GENERATED_CATEGORY ? 'current_system_state' : openDoc.title.toLowerCase().replace(/[^a-z0-9]+/g, '_')}.md`)
+  }
 
   const q = search.trim().toLowerCase()
   const filtered = DOCS.filter((d) => !q || d.title.toLowerCase().includes(q) || d.category.toLowerCase().includes(q) || d.description.toLowerCase().includes(q))
@@ -73,9 +119,14 @@ export default function DocumentationPage() {
   if (openDoc) {
     return (
       <div className="admin-page">
-        <button className="btn-secondary btn-small" onClick={() => setOpenDoc(null)} style={{ marginBottom: 12 }}>
-          ← Back to Documentation
-        </button>
+        <div className="admin-page-actions" style={{ marginBottom: 12 }}>
+          <button className="btn-secondary btn-small" onClick={() => setOpenDoc(null)}>
+            ← Back to Documentation
+          </button>
+          <button className="btn-secondary btn-small" onClick={handleDownload}>
+            ⬇ Download .md
+          </button>
+        </div>
         <h1>{openDoc.title}</h1>
         <p className="muted">{openDoc.category}</p>
         <div className="md-report" dangerouslySetInnerHTML={{ __html: renderedHtml as string }} />
@@ -90,6 +141,20 @@ export default function DocumentationPage() {
         Architecture notes, audits, deployment guides, and decision records already written for this project — now
         browsable without repo access.
       </p>
+
+      <div className="health-card" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div>
+          <div className="health-card-title">{GENERATED_CATEGORY}</div>
+          <div className="health-card-sub">
+            Unlike the docs below, this is generated fresh right now from the live database — no history, just what
+            the application actually is today. Works the same after this is deployed to production.
+          </div>
+          {generateError && <div className="form-error form-error-inline" style={{ marginTop: 6 }}>{generateError}</div>}
+        </div>
+        <button className="btn-primary" onClick={handleGenerate} disabled={generating} style={{ whiteSpace: 'nowrap' }}>
+          {generating ? 'Generating…' : '⚙ Generate'}
+        </button>
+      </div>
 
       <input
         value={search}

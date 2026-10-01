@@ -4,8 +4,8 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import (api_auth, audit, auth_log, backup, consent, dashboard, drive_test,
                exports, issues, kpi_trend, reports, rescue, rf_audit,
-               rf_reports, roles, site_import, sso_views, telemetry_admin,
-               views)
+               rf_reports, roles, site_import, sso_views, system_doc,
+               telemetry_admin, views)
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
@@ -153,6 +153,10 @@ urlpatterns = [
     path('sla/', reports.SlaReportView.as_view(), name='sla-report'),
     path('nta/', reports.NtaReportView.as_view(), name='nta-report'),
     path('monthly-report/', reports.MonthlyReportView.as_view(), name='monthly-report'),
+    # Generate Current-State System Documentation (2026-10-01) -- see
+    # core/system_doc.py's module docstring. Backs the "Generate" button
+    # on DocumentationPage.tsx.
+    path('system-doc/', system_doc.SystemDocView.as_view(), name='system-doc'),
     path('scatter/', reports.ScatterDataView.as_view(), name='scatter-data'),
     path('kpi-trend/', kpi_trend.KpiTrendView.as_view(), name='kpi-trend'),
     path('rf-audit/data/', rf_audit.RfAuditDataView.as_view(), name='rf-audit-data'),

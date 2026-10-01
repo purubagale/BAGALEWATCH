@@ -68,6 +68,7 @@ import type {
   UserWrite,
   HealthInfo,
   SystemHealthPayload,
+  SystemDocResponse,
   AuditLogParams,
   AuditLogPageResponse,
   RescueConsentPolicy,
@@ -367,6 +368,14 @@ export async function exportAuditLogCsv(params: AuditLogParams): Promise<Blob> {
     throw new ApiError(res.status, body)
   }
   return res.blob()
+}
+
+// Backs DocumentationPage.tsx's "Generate Current System State" button
+// (2026-10-01) -- a plain async function, not useQuery, since this is
+// generate-on-click rather than auto-loaded, same reasoning
+// exportAuditLogCsv() above already uses for its own on-click fetch.
+export function fetchSystemDoc(): Promise<SystemDocResponse> {
+  return apiJson<SystemDocResponse>('/api/v2/system-doc/')
 }
 
 // ── External API keys (2026-08-12) ───────────────────────────────────────
