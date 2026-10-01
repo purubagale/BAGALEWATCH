@@ -507,20 +507,16 @@ export default function TelemetryAdminPage() {
 curl "${origin}/api/telemetry/v1/health/"`}
         </pre>
       </section>
-      <section>
-        <h2>Dev tools</h2>
-        <p className="muted">
-          Raw, per-sample view for verifying test-device uploads during development -- not a coverage or
-          subscriber-tracking feature. Superadmin-only, not linked from the main menu.
-        </p>
-        <a href="/telemetry-live-samples" className="btn-secondary btn-small">
-          Live samples (dev)
-        </a>{' '}
-        <a href="/telemetry-dt-sessions" className="btn-secondary btn-small">
-          Drive-test sessions
-        </a>
-      </section>
     </div>
   )
 }
+
+// "Dev tools" section (plain <a href> shortcuts to Live Samples and
+// Drive-test Sessions) removed (2026-09-30, "these link are seperately
+// managed, so can be removed from that admin page") -- both are now real
+// MenuItem entries under the "Telemetry" sidebar group (Live Samples via
+// migration 0072_seed_telemetry_live_samples_menuitem.py, Drive-test
+// Sessions via 0044_seed_telemetry_dt_session_menuitem.py), so this
+// page's own shortcut buttons were a redundant second way to reach the
+// same two pages.
 
