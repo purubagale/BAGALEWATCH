@@ -3,6 +3,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.core.cache import cache
 from django.db import connection, transaction
 from django.db.models import Count, Exists, OuterRef, Q
+from django.utils import timezone
 
 from django.core.files.base import ContentFile
 from rest_framework import pagination, permissions, status, viewsets
@@ -176,6 +177,16 @@ class LoginView(APIView):
     LOCKOUT_SECONDS = 15 * 60
 
     def post(self, request):
+        # Local import -- see core/auth_log.py's module docstring for why
+        # this can't be a top-level import here: auth_log.py itself
+        # imports IsSuperadminOnly FROM this module, and this module is
+        # usually the first of the two actually loaded (core/urls.py's
+        # `from . import (..., sso_views, ..., views)` would otherwise
+        # try to fully load views.py again, mid-load, through auth_log --
+        # a real circular import. Deferring this one import to call time
+        # breaks the cycle without restructuring either module.
+        from .auth_log import log_auth_event
+
         # SSO-only cutover switch (2026-08-23). Checked before anything else,
         # including the lockout counter, so a disabled password endpoint does
         # no work and cannot be used to probe which usernames exist.
@@ -190,6 +201,7 @@ class LoginView(APIView):
         cache_key = f'login_fail:{username.strip().lower()}'
 
         if username and cache.get(cache_key, 0) >= self.MAX_ATTEMPTS:
+            log_auth_event(request, 'login_locked', username=username)
             return Response(
                 {'detail': 'Too many failed login attempts. Try again in 15 minutes.'},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -199,11 +211,23 @@ class LoginView(APIView):
         if user is None:
             if username:
                 cache.set(cache_key, cache.get(cache_key, 0) + 1, self.LOCKOUT_SECONDS)
+            log_auth_event(request, 'login_failed', username=username)
             return Response({'detail': 'Invalid username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
         if not user.is_active:
+            log_auth_event(request, 'login_disabled', username=username, user=user)
             return Response({'detail': 'This account is disabled.'}, status=status.HTTP_403_FORBIDDEN)
 
         cache.delete(cache_key)
+        # Last Login fix (2026-10-01, "last login is displayed only in sso
+        # login, not in application direct login... make it for
+        # application user also") -- this is a custom User model, not
+        # Django's AbstractUser/ModelBackend flow that normally updates
+        # last_login via the user_logged_in signal, so nothing was ever
+        # writing it for a local sign-in -- sso_views.py's SSOCallbackView
+        # was the only place that did. Mirrors that exact update.
+        user.last_login = timezone.now()
+        user.save(update_fields=['last_login'])
+        log_auth_event(request, 'login_success', user=user)
         refresh = RefreshToken.for_user(user)
         data = MeSerializer(user).data
         data['access'] = str(refresh.access_token)
@@ -230,6 +254,9 @@ class LogoutView(APIView):
         # from here. '' means there is nothing to end (local account, SSO
         # off, or the retained ID token is gone) and the SPA just clears its
         # own tokens, exactly as before.
+        from .auth_log import log_auth_event
+        log_auth_event(request, 'logout', user=request.user)
+
         logout_url = sso.end_session_url_for(request.user)
         if logout_url:
             return Response({'keycloak_logout_url': logout_url})
@@ -563,10 +590,26 @@ class SiteSearchView(APIView):
     Query params (all optional, combined with AND): `q` (site ID/name
     substring), `region` (exact), `city` (substring, matches city OR
     district — v2 splits what v1 calls one "City / District" field into
-    two real columns), `tech` (substring, Site.tech OR any sector's
-    tech), `type` (substring), `cell_name` (substring, any sector),
-    `cell_active_status` (substring, any sector), `has_location` (`1` or
-    `0`), `has_dt` (`1` or `0`).
+    two real columns), `deployment_status` (exact, the Live Site
+    Directory's own on-air/planned/etc state), `palika` (substring),
+    `ward_no` (exact integer), `tech` (substring, Site.tech OR any
+    sector's tech), `tower_type` (substring, Site.tower_type — see its own
+    2026-09-30 comment below for why this isn't `type`), `cell_name`
+    (substring, any sector), `cell_active_status` (substring, any sector),
+    `has_location` (`1` or `0`), `has_dt` (`1` or `0`).
+
+    **2026-09-30 rework — `deployment_status`/`palika`/`ward_no` added.**
+    Per "update search parameters also as our application also updated":
+    these three are real Site fields from the Live Site Directory sync
+    (2026-08-26) that had no search filter at all until now, despite
+    `deployment_status` already driving the Dashboard's Active/Planned/
+    Decommissioning tiles and `palika`/`ward_no` already being shown on
+    the Sites page's Table view. Same conventions as their siblings above:
+    `deployment_status` exact (frontend dropdown, real distinct values,
+    same as SiteViewSet.get_queryset()'s own `status` filter), `palika`
+    substring (same as `city`), `ward_no` exact integer (silently ignored
+    if not a valid int, since it's a plain number input with no
+    client-side validation).
 
     **`sector_expansion`, 2026-08-09 follow-up: "my major concern is to
     find expanded sector list... add search parameter with all sector
@@ -624,6 +667,35 @@ class SiteSearchView(APIView):
         if city:
             qs = qs.filter(Q(city__icontains=city) | Q(district__icontains=city))
 
+        # Deployment Status / Palika / Ward No. (2026-09-30, "update search
+        # parameters also as our application also updated") — all three
+        # are real Live Site Directory sync fields (2026-08-26) that
+        # postdate this modal's last rework and had no search filter at
+        # all until now. `deployment_status` is exact match, same
+        # convention as SiteViewSet.get_queryset()'s own `status` filter
+        # (frontend derives its dropdown from real distinct values, so
+        # whatever it sends is already a value known to appear verbatim on
+        # some site — no need to tolerate casing/spacing drift the way a
+        # free-typed field would). `palika` is substring, same convention
+        # as `city` above (free-text, high-cardinality, no fixed list).
+        # `ward_no` is an exact integer match; a non-numeric value is
+        # ignored rather than erroring, since it's a plain number input
+        # with no client-side validation stopping a stray non-digit paste.
+        deployment_status = (request.query_params.get('deployment_status') or '').strip()
+        if deployment_status:
+            qs = qs.filter(deployment_status=deployment_status)
+
+        palika = (request.query_params.get('palika') or '').strip()
+        if palika:
+            qs = qs.filter(palika__icontains=palika)
+
+        ward_no = (request.query_params.get('ward_no') or '').strip()
+        if ward_no:
+            try:
+                qs = qs.filter(ward_no=int(ward_no))
+            except ValueError:
+                pass
+
         # `tech` matches either the site's own Site.tech OR any of its
         # sectors' Sector.tech — 2G/3G values on this real dataset live
         # almost entirely on the sector rows (from the per-tech Sector
@@ -640,9 +712,17 @@ class SiteSearchView(APIView):
                 | Exists(Sector.objects.filter(site_id=OuterRef('pk'), tech__icontains=tech))
             )
 
-        type_ = (request.query_params.get('type') or '').strip()
-        if type_:
-            qs = qs.filter(type__icontains=type_)
+        # Tower Type (2026-09-30, "there is only 2g and 3g in tech, what is
+        # type here?... fix it") — confirmed directly against the live
+        # data that `Site.type` is blank for EVERY site (0 of 5,327); no
+        # import path has ever written to it, so this filter could never
+        # match anything. `Site.tower_type` is the real, populated
+        # equivalent (4,183 of 5,327, from the LTE Engineering Parameter
+        # import) — renamed the param to match so it doesn't silently
+        # claim to filter a field it doesn't.
+        tower_type = (request.query_params.get('tower_type') or '').strip()
+        if tower_type:
+            qs = qs.filter(tower_type__icontains=tower_type)
 
         cell_name = (request.query_params.get('cell_name') or '').strip()
         if cell_name:
@@ -697,6 +777,30 @@ class SiteSearchView(APIView):
         # to walk every DriveTestSession's meta blob twice per request.
         if dt_site_ids is None:
             dt_site_ids = self._sites_with_dt_coverage()
+
+        # TECH column fix (2026-09-30, "why tech is empty here" — a
+        # tech=2G search returned real matching sites with a blank TECH
+        # column for every single row). Root cause confirmed directly
+        # against the live data: `Site.tech` is blank for EVERY site in
+        # the database (0 of 5,327) — nothing in any current import or
+        # Live Site Directory sync path has ever written to it; the real
+        # tech info lives on Sector.tech and Site.operational_technologies
+        # instead (same reasoning the `tech` FILTER above already applies
+        # via Exists()/operational_technologies__contains, and the exact
+        # union SiteListSerializer.get_techs() computes for the Sites
+        # page). The old `'tech': s.tech` below always echoed that
+        # permanently-empty field back. Reuses SiteViewSet._techs_by_site's
+        # one bulk (site_id, tech) query rather than an N+1 per result row.
+        techs_by_site = SiteViewSet._techs_by_site(sites_list)
+
+        def display_tech(s):
+            techs = set(techs_by_site.get(s.id, ()))
+            if s.tech:
+                techs.add(s.tech.strip().upper())
+            for t in (s.operational_technologies or []):
+                if t:
+                    techs.add(str(t).strip().upper())
+            return ', '.join(sorted(techs))
 
         if sector_expansion:
             # Sector-wise rows (2026-08-09 follow-up: "it is giving
@@ -763,7 +867,7 @@ class SiteSearchView(APIView):
                 'region': s.region,
                 'city': s.city,
                 'district': s.district,
-                'tech': s.tech,
+                'tech': display_tech(s),
                 'status': s.status,
                 'status_2g': s.status_2g,
                 'status_3g': s.status_3g,
@@ -1206,7 +1310,7 @@ class BrandingSettingsView(APIView):
     # times.
     TEXT_FIELDS = [
         'app_name', 'login_subtitle', 'login_username_label', 'login_password_label', 'login_button_text',
-        'login_disclaimer',
+        'login_disclaimer', 'footer_text', 'footer_developed_by',
     ]
 
     def put(self, request):

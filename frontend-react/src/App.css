@@ -63,6 +63,17 @@
   --brand-primary-soft: rgba(var(--brand-primary-rgb), 0.16);
   --brand-primary-soft-strong: rgba(var(--brand-primary-rgb), 0.32);
 
+  /* nt-frontend.skill's animated gradient (2026-10-01) -- moved to :root
+     (was scoped to `.login-page` alone as `--login-grad-*`) so the shared
+     `.nt-gradient-bg` class below can be reused anywhere, not just the
+     login page -- see that class's own comment for where. Forced-light in
+     both themes, same as `.login-page`'s own 2026-09-30 decision: dutychart's
+     own --gradient-color-1/2/3, same values the trial page's Section 5B
+     preview uses (in HSL there vs hex here). */
+  --nt-gradient-1: #0054a3;
+  --nt-gradient-2: #004a8f;
+  --nt-gradient-3: #e4edf6;
+
   /* Neutral surface scale (dark, default) */
   --bg-app: #0b0d12;
   --bg-surface: #12151c;
@@ -554,6 +565,64 @@ textarea:focus {
   overflow: auto;
 }
 
+/* Shared animated gradient background (2026-10-01, "bottom style with
+   gradient can be used in footer using nt-frontend.skill") -- was
+   `.login-page`'s own private rule; pulled out into a reusable class,
+   grouped onto the same declaration as `.login-page` and `.app-footer`
+   directly (rather than adding an `nt-gradient-bg` class to either
+   element's JSX) so both automatically share one background/animation
+   instead of a second hand-copied gradient. See `--nt-gradient-1/2/3`'s
+   own comment (near :root's brand colors) for the color values. */
+.nt-gradient-bg, .login-page, .app-footer {
+  background: linear-gradient(-45deg, var(--nt-gradient-1), var(--nt-gradient-2), var(--nt-gradient-3), var(--nt-gradient-2));
+  /* 400% with an animated background-position is what makes the gradient
+     drift rather than sit still — the size is the mechanism, not padding. */
+  background-size: 400% 400%;
+  animation: loginGradientShift 15s ease infinite;
+}
+@keyframes loginGradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+/* A 15s infinite animation is exactly what this opts out of. The gradient
+   still renders, it just stops drifting. */
+@media (prefers-reduced-motion: reduce) {
+  .nt-gradient-bg, .login-page, .app-footer { animation: none; }
+}
+
+/* App-wide footer (2026-09-30, "use... footer... in all with superadmin
+   controlled text configuration in branding"; follow-up "i cant see this
+   footer... display configurable footer text wrapping centrally on this
+   footer in every page module or page"; 2026-10-01 follow-up, "bottom
+   style with gradient can be used in footer") — shared FooterLine.tsx. In
+   Layout.tsx it's a sibling of `.app-main` inside `.app-content-col`
+   (`flex-shrink: 0`, same docked-bar pattern as `.app-sidebar-footer`),
+   NOT nested inside `.app-main`'s own scroll area — a full-height map/
+   table page already fills that area on its own, so a footer trailing
+   after it there sat below the fold, effectively invisible without an
+   extra scroll past the whole page. Docking it as its own flex row keeps
+   it always visible at the bottom of the viewport on every page.
+
+   Now shares `.nt-gradient-bg` with `.login-page` (both forced-light,
+   both themes) instead of the earlier plain `--text-dim`-on-surface
+   treatment -- text color is the same dark, low-opacity choice
+   `.login-version`/`.login-disclaimer` already proved readable across
+   this exact gradient, used unconditionally in BOTH contexts now that
+   they share one background; no `.login-page`-scoped override needed
+   any more. */
+.app-footer {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  text-align: center;
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.45);
+}
+.login-page .app-footer { padding: 0; margin-top: 4px; }
+.app-footer-line { max-width: 100%; word-wrap: break-word; }
+.app-footer-line + .app-footer-line { margin-top: 2px; }
+.app-footer-developed-by-name { font-weight: 600; }
+
 /* ── Login ─────────────────────────────────────────────────────── */
 /* Matched to dutychart's login screen (2026-08-23, "make whole login page
    same as dutychart with current contents"), so the two internal NTC apps
@@ -567,25 +636,29 @@ textarea:focus {
    pill badge above the card, circular avatar, pill-shaped icon-prefixed
    inputs).
 
-   Two deliberate departures from the reference:
+   One deliberate departure from the reference: its primary is
+   hsl(209 100% 32%) = #0054A3, which is within a hair of this app's own
+   --brand-primary #0153A5, so the shared blue needs no new token — the
+   match is already there.
 
-   1. dutychart's login is light-only and hardcodes white/gray-300/gray-800.
-      This app is dark-FIRST (`:root` is the dark theme, `[data-theme=
-      'light']` overrides it) and has a working theme toggle on this very
-      page, so everything here is expressed in tokens and the gradient gets
-      a dark default with dutychart's exact colors as the light override.
-      Hardcoding the reference's colors would have produced an unreadable
-      dark mode.
-   2. Its primary is hsl(209 100% 32%) = #0054A3, which is within a hair of
-      this app's own --brand-primary #0153A5, so the shared blue needs no
-      new token — the match is already there. */
+   2026-08-23 -> 2026-09-30 update: this originally gave the gradient a
+   DARKER default (for this app's dark-FIRST `:root` theme) and only used
+   dutychart's exact light colors under `[data-theme='light']`, since
+   dutychart's own login is light-only and hardcodes white/gray-300/
+   gray-800. Per explicit request ("lets use the animated gradient login
+   background also (broken the login page's working dark theme is ok) but
+   inside dark theme also should be available"), the gradient is now
+   FORCED to dutychart's light colors in both themes. The rest of this
+   page's card/text styling still reads its normal theme tokens, so dark
+   theme can look mismatched against this now-always-light background;
+   that tradeoff was explicitly accepted.
+
+   2026-10-01: the gradient/animation declarations themselves moved to the
+   shared `.nt-gradient-bg, .login-page, .app-footer` rule above (`--nt-
+   gradient-1/2/3` at :root), so `.app-footer` could reuse the identical
+   background instead of a second hand-copied gradient -- this rule only
+   carries the page's LAYOUT now, not the background. */
 .login-page {
-  /* Dark-theme default (this app's `:root`). Same -45deg 4-stop structure
-     dutychart animates, darkened so the card still reads against it. */
-  --login-grad-1: #0a2f52;
-  --login-grad-2: #05203a;
-  --login-grad-3: #0b0d12;
-
   min-height: 100%;
   width: 100%;
   display: flex;
@@ -596,33 +669,6 @@ textarea:focus {
   padding: 48px 16px;
   position: relative;
   overflow: auto;
-  background: linear-gradient(
-    -45deg,
-    var(--login-grad-1),
-    var(--login-grad-2),
-    var(--login-grad-3),
-    var(--login-grad-2)
-  );
-  /* 400% with an animated background-position is what makes the gradient
-     drift rather than sit still — the size is the mechanism, not padding. */
-  background-size: 400% 400%;
-  animation: loginGradientShift 15s ease infinite;
-}
-:root[data-theme='light'] .login-page {
-  /* dutychart's own --gradient-color-1/2/3, converted from HSL. */
-  --login-grad-1: #0054a3;
-  --login-grad-2: #004a8f;
-  --login-grad-3: #e4edf6;
-}
-@keyframes loginGradientShift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-/* A 15s infinite animation is exactly what this opts out of. The gradient
-   still renders, it just stops drifting. */
-@media (prefers-reduced-motion: reduce) {
-  .login-page { animation: none; }
 }
 
 .login-theme-toggle { position: absolute; top: 16px; right: 16px; }
@@ -1674,6 +1720,29 @@ textarea:focus {
   font-weight: 800;
 }
 
+/* Access Log (2026-10-01) -- same badge shape as .issue-badge above,
+   just a plain success/fail split (no per-severity gradient needed for
+   a login attempt — it either succeeded or it didn't). */
+.auth-event-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border-radius: 4px;
+  padding: 2px 7px;
+  display: inline-block;
+  white-space: nowrap;
+}
+.auth-event-badge-success {
+  color: var(--status-success);
+  background: var(--status-success-bg-subtle);
+  border: 1px solid var(--status-success-border);
+}
+.auth-event-badge-fail {
+  color: var(--status-danger);
+  background: var(--status-danger-bg-subtle);
+  border: 1px solid var(--status-danger-border);
+}
+
 /* RF Reports page (2026-09-15 vendor RNO report importer) -- the
    expand/collapse toggle on each imported report row, and its plain
    attachment list, both first used there. */
@@ -1752,24 +1821,64 @@ textarea:focus {
   border-collapse: collapse;
   font-size: 13px;
 }
+/* Rounded header corners (2026-10-01, "top corner is flat not as
+   referenced") -- the trial's table wraps the whole thing in a
+   `rounded-md border` container div; adding that wrapper here would mean
+   touching every one of this class's many call sites' JSX. Rounding the
+   header row's own outer corners directly gets the same visible result
+   (the flat-corner complaint was specifically about the header bar) --
+   `border-radius` on an individual `th`/`td` renders correctly under
+   `border-collapse: collapse`, no wrapper needed. Bottom corners are left
+   square: unlike the header (always exactly one row), the last body row
+   isn't a fixed target -- an empty/loading table has no last row to round,
+   and rounding it would need a `:last-child` selector repeated for every
+   possible "last column" shape this class's many tables use. */
+.admin-table thead tr:first-child th:first-child { border-top-left-radius: 6px; }
+.admin-table thead tr:first-child th:last-child { border-top-right-radius: 6px; }
+/* Row-separator-only borders (2026-10-01, same table-style port) --
+   was a full per-cell grid (border on all 4 sides of every th/td); the
+   trial's table only borders the bottom of each row, which reads cleaner
+   against the new solid-color header (a full grid around a solid-color
+   header cell looked boxed-in/busy by comparison). Moved to `td`-only
+   below, so `th` has no border at all -- a clean edge under the header
+   bar, no seam. */
 .admin-table th, .admin-table td {
-  border: 1px solid var(--border);
   padding: 6px 10px;
   text-align: left;
 }
-/* Header styling (2026-08-07) — small caps + letter-spacing, matching
-   the micro-copy treatment already used elsewhere (.report-card-label,
-   .dt-explore-list-title) so table headers read as one consistent
-   "section label" style across the app instead of just being slightly
-   darker body text. */
+.admin-table td { border-bottom: 1px solid var(--border); }
+/* Header styling (2026-08-07 small-caps/muted treatment -> 2026-10-01
+   solid brand-blue bar, "can we use body style also as attached" --
+   ported from the nt-frontend.skill trial page's Section 9 table
+   preview). Applied here on the ONE shared `.admin-table` class rather
+   than per-page, so every table in the app (DT Session History, Sites,
+   Sectors, Advanced Search, RF Audit, etc.) gets the same header at once
+   -- explicitly confirmed with the user before doing this, since it's a
+   much bigger blast radius than an isolated page restyle.
+
+   Uses this app's OWN `--brand-primary`/`--text-on-brand` tokens, not a
+   literal port of the trial's `dark:bg-card` dark-mode override --
+   that override paired a near-black card background with a near-black
+   `--nt-primary-foreground` text color in the trial's own dark palette,
+   which reads as invisible dark-on-dark (an apparent bug in the trial,
+   not something to replicate). `--brand-primary` + `--text-on-brand`
+   is this app's existing, already-theme-tested "solid brand button"
+   pair (same as .btn-primary, the topbar, active toolbar buttons) --
+   it doesn't need a dark-theme override at all, since it's a fixed-color
+   block that doesn't inherit the surrounding surface color either way. */
 .admin-table th {
-  background: var(--bg-surface);
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--text-muted);
+  background: var(--brand-primary);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-on-brand);
 }
+/* Row hover (2026-10-01, same table-style port) — every row, not just
+   explicitly `-row-clickable` ones, matching the trial's `hover:bg-muted/50`
+   applied unconditionally. `.admin-table-row-clickable`'s own longer-
+   standing rule below still applies as-is (same `--bg-hover`, so this
+   isn't a visible change for those rows, just extends the same highlight
+   to plain non-clickable tables too). */
+.admin-table tbody tr:hover { background: var(--bg-hover); }
 /* Advanced Site Search (2026-08-06) result rows navigate to site detail on click. */
 .admin-table-row-clickable { transition: background-color 0.1s ease; }
 .admin-table-row-clickable:hover { background: var(--bg-hover); }
@@ -2478,6 +2587,7 @@ textarea:focus {
   align-items: center;
   justify-content: center;
   z-index: 500;
+  padding: 16px;
 }
 .modal-box {
   background: var(--bg-surface);
@@ -2486,11 +2596,25 @@ textarea:focus {
   box-shadow: var(--shadow-md);
   width: 100%;
   margin: 0 16px;
+  /* 2026-09-30 fix ("cant see close button without resizing page") -- a
+     modal with enough content to exceed the viewport height (e.g.
+     Advanced Site Search with a full filter grid + results table) had no
+     height limit at all, so `align-items: center` on the overlay pushed
+     it half off-screen at both top AND bottom -- the header and footer
+     (with Close) ended up literally outside the visible viewport, not
+     just scrolled out of view. Capping the box and letting only the body
+     scroll internally keeps the header/footer always on-screen regardless
+     of viewport size or how much content a given modal has -- shared
+     chrome, so this fixes every modal built on it, not just one. */
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.modal-hdr { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.modal-hdr { padding: 14px 18px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .modal-hdr h2 { margin: 0; font-size: 15px; }
-.modal-body { padding: 14px 18px; }
-.modal-footer { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+.modal-body { padding: 14px 18px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.modal-footer { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; flex-shrink: 0; }
 
 .dt-dup-card {
   background: var(--bg-app);
@@ -2818,10 +2942,14 @@ textarea:focus {
 .login-version {
   font-size: 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: rgba(255, 255, 255, 0.55);
+  /* Dark, not theme-conditional light/dark text (2026-09-30) -- matches
+     `.app-footer`'s own comment: the login gradient is now forced to this
+     same light variant in both themes, so the text color that used to be
+     light-theme-only is now the only color that ever needs to contrast
+     against it. */
+  color: rgba(0, 0, 0, 0.45);
   letter-spacing: 0.02em;
 }
-:root[data-theme='light'] .login-version { color: rgba(0, 0, 0, 0.45); }
 
 .about-page { max-width: 620px; }
 .about-card {

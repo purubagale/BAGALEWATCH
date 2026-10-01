@@ -2,9 +2,9 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import (api_auth, backup, consent, dashboard, drive_test, exports,
-               issues, kpi_trend, reports, rescue, rf_audit, rf_reports,
-               site_import, sso_views, telemetry_admin, views)
+from . import (api_auth, auth_log, backup, consent, dashboard, drive_test,
+               exports, issues, kpi_trend, reports, rescue, rf_audit,
+               rf_reports, site_import, sso_views, telemetry_admin, views)
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
@@ -48,6 +48,11 @@ urlpatterns = [
     path('auth/sso/login/', sso_views.SSOLoginView.as_view(), name='auth-sso-login'),
     path('auth/sso/callback/', sso_views.SSOCallbackView.as_view(), name='auth-sso-callback'),
     path('auth/sso/token/', sso_views.SSOTokenExchangeView.as_view(), name='auth-sso-token'),
+
+    # Login/access audit trail (2026-10-01) -- see core/auth_log.py's
+    # module docstring. Superadmin-only read of every sign-in attempt,
+    # local or SSO, successful or not.
+    path('auth-events/', auth_log.AuthEventLogListView.as_view(), name='auth-event-log'),
 
     # Registered BEFORE the router's `sites/<pk>/` include below —
     # Django matches urlpatterns top-to-bottom, so this literal path must

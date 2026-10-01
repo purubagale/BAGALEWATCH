@@ -8,6 +8,8 @@ import type {
   ApiKeyUpdate,
   AuditHistoryCreate,
   AuditHistoryEntry,
+  AuthEventLogPageResponse,
+  AuthEventLogParams,
   BackupSummary,
   BrandingSettings,
   BrandingSettingsWrite,
@@ -297,6 +299,25 @@ export function useDeleteUser() {
   return useMutation({
     mutationFn: (userId: number) => apiJson<void>(`/api/v2/users/${userId}/`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+
+// ── Login/access audit trail (2026-10-01) ───────────────────────────────
+// Superadmin-only, server-side paginated -- see core/auth_log.py's
+// AuthEventLogListView docstring. Same `placeholderData: (prev) => prev`
+// convention as useSitesPage above, so paging forward/filtering doesn't
+// blank the table while the next page loads.
+export function useAuthEventLog(params: AuthEventLogParams) {
+  const qs = new URLSearchParams()
+  qs.set('page', String(params.page ?? 1))
+  qs.set('page_size', String(params.page_size ?? 50))
+  if (params.event) qs.set('event', params.event)
+  if (params.username) qs.set('username', params.username)
+  if (params.success) qs.set('success', params.success)
+  return useQuery({
+    queryKey: ['auth-events', params],
+    queryFn: () => apiJson<AuthEventLogPageResponse>(`/api/v2/auth-events/?${qs.toString()}`),
+    placeholderData: (prev) => prev,
   })
 }
 

@@ -27,6 +27,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import sso
 from . import sso_config as cfg
+from .auth_log import log_auth_event
 from .models import User
 from .serializers import MeSerializer
 
@@ -119,17 +120,20 @@ class SSOCallbackView(APIView):
         # Keycloak-reported errors (user cancelled, consent denied, ...).
         if request.GET.get('error'):
             logger.info('SSO callback error from Keycloak: %s', request.GET.get('error'))
+            log_auth_event(request, 'sso_login_failed', detail='idp_error')
             return _done(_redirect_to_spa('idp_error'))
 
         code = request.GET.get('code')
         state = request.GET.get('state')
         if not code or not state:
+            log_auth_event(request, 'sso_login_failed', detail='bad_request')
             return _done(_redirect_to_spa('bad_request'))
 
         # Login-CSRF protection: `state` must match the cookie set at login.
         cookie_state = request.COOKIES.get(sso.STATE_COOKIE)
         if not cookie_state or cookie_state != state:
             logger.warning('SSO callback state/cookie mismatch (possible login CSRF)')
+            log_auth_event(request, 'sso_login_failed', detail='bad_state')
             return _done(_redirect_to_spa('bad_state'))
 
         try:
@@ -138,7 +142,17 @@ class SSOCallbackView(APIView):
             claims = sso.verify_id_token(tokens.get('id_token'), nonce=txn.get('nonce'))
         except sso.SSOError as exc:
             logger.warning('SSO callback rejected: %s (%s)', exc, exc.code)
+            log_auth_event(request, 'sso_login_failed', detail=exc.code)
             return _done(_redirect_to_spa(exc.code))
+
+        # Best-effort identity label for the two failure branches below,
+        # which reject BEFORE a local User is ever resolved -- there's no
+        # `user` object yet to log against, but the IdP's own claims
+        # already name who was attempting to sign in, which is exactly
+        # the "unauthentic access tried" this audit trail exists to catch
+        # (e.g. a real Keycloak account that was never added to the
+        # required group, repeatedly trying to reach this app).
+        claimed_username = (claims.get('preferred_username') or claims.get('email') or '').strip()
 
         # Access gate. Logged with enough context to diagnose a realm
         # misconfiguration (wrong claim path, mapper emitting full paths)
@@ -149,20 +163,24 @@ class SSOCallbackView(APIView):
                 cfg.required_group(), cfg.groups_claim(),
                 sso.get_groups(claims), sorted(claims.keys()),
             )
+            log_auth_event(request, 'sso_login_failed', username=claimed_username, detail='no_app_access')
             return _done(_redirect_to_spa('no_app_access'))
 
         try:
             user, created = sso.resolve_user(claims)
         except sso.SSOError as exc:
             logger.warning('SSO user resolution failed: %s (%s)', exc, exc.code)
+            log_auth_event(request, 'sso_login_failed', username=claimed_username, detail=exc.code)
             return _done(_redirect_to_spa(exc.code))
 
         if not user.is_active:
             logger.info('SSO login for disabled DT-WATCH account %s', user.username)
+            log_auth_event(request, 'sso_login_failed', user=user, detail='inactive_user')
             return _done(_redirect_to_spa('inactive_user'))
 
         user.last_login = timezone.now()
         user.save(update_fields=['last_login'])
+        log_auth_event(request, 'sso_login_success', user=user)
 
         logger.info(
             'SSO login: user=%s role=%s created=%s', user.username, user.role, created

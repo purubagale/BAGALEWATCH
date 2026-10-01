@@ -55,6 +55,7 @@ const KNOWN_ROUTES: { path: string; label: string }[] = [
   { path: '/i8s4kw', label: 'Issues' },
   { path: '/g3q7nx', label: 'RF Reports' },
   { path: '/k9d4wr', label: 'DT Plot Catalog' },
+  { path: '/a3x9lq', label: 'Access Log' },
 ]
 
 // Generates a random opaque-looking route token in the same style as the

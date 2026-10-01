@@ -44,6 +44,13 @@ export default function BrandingPage() {
   // server's current value" — same override pattern as appName etc. above.
   const [idleTimeoutInput, setIdleTimeoutInput] = useState<string | null>(null)
 
+  // App-wide footer text (2026-09-30, "use... footer... in all with
+  // superadmin controlled text configuration in branding") — same
+  // null-means-"use server value" local-override pattern as every field
+  // above.
+  const [footerText, setFooterText] = useState<string | null>(null)
+  const [footerDevelopedBy, setFooterDevelopedBy] = useState<string | null>(null)
+
   if (isLoading) return <div className="page-status">Loading branding settings…</div>
   if (error) return <div className="page-status page-status-error">Could not load branding settings.</div>
   if (!user) return null
@@ -64,6 +71,13 @@ export default function BrandingPage() {
   const currentLoginPasswordLabel = loginPasswordLabel ?? branding?.login_password_label ?? ''
   const currentLoginButtonText = loginButtonText ?? branding?.login_button_text ?? ''
   const currentLoginDisclaimer = loginDisclaimer ?? branding?.login_disclaimer ?? ''
+
+  const currentFooterText = footerText ?? branding?.footer_text ?? ''
+  const currentFooterDevelopedBy = footerDevelopedBy ?? branding?.footer_developed_by ?? ''
+  // Same fallback FooterLine.tsx actually renders when left blank — shown
+  // as the input's placeholder so a superadmin sees exactly what "leave
+  // this blank" means, not a generic example string.
+  const defaultFooterText = `© ${new Date().getFullYear()} ${currentName || 'DT-WATCH BTS'} - Nepal Telecom. All rights reserved.`
 
   const serverIdleTimeout = branding?.idle_timeout_minutes
   const currentIdleTimeout = idleTimeoutInput ?? (serverIdleTimeout != null ? String(serverIdleTimeout) : '')
@@ -171,6 +185,20 @@ export default function BrandingPage() {
       setSaveOk(true)
     } catch (err) {
       setSaveError(apiErrorMessage(err, 'Could not save the session timeout.'))
+    }
+  }
+
+  async function handleSaveFooter() {
+    setSaveError(null)
+    setSaveOk(false)
+    try {
+      await updateBranding.mutateAsync({
+        footer_text: currentFooterText,
+        footer_developed_by: currentFooterDevelopedBy,
+      })
+      setSaveOk(true)
+    } catch (err) {
+      setSaveError(apiErrorMessage(err, 'Could not save the footer text.'))
     }
   }
 
@@ -318,6 +346,42 @@ export default function BrandingPage() {
           />
           <button type="button" onClick={handleSaveIdleTimeout} disabled={updateBranding.isPending}>
             {updateBranding.isPending ? 'Saving…' : 'Save session timeout'}
+          </button>
+        </div>
+      </section>
+
+      <section className="branding-section">
+        <h2>Footer</h2>
+        <p className="muted">
+          Customize the app-wide footer shown at the bottom of every page and the sign-in screen. Leave the
+          copyright line blank to use the default shown below; leave "Developed By" blank to omit that line
+          entirely.
+        </p>
+        <div className="branding-login-text-grid">
+          <label>
+            Copyright line
+            <input
+              type="text"
+              value={currentFooterText}
+              onChange={(e) => setFooterText(e.target.value)}
+              placeholder={defaultFooterText}
+              maxLength={200}
+            />
+          </label>
+          <label>
+            Developed By
+            <input
+              type="text"
+              value={currentFooterDevelopedBy}
+              onChange={(e) => setFooterDevelopedBy(e.target.value)}
+              placeholder="Leave blank to omit this line"
+              maxLength={200}
+            />
+          </label>
+        </div>
+        <div className="admin-page-actions">
+          <button type="button" onClick={handleSaveFooter} disabled={updateBranding.isPending}>
+            {updateBranding.isPending ? 'Saving…' : 'Save footer'}
           </button>
         </div>
       </section>

@@ -87,20 +87,22 @@ export const OPAQUE_PATHS: Record<string, string> = {
   '/telemetry-coverage': '/t7m2kq',
   '/telemetry-admin': '/t4v9cx',
   // Live raw-sample dev/pilot-testing tool (added alongside the above) --
-  // deliberately has NO seeded MenuItem / migration entry (see
-  // TelemetryLiveSamplesPage.tsx's own comment for why), so there is
-  // nothing to "keep in sync" here the way every other entry's comment
-  // describes -- this row exists purely so withOpaqueSection's route
-  // registration for this path resolves to a real path instead of
-  // undefined.
+  // originally had NO seeded MenuItem at all (only reachable via a plain
+  // <a href> button in TelemetryAdminPage.tsx's "Dev tools" section), per
+  // explicit request to keep it superadmin-only and off the main menu.
+  // 2026-09-30 ("manage live sample page seperately in menu inside
+  // telemetry with superadmin permission") reversed that -- now seeded
+  // server-side by migration 0072_seed_telemetry_live_samples_menuitem.py
+  // as a child of the "Telemetry" group -- keep this in sync with that
+  // file, same convention as every other entry below.
   '/telemetry-live-samples': '/z3q8mn',
   // Scoped drive-test sessions over live telemetry (2026-09-01) — seeded
   // server-side by migration 0044_seed_telemetry_dt_session_menuitem.py —
   // keep this in sync with that file, same convention as every other
-  // entry. Unlike '/telemetry-live-samples' above, THIS one does get a
-  // seeded MenuItem: it's the consent-scoped, promotable replacement for
-  // that dev tool (see TelemetryDriveTestSession's docstring in
-  // core/models.py), not a superadmin-only debugging aid.
+  // entry. Unlike '/telemetry-live-samples' above, THIS one was always
+  // access='admin', not superadmin-only: it's the consent-scoped,
+  // promotable replacement for that dev tool (see
+  // TelemetryDriveTestSession's docstring in core/models.py).
   '/telemetry-dt-sessions': '/t6q9lp',
   // Rescue-location lookup pages (2026-09-03) -- seeded server-side by
   // migration 0049_rescue_menu_items.py -- keep these in sync with that
@@ -119,6 +121,10 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // 0067_seed_dt_plot_catalog_menuitem.py -- keep this in sync with that
   // file, same convention as every other entry.
   '/dt-plot-catalog': '/k9d4wr',
+  // Login/access audit trail (2026-10-01) -- seeded server-side by
+  // migration 0075_seed_access_log_menuitem.py -- keep this in sync with
+  // that file, same convention as every other entry.
+  '/access-log': '/a3x9lq',
 }
 
 export const DASHBOARD_PATH = OPAQUE_PATHS['/dashboard']

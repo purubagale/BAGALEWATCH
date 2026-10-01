@@ -131,6 +131,15 @@ class SiteListSerializer(serializers.ModelSerializer):
             'id', 'name', 'region', 'city', 'district', 'lat', 'lng',
             'type', 'tech', 'status', 'status_2g', 'status_3g', 'kpi_entered',
             'techs',
+            # 2026-09-30 ("Site.type is dead -- wire the Advanced Search
+            # Type filter to Tower Type instead") -- `type` above has never
+            # been populated by any import path (confirmed: 0 of 5,327
+            # real sites), while `tower_type` genuinely is (4,183 of
+            # 5,327, from the LTE Engineering Parameter import -- see its
+            # own comment on the Site model). Exposed here so
+            # AdvancedSiteSearchModal.tsx can derive its dropdown from
+            # real distinct values, same convention as region/tech.
+            'tower_type',
             # Live Site Directory fields (2026-09-07, Sites page Table/Map
             # rebuild) — palika/ward_no/deployment_status were already on
             # Site (core/live_sites.py's 2026-08-26 sync) but never
@@ -358,6 +367,7 @@ class BrandingSettingsSerializer(serializers.ModelSerializer):
             'app_name', 'logo', 'logo_url',
             'login_subtitle', 'login_username_label', 'login_password_label', 'login_button_text',
             'login_disclaimer', 'idle_timeout_minutes',
+            'footer_text', 'footer_developed_by',
         ]
         extra_kwargs = {'logo': {'write_only': True, 'required': False}}
 

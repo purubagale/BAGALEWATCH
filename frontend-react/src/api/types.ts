@@ -49,6 +49,11 @@ export interface SiteListItem {
   lat: number | null
   lng: number | null
   type: string
+  // 2026-09-30 -- `type` above is dead (never populated by any import
+  // path, confirmed 0 of 5,327 real sites); `tower_type` genuinely is
+  // (from the LTE Engineering Parameter import). AdvancedSiteSearchModal's
+  // "Tower Type" filter derives its dropdown from this, not `type`.
+  tower_type: string
   tech: string
   status: string
   status_2g: string
@@ -1322,11 +1327,25 @@ export interface SiteSearchParams {
   q?: string
   region?: string
   city?: string
+  // Live Site Directory fields (2026-09-30, "update search parameters
+  // also as our application also updated") — real Site fields from the
+  // 2026-08-26 sync that had no search filter until now. `deployment_status`
+  // exact match, `palika` substring, `ward_no` exact integer (sent as a
+  // string like every other query param here, parsed server-side).
+  deployment_status?: string
+  palika?: string
+  ward_no?: string
   // `tech` matches EITHER Site.tech or any sector's own Sector.tech (see
   // core/views.py's SiteSearchView docstring) — needed since real 2G/3G
   // values only ever live on sector rows, not Site.tech.
   tech?: string
-  type?: string
+  // 2026-09-30 ("Site.type is dead -- wire the Type filter to Tower
+  // Type") — substring match against Site.tower_type (GBT/RTP/RTT/wall
+  // mount/etc, from the LTE Engineering Parameter import), not the
+  // never-populated Site.type. Renamed from the old `type` param for the
+  // same reason the UI label changed from "Type" to "Tower Type" — so the
+  // param name doesn't silently lie about what field it actually filters.
+  tower_type?: string
   cell_name?: string
   // Cell Active Status (2026-08-10, "add parameter 'cell actual status'
   // with on-air, planned, dismantle") — substring match against any
@@ -1524,6 +1543,13 @@ export interface BrandingSettings {
   // visible from the login form itself, so neither is sensitive.
   sso_enabled: boolean
   local_login_enabled: boolean
+  // App-wide footer text (2026-09-30), same blank-means-default
+  // convention as the login_* fields above. Rendered by both Layout.tsx
+  // (every authenticated page) and LoginPage.tsx via a shared
+  // FooterLine.tsx component. `footer_developed_by` blank means the
+  // whole "Developed By" line is omitted, not rendered empty.
+  footer_text: string
+  footer_developed_by: string
 }
 
 /** PUT /api/v2/branding/ body. All fields optional/partial: omit `app_name`
@@ -1546,6 +1572,8 @@ export interface BrandingSettingsWrite {
   // leave the current setting unchanged, same "omit means unchanged" rule
   // as every other field here.
   idle_timeout_minutes?: number | null
+  footer_text?: string
+  footer_developed_by?: string
 }
 
 // ── External API keys (2026-08-12) ───────────────────────────────────────
@@ -1926,4 +1954,47 @@ export interface RescueBulkLookupResponse {
 export interface DriveTestConsentMessage {
   message: string
   updated_at?: string
+}
+
+// ── Login/access audit trail (2026-10-01) ───────────────────────────────
+// Mirrors core/auth_log.py's AuthEventLogSerializer/AuthEventLog exactly
+// -- see that module's docstring for the full design. Superadmin-only
+// feed of every sign-in attempt, local or SSO, successful or not.
+export type AuthEventType =
+  | 'login_success' | 'login_failed' | 'login_locked' | 'login_disabled'
+  | 'sso_login_success' | 'sso_login_failed' | 'logout'
+
+export interface AuthEventLogEntry {
+  id: number
+  event: AuthEventType
+  // Raw attempted username, kept even when it never resolved to a real
+  // account -- see the model's own docstring for why that matters for
+  // "unauthentic access tried" specifically.
+  username: string
+  user: number | null
+  // Resolved account's display name, or the raw `username` when there is
+  // no account -- always has SOMETHING to show in a "Who" column.
+  user_display: string
+  is_success: boolean
+  ip_address: string | null
+  user_agent: string
+  detail: string
+  created_at: string
+}
+
+export interface AuthEventLogPageResponse {
+  count: number
+  next: string | null
+  previous: string | null
+  results: AuthEventLogEntry[]
+}
+
+export interface AuthEventLogParams {
+  page?: number
+  page_size?: number
+  event?: AuthEventType
+  username?: string
+  /** `'1'` restricts to successful events, `'0'` to failures/logout-only
+   * exclusions -- see AuthEventLogListView's own docstring. */
+  success?: '1' | '0'
 }

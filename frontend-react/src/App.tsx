@@ -45,6 +45,7 @@ const TreeAdminPage = lazy(() => import('./pages/TreeAdminPage'))
 const UsersPage = lazy(() => import('./pages/UsersPage'))
 const PermissionsPage = lazy(() => import('./pages/PermissionsPage'))
 const MenuAdminPage = lazy(() => import('./pages/MenuAdminPage'))
+const AccessLogPage = lazy(() => import('./pages/AccessLogPage'))
 const BrandingPage = lazy(() => import('./pages/BrandingPage'))
 const SlaTrackerPage = lazy(() => import('./pages/SlaTrackerPage'))
 const NtaCompliancePage = lazy(() => import('./pages/NtaCompliancePage'))
@@ -280,6 +281,7 @@ function App() {
         {withOpaqueSection('/issues', <IssuesPage />)}
         {withOpaqueSection('/rf-reports', <RfReportsPage />)}
         {withOpaqueSection('/dt-plot-catalog', <DtPlotCatalogPage />)}
+        {withOpaqueSection('/access-log', <AccessLogPage />)}
         {/* nt-frontend skill trial — no MenuSectionGate/opaque alias, this
             is a dev-only style test, not a real feature route. */}
         <Route path="/style-test" element={<ProtectedRoute><StyleTestPage /></ProtectedRoute>} />

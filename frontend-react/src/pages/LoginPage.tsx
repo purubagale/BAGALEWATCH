@@ -6,6 +6,7 @@ import { ApiError } from '../api/client'
 import { useBranding } from '../api/queries'
 import { DASHBOARD_PATH } from '../constants/opaqueRoutes'
 import { APP_VERSION } from '../lib/version'
+import FooterLine from '../components/FooterLine'
 
 /** Reasons the backend can bounce a failed SSO attempt back to /login.
  *
@@ -237,6 +238,8 @@ export default function LoginPage() {
         </svg>
         {disclaimer}
       </div>
+
+      <FooterLine />
     </div>
   )
 }

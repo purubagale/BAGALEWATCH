@@ -7,6 +7,7 @@ import type { MenuTreeNode, SiteSearchParams } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { canonicalSection } from '../constants/opaqueRoutes'
 import { DtExploreStateProvider } from '../contexts/DtExploreStateContext'
+import FooterLine from './FooterLine'
 import { SearchModalContext } from '../contexts/SearchModalContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { useTreeStore } from '../store/treeStore'
@@ -424,6 +425,27 @@ export default function Layout({ children }: { children: ReactNode }) {
         <main className="app-main">
           <DtExploreStateProvider>{children}</DtExploreStateProvider>
         </main>
+        {/* Docked OUTSIDE `.app-main`'s scroll area (2026-09-30, "i cant
+            see this footer") -- as a sibling flex row in `.app-content-col`
+            rather than trailing after `{children}` inside the scrollable
+            main area, it's always visible at the bottom of the viewport on
+            every page, including a full-height map/table page whose own
+            content already fills `.app-main` (previously the footer sat
+            below that content, inside the scroll area, so seeing it meant
+            scrolling past an entire page of map/table first).
+
+            Gated on `user`, same as the sidebar/header above (2026-09-30
+            follow-up, "footer text repeated or used in multiple place") --
+            `/login` is a <Route> rendered as this Layout's own `children`
+            (see App.tsx), so LoginPage.tsx's `{children}` was landing
+            inside this same `.app-main`, and its OWN embedded <FooterLine/>
+            (styled for the gradient background, inside `.login-page`) was
+            rendering alongside a SECOND copy from here -- this one plain-
+            styled, outside the gradient, in its own visible strip below
+            it. Only the pre-login page needs the gradient-aware styling,
+            so it keeps owning its own copy; this one is authenticated-
+            pages-only. */}
+        {user && <FooterLine />}
       </div>
 
       {searchOpen && (
