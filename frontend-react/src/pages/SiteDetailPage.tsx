@@ -18,7 +18,6 @@ import { DT_EXPLORE_PATH, DT_SESSION_HISTORY_PATH, RF_REPORTS_PATH, SITES_PATH }
 import { useSearchModal } from '../contexts/SearchModalContext'
 import SiteLocationMiniMap from '../components/SiteLocationMiniMap'
 import { ISSUE_SEVERITY_LABELS, ISSUE_STATUS_LABELS, ISSUE_STATUS_ORDER } from '../lib/issueLabels'
-import { STATUS_COLOR, STATUS_LABELS } from '../lib/statusColor'
 
 const KPI_FIELDS: [keyof SiteWrite, string][] = [
   ['rrc', 'RRC Setup SR (%)'],
@@ -271,17 +270,16 @@ export default function SiteDetailPage() {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<SiteWrite | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [kpiTech, setKpiTech] = useState<KpiTech>('4G')
   // Sectors tab (2026-09-23, "all 2g, 3g and 4g data are displayed
   // together resulting improper display... like in KPI values, display
   // sector detail also in separate tab with their related data only") —
   // the Sectors table used to show every sector at the site in one list
-  // regardless of tech, unlike KPI Values just above it which already
-  // tabs 4G LTE/3G UMTS/2G GSM apart. Mirrors that same tab pattern
-  // (kpiTech/KpiTech) rather than introducing a separate concept — only
-  // scoped to the read-mode table below; edit mode still shows/edits every
-  // sector in one flat list (removing/re-adding a sector by tab would need
-  // its own index-mapping work this request didn't ask for).
+  // regardless of tech; this tabs 4G/3G/2G apart, mirroring the pattern
+  // the (since-removed, 2026-09-30 "donot display kpi... in site details")
+  // KPI Values section used. Only scoped to the read-mode table below;
+  // edit mode still shows/edits every sector in one flat list (removing/
+  // re-adding a sector by tab would need its own index-mapping work this
+  // request didn't ask for).
   const [sectorTech, setSectorTech] = useState<KpiTech>('4G')
   const sectorsSectionRef = useRef<HTMLElement>(null)
   const [showAddIssue, setShowAddIssue] = useState(false)
@@ -368,18 +366,6 @@ export default function SiteDetailPage() {
     setDraft((d) => (d ? { ...d, [key]: raw as unknown as SiteWrite[typeof key] } : d))
   }
 
-  // Same raw-string-until-save pattern as setNumberField, for the 3G/2G
-  // JSON-blob fields — draft.kpi_3g_json/kpi_2g_json hold plain strings
-  // while editing (normalizeForSave converts to numbers at save time).
-  function setTechKpiField(tech: '3g' | '2g', key: string, raw: string) {
-    setDraft((d) => {
-      if (!d) return d
-      const field = tech === '3g' ? 'kpi_3g_json' : 'kpi_2g_json'
-      const current = (d[field] as Record<string, unknown> | null) ?? {}
-      return { ...d, [field]: { ...current, [key]: raw } }
-    })
-  }
-
   function setSectorField(index: number, key: keyof SectorWrite, raw: string) {
     setDraft((d) => {
       if (!d) return d
@@ -402,8 +388,8 @@ export default function SiteDetailPage() {
   }
 
   // Runs once at save time — converts the raw strings setNumberField()/
-  // setTechKpiField()/setSectorField() stashed in these fields (see their
-  // comments) into actual numbers (or null), so the payload sent to the
+  // setSectorField() stashed in these fields (see their comments) into
+  // actual numbers (or null), so the payload sent to the
   // API matches SiteWrite's real shape. Also computes kpi_entered/
   // kpi_entered_2g/kpi_entered_3g the same way v1's saveEditSite() does
   // (bts_monitor.html ~4402): true if this save just entered a real value
@@ -724,25 +710,20 @@ export default function SiteDetailPage() {
       <aside className="site-detail-sidebar">
         <div className="site-sidebar-card">
           <div className="site-sidebar-card-title">Quick Stats</div>
-          <div className="site-stat-row">
-            <span className="site-stat-label">Status</span>
-            <span className="site-status-badge" style={{ background: STATUS_COLOR[site.status] ?? STATUS_COLOR.nodata }}>
-              {STATUS_LABELS[site.status] ?? site.status ?? 'Unknown'}
-            </span>
-          </div>
+          {/* Status badge + KPI Coverage row removed (2026-09-30, "for now
+              donot use kpi related search or display... in dashboard and
+              site details also donot display... if needed in future will
+              again use") — `site.status` is this app's own KPI-health
+              traffic light (ok/warn/crit/nodata); `kpi_entered`/
+              `kpi_entered_3g`/`kpi_entered_2g` are the per-tech flags the
+              "KPI Values" section below also gates on. Neither is deleted
+              from SiteDetail/the API, only these two display rows —
+              restore from git history if needed. */}
           <div className="site-stat-row">
             <span className="site-stat-label">Sectors</span>
             <span className="site-stat-value">
               {site.sectors.length}
               {site.sectors.length > 0 ? ` (${summarizeSectorTechs(site.sectors)})` : ''}
-            </span>
-          </div>
-          <div className="site-stat-row">
-            <span className="site-stat-label">KPI Coverage</span>
-            <span className="site-tech-flags">
-              <span className={`site-tech-flag${site.kpi_entered ? ' entered' : ''}`}>4G</span>
-              <span className={`site-tech-flag${site.kpi_entered_3g ? ' entered' : ''}`}>3G</span>
-              <span className={`site-tech-flag${site.kpi_entered_2g ? ' entered' : ''}`}>2G</span>
             </span>
           </div>
           <div className="site-stat-row">
@@ -900,99 +881,17 @@ export default function SiteDetailPage() {
         )}
       </section>
 
-      {/* ── KPI Values — tabbed 4G LTE / 3G UMTS / 2G GSM ─────────────
-          Moved below Sector Azimuth Layout (2026-09-28, "display KPI
-          values below the sector azimuth layout in site detail page") —
-          previously lived inside the two-column site-detail-layout grid,
-          above the (full-width, outside that grid) Sectors section; now
-          full-width itself, in its own <section> matching every other
-          below-Sectors block (Drive Tests/Antenna Change History/Site
-          Issues) rather than sharing space with the 320px sidebar. */}
-      <section>
-        <div className="site-form-section">
-          KPI Values
-          <span className="site-form-section-hint">
-            {site.kpi_date ? `as of ${site.kpi_date}` : 'site-level averages per technology'}
-          </span>
-        </div>
-        <div className="kpi-tabs">
-          {(['4G', '3G', '2G'] as KpiTech[]).map((t) => (
-            <button
-              key={t}
-              type="button"
-              className={`kpi-tab${kpiTech === t ? ' active' : ''}`}
-              onClick={() => setKpiTech(t)}
-            >
-              {t === '4G' ? '4G LTE' : t === '3G' ? '3G UMTS' : '2G GSM'}
-            </button>
-          ))}
-        </div>
-
-        {kpiTech === '4G' && (
-          site.kpi_entered || editing ? (
-            <div className="site-form-row cols-4">
-              {KPI_FIELDS.map(([key, label]) => (
-                <FieldCard
-                  key={String(key)}
-                  label={label}
-                  editing={editing}
-                  type="number"
-                  value={String((editing ? draft?.[key] : site[key]) ?? '')}
-                  onChange={(v) => setNumberField(key, v)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="kpi-pane-empty">No 4G KPI data entered for this site yet.</div>
-          )
-        )}
-
-        {kpiTech === '3G' && (
-          site.kpi_entered_3g || editing ? (
-            <div className="site-form-row cols-4">
-              {KPI_3G_FIELDS.map(([key, label]) => {
-                const source = (editing ? draft?.kpi_3g_json : site.kpi_3g_json) as Record<string, unknown> | null
-                const raw = source?.[key]
-                return (
-                  <FieldCard
-                    key={key}
-                    label={label}
-                    editing={editing}
-                    type="number"
-                    value={raw === undefined || raw === null ? '' : String(raw)}
-                    onChange={(v) => setTechKpiField('3g', key, v)}
-                  />
-                )
-              })}
-            </div>
-          ) : (
-            <div className="kpi-pane-empty">No 3G KPI data entered for this site yet.</div>
-          )
-        )}
-
-        {kpiTech === '2G' && (
-          site.kpi_entered_2g || editing ? (
-            <div className="site-form-row cols-4">
-              {KPI_2G_FIELDS.map(([key, label]) => {
-                const source = (editing ? draft?.kpi_2g_json : site.kpi_2g_json) as Record<string, unknown> | null
-                const raw = source?.[key]
-                return (
-                  <FieldCard
-                    key={key}
-                    label={label}
-                    editing={editing}
-                    type="number"
-                    value={raw === undefined || raw === null ? '' : String(raw)}
-                    onChange={(v) => setTechKpiField('2g', key, v)}
-                  />
-                )
-              })}
-            </div>
-          ) : (
-            <div className="kpi-pane-empty">No 2G KPI data entered for this site yet.</div>
-          )
-        )}
-      </section>
+      {/* KPI Values section removed (2026-09-30, "for now donot use kpi
+          related search or display... in dashboard and site details also
+          donot display... if needed in future will again use") — was a
+          tabbed 4G LTE/3G UMTS/2G GSM editor for KPI_FIELDS, KPI_3G_FIELDS
+          and KPI_2G_FIELDS (site.kpi_entered flags, kpi_3g_json,
+          kpi_2g_json), full-width below Sector Azimuth Layout. Those
+          fields/constants and normalizeForSave's kpi_entered computation
+          are untouched -- KPI data already saved is preserved and still
+          round-trips through Save, just has no editing UI here for now.
+          Restore the full section (kpiTech state, setTechKpiField, this
+          JSX) from git history if that changes. */}
 
       {/* -- Drive Tests Near This Site --------------------------------
           2026-09-12 request: surface which DT sessions were driven near
