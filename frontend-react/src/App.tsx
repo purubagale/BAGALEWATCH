@@ -46,6 +46,11 @@ const UsersPage = lazy(() => import('./pages/UsersPage'))
 const PermissionsPage = lazy(() => import('./pages/PermissionsPage'))
 const MenuAdminPage = lazy(() => import('./pages/MenuAdminPage'))
 const AccessLogPage = lazy(() => import('./pages/AccessLogPage'))
+const ManageRolesPage = lazy(() => import('./pages/ManageRolesPage'))
+const AssignRolesPage = lazy(() => import('./pages/AssignRolesPage'))
+const MenuVisibilityPage = lazy(() => import('./pages/MenuVisibilityPage'))
+const SystemHealthPage = lazy(() => import('./pages/SystemHealthPage'))
+const DocumentationPage = lazy(() => import('./pages/DocumentationPage'))
 const BrandingPage = lazy(() => import('./pages/BrandingPage'))
 const SlaTrackerPage = lazy(() => import('./pages/SlaTrackerPage'))
 const NtaCompliancePage = lazy(() => import('./pages/NtaCompliancePage'))
@@ -282,6 +287,11 @@ function App() {
         {withOpaqueSection('/rf-reports', <RfReportsPage />)}
         {withOpaqueSection('/dt-plot-catalog', <DtPlotCatalogPage />)}
         {withOpaqueSection('/access-log', <AccessLogPage />)}
+        {withOpaqueSection('/manage-roles', <ManageRolesPage />)}
+        {withOpaqueSection('/assign-roles', <AssignRolesPage />)}
+        {withOpaqueSection('/menu-visibility', <MenuVisibilityPage />)}
+        {withOpaqueSection('/system-health', <SystemHealthPage />)}
+        {withOpaqueSection('/documentation', <DocumentationPage />)}
         {/* nt-frontend skill trial — no MenuSectionGate/opaque alias, this
             is a dev-only style test, not a real feature route. */}
         <Route path="/style-test" element={<ProtectedRoute><StyleTestPage /></ProtectedRoute>} />

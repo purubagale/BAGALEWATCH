@@ -38,6 +38,7 @@ import type {
   MenuItem,
   MenuItemWrite,
   MenuTreeNode,
+  MenuVisibilityMatrix,
   MonthlyReport,
   NtaReport,
   PermissionsMatrix,
@@ -61,8 +62,12 @@ import type {
   TelemetryStats,
   ThresholdMap,
   TreeState,
+  RoleRow,
+  RoleWrite,
+  UserRoleRow,
   UserWrite,
   HealthInfo,
+  SystemHealthPayload,
   RescueConsentPolicy,
   RescueConsentPolicyWrite,
   RescueLookupParams,
@@ -1040,6 +1045,113 @@ export function useUpdatePermissionsMatrix() {
     mutationFn: (changed: Partial<PermissionsMatrix>) =>
       apiJson<{ ok: true }>('/api/v2/permissions-matrix/', { method: 'PUT', body: JSON.stringify(changed) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['permissions-matrix'] }),
+  })
+}
+
+// ── Multi-role RBAC (2026-10-01, "full parity" RBAC feature) ────────────
+// Same hook shapes as useUsers/useCreateUser/useUpdateUser/useDeleteUser
+// above, over /api/v2/roles/ -- backs ManageRolesPage.tsx.
+export function useRoles() {
+  return useQuery({
+    queryKey: ['roles'],
+    queryFn: () => apiJson<RoleRow[]>('/api/v2/roles/'),
+  })
+}
+
+export function useCreateRole() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (role: RoleWrite) => apiJson<RoleRow>('/api/v2/roles/', { method: 'POST', body: JSON.stringify(role) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['roles'] }),
+  })
+}
+
+export function useUpdateRole(roleId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (role: Partial<RoleWrite>) =>
+      apiJson<RoleRow>(`/api/v2/roles/${roleId}/`, { method: 'PATCH', body: JSON.stringify(role) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['roles'] })
+      // A rename cascades into MenuPermission server-side (core/roles.py's
+      // RoleViewSet.update()) -- refetch the matrix too so a renamed
+      // role's column doesn't look like it lost its permissions until the
+      // next unrelated refetch.
+      qc.invalidateQueries({ queryKey: ['permissions-matrix'] })
+    },
+  })
+}
+
+export function useDeleteRole() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (roleId: number) => apiJson<void>(`/api/v2/roles/${roleId}/`, { method: 'DELETE' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['roles'] })
+      qc.invalidateQueries({ queryKey: ['permissions-matrix'] })
+      qc.invalidateQueries({ queryKey: ['menu-visibility'] })
+    },
+  })
+}
+
+// Backs AssignRolesPage.tsx -- GET/PUT one user's full role set.
+export function useUserRoles(userId: number | undefined) {
+  return useQuery({
+    queryKey: ['user-roles', userId],
+    queryFn: () => apiJson<UserRoleRow[]>(`/api/v2/users/${userId}/roles/`),
+    enabled: !!userId,
+  })
+}
+
+export function useSetUserRoles(userId: number | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (roleNames: string[]) =>
+      apiJson<UserRoleRow[]>(`/api/v2/users/${userId}/roles/`, { method: 'PUT', body: JSON.stringify({ roles: roleNames }) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['user-roles', userId] })
+      // The Users page's own role chips (AdminUser.roles) come from a
+      // DIFFERENT endpoint (/api/v2/users/) -- refetch that list too so
+      // a role change made here shows up there without a manual reload.
+      qc.invalidateQueries({ queryKey: ['users'] })
+    },
+  })
+}
+
+// Backs MenuVisibilityPage.tsx -- same nested-dict GET/per-key-upsert PUT
+// convention as usePermissionsMatrix/useUpdatePermissionsMatrix above.
+export function useMenuVisibility() {
+  return useQuery({
+    queryKey: ['menu-visibility'],
+    queryFn: () => apiJson<MenuVisibilityMatrix>('/api/v2/menu-visibility/'),
+  })
+}
+
+export function useUpdateMenuVisibility() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (changed: Record<string, Record<string, boolean | null>>) =>
+      apiJson<{ ok: true }>('/api/v2/menu-visibility/', { method: 'PUT', body: JSON.stringify(changed) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['menu-visibility'] })
+      // A visibility override changes what get_visible_menu_items()
+      // returns for whoever holds the affected role -- refetch the
+      // sidebar's own tree too so a superadmin testing this sees it
+      // reflected without a manual reload.
+      qc.invalidateQueries({ queryKey: ['menu-tree'] })
+    },
+  })
+}
+
+// Backs SystemHealthPage.tsx (2026-10-01). Polled, not just loaded once --
+// this is meant to be glanced at live, same cadence as
+// useLiveSiteSources() below, which this page also calls directly rather
+// than duplicating Live Site Sync's own per-source state server-side.
+export function useSystemHealth() {
+  return useQuery({
+    queryKey: ['system-health'],
+    queryFn: () => apiJson<SystemHealthPayload>('/api/v2/system-health/'),
+    refetchInterval: 15_000,
   })
 }
 

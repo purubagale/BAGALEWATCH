@@ -1,3 +1,6 @@
+import shutil
+
+import redis
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.core.cache import cache
@@ -23,10 +26,13 @@ from .models import (
     DtBand,
     KpiThreshold,
     MenuItem,
+    MenuItemRoleVisibility,
     MenuPermission,
+    Role,
     Sector,
     Site,
     SiteAssignment,
+    TelemetryRollState,
     TreeFolder,
     TreeSettings,
 )
@@ -133,6 +139,78 @@ def health(request):
         })
 
     return Response(payload, status=200 if db_ok else 503)
+
+
+class SystemHealthView(APIView):
+    """GET /api/v2/system-health/ -- superadmin-only diagnostic dashboard
+    (2026-10-01, "idea and plan" follow-up to the UTS screenshots). Unlike
+    the public health() above, this is authenticated and deliberately
+    reveals infra internals (Redis reachability, disk headroom), so it's
+    gated the same as every other infra-ish superadmin page (ApiAccessPage,
+    AccessLogPage, LiveSiteSyncPage), not AllowAny.
+
+    dtwatch is a monolith, not a microservice mesh -- there's no API to ask
+    Docker "is sibling container X up," so this only reports on things
+    Django can itself observe: its own DB connection, the Redis instance it
+    already talks to (cache + SSO transaction state), disk headroom under
+    MEDIA_ROOT, and the one other background loop with DB-backed state
+    (TelemetryRollState's bin-roller watermark). Live Site Sync's own
+    per-source health is deliberately NOT duplicated here -- see
+    useLiveSiteSources() on the frontend, which SystemHealthPage.tsx calls
+    directly instead of this endpoint aggregating it a second time.
+
+    telemetry-maintenance (the OTHER always-on loop, monthly partition
+    rollover/retention) has no status model at all and is not represented
+    here -- inventing one would be a bigger feature than "report what
+    already exists," not a gap in this endpoint.
+
+    Each check is independently try/excepted so one failure (e.g. Redis
+    down) doesn't blank out the others.
+    """
+    permission_classes = [IsAuthenticated, IsSuperadminOnly]
+
+    def get(self, request):
+        db_ok = True
+        db_error = None
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute('SELECT 1')
+                cursor.fetchone()
+        except Exception as exc:  # pragma: no cover - defensive, reported not raised
+            db_ok = False
+            db_error = str(exc)
+
+        redis_ok = True
+        redis_error = None
+        try:
+            redis.from_url(sso_config.redis_url(), socket_connect_timeout=2, socket_timeout=2).ping()
+        except Exception as exc:  # pragma: no cover - defensive, reported not raised
+            redis_ok = False
+            redis_error = str(exc)
+
+        disk = None
+        disk_error = None
+        try:
+            usage = shutil.disk_usage(settings.MEDIA_ROOT)
+            disk = {'total_bytes': usage.total, 'used_bytes': usage.used, 'free_bytes': usage.free}
+        except Exception as exc:  # pragma: no cover - defensive, reported not raised
+            disk_error = str(exc)
+
+        roll_state = TelemetryRollState.objects.filter(pk=1).first()
+
+        return Response({
+            'database': {'status': 'ok' if db_ok else 'down', 'error': db_error},
+            'redis': {'status': 'ok' if redis_ok else 'down', 'error': redis_error},
+            'disk': disk,
+            'disk_error': disk_error,
+            'telemetry_bin_roller': {
+                'last_rolled_at': roll_state.last_rolled_at if roll_state else None,
+            },
+            'version': settings.APP_VERSION,
+            'build_tag': settings.BUILD_TAG,
+            'git_sha': settings.GIT_SHA,
+            'checked_at': timezone.now(),
+        })
 
 
 # ── Auth ─────────────────────────────────────────────────────────────
@@ -1124,9 +1202,40 @@ def get_visible_menu_items(user):
             for r in MenuPermission.objects.filter(role=user.role, action='read')
         }
 
+    # Menu Visibility overrides (2026-10-01, "full parity" RBAC feature) —
+    # a SPARSE, additive layer on top of the coarse access-tier checks
+    # below, not a replacement for them. `user.roles` may hold multiple
+    # roles (a builtin tier plus any number of custom ones); `user.role`
+    # alone would miss an override granted specifically to a custom role
+    # the user also holds, so this reads the FULL set. Falls back to just
+    # `{user.role}` so a user who (incorrectly) has no `roles` rows yet
+    # still gets exactly today's behavior instead of silently losing every
+    # override lookup.
+    user_role_names = set(user.roles.values_list('name', flat=True)) or {user.role}
+    overrides_by_item: dict = {}
+    if user.role != 'superadmin':
+        for row in MenuItemRoleVisibility.objects.filter(role__name__in=user_role_names):
+            overrides_by_item.setdefault(row.menu_item_id, set()).add(row.visible)
+
+    def visibility_override(item_id):
+        """True/False if any of the user's roles has an explicit
+        MenuItemRoleVisibility row for this item, else None (= inherit
+        the coarse default below). Explicit ALLOW on ANY held role wins
+        over explicit DENY on ALL of them — a user should see something
+        if even one of their roles was granted it, matching how
+        MenuPermission's own read_perms above already works (any
+        permission source granting access is enough)."""
+        values = overrides_by_item.get(item_id)
+        if not values:
+            return None
+        return True if True in values else False
+
     def own_access_ok(item):
         if user.role == 'superadmin':
             return True
+        override = visibility_override(item.id)
+        if override is not None:
+            return override
         if item.access == MenuItem.ACCESS_ALL:
             return True
         if item.access == MenuItem.ACCESS_ADMIN:
@@ -1410,7 +1519,14 @@ class PermissionsMatrixView(APIView):
     and-replace) — matches v1's _write_role_perm exactly: a plain bool
     writes one action='read' row, a {read,write,update,delete} dict
     writes up to 4 rows. Superadmin-only write, matching v1's
-    `_require_auth(roles=('superadmin',))` on PUT /permissions."""
+    `_require_auth(roles=('superadmin',))` on PUT /permissions.
+
+    2026-10-01 ("full parity" RBAC feature) — GET used to hardcode exactly
+    two role keys (admin/viewer); now iterates every real `Role` row
+    (excluding superadmin, same reasoning as always) so a custom role
+    created via Manage Roles gets its own column here automatically, with
+    no code change needed per role. `put()` was already role-agnostic
+    (iterates whatever keys the client sends) — unchanged."""
 
     def get_permissions(self):
         if self.request.method == 'PUT':
@@ -1418,18 +1534,20 @@ class PermissionsMatrixView(APIView):
         return [IsAuthenticated()]
 
     def get(self, request):
-        rows = MenuPermission.objects.exclude(role='superadmin')
-        # Both role keys always present, even with zero rows for one of
-        # them (2026-08-25 live bug: a role with no MenuPermission rows at
-        # all — e.g. a fresh/partially-seeded install, or 'viewer' simply
-        # never having been saved yet — meant this dict silently omitted
-        # that key entirely. PermissionsPage.tsx indexes `draft[role][key]`
-        # unconditionally, so a missing role key crashed the whole page
-        # with "Cannot read properties of undefined (reading 'sites')" the
-        # instant it rendered. Pre-seeding both keys as {} makes "no rows
-        # yet" and "some rows" the same shape, not two different ones the
-        # client has to guess between.
-        out: dict = {'admin': {}, 'viewer': {}}
+        role_names = list(Role.objects.exclude(name='superadmin').values_list('name', flat=True))
+        rows = MenuPermission.objects.filter(role__in=role_names)
+        # Every real role's key always present, even with zero rows for
+        # one of them (2026-08-25 live bug: a role with no MenuPermission
+        # rows at all — e.g. a fresh/partially-seeded install, or a role
+        # simply never having been saved yet — meant this dict silently
+        # omitted that key entirely. PermissionsPage.tsx indexes
+        # `draft[role][key]` unconditionally, so a missing role key
+        # crashed the whole page with "Cannot read properties of
+        # undefined (reading 'sites')" the instant it rendered.
+        # Pre-seeding every key as {} makes "no rows yet" and "some rows"
+        # the same shape, not two different ones the client has to guess
+        # between.
+        out: dict = {name: {} for name in role_names}
         for r in rows:
             role_out = out.setdefault(r.role, {})
             if r.menu_key in CRUD_MENUS:
@@ -1453,6 +1571,53 @@ class PermissionsMatrixView(APIView):
                         MenuPermission.objects.update_or_create(
                             role=role, menu_key=menu_key, action='read',
                             defaults={'allowed': bool(value)},
+                        )
+        return Response({'ok': True})
+
+
+class MenuItemRoleVisibilityView(APIView):
+    """GET/PUT /api/v2/menu-visibility/ (2026-10-01, "full parity" RBAC
+    feature) — the admin side of the sparse MenuItemRoleVisibility
+    override layered on top of get_visible_menu_items()'s own coarse
+    access-tier checks (see that function's docstring for exactly how the
+    two combine). Same nested-dict GET/per-key-upsert PUT convention as
+    PermissionsMatrixView above, just keyed by (menu_item id, role name)
+    instead of (role, menu_key).
+
+    Sparse by design: GET only returns rows that actually exist (an
+    omitted (item, role) pair means "inherit the default", which the
+    frontend renders distinctly from an explicit True/False — see
+    MenuVisibilityPage.tsx). PUT's `null` value DELETES the override row
+    (the "reset to inherit" affordance), rather than writing a third
+    tri-state value into the boolean column."""
+
+    def get_permissions(self):
+        if self.request.method == 'PUT':
+            return [IsAuthenticated(), IsSuperadminOnly()]
+        return [IsAuthenticated()]
+
+    def get(self, request):
+        out: dict = {}
+        for row in MenuItemRoleVisibility.objects.select_related('role'):
+            out.setdefault(str(row.menu_item_id), {})[row.role.name] = row.visible
+        return Response(out)
+
+    def put(self, request):
+        body = request.data or {}
+        with transaction.atomic():
+            for menu_item_id, role_map in body.items():
+                for role_name, value in (role_map or {}).items():
+                    role = Role.objects.filter(name=role_name).first()
+                    if role is None:
+                        continue
+                    if value is None:
+                        MenuItemRoleVisibility.objects.filter(
+                            menu_item_id=menu_item_id, role=role,
+                        ).delete()
+                    else:
+                        MenuItemRoleVisibility.objects.update_or_create(
+                            menu_item_id=menu_item_id, role=role,
+                            defaults={'visible': bool(value)},
                         )
         return Response({'ok': True})
 

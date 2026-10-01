@@ -1,7 +1,18 @@
 // Mirrors core/serializers.py — kept in one place so a field rename on
 // the Django side is a one-file fix here, not a hunt through components.
 
-export type Role = 'superadmin' | 'admin' | 'viewer' | 'rescue_operator'
+// 2026-10-01 ("full parity" RBAC feature) -- was a closed 4-value union.
+// A superadmin can now create custom roles at runtime (Manage Roles), so
+// a role name is a dynamic string, not a fixed literal set. Every
+// existing `role === 'superadmin'`-style comparison across the app still
+// compiles fine against `string`; nothing exhaustively switched over the
+// old union.
+export type Role = string
+// The 4 roles every permission class / MenuItem access tier on the
+// backend hardcodes by this exact literal -- kept here purely for
+// frontend dropdowns/labels that want to distinguish a builtin tier from
+// a custom role, NOT as a type (that stays the open `Role = string` above).
+export const BUILTIN_ROLES: Role[] = ['superadmin', 'admin', 'viewer', 'rescue_operator']
 
 export type CrudPerm = { read?: boolean; write?: boolean; update?: boolean; delete?: boolean }
 /** How a user authenticates. `sso` means Keycloak owns their role and
@@ -31,6 +42,12 @@ export interface Me {
   id: number
   username: string
   role: Role
+  // Full role list (2026-10-01, "full parity" RBAC feature) -- `role`
+  // above is still the single cached highest-precedence value every
+  // pre-existing check reads; `roles` is the real set, needed to show a
+  // custom role (e.g. 'ftth_leader') a user holds alongside their builtin
+  // tier. Always present (an empty array, never undefined).
+  roles: string[]
   name: string
   dept: string
   is_active: boolean
@@ -404,6 +421,9 @@ export interface AdminUser {
   id: number
   username: string
   role: Role
+  // Full role list (2026-10-01) -- see Me.roles' own comment above, same
+  // convention.
+  roles: string[]
   name: string
   dept: string
   is_active: boolean
@@ -426,6 +446,56 @@ export interface UserWrite {
   dept: string
   is_active?: boolean
   operator_mncs?: string[]
+}
+
+// ── Multi-role RBAC (2026-10-01, "full parity" RBAC feature) ────────────
+// Mirrors core/serializers.py's RoleSerializer / core/roles.py's
+// UserRolesView exactly.
+export interface RoleRow {
+  id: number
+  name: string
+  label: string
+  description: string
+  is_builtin: boolean
+  created_at: string
+}
+export interface RoleWrite {
+  name: string
+  label: string
+  description?: string
+}
+/** GET/PUT /api/v2/users/:id/roles/ response shape — a flat list, not
+ * just names, so AssignRolesPage can show each role's label without a
+ * second lookup against useRoles(). */
+export interface UserRoleRow {
+  id: number
+  name: string
+  label: string
+}
+/** GET/PUT /api/v2/menu-visibility/ — sparse: a menu item id with no key
+ * here, or a role name missing within one, means "inherit the default"
+ * (see MenuItemRoleVisibilityView's own docstring, core/views.py). PUT
+ * sends the same shape back with a changed/added entry, or `null` for a
+ * value to delete that override and reset to inherited. */
+export type MenuVisibilityMatrix = Record<string, Record<string, boolean>>
+
+/** GET /api/v2/system-health/ (2026-10-01) — superadmin-only diagnostic
+ * dashboard. `disk` is null (with `disk_error` set) only if the
+ * `shutil.disk_usage()` call itself raised, which in practice should never
+ * happen under a real deployment — see SystemHealthView's docstring
+ * (core/views.py) for why Live Site Sync's own per-source state is NOT
+ * part of this shape (SystemHealthPage.tsx calls useLiveSiteSources()
+ * directly instead, to avoid a second source of truth for it). */
+export interface SystemHealthPayload {
+  database: { status: 'ok' | 'down'; error: string | null }
+  redis: { status: 'ok' | 'down'; error: string | null }
+  disk: { total_bytes: number; used_bytes: number; free_bytes: number } | null
+  disk_error: string | null
+  telemetry_bin_roller: { last_rolled_at: string | null }
+  version: string
+  build_tag: string
+  git_sha: string
+  checked_at: string
 }
 
 // ── Phase 3: reporting suite (read-only) ────────────────────────────────
@@ -1287,7 +1357,11 @@ export interface DtSessionCreate {
 
 // GET/PUT /permissions-matrix/ shape — excludes superadmin (see
 // PermissionsMatrixView's docstring), so only admin/viewer appear here.
-export type PermissionsMatrix = Record<'admin' | 'viewer', PermissionMap>
+// 2026-10-01 ("full parity" RBAC feature) -- was hardcoded to exactly
+// 'admin' | 'viewer'. The matrix now has one column per real Role
+// (excluding superadmin, same bypass reasoning as always), so the key
+// type widens to a plain string.
+export type PermissionsMatrix = Record<string, PermissionMap>
 
 /** Same helper the v1 client already needs for CRUD-vs-simple menus.
  *

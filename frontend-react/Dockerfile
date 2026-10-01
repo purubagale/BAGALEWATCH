@@ -1,16 +1,26 @@
 # Multi-stage build: compile the Vite app, then serve the static output
 # with nginx. Build-time env vars (VITE_DJANGO_API_URL etc.) are baked in
 # at build time — see docker-compose.yml build args.
+#
+# Build context is the REPO ROOT, not this directory (2026-10-01, widened
+# for DocumentationPage.tsx's ../../../docs/*.md?raw imports -- see
+# docker-compose.yml's `frontend` comment for why). Every COPY below is
+# written relative to that repo-root context, and WORKDIR is nested one
+# level deeper (/app/frontend-react, not /app) so the SAME relative
+# `../../../docs/...` import that already resolves correctly in a plain
+# host `npm run build` keeps resolving identically inside the container:
+# frontend-react/src/pages/ -> frontend-react/ -> repo root -> docs/.
 FROM node:22-slim AS build
-WORKDIR /app
+WORKDIR /app/frontend-react
 # .npmrc (legacy-peer-deps=true) MUST be copied before `npm install` — it's
 # what makes react-leaflet-cluster@2.1.0's react@^18 peer-dep declaration
 # not fail the install even though this project is on react@19 (confirmed
 # 2026-07-27: the package's actual runtime code has no React-18-specific
 # behavior, this is purely an unmaintained peer-range declaration).
-COPY package.json package-lock.json* .npmrc ./
+COPY frontend-react/package.json frontend-react/package-lock.json* frontend-react/.npmrc ./
 RUN npm install
-COPY . .
+COPY frontend-react/. .
+COPY docs/ /app/docs/
 
 # Build-time version stamp (2026-08-23). These ARGs are the whole reason a
 # --build-arg now takes effect here: Vite only inlines import.meta.env.VITE_*
@@ -30,6 +40,6 @@ ENV VITE_APP_VERSION=$VITE_APP_VERSION \
 RUN npm run build
 
 FROM nginx:1.27-alpine
-COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/frontend-react/dist /usr/share/nginx/html
+COPY frontend-react/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

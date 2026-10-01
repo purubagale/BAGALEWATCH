@@ -1,8 +1,31 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { apiErrorMessage } from '../api/client'
 import { useCreateUser, useDeleteUser, useUpdateUser, useUsers } from '../api/queries'
 import type { AdminUser, Role, UserWrite } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
+import { ASSIGN_ROLES_PATH } from '../constants/opaqueRoutes'
+
+// Role chips (2026-10-01, "full parity" RBAC feature) — a user can now
+// hold multiple roles (one builtin tier plus any number of custom ones),
+// so the plain `{u.role}` text this used to render is replaced with one
+// chip per entry in `u.roles` (falls back to `[u.role]` for the
+// vanishingly unlikely case of a user with no `roles` rows at all, so
+// this never renders as empty). Read-only here — actual role assignment
+// moved to its own Assign Roles page (AssignRolesPage.tsx), reachable via
+// the link this renders; EditableUserRow below no longer edits role at
+// all, matching the reference app's own split between "user account CRUD"
+// and "role assignment" as two separate concerns/pages.
+function RoleChips({ u }: { u: AdminUser }) {
+  const roles = u.roles?.length ? u.roles : [u.role]
+  return (
+    <span className="role-chip-row">
+      {roles.map((r) => (
+        <span key={r} className="role-chip">{r}</span>
+      ))}
+    </span>
+  )
+}
 
 const emptyNewUser: UserWrite = { username: '', password: '', role: 'viewer', name: '', dept: '', operator_mncs: [] }
 
@@ -21,7 +44,6 @@ function textToMncs(text: string): string[] {
 
 function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
   const [editing, setEditing] = useState(false)
-  const [role, setRole] = useState<Role>(u.role)
   const [name, setName] = useState(u.name)
   const [dept, setDept] = useState(u.dept)
   const [isActive, setIsActive] = useState(u.is_active)
@@ -42,8 +64,10 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
   async function save() {
     setError(null)
     try {
+      // `role` is deliberately NOT sent here any more (2026-10-01) —
+      // this row no longer edits it at all; Assign Roles (linked from the
+      // Role column below) is the one place that edits a user's roles.
       const patch: Partial<UserWrite> = { name, dept, is_active: isActive, operator_mncs: textToMncs(mncsText) }
-      if (!ssoManaged) patch.role = role
       if (!ssoManaged && password) patch.password = password
       await updateUser.mutateAsync(patch)
       setPassword('')
@@ -63,8 +87,13 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
       <tr>
         <td>{u.username}</td>
         <td>
-          {u.role}
+          <RoleChips u={u} />
           {ssoManaged && <span className="user-sso-tag" title="Role is managed by Keycloak SSO">SSO</span>}
+          {canWrite && (
+            <Link to={`${ASSIGN_ROLES_PATH}?user=${u.id}`} className="role-assign-link">
+              Assign roles →
+            </Link>
+          )}
         </td>
         <td>{u.name}</td>
         <td>{u.dept}</td>
@@ -85,18 +114,11 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
     <tr>
       <td>{u.username}</td>
       <td>
-        {ssoManaged ? (
-          <span title="Managed by Keycloak SSO — change the user's group in Keycloak instead">
-            {u.role} <span className="user-sso-tag">SSO</span>
-          </span>
-        ) : (
-          <select value={role} onChange={(e) => setRole(e.target.value as Role)}>
-            <option value="viewer">viewer</option>
-            <option value="admin">admin</option>
-            <option value="superadmin">superadmin</option>
-            <option value="rescue_operator">rescue_operator</option>
-          </select>
-        )}
+        {/* Read-only here even while editing other fields (2026-10-01) --
+            role editing moved entirely to Assign Roles; this row no longer
+            has a role <select> at all, SSO-managed or not. */}
+        <RoleChips u={u} />
+        {ssoManaged && <span className="user-sso-tag" title="Role is managed by Keycloak SSO">SSO</span>}
       </td>
       <td><input value={name} onChange={(e) => setName(e.target.value)} /></td>
       <td><input value={dept} onChange={(e) => setDept(e.target.value)} /></td>

@@ -4,7 +4,8 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import (api_auth, auth_log, backup, consent, dashboard, drive_test,
                exports, issues, kpi_trend, reports, rescue, rf_audit,
-               rf_reports, site_import, sso_views, telemetry_admin, views)
+               rf_reports, roles, site_import, sso_views, telemetry_admin,
+               views)
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
@@ -22,6 +23,9 @@ router.register('issues', issues.IssueViewSet, basename='issue')
 # RfOptimizationReportViewSet's docstring in core/rf_reports.py.
 router.register('rf-reports', rf_reports.RfOptimizationReportViewSet, basename='rf-report')
 router.register('menu-items', views.MenuItemViewSet, basename='menu-item')
+# Superadmin-only CRUD for custom role definitions (2026-10-01, "full
+# parity" RBAC feature) -- see core/roles.py's module docstring.
+router.register('roles', roles.RoleViewSet, basename='role')
 # Superadmin-only management of external API credentials (2026-08-12) —
 # see core/api_auth.py's ApiKeyViewSet docstring. Distinct from the
 # API-key-AUTHENTICATED endpoints those keys unlock, which live under
@@ -36,6 +40,7 @@ router.register('telemetry/keys', telemetry_admin.TelemetryIngestKeyViewSet, bas
 
 urlpatterns = [
     path('health/', views.health, name='health'),
+    path('system-health/', views.SystemHealthView.as_view(), name='system-health'),
 
     path('auth/login/', views.LoginView.as_view(), name='auth-login'),
     path('auth/logout/', views.LogoutView.as_view(), name='auth-logout'),
@@ -91,6 +96,16 @@ urlpatterns = [
     path('thresholds/<str:kpi_key>/', views.ThresholdDetailView.as_view(), name='threshold-detail'),
     path('tree/', views.TreeView.as_view(), name='tree'),
     path('permissions-matrix/', views.PermissionsMatrixView.as_view(), name='permissions-matrix'),
+    # Per-role sidebar-visibility overrides (2026-10-01, "full parity" RBAC
+    # feature, Menu Visibility page) -- see MenuItemRoleVisibilityView's
+    # own docstring in views.py.
+    path('menu-visibility/', views.MenuItemRoleVisibilityView.as_view(), name='menu-visibility'),
+    # One user's full role set (2026-10-01, Assign Roles page) -- see
+    # UserRolesView's own docstring in core/roles.py. Registered before the
+    # router's `users/<pk>/` include below, same reason as sites/search/
+    # above: this literal suffix must win over the router's dynamic pk
+    # pattern.
+    path('users/<int:pk>/roles/', roles.UserRolesView.as_view(), name='user-roles'),
     # 2026-08-05, v2-only (no v1 equivalent) — see DtBandsView's docstring.
     path('dt-bands/', views.DtBandsView.as_view(), name='dt-bands'),
     # Dynamic top-nav (2026-08-08, v2-only) — see MenuTreeView's docstring.

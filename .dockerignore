@@ -1,0 +1,23 @@
+# Root-level .dockerignore (2026-10-01) -- only exists because the
+# `frontend` service's build context was widened from ./frontend-react to
+# the repo root (see docker-compose.yml's comment), so DocumentationPage.tsx
+# can reach ../../../docs/*.md?raw at build time. Without this file, every
+# frontend build would send the ENTIRE repo to the builder -- notably
+# data/ (500MB+ of bind-mounted Postgres/Redis/media state) and .git/ --
+# instead of just the ~2 directories that build actually needs.
+#
+# "Exclude everything, then re-include only what's needed" -- the other
+# three services (backend-django, backend-go, backend-node) each keep
+# their OWN .dockerignore scoped to their own build context and are
+# unaffected by this file, since Docker only reads the .dockerignore at
+# the build context root being used for that particular build.
+**
+!frontend-react
+!frontend-react/**
+!docs
+!docs/**
+frontend-react/node_modules
+frontend-react/node_modules/**
+frontend-react/dist
+frontend-react/dist/**
+frontend-react/.env

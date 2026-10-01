@@ -358,7 +358,20 @@ services:
     # the app defaults to same-origin requests through nginx's new /api/
     # proxy (nginx.conf) instead of a separate published port.
     build:
-      context: ./frontend-react
+      # Widened from ./frontend-react to the repo root (2026-10-01,
+      # in-app Documentation page) -- DocumentationPage.tsx imports
+      # ../../../docs/*.md?raw at build time (Vite bundles these into its
+      # own lazy chunk, no runtime file I/O -- see that file's own header
+      # comment for why). A build context scoped to ./frontend-react never
+      # transmits docs/ (a sibling directory) to the builder at all, so
+      # those imports failed to resolve with the old context -- confirmed
+      # by a real build failure, not a guess. The root .dockerignore
+      # excludes everything except frontend-react/ and docs/ so this
+      # doesn't balloon into sending the whole repo (notably data/, which
+      # is 500MB+ of bind-mounted Postgres/Redis/media state) to the
+      # builder on every build.
+      context: .
+      dockerfile: frontend-react/Dockerfile
       # Vite inlines VITE_* at BUILD time, so unlike django's runtime env above
       # these have to be build args. The Dockerfile now declares matching ARGs
       # (2026-08-23) — before that it declared none and every build arg here

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { apiErrorMessage } from '../api/client'
-import { useMenuItems, usePermissionsMatrix, useUpdatePermissionsMatrix } from '../api/queries'
+import { useDeleteRole, useMenuItems, usePermissionsMatrix, useRoles, useUpdatePermissionsMatrix } from '../api/queries'
 import type { CrudPerm, PermissionsMatrix, PermissionValue } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
+import { MANAGE_ROLES_PATH } from '../constants/opaqueRoutes'
 
 // Full menu key list + CRUD-vs-simple shape, matching v1's DEFAULT_PERMS /
 // CRUD_MENUS in bagalewatch_api.py exactly (confirmed by reading it
@@ -42,7 +44,6 @@ const SIMPLE_MENU_KEYS: [string, string][] = [
   ['sla', 'SLA Tracker'],
 ]
 const CRUD_ACTIONS: (keyof CrudPerm)[] = ['read', 'write', 'update', 'delete']
-const ROLES: ('admin' | 'viewer')[] = ['admin', 'viewer']
 
 function asCrud(v: PermissionValue | undefined): CrudPerm {
   if (v && typeof v === 'object') return v
@@ -59,7 +60,12 @@ function asCrud(v: PermissionValue | undefined): CrudPerm {
 // backend that regresses this again) degrades to "show empty" instead of a
 // full-page crash — same reasoning `asCrud()` above already applies one level
 // down, for an individual menu key rather than the whole role.
-function roleMatrix(d: PermissionsMatrix, role: 'admin' | 'viewer'): PermissionsMatrix['admin'] {
+//
+// Widened from the literal 'admin' | 'viewer' union to a plain string
+// (2026-10-01, "full parity" RBAC feature) -- the matrix now has one
+// column per real Role (rescue_operator and any custom roles included),
+// not just the original two.
+function roleMatrix(d: PermissionsMatrix, role: string): PermissionsMatrix[string] {
   return d[role] ?? {}
 }
 
@@ -67,6 +73,21 @@ export default function PermissionsPage() {
   const { user } = useAuth()
   const { data: matrix, isLoading, error } = usePermissionsMatrix()
   const updateMatrix = useUpdatePermissionsMatrix()
+  // Dynamic role columns (2026-10-01, "full parity" RBAC feature) --
+  // was a hardcoded `['admin', 'viewer']` tuple. Mirrors the backend's own
+  // PermissionsMatrixView.get(), which now iterates
+  // Role.objects.exclude(name='superadmin') instead of a hardcoded dict.
+  const { data: roles, isLoading: rolesLoading } = useRoles()
+  const deleteRole = useDeleteRole()
+  const [roleError, setRoleError] = useState<string | null>(null)
+  const visibleRoles = useMemo(() => (roles ?? []).filter((r) => r.name !== 'superadmin'), [roles])
+  const ROLES = useMemo(() => visibleRoles.map((r) => r.name), [visibleRoles])
+  // Ad-hoc "+ Add Permission" rows (2026-10-01) -- PermissionsMatrixView's
+  // put() already accepts any menu_key, so a brand new simple-menu
+  // permission needs no backend change, just a way to add a blank row
+  // here to start checking boxes on. Not persisted until Save is clicked,
+  // same as every other edit on this page.
+  const [customSimpleKeys, setCustomSimpleKeys] = useState<[string, string][]>([])
   // Dynamic top-nav (2026-08-08) — a superadmin can now add a brand new
   // custom menu item with access='permission' and an arbitrary
   // permission_key via the new Menu admin page. That key needs a toggle
@@ -97,7 +118,7 @@ export default function PermissionsPage() {
   // lists means this table now only ever shows a permission_key that
   // ISN'T already covered by a CRUD row above.
   const dynamicSimpleKeys = useMemo<[string, string][]>(() => {
-    const known = new Set([...SIMPLE_MENU_KEYS, ...CRUD_MENU_KEYS].map(([key]) => key))
+    const known = new Set([...SIMPLE_MENU_KEYS, ...CRUD_MENU_KEYS, ...customSimpleKeys].map(([key]) => key))
     const extra: [string, string][] = []
     for (const item of menuItems ?? []) {
       if (item.access === 'permission' && item.permission_key && !known.has(item.permission_key)) {
@@ -106,7 +127,7 @@ export default function PermissionsPage() {
       }
     }
     return extra
-  }, [menuItems])
+  }, [menuItems, customSimpleKeys])
 
   const [draft, setDraft] = useState<PermissionsMatrix | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -116,7 +137,7 @@ export default function PermissionsPage() {
     if (matrix) setDraft(matrix)
   }, [matrix])
 
-  if (isLoading) return <div className="page-status">Loading permissions…</div>
+  if (isLoading || rolesLoading) return <div className="page-status">Loading permissions…</div>
   if (error) return <div className="page-status page-status-error">Could not load the permission matrix.</div>
   if (!user || !draft) return null
 
@@ -126,12 +147,12 @@ export default function PermissionsPage() {
     return <div className="page-status page-status-error">Only superadmin can manage permissions.</div>
   }
 
-  function setSimple(role: 'admin' | 'viewer', menuKey: string, value: boolean) {
+  function setSimple(role: string, menuKey: string, value: boolean) {
     setDraft((d) => (d ? { ...d, [role]: { ...roleMatrix(d, role), [menuKey]: value } } : d))
     setSaved(false)
   }
 
-  function setCrud(role: 'admin' | 'viewer', menuKey: string, action: keyof CrudPerm, value: boolean) {
+  function setCrud(role: string, menuKey: string, action: keyof CrudPerm, value: boolean) {
     setDraft((d) => {
       if (!d) return d
       const current = asCrud(roleMatrix(d, role)[menuKey])
@@ -152,6 +173,25 @@ export default function PermissionsPage() {
     }
   }
 
+  function addPermission() {
+    const key = window.prompt('New permission key (e.g. "my_feature" — must match what the page checks via isAllowed()):')
+    if (!key) return
+    const trimmedKey = key.trim()
+    if (!trimmedKey) return
+    const label = window.prompt('Label to show in this table:', trimmedKey) ?? trimmedKey
+    setCustomSimpleKeys((prev) => (prev.some(([k]) => k === trimmedKey) ? prev : [...prev, [trimmedKey, label || trimmedKey]]))
+  }
+
+  async function removeRole(roleId: number, name: string) {
+    setRoleError(null)
+    if (!window.confirm(`Delete role "${name}"? This removes its entire column here and anywhere it's assigned.`)) return
+    try {
+      await deleteRole.mutateAsync(roleId)
+    } catch (err) {
+      setRoleError(apiErrorMessage(err, 'Could not delete this role.'))
+    }
+  }
+
   return (
     <div className="admin-page">
       <h1>Permissions</h1>
@@ -161,6 +201,30 @@ export default function PermissionsPage() {
       </p>
       {saveError && <div className="form-error">{saveError}</div>}
       {saved && <div className="form-success">Saved.</div>}
+      {roleError && <div className="form-error">{roleError}</div>}
+
+      <div className="role-chip-row" style={{ marginBottom: 16 }}>
+        {visibleRoles.map((r) => (
+          <span key={r.id} className="role-chip">
+            {r.label}
+            {!r.is_builtin && (
+              <button
+                type="button"
+                className="role-chip-remove"
+                onClick={() => removeRole(r.id, r.name)}
+                disabled={deleteRole.isPending}
+                aria-label={`Delete role ${r.label}`}
+                title="Delete this role (also removes its column here)"
+              >
+                ×
+              </button>
+            )}
+          </span>
+        ))}
+        <Link to={MANAGE_ROLES_PATH} className="role-assign-link" style={{ display: 'inline', marginLeft: 8 }}>
+          + Create new role
+        </Link>
+      </div>
 
       <h2>CRUD menus</h2>
       <table className="admin-table permissions-table">
@@ -194,7 +258,17 @@ export default function PermissionsPage() {
         </tbody>
       </table>
 
-      <h2>Simple menus</h2>
+      <h2>
+        Simple menus
+        <button
+          type="button"
+          className="btn-secondary btn-small"
+          style={{ marginLeft: 10 }}
+          onClick={addPermission}
+        >
+          + Add Permission
+        </button>
+      </h2>
       <table className="admin-table permissions-table">
         <thead>
           <tr>

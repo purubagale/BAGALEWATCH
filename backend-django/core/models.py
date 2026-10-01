@@ -17,6 +17,8 @@ from django.contrib.auth.models import AbstractUser
 from django.contrib.gis.db.models import PointField
 from django.contrib.gis.geos import Point
 from django.db import models
+from django.db.models.signals import m2m_changed
+from django.dispatch import receiver
 
 
 def _point_or_none(lat, lng):
@@ -101,6 +103,31 @@ class User(AbstractUser):
     # hasher without needing to revisit the prefix length again.
     password = models.CharField(max_length=255)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='viewer')
+    # Multi-role RBAC (2026-10-01, "full parity" with a reference app's
+    # Manage Roles / Assign Roles / dynamic Permission Matrix / Menu
+    # Visibility screens) — `role` above is DELIBERATELY left exactly as
+    # it was before this field existed: a real, persisted CharField, not
+    # replaced by a computed property. An earlier draft of this design
+    # tried that and it broke on contact with this codebase in at least
+    # 5 places (Django admin's `list_filter='role'` needs a real DB
+    # column; `User(**validated_data)` in UserWriteSerializer.create()
+    # and seed_legacy_data.py both pass `role=...` as a constructor
+    # kwarg, which only works for a real field; every existing test
+    # fixture does `User.objects.create(role='admin')`). Instead, `role`
+    # is now a DENORMALIZED CACHE kept in sync with this `roles` M2M by
+    # the `_sync_primary_role` signal receiver below — every one of the
+    # ~15 existing `user.role == 'x'` / `role in (...)` checks across the
+    # whole codebase (the 3 permission classes, MenuItem access tiers,
+    # the frontend's isAllowed(), etc.) keeps working completely
+    # unchanged, because a user holding {admin, ftth_leader} still
+    # resolves `.role` to 'admin' via `resolve_primary_role()`'s
+    # precedence order. Only genuinely NEW code (Manage Roles, Assign
+    # Roles, the Permission Matrix's now-dynamic role columns, Menu
+    # Visibility) needs to query `.roles` directly. A custom role beyond
+    # the 4 builtin ones NEVER changes `role`/is_staff/is_superuser or
+    # any access-tier check — it only participates in MenuPermission and
+    # MenuItemRoleVisibility lookups (see those models below).
+    roles = models.ManyToManyField('Role', blank=True, related_name='users')
     name = models.CharField(max_length=150, blank=True)
     dept = models.CharField(max_length=100, blank=True)
 
@@ -148,6 +175,105 @@ class User(AbstractUser):
 
     def __str__(self):
         return f'{self.username} ({self.role})'
+
+
+# Precedence order for collapsing a user's full role SET down to the one
+# `User.role` cache value every existing privilege-tier check in this
+# codebase reads (2026-10-01, see User.roles' own comment above for the
+# full "why a cache, not a property" reasoning). A user holding only
+# custom roles (nothing in this list) falls back to 'viewer' — matching
+# `role`'s own pre-existing field default, so a brand-new custom-roles-
+# only account is never accidentally MORE privileged than before this
+# feature existed.
+_BUILTIN_ROLE_PRECEDENCE = ['superadmin', 'admin', 'rescue_operator', 'viewer']
+
+
+def resolve_primary_role(role_names):
+    """`role_names` is any iterable of role-name strings (typically
+    `user.roles.values_list('name', flat=True)`). Returns the single
+    highest-precedence builtin name per `_BUILTIN_ROLE_PRECEDENCE`, or
+    'viewer' if none of the given names are builtin at all."""
+    names = set(role_names)
+    for candidate in _BUILTIN_ROLE_PRECEDENCE:
+        if candidate in names:
+            return candidate
+    return 'viewer'
+
+
+@receiver(m2m_changed, sender=User.roles.through)
+def _sync_primary_role(sender, instance, action, **kwargs):
+    """Keeps `User.role` (the cache) in sync with `User.roles` (the real
+    M2M) on every add/remove/clear — see `User.roles`' own comment for
+    why this exists instead of a computed property. `save(update_fields=
+    [...])` does not re-fire `m2m_changed`, so there is no recursion risk
+    here. Only runs for the "post" actions (after the through-table write
+    actually happened) — `pre_add`/`pre_remove`/`pre_clear` would compute
+    the primary role from the state BEFORE this change took effect."""
+    if action not in ('post_add', 'post_remove', 'post_clear'):
+        return
+    new_role = resolve_primary_role(instance.roles.values_list('name', flat=True))
+    if instance.role != new_role:
+        instance.role = new_role
+        instance.save(update_fields=['role'])
+
+
+class Role(models.Model):
+    """A role a user can hold (2026-10-01, "full parity" RBAC feature —
+    see the module-level plan this shipped against). `name` is the plain
+    string every existing permission check, MenuItem.access tier, and
+    MenuPermission.role column already compares against — kept a plain
+    CharField rather than promoting those other call sites to FKs, since
+    that would be a much larger, riskier change for no real benefit (a
+    role's name changing is rare and, for the 4 builtin ones, explicitly
+    blocked — see `is_builtin` below).
+
+    `is_builtin` protects 'superadmin'/'admin'/'viewer'/'rescue_operator'
+    from rename or delete: every one of the 3 DRF permission classes
+    (IsAdminOrSuperadmin/IsSuperadminOnly/IsRescueOperator, core/views.py)
+    and `own_access_ok()`'s MenuItem access-tier checks hardcode these
+    exact literal strings — renaming or deleting one out from under them
+    would silently strip privilege from every user who held it, with no
+    error anywhere. A custom role (is_builtin=False) carries none of that
+    risk: it only ever participates in MenuPermission/
+    MenuItemRoleVisibility lookups, both of which degrade gracefully to
+    "no explicit grant" if the role disappears."""
+    name = models.CharField(max_length=20, unique=True)
+    label = models.CharField(max_length=50)
+    description = models.TextField(blank=True, default='')
+    is_builtin = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_roles'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class MenuItemRoleVisibility(models.Model):
+    """Sparse, additive override on top of `MenuItem.access`'s existing
+    coarse tier (2026-10-01, Menu Visibility feature) — see
+    `get_visible_menu_items()`'s docstring in views.py for exactly how
+    this is layered in. A MISSING row for a given (menu_item, role) pair
+    means "inherit the access-tier default, as before this feature
+    existed"; a PRESENT row is an explicit admin decision made on the
+    Menu Visibility page, which is why `visible` has no default — "no
+    opinion yet" (no row) and "explicitly set" must stay distinguishable,
+    matching the reference app's own "Explicit override — click to flip,
+    or reset to inherit the default" framing exactly."""
+    menu_item = models.ForeignKey('MenuItem', on_delete=models.CASCADE, related_name='role_visibility')
+    role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='menu_visibility')
+    visible = models.BooleanField()
+
+    class Meta:
+        db_table = 'v2_menu_item_role_visibility'
+        constraints = [
+            models.UniqueConstraint(fields=['menu_item', 'role'], name='uniq_menu_item_role_visibility'),
+        ]
+
+    def __str__(self):
+        return f'{self.menu_item_id} / {self.role_id} -> {self.visible}'
 
 
 class Site(models.Model):
