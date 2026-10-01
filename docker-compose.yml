@@ -258,6 +258,29 @@ services:
         condition: service_healthy
     # Outbound only (Postgres) — no `ports:`.
 
+  # Audit Log retention (2026-10-01, "should store upto 1 month log cap.
+  # after that dump older") — same "reuse the django image, different CMD"
+  # pattern as telemetry-maintenance above, enforcing
+  # AUDIT_LOG_RETENTION_DAYS in the pipeline rather than leaving it to a
+  # policy someone has to remember to run. Deliberately its own service
+  # (not folded into telemetry-maintenance), since that command is
+  # conceptually scoped to the telemetry pipeline, not an unrelated
+  # concern like audit-log pruning.
+  audit-log-maintenance:
+    image: dtwatch-backend-django
+    restart: unless-stopped
+    command: ["python", "manage.py", "prune_audit_log", "--loop"]
+    env_file:
+      - ./.env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      APP_VERSION: ${APP_VERSION:-dev}
+    depends_on:
+      db:
+        condition: service_healthy
+    # Outbound only (Postgres) — no `ports:`.
+
   # Continuous coverage-bin rollup (2026-09-01) — deliberately a SEPARATE
   # service/loop from telemetry-maintenance above, not an extra step
   # folded into it, because the two run on very different cadences: this

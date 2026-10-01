@@ -45,7 +45,7 @@ const TreeAdminPage = lazy(() => import('./pages/TreeAdminPage'))
 const UsersPage = lazy(() => import('./pages/UsersPage'))
 const PermissionsPage = lazy(() => import('./pages/PermissionsPage'))
 const MenuAdminPage = lazy(() => import('./pages/MenuAdminPage'))
-const AccessLogPage = lazy(() => import('./pages/AccessLogPage'))
+const AuditLogPage = lazy(() => import('./pages/AuditLogPage'))
 const ManageRolesPage = lazy(() => import('./pages/ManageRolesPage'))
 const AssignRolesPage = lazy(() => import('./pages/AssignRolesPage'))
 const MenuVisibilityPage = lazy(() => import('./pages/MenuVisibilityPage'))
@@ -286,7 +286,7 @@ function App() {
         {withOpaqueSection('/issues', <IssuesPage />)}
         {withOpaqueSection('/rf-reports', <RfReportsPage />)}
         {withOpaqueSection('/dt-plot-catalog', <DtPlotCatalogPage />)}
-        {withOpaqueSection('/access-log', <AccessLogPage />)}
+        {withOpaqueSection('/access-log', <AuditLogPage />)}
         {withOpaqueSection('/manage-roles', <ManageRolesPage />)}
         {withOpaqueSection('/assign-roles', <AssignRolesPage />)}
         {withOpaqueSection('/menu-visibility', <MenuVisibilityPage />)}

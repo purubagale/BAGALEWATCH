@@ -121,9 +121,14 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // 0067_seed_dt_plot_catalog_menuitem.py -- keep this in sync with that
   // file, same convention as every other entry.
   '/dt-plot-catalog': '/k9d4wr',
-  // Login/access audit trail (2026-10-01) -- seeded server-side by
-  // migration 0075_seed_access_log_menuitem.py -- keep this in sync with
-  // that file, same convention as every other entry.
+  // Originally "Login/access audit trail" (2026-10-01, seeded by
+  // migration 0075_seed_access_log_menuitem.py), RELABELED in place to
+  // "Audit Log" the same day by migration
+  // 0083_relabel_access_log_menuitem.py once AccessLogPage.tsx was
+  // replaced by the broader AuditLogPage.tsx (unified access + data-change
+  // feed -- see core/audit.py). Same path/MenuItem id throughout -- this
+  // dict key is left as '/access-log' on purpose, it's an internal lookup
+  // key, not anything user-visible, and renaming it buys nothing.
   '/access-log': '/a3x9lq',
   // Multi-role RBAC ("full parity" feature, 2026-10-01) -- seeded
   // server-side by migration 0079_seed_rbac_menuitems.py -- keep these in

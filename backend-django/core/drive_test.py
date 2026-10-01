@@ -24,6 +24,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .audit import log_audit_event
 from .dt_serving_cell import attach_serving_cells
 from .models import (
     DriveTestSample,
@@ -226,6 +227,16 @@ class DriveTestSessionViewSet(
             # method here.
             return [IsAuthenticated()]
         return [IsAuthenticated()]
+
+    def perform_create(self, serializer):
+        serializer.save()
+        log_audit_event(self.request, 'DT_SESSION.CREATED', resource='dt_session',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.name)
+
+    def perform_destroy(self, instance):
+        log_audit_event(self.request, 'DT_SESSION.DELETED', resource='dt_session',
+                         resource_id=instance.pk, detail=instance.name)
+        instance.delete()
 
     @action(detail=True, methods=['post'])
     def samples(self, request, pk=None):
@@ -686,6 +697,13 @@ class OptimizationActivityViewSet(
     def perform_create(self, serializer):
         user = self.request.user
         serializer.save(created_by=user if user and user.is_authenticated else None)
+        log_audit_event(self.request, 'DT_ACTIVITY.CREATED', resource='dt_activity',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.name)
+
+    def perform_destroy(self, instance):
+        log_audit_event(self.request, 'DT_ACTIVITY.DELETED', resource='dt_activity',
+                         resource_id=instance.pk, detail=instance.name)
+        instance.delete()
 
     @action(detail=True, methods=['post'], url_path='sessions')
     def sessions(self, request, pk=None):

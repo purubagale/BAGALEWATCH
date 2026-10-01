@@ -28,6 +28,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .audit import log_audit_event
 from .models import MenuPermission, Role
 from .serializers import RoleSerializer
 from .views import IsSuperadminOnly, User
@@ -42,6 +43,16 @@ class RoleViewSet(viewsets.ModelViewSet):
     queryset = Role.objects.all()
     serializer_class = RoleSerializer
     permission_classes = [IsAuthenticated, IsSuperadminOnly]
+
+    def perform_create(self, serializer):
+        serializer.save()
+        log_audit_event(self.request, 'ROLE.CREATED', resource='role',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.name)
+
+    def perform_update(self, serializer):
+        serializer.save()
+        log_audit_event(self.request, 'ROLE.UPDATED', resource='role',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.name)
 
     def update(self, request, *args, **kwargs):
         # Renaming a custom role must carry its MenuPermission rows along
@@ -73,8 +84,12 @@ class RoleViewSet(viewsets.ModelViewSet):
             # Role already (on_delete=CASCADE) — only MenuPermission,
             # which keys on the plain name string, needs an explicit
             # cleanup pass here.
+            role_id, role_name = role.pk, role.name
             MenuPermission.objects.filter(role=role.name).delete()
             role.delete()
+        # role.pk is None after .delete() (Django clears it) -- captured
+        # above, before the delete, not read off the now-cleared instance.
+        log_audit_event(request, 'ROLE.DELETED', resource='role', resource_id=role_id, detail=role_name)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -88,6 +103,7 @@ class UserRolesView(APIView):
 
     def put(self, request, pk):
         user = get_object_or_404(User, pk=pk)
+        old_names = list(user.roles.values_list('name', flat=True))
         names = request.data.get('roles') or []
         roles = list(Role.objects.filter(name__in=names))
         if not any(r.name in BUILTIN_ROLE_NAMES for r in roles):
@@ -96,4 +112,8 @@ class UserRolesView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         user.roles.set(roles)
+        log_audit_event(
+            request, 'USER_ROLES.UPDATED', resource='user_roles', resource_id=user.pk, detail=user.username,
+            payload={'before': old_names, 'after': [r.name for r in roles]},
+        )
         return Response(list(user.roles.values('id', 'name', 'label')))

@@ -516,15 +516,21 @@ class SiteViewSet(viewsets.ModelViewSet):
         # (bulk upsert) — mirrored here rather than only supporting DRF's
         # default single-object create, so a future bulk-import UI doesn't
         # need a second endpoint.
+        from .audit import log_audit_event
+
         many = isinstance(request.data, list)
         serializer = self.get_serializer(data=request.data, many=many)
         serializer.is_valid(raise_exception=True)
         with transaction.atomic():
             serializer.save(updated_by=request.user)
         headers = self.get_success_headers(serializer.data)
+        ids = [s.id for s in serializer.instance] if many else [serializer.instance.id]
+        log_audit_event(request, 'SITE.CREATED', resource='site', resource_id=','.join(map(str, ids)))
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
     def update(self, request, *args, **kwargs):
+        from .audit import log_audit_event
+
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
         # The URL's site ID is authoritative, matching v1's PUT /sites/<id>
@@ -539,7 +545,13 @@ class SiteViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         with transaction.atomic():
             serializer.save(updated_by=request.user)
+        log_audit_event(request, 'SITE.UPDATED', resource='site', resource_id=instance.pk)
         return Response(serializer.data)
+
+    def perform_destroy(self, instance):
+        from .audit import log_audit_event
+        log_audit_event(self.request, 'SITE.DELETED', resource='site', resource_id=instance.pk, detail=instance.name)
+        instance.delete()
 
     # Max sessions returned by dt_sessions() below -- this is a Site Detail
     # summary panel ("which drive tests were driven near this site"), not
@@ -985,6 +997,8 @@ class ThresholdsView(APIView):
         })
 
     def put(self, request):
+        from .audit import log_audit_event
+
         body = request.data or {}
         with transaction.atomic():
             for kpi_key, t in body.items():
@@ -996,6 +1010,7 @@ class ThresholdsView(APIView):
                         hi=bool(t.get('hi')), max=t.get('max'), unit=t.get('unit') or '',
                     ),
                 )
+        log_audit_event(request, 'THRESHOLD.UPDATED', resource='threshold', payload=body)
         return Response({'ok': True})
 
 
@@ -1012,9 +1027,12 @@ class ThresholdDetailView(APIView):
     permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
 
     def delete(self, request, kpi_key):
+        from .audit import log_audit_event
+
         deleted, _ = KpiThreshold.objects.filter(kpi_key=kpi_key).delete()
         if not deleted:
             return Response({'detail': 'No threshold with that key.'}, status=404)
+        log_audit_event(request, 'THRESHOLD.DELETED', resource='threshold', resource_id=kpi_key)
         return Response(status=204)
 
 
@@ -1155,6 +1173,14 @@ class TreeView(APIView):
 
             TreeSettings.objects.update_or_create(pk=1, defaults={'custom_active': bool(body.get('active'))})
 
+        from .audit import log_audit_event
+        # Summary counts, not the raw body -- a full tree payload can cover
+        # thousands of site assignments, too large to usefully store as one
+        # AuditEvent.payload blob.
+        log_audit_event(
+            request, 'TREE.UPDATED', resource='tree',
+            detail=f"{len(body.get('folders') or [])} top-level folder(s), {len(body.get('assignments') or {})} assignment(s)",
+        )
         return Response({'ok': True})
 
 
@@ -1295,6 +1321,24 @@ class MenuItemViewSet(viewsets.ModelViewSet):
     queryset = MenuItem.objects.all().order_by('order', 'id')
     serializer_class = MenuItemSerializer
     permission_classes = [IsAuthenticated, IsSuperadminOnly]
+
+    def perform_create(self, serializer):
+        from .audit import log_audit_event
+        serializer.save()
+        log_audit_event(self.request, 'MENU_ITEM.CREATED', resource='menu_item',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.label)
+
+    def perform_update(self, serializer):
+        from .audit import log_audit_event
+        serializer.save()
+        log_audit_event(self.request, 'MENU_ITEM.UPDATED', resource='menu_item',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.label)
+
+    def perform_destroy(self, instance):
+        from .audit import log_audit_event
+        log_audit_event(self.request, 'MENU_ITEM.DELETED', resource='menu_item',
+                         resource_id=instance.pk, detail=instance.label)
+        instance.delete()
 
 
 class MenuTreeView(APIView):
@@ -1485,6 +1529,13 @@ class BrandingSettingsView(APIView):
             obj.logo.save(f'logo.{ext}', ContentFile(raw), save=False)
 
         obj.save()
+        from .audit import log_audit_event
+        changed_fields = [f for f in self.TEXT_FIELDS if body.get(f) is not None]
+        if body.get('remove_logo'):
+            changed_fields.append('logo (removed)')
+        elif body.get('logo_data_url'):
+            changed_fields.append('logo')
+        log_audit_event(request, 'BRANDING.UPDATED', resource='branding', detail=', '.join(changed_fields))
         return Response(BrandingSettingsSerializer(obj, context={'request': request}).data)
 
 
@@ -1505,6 +1556,24 @@ class UserViewSet(viewsets.ModelViewSet):
         if self.action in ('create', 'update', 'partial_update', 'destroy'):
             return [IsAuthenticated(), IsSuperadminOnly()]
         return [IsAuthenticated(), IsAdminOrSuperadmin()]
+
+    def perform_create(self, serializer):
+        from .audit import log_audit_event
+        serializer.save()
+        log_audit_event(self.request, 'USER.CREATED', resource='user',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.username)
+
+    def perform_update(self, serializer):
+        from .audit import log_audit_event
+        serializer.save()
+        log_audit_event(self.request, 'USER.UPDATED', resource='user',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.username)
+
+    def perform_destroy(self, instance):
+        from .audit import log_audit_event
+        log_audit_event(self.request, 'USER.DELETED', resource='user',
+                         resource_id=instance.pk, detail=instance.username)
+        instance.delete()
 
 
 class PermissionsMatrixView(APIView):
@@ -1557,6 +1626,8 @@ class PermissionsMatrixView(APIView):
         return Response(out)
 
     def put(self, request):
+        from .audit import log_audit_event
+
         body = request.data or {}
         with transaction.atomic():
             for role, perms in body.items():
@@ -1572,6 +1643,7 @@ class PermissionsMatrixView(APIView):
                             role=role, menu_key=menu_key, action='read',
                             defaults={'allowed': bool(value)},
                         )
+        log_audit_event(request, 'PERMISSIONS.UPDATED', resource='permissions', payload=body)
         return Response({'ok': True})
 
 
@@ -1603,6 +1675,8 @@ class MenuItemRoleVisibilityView(APIView):
         return Response(out)
 
     def put(self, request):
+        from .audit import log_audit_event
+
         body = request.data or {}
         with transaction.atomic():
             for menu_item_id, role_map in body.items():
@@ -1619,5 +1693,6 @@ class MenuItemRoleVisibilityView(APIView):
                             menu_item_id=menu_item_id, role=role,
                             defaults={'visible': bool(value)},
                         )
+        log_audit_event(request, 'MENU_VISIBILITY.UPDATED', resource='menu_visibility', payload=body)
         return Response({'ok': True})
 

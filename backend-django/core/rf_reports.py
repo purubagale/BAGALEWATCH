@@ -103,6 +103,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .audit import log_audit_event
 from .models import RfOptimizationReport, RfReportAttachment, Sector
 from .serializers import RfOptimizationReportSerializer, RfReportAttachmentSerializer
 from .views import IsAdminOrSuperadmin
@@ -523,6 +524,18 @@ class RfOptimizationReportViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         user = self.request.user
         serializer.save(imported_by=user if user and user.is_authenticated else None)
+        log_audit_event(self.request, 'RF_REPORT.CREATED', resource='rf_report',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.lot_name)
+
+    def perform_update(self, serializer):
+        serializer.save()
+        log_audit_event(self.request, 'RF_REPORT.UPDATED', resource='rf_report',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.lot_name)
+
+    def perform_destroy(self, instance):
+        log_audit_event(self.request, 'RF_REPORT.DELETED', resource='rf_report',
+                         resource_id=instance.pk, detail=instance.lot_name)
+        instance.delete()
 
     @action(detail=True, methods=['get', 'post'], url_path='attachments')
     def attachments(self, request, pk=None):

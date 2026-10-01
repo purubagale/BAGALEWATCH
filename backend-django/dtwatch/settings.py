@@ -546,6 +546,13 @@ LIVE_SITE_SYNC_INTERVAL_SECONDS = int(os.environ.get('LIVE_SITE_SYNC_INTERVAL_SE
 TELEMETRY_RETENTION_DAYS = int(os.environ.get('TELEMETRY_RETENTION_DAYS', 90))
 TELEMETRY_MAINTENANCE_INTERVAL_HOURS = int(os.environ.get('TELEMETRY_MAINTENANCE_INTERVAL_HOURS', 24))
 
+# Audit Log retention (2026-10-01, "should store upto 1 month log cap.
+# after that dump older") -- prune_audit_log.py prunes AuthEventLog AND
+# AuditEvent together on this same cutoff; the `audit-log-maintenance`
+# compose service runs it on a daily loop, same pattern as
+# TELEMETRY_RETENTION_DAYS/`telemetry-maintenance` above.
+AUDIT_LOG_RETENTION_DAYS = int(os.environ.get('AUDIT_LOG_RETENTION_DAYS', 30))
+
 # Continuous coverage-bin rollup (2026-09-01, `telemetry-bin-roller`
 # compose service, core/management/commands/roll_telemetry_bins.py) — runs
 # far more often than the daily retention pass above so the Coverage map

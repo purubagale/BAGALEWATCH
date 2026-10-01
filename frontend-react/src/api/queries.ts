@@ -1,5 +1,5 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiJson } from './client'
+import { ApiError, apiFetch, apiJson } from './client'
 import type {
   AdminUser,
   ApiKeyCreate,
@@ -68,6 +68,8 @@ import type {
   UserWrite,
   HealthInfo,
   SystemHealthPayload,
+  AuditLogParams,
+  AuditLogPageResponse,
   RescueConsentPolicy,
   RescueConsentPolicyWrite,
   RescueLookupParams,
@@ -324,6 +326,47 @@ export function useAuthEventLog(params: AuthEventLogParams) {
     queryFn: () => apiJson<AuthEventLogPageResponse>(`/api/v2/auth-events/?${qs.toString()}`),
     placeholderData: (prev) => prev,
   })
+}
+
+// Backs AuditLogPage.tsx (2026-10-01) -- replaces AccessLogPage.tsx's use
+// of useAuthEventLog above with the unified access+data-change feed.
+// Shared filter params only (q/date_from/date_to/source) -- pagination is
+// added separately by each caller, since the export endpoint below
+// deliberately ignores it (full filtered result set, not just one page).
+function auditLogFilterParams(params: AuditLogParams): URLSearchParams {
+  const qs = new URLSearchParams()
+  if (params.q) qs.set('q', params.q)
+  if (params.date_from) qs.set('date_from', params.date_from)
+  if (params.date_to) qs.set('date_to', params.date_to)
+  if (params.source) qs.set('source', params.source)
+  return qs
+}
+
+export function useAuditLog(params: AuditLogParams) {
+  const qs = auditLogFilterParams(params)
+  qs.set('page', String(params.page ?? 1))
+  qs.set('page_size', String(params.page_size ?? 50))
+  return useQuery({
+    queryKey: ['audit-log', params],
+    queryFn: () => apiJson<AuditLogPageResponse>(`/api/v2/audit-log/?${qs.toString()}`),
+    placeholderData: (prev) => prev,
+  })
+}
+
+// Not a useMutation -- this triggers a file download, not a cache-
+// invalidating write. Same apiFetch() + res.blob() + downloadBlob()
+// pattern BackupPage.tsx's XLSX export already uses; the server always
+// names the file 'audit_log.csv' (core/audit.py's AuditLogExportView), so
+// there's no Content-Disposition filename to parse here the way that
+// page's per-scope export needs to.
+export async function exportAuditLogCsv(params: AuditLogParams): Promise<Blob> {
+  const qs = auditLogFilterParams(params)
+  const res = await apiFetch(`/api/v2/audit-log/export.csv?${qs.toString()}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new ApiError(res.status, body)
+  }
+  return res.blob()
 }
 
 // ── External API keys (2026-08-12) ───────────────────────────────────────

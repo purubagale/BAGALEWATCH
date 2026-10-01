@@ -39,6 +39,7 @@ from .models import (
     TelemetryRemoteOptOutRequest,
     TelemetrySample,
 )
+from .audit import log_audit_event
 from .telemetry import _scope_by_operator, generate_ingest_key, geohash_center, geohash_encode
 from .views import IsAdminOrSuperadmin, IsSuperadminOnly
 
@@ -85,6 +86,18 @@ class TelemetryIngestKeyViewSet(viewsets.ModelViewSet):
         )
         # In-memory only, never a column — just so create() can echo it once.
         serializer.instance._plaintext_key = full_key
+        log_audit_event(self.request, 'TELEMETRY_INGEST_KEY.CREATED', resource='telemetry_ingest_key',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.name)
+
+    def perform_update(self, serializer):
+        serializer.save()
+        log_audit_event(self.request, 'TELEMETRY_INGEST_KEY.UPDATED', resource='telemetry_ingest_key',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.name)
+
+    def perform_destroy(self, instance):
+        log_audit_event(self.request, 'TELEMETRY_INGEST_KEY.DELETED', resource='telemetry_ingest_key',
+                         resource_id=instance.pk, detail=instance.name)
+        instance.delete()
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

@@ -1794,6 +1794,15 @@ textarea:focus {
   background: var(--status-danger-bg-subtle);
   border: 1px solid var(--status-danger-border);
 }
+/* AuditLogPage.tsx (2026-10-01) -- reuses this same pill for its unified
+   Action column. Data-change events (SITE.CREATED, BACKUP.RESTORED, etc.)
+   aren't inherently success/fail the way an access event is, so they get
+   a third, neutral brand-colored variant instead of defaulting to green. */
+.auth-event-badge-neutral {
+  color: var(--brand-primary);
+  background: var(--brand-primary-soft);
+  border: 1px solid var(--brand-primary-soft);
+}
 
 /* RF Reports page (2026-09-15 vendor RNO report importer) -- the
    expand/collapse toggle on each imported report row, and its plain

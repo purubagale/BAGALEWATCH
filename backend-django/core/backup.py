@@ -48,6 +48,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .audit import log_audit_event
 from .models import DtBand, KpiSnapshot, KpiThreshold, Sector, Site, SiteAssignment, TreeFolder, TreeSettings
 from .serializers import SiteDetailSerializer, TreeFolderSerializer
 from .views import IsAdminOrSuperadmin, IsSuperadminOnly
@@ -371,6 +372,7 @@ class BackupImportView(APIView):
                         DtBand.objects.bulk_create(rows)
                 restored.append('band colors')
 
+        log_audit_event(request, 'BACKUP.RESTORED', resource='backup', payload={'restored': restored})
         return Response({'ok': True, 'restored': restored})
 
 
@@ -424,12 +426,11 @@ class SiteDataResetView(APIView):
             SiteAssignment.objects.all().delete()
             Site.objects.all().delete()
 
-        return Response({
-            'ok': True,
-            'deleted': {
-                'sites': site_count,
-                'sectors': sector_count,
-                'kpi_snapshots': snapshot_count,
-                'tree_assignments': assignment_count,
-            },
-        })
+        deleted = {
+            'sites': site_count,
+            'sectors': sector_count,
+            'kpi_snapshots': snapshot_count,
+            'tree_assignments': assignment_count,
+        }
+        log_audit_event(request, 'SITE_DATA.RESET', resource='site_data', payload=deleted)
+        return Response({'ok': True, 'deleted': deleted})

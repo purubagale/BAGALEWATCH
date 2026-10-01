@@ -97,6 +97,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .audit import log_audit_event
 from .live_sites import sync_live_sites
 from .models import LiveSiteSource, Sector, Site
 from .serializers import LiveSiteSourceSerializer
@@ -821,6 +822,8 @@ class LiveSiteSourceListView(APIView):
             enabled=bool(request.data.get('enabled', True)),
             updated_by=request.user,
         )
+        log_audit_event(request, 'LIVE_SITE_SOURCE.CREATED', resource='live_site_source',
+                         resource_id=source.pk, detail=source.name)
         return Response(LiveSiteSourceSerializer(source).data, status=201)
 
 
@@ -890,12 +893,16 @@ class LiveSiteSourceDetailView(APIView):
 
         source.updated_by = request.user
         source.save()
+        log_audit_event(request, 'LIVE_SITE_SOURCE.UPDATED', resource='live_site_source',
+                         resource_id=source.pk, detail=source.name)
         return Response(LiveSiteSourceSerializer(source).data)
 
     def delete(self, request, pk):
         source = self._get_source(pk)
         if source is None:
             return Response({'detail': 'Source not found.'}, status=404)
+        log_audit_event(request, 'LIVE_SITE_SOURCE.DELETED', resource='live_site_source',
+                         resource_id=source.pk, detail=source.name)
         source.delete()
         return Response(status=204)
 

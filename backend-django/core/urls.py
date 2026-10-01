@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import (api_auth, auth_log, backup, consent, dashboard, drive_test,
+from . import (api_auth, audit, auth_log, backup, consent, dashboard, drive_test,
                exports, issues, kpi_trend, reports, rescue, rf_audit,
                rf_reports, roles, site_import, sso_views, telemetry_admin,
                views)
@@ -58,6 +58,15 @@ urlpatterns = [
     # module docstring. Superadmin-only read of every sign-in attempt,
     # local or SSO, successful or not.
     path('auth-events/', auth_log.AuthEventLogListView.as_view(), name='auth-event-log'),
+
+    # Unified Audit Log (2026-10-01) -- merges AuthEventLog (access events,
+    # above) with the new AuditEvent (data-change events) into one
+    # searchable, exportable feed. See core/audit.py's module docstring.
+    # Replaces AccessLogPage.tsx's old narrower view (the underlying
+    # /auth-events/ endpoint above stays, just no longer linked from the
+    # frontend's nav).
+    path('audit-log/', audit.AuditLogListView.as_view(), name='audit-log'),
+    path('audit-log/export.csv', audit.AuditLogExportView.as_view(), name='audit-log-export'),
 
     # Registered BEFORE the router's `sites/<pk>/` include below —
     # Django matches urlpatterns top-to-bottom, so this literal path must

@@ -2578,6 +2578,65 @@ class AuthEventLog(models.Model):
         return f'{self.event}: {self.username or self.user} @ {self.created_at}'
 
 
+class AuditEvent(models.Model):
+    """Generic data-change audit trail (2026-10-01, "Audit Log" follow-up
+    to AuthEventLog above -- "all system activity, data changes, and
+    access events" in one searchable place). AuthEventLog already covers
+    access events (login/logout/SSO) and stays exactly as it is; this
+    model covers everything else -- a Site/Role/User CRUD, a Backup
+    restore, a Permissions Matrix edit, a Menu Visibility override, and so
+    on. AuditLogListView (core/audit.py) merges rows from both tables into
+    one unified, paginated feed -- they stay two separate tables (not one
+    migrated schema) since their natural fields genuinely differ
+    (AuthEventLog's user_agent/event-choices are login-specific; this
+    model's resource/resource_id/payload are not), same reasoning
+    RescueLocationAccessLog/RescueConsentPolicyChangeLog already use for
+    staying their own dedicated tables rather than joining a shared one.
+
+    `action` is a dotted RESOURCE.VERB string (e.g. 'SITE.CREATED',
+    'BACKUP.RESTORED') -- a single display-ready label, matching the
+    Action column shape from the reference screenshots. `resource` is a
+    separate, lowercase slug (e.g. 'site', 'backup') kept alongside it
+    purely as a clean filter/grouping column that doesn't need to parse
+    `action`.
+
+    Written by `log_audit_event()` (core/audit.py) -- either automatically
+    via AuditedModelViewSetMixin for the app's generic ModelViewSets, or by
+    a hand-placed call at the point of success in a bespoke APIView whose
+    payload shape generic introspection can't capture meaningfully (Backup
+    restore, Permissions Matrix, Menu Visibility, Thresholds, Tree,
+    Branding, Live Site Source config, Role assignment). Same
+    swallow-its-own-errors posture as log_auth_event() -- an audit-trail
+    write must never break the real action it's recording.
+
+    No retention here either -- see prune_audit_log.py (management
+    command), which prunes both this table and AuthEventLog together on
+    the same AUDIT_LOG_RETENTION_DAYS cutoff (default 30 days, "1 month
+    log cap, dump older" per the original request)."""
+
+    actor = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='audit_events'
+    )
+    # Point-in-time snapshot, same reasoning as AuthEventLog.username vs.
+    # .user -- stays readable after the actor's account is later renamed
+    # or deleted.
+    actor_username = models.CharField(max_length=150, blank=True, default='')
+    action = models.CharField(max_length=60, db_index=True)
+    resource = models.CharField(max_length=40, blank=True, default='', db_index=True)
+    resource_id = models.CharField(max_length=40, blank=True, default='')
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    detail = models.CharField(max_length=200, blank=True, default='')
+    payload = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'v2_audit_event'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.action}: {self.actor_username} @ {self.created_at}'
+
+
 # ── Continuous coverage-bin rollup (2026-09-01) ─────────────────────────
 
 class TelemetryRollState(models.Model):

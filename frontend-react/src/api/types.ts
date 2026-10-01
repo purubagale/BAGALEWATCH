@@ -2072,3 +2072,41 @@ export interface AuthEventLogParams {
    * exclusions -- see AuthEventLogListView's own docstring. */
   success?: '1' | '0'
 }
+
+// ── Unified Audit Log (2026-10-01) ──────────────────────────────────────
+// Mirrors core/audit.py's AuditLogListView exactly -- merges AuthEventLog
+// (access events, above) and the new AuditEvent (data-change events) into
+// one feed. Replaces AccessLogPage.tsx's old narrower view; the
+// AuthEventLog* types above stay (the underlying /auth-events/ endpoint
+// is unchanged) but are no longer rendered by any page.
+export type AuditLogSource = 'access' | 'data_change'
+
+export interface AuditLogEntry {
+  id: string
+  source: AuditLogSource
+  created_at: string
+  actor: string
+  action: string
+  resource: string
+  detail: string
+  ip_address: string | null
+  payload: unknown
+}
+
+export interface AuditLogPageResponse {
+  count: number
+  next: string | null
+  previous: string | null
+  results: AuditLogEntry[]
+}
+
+export interface AuditLogParams {
+  page?: number
+  page_size?: number
+  /** Free text across actor/action/resource/detail. */
+  q?: string
+  /** YYYY-MM-DD, inclusive. */
+  date_from?: string
+  date_to?: string
+  source?: AuditLogSource
+}
