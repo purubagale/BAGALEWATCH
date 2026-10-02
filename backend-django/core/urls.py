@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import (api_auth, audit, auth_log, backup, consent, dashboard, drive_test,
-               exports, issues, kpi_trend, mfa, password_reset, reports, rescue, rf_audit,
+               exports, ip_block, issues, kpi_trend, mfa, password_reset, reports, rescue, rf_audit,
                rf_reports, roles, site_import, sso_views, system_doc,
                telemetry_admin, views, volte_quality)
 
@@ -84,6 +84,12 @@ urlpatterns = [
     # frontend's nav).
     path('audit-log/', audit.AuditLogListView.as_view(), name='audit-log'),
     path('audit-log/export.csv', audit.AuditLogExportView.as_view(), name='audit-log-export'),
+
+    # Active IP blocking (2026-10-02, Phase E2) -- escalates the Audit
+    # Log's own suspicious-burst detection into actual enforcement. See
+    # core/ip_block.py's module docstring.
+    path('blocked-ips/', ip_block.BlockedIPListView.as_view(), name='blocked-ips-list'),
+    path('blocked-ips/<str:ip>/unblock/', ip_block.BlockedIPUnblockView.as_view(), name='blocked-ips-unblock'),
 
     # Registered BEFORE the router's `sites/<pk>/` include below —
     # Django matches urlpatterns top-to-bottom, so this literal path must

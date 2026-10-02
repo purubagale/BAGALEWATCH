@@ -23,6 +23,7 @@ independently verified to actually fire.
 """
 import csv
 import logging
+from datetime import timedelta
 
 from django.db.models import Q
 from rest_framework import pagination
@@ -89,6 +90,67 @@ def _normalize_audit_row(row):
     }
 
 
+# Attack-attempt detection (2026-10-02, Phase E of the auth-hardening
+# pass) -- a lower bar (3) than the existing per-USERNAME lockout's 5
+# (core/views.py's LoginView), deliberately: this catches a DIFFERENT
+# pattern -- one IP trying many different accounts -- which the per-
+# account lockout never sees until each individual username separately
+# hits 5. One IP hammering several accounts is generally a more alarming
+# signal than one person mistyping their own password repeatedly.
+_SUSPICIOUS_FAILURE_EVENTS = {'LOGIN_FAILED', 'LOGIN_LOCKED', 'SSO_LOGIN_FAILED'}
+_SUSPICIOUS_WINDOW = timedelta(minutes=15)
+_SUSPICIOUS_THRESHOLD = 3
+
+
+def _annotate_suspicious(rows):
+    """Flags any row that is part of a burst of >= `_SUSPICIOUS_THRESHOLD`
+    failure-type ACCESS events from the SAME `ip_address` within a
+    trailing `_SUSPICIOUS_WINDOW` -- mutates every row in place, adding
+    `is_suspicious`/`suspicious_reason` (every row gets `is_suspicious:
+    False` even when not flagged, so a caller never has to treat a
+    missing key as "not suspicious" itself).
+
+    The window is evaluated per EVENT, not once for the whole list: for
+    each failure event, count how many of that same IP's failure events
+    (including itself) fall within the preceding 15 minutes. This
+    correctly flags multiple independent bursts across a longer-ranged
+    view (e.g. "last 24 hours") rather than only ever checking one
+    whole-list-wide window.
+
+    Deliberate, documented scope limit: this runs over whatever `rows`
+    the caller already assembled for the current view/filter -- not a
+    separate always-full-history scan. Most meaningful on the default
+    (recent, unfiltered) view, exactly when a security admin would
+    actually be looking. No persisted alert, no outbound notification --
+    this is a visible flag on the Audit Log itself, not a push alert;
+    this app has no channel to hang one on beyond the email infrastructure
+    Phase A/B added, which a future pass could wire up, not built here."""
+    by_ip = {}
+    for row in rows:
+        row['is_suspicious'] = False
+        row['suspicious_reason'] = ''
+        if row['source'] != 'access' or not row['ip_address']:
+            continue
+        if row['action'] not in _SUSPICIOUS_FAILURE_EVENTS:
+            continue
+        by_ip.setdefault(row['ip_address'], []).append(row)
+
+    for ip, ip_rows in by_ip.items():
+        # Oldest-first for the sliding window below -- the overall `rows`
+        # list is newest-first (the API's own sort order), but walking a
+        # per-IP window needs to move forward through time.
+        ip_rows.sort(key=lambda r: r['created_at'])
+        window_start = 0
+        for i, row in enumerate(ip_rows):
+            while row['created_at'] - ip_rows[window_start]['created_at'] > _SUSPICIOUS_WINDOW:
+                window_start += 1
+            count = i - window_start + 1
+            if count >= _SUSPICIOUS_THRESHOLD:
+                row['is_suspicious'] = True
+                row['suspicious_reason'] = f'{count} failed login attempts from {ip} within 15 minutes'
+    return rows
+
+
 def _filtered_rows(params):
     """Shared filter + merge logic for both AuditLogListView and
     AuditLogExportView -- fetches AuthEventLog + AuditEvent rows matching
@@ -130,6 +192,10 @@ def _filtered_rows(params):
     if source != 'access':
         rows.extend(_normalize_audit_row(r) for r in audit_qs)
     rows.sort(key=lambda r: r['created_at'], reverse=True)
+    # Annotated here, not separately in each caller, so both
+    # AuditLogListView and AuditLogExportView always get it -- see
+    # _annotate_suspicious()'s own docstring.
+    _annotate_suspicious(rows)
     return rows
 
 
@@ -172,10 +238,14 @@ class AuditLogExportView(APIView):
         response = HttpResponse(content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="audit_log.csv"'
         writer = csv.writer(response)
-        writer.writerow(['Timestamp', 'Actor', 'Action', 'Resource', 'Detail', 'IP Address', 'Payload'])
+        writer.writerow([
+            'Timestamp', 'Actor', 'Action', 'Resource', 'Detail', 'IP Address', 'Payload',
+            'Suspicious', 'Suspicious Reason',
+        ])
         for r in rows:
             writer.writerow([
                 r['created_at'].isoformat(), r['actor'], r['action'], r['resource'],
                 r['detail'], r['ip_address'] or '', r['payload'] or '',
+                'yes' if r['is_suspicious'] else '', r['suspicious_reason'],
             ])
         return response

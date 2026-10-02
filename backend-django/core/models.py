@@ -2698,6 +2698,11 @@ class AuthEventLog(models.Model):
     EVENT_MFA_ENROLLED = 'mfa_enrolled'
     EVENT_MFA_DISABLED = 'mfa_disabled'
     EVENT_RECAPTCHA_FAILED = 'recaptcha_failed'
+    # 2026-10-02, Phase E2 (active IP blocking) -- logged from
+    # core/ip_block.py's maybe_auto_block() the moment a burst crosses the
+    # auto-block threshold, and from LoginView.post() on every subsequent
+    # attempt from an already-blocked IP.
+    EVENT_LOGIN_IP_BLOCKED = 'login_ip_blocked'
     EVENT_CHOICES = [
         (EVENT_LOGIN_SUCCESS, 'Local login succeeded'),
         (EVENT_LOGIN_FAILED, 'Local login failed (bad credentials)'),
@@ -2714,6 +2719,7 @@ class AuthEventLog(models.Model):
         (EVENT_MFA_ENROLLED, 'MFA enrolled'),
         (EVENT_MFA_DISABLED, 'MFA disabled'),
         (EVENT_RECAPTCHA_FAILED, 'reCAPTCHA check failed'),
+        (EVENT_LOGIN_IP_BLOCKED, 'Login blocked (IP auto-blocked)'),
     ]
     # Events that represent a real, successful session — everything else
     # in EVENT_CHOICES is either a failure or a logout. Used by the
@@ -2735,9 +2741,65 @@ class AuthEventLog(models.Model):
     class Meta:
         db_table = 'v2_auth_event_log'
         ordering = ['-created_at']
+        indexes = [
+            # 2026-10-02, Phase E2 -- core/ip_block.py's maybe_auto_block()
+            # runs this exact filter (ip_address + created_at range) on
+            # every failed local login, a much hotter path than the
+            # Audit Log's own superadmin-only view that previously was
+            # this table's only reader.
+            models.Index(fields=['ip_address', 'created_at']),
+        ]
 
     def __str__(self):
         return f'{self.event}: {self.username or self.user} @ {self.created_at}'
+
+
+class BlockedIP(models.Model):
+    """Active-enforcement companion to `AuthEventLog`'s own suspicious-
+    burst detection (2026-10-02, Phase E2: "can we block the ip, if
+    mistakenly blocked, superadmin can unblock"). `core/ip_block.py`'s
+    `maybe_auto_block()` creates/reactivates a row here the moment an IP
+    crosses the SAME 3-failures-in-15-minutes threshold
+    `core/audit.py`'s `_annotate_suspicious()` already flags in the Audit
+    Log -- one definition of "what counts as a burst," shared by detection
+    and enforcement.
+
+    One row per unique IP, not one row per block event: re-triggering an
+    already-blocked IP just refreshes `reason`/`blocked_at` and leaves
+    `is_active=True` rather than piling up duplicate rows for the same
+    address. Unblocking SETS `is_active=False` and stamps
+    `unblocked_at`/`unblocked_by` rather than deleting the row -- the
+    whole point of this shape is that "this IP was auto-blocked, then a
+    superadmin corrected it" stays visible afterward, not silently erased
+    the moment it's fixed.
+
+    `blocked_by is None` means an automatic block (`maybe_auto_block()`);
+    a real user means a superadmin manually blocked this IP via
+    `BlockedIPCreateView` without waiting for the auto-trigger -- the UI
+    must show these as "Automatic" vs the superadmin's own name, never
+    conflate the two.
+
+    Scope: local login only (`core/views.py`'s `LoginView`), not SSO --
+    same boundary Phase C's MFA already draws, for the same reason
+    (Keycloak owns SSO's own brute-force posture)."""
+    ip_address = models.GenericIPAddressField(unique=True)
+    reason = models.CharField(max_length=255)
+    blocked_at = models.DateTimeField(auto_now_add=True)
+    blocked_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    unblocked_at = models.DateTimeField(null=True, blank=True)
+    unblocked_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+
+    class Meta:
+        db_table = 'v2_blocked_ips'
+        ordering = ['-blocked_at']
+
+    def __str__(self):
+        return f'{self.ip_address} ({"active" if self.is_active else "unblocked"})'
 
 
 class AuditEvent(models.Model):

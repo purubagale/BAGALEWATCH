@@ -42,9 +42,9 @@ backend-django/core/*.py       One file per feature area (not MVC folders) —
                                 telemetry_admin.py, roles.py, sso.py. models.py
                                 holds every model; serializers.py every
                                 serializer; urls.py wires it all together.
-backend-django/core/migrations/  89 migrations as of 0089. Numbered sequentially,
+backend-django/core/migrations/  91 migrations as of 0091. Numbered sequentially,
                                   no squashing.
-frontend-react/src/pages/*.tsx  44 pages, one per route. Most are React.lazy()
+frontend-react/src/pages/*.tsx  45 pages, one per route. Most are React.lazy()
                                  imported in App.tsx except Login/Sites/Dashboard
                                  (the pages nearly every session hits immediately).
 frontend-react/src/api/
@@ -117,7 +117,7 @@ docs/                            Dated audits, server migration guides, runbook
 
 ## Current status
 
-**Done and pushed** (branch `telemetry`, as of commit `68f0931`):
+**Done and pushed** (branch `telemetry`, as of commit `e427bf1`):
 - Multi-role RBAC, System Health page, in-app current-state Documentation
   (`/api/v2/system-doc/`), unified Audit Log (replacing the old Access Log)
 - Performance audit top-5 fixes: N+1 elimination + 500-row list caps on RF
@@ -131,18 +131,15 @@ docs/                            Dated audits, server migration guides, runbook
   new user-menu dropdown in `Layout.tsx` (replacing the old plain Sign Out
   button) with Change Password + Sign Out
 
-**Done, built after `68f0931`, not yet pushed as of this writing** (commit
-when the next "commit and push" request lands):
-- **Phase C — MFA (TOTP), superadmin-togglable.** `SecuritySettings`
+- **MFA (TOTP), superadmin-togglable** (`core/mfa.py`, Phase C). `SecuritySettings`
   singleton (`mfa_required`), `User.totp_secret_encrypted`/`totp_enabled`,
-  `core/mfa.py` (enroll/confirm/disable/status + login-time
-  `MFAVerifyView` using a Redis `SETEX`+`GETDEL` pending ticket, same
-  shape as `sso.py`'s login code). `LoginView.post()`'s tail extracted
-  into `_finish_login()`, shared by both the no-MFA and post-verify paths.
-  A user who has enrolled is challenged on every login regardless of the
-  org-wide toggle; the toggle only forces enrollment for everyone else
-  (`mfa_setup_required` flag on the login response). SSO users entirely
-  untouched, by design. Full round-trip live-tested.
+  enroll/confirm/disable/status + login-time `MFAVerifyView` using a Redis
+  `SETEX`+`GETDEL` pending ticket, same shape as `sso.py`'s login code.
+  `LoginView.post()`'s tail extracted into `_finish_login()`, shared by
+  both the no-MFA and post-verify paths. A user who has enrolled is
+  challenged on every login regardless of the org-wide toggle; the toggle
+  only forces enrollment for everyone else (`mfa_setup_required` flag on
+  the login response). SSO users entirely untouched, by design.
 - **VoLTE/VoNR call-quality estimation** (`core/volte_quality.py`,
   `VolteCallSample` model, `/api/telemetry/v1/volte-samples/` ingest +
   `/api/v2/telemetry/volte-samples/` admin list, seeded "VoLTE Quality"
@@ -160,22 +157,34 @@ when the next "commit and push" request lands):
   privileged/signature permission) — spec for the separate, inaccessible
   `netplanning-telemetry-sdk` repo lives in
   `docs/telemetry_pipeline_mobile_handoff.md`'s §12 addendum, not code
-  here. Full pipeline live-tested end-to-end through the real HTTP
-  endpoints.
+  here.
+- **Attack-attempt detection + active IP blocking** (`core/audit.py`'s
+  `_annotate_suspicious()` + `core/ip_block.py`, Phases E/E2). An IP with
+  ≥3 failure-type access events (`login_failed`/`login_locked`/
+  `sso_login_failed`) in a trailing 15 minutes — across potentially
+  different usernames, a lower/different bar than the existing
+  per-username 5-attempt lockout — gets flagged with a ⚠ badge on the
+  Audit Log AND, for local login specifically, actually auto-blocked
+  (`BlockedIP` model) before `authenticate()` runs on any further attempt.
+  Superadmin-only "Blocked IPs" page to review/manually block/reverse a
+  false positive — unblocking stamps who/when rather than deleting the
+  row, so the correction stays visible. Found and fixed a real pre-existing
+  bug while building this: `core/auth_log.py`'s `_client_ip()` trusted
+  `X-Forwarded-For`'s first entry, which a client can forge (nginx
+  *appends* via `$proxy_add_x_forwarded_for`, never replaces) — now
+  prefers `X-Real-IP` (nginx-set from the TCP peer, unspoofable). Scope:
+  local login only, not SSO — same boundary as MFA, for the same reason
+  (Keycloak owns SSO's own brute-force posture).
 
-**In progress — Auth security hardening, Phases D–G** (plan file:
-`C:\Users\HP\.claude\plans\majestic-napping-stream.md` on the machine this
-was planned on; summarized here so that file isn't load-bearing):
+**In progress — Auth security hardening, Phases D, F, G remain** (plan
+file: `C:\Users\HP\.claude\plans\majestic-napping-stream.md` on the
+machine this was planned on; summarized here so that file isn't
+load-bearing):
 
 - **Phase D — GeoIP on Audit Log.** `geoip2` + MaxMind GeoLite2 `.mmdb`
   (user supplies the license key later) — `core/geoip.py`, lazy reader,
   `None`/"Unknown location" fallback when the file is absent. Read-time
   lookup in `core/audit.py`'s row normalizers, no schema migration.
-- **Phase E — Attack-attempt detection on Audit Log.** `_annotate_suspicious()`
-  in `core/audit.py` — group already-filtered rows by IP, flag ≥3
-  failure-type events in a trailing 15-minute window (lower bar than the
-  per-username 5-attempt lockout, since this catches one IP hitting many
-  accounts). In-app badge only — no outbound notification channel exists.
 - **Phase F — Google reCAPTCHA v3 on login.** `SecuritySettings.recaptcha_enabled`
   + `RECAPTCHA_SITE_KEY`/`RECAPTCHA_SECRET_KEY` env vars. Inert when unset.
 - **Phase G — SMS OTP, pluggable seam only (not wired).** NTC has an
