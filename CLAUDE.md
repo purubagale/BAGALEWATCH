@@ -1,0 +1,194 @@
+# DT-WATCH BTS v2 — Project Brief
+
+> Generated 2026-10-02. This file is the fast-load orientation doc for this
+> repo — read this instead of re-deriving architecture/status from scratch.
+> For an always-fresh, DB-introspected reference (every model field, every
+> menu item, every role's permission counts), use the in-app Documentation
+> page (superadmin/admin, `/api/v2/system-doc/`) instead of duplicating that
+> here — this file covers what that endpoint doesn't: conventions, workflow
+> gotchas, and current project status.
+
+## What this is
+
+Nepal Telecom's 4G RAN Operations & Maintenance platform — site/sector
+inventory, KPI tracking, drive-test analysis, crowdsourced telemetry
+coverage, RF optimization report import, and the admin surfaces (RBAC,
+audit logging, live site sync) that support them. Single-tenant Django
+REST Framework + React application, deployed via Docker Compose.
+
+This is the **v2 rewrite** (Django + React) of a legacy single-file HTML
+dashboard (`bts_monitor.html`, documented in the parent directory's own
+`CLAUDE.md` one level up from this repo) — that file describes a different,
+earlier project, not this one. Ignore it when working in this repo.
+
+## Tech stack
+
+| Concern | Choice |
+|---|---|
+| Backend | Django 5 + DRF, one app: `core` |
+| Database | PostgreSQL 16 + PostGIS |
+| Cache / ephemeral state | Redis (login lockout counters, SSO transaction state, rate limits) |
+| Auth | JWT (SimpleJWT) + optional Keycloak SSO (OIDC) |
+| API docs | drf-spectacular — `/api/v2/schema/`, `/api/v2/docs/` |
+| Frontend | React 19 + TypeScript + Vite, React Query for server state |
+| Maps | Leaflet + MarkerCluster |
+| Deployment | Docker Compose, 10 services (see below) |
+
+## Repo layout
+
+```
+backend-django/core/*.py       One file per feature area (not MVC folders) —
+                                e.g. password_reset.py, audit.py, rf_reports.py,
+                                telemetry_admin.py, roles.py, sso.py. models.py
+                                holds every model; serializers.py every
+                                serializer; urls.py wires it all together.
+backend-django/core/migrations/  89 migrations as of 0089. Numbered sequentially,
+                                  no squashing.
+frontend-react/src/pages/*.tsx  44 pages, one per route. Most are React.lazy()
+                                 imported in App.tsx except Login/Sites/Dashboard
+                                 (the pages nearly every session hits immediately).
+frontend-react/src/api/
+  client.ts                     apiFetch/apiJson, token storage (sessionStorage),
+                                 ApiError, apiErrorMessage()
+  queries.ts                    Every React Query hook, grouped by feature
+  types.ts                      Every TS interface for API payloads
+docker-compose.yml               10 services: db, redis, django, frontend,
+                                  site-sync, telemetry-maintenance,
+                                  telemetry-bin-roller, audit-log-maintenance,
+                                  node-gateway (profile: future, unused),
+                                  go-worker (profile: future, unused)
+docs/                            Dated audits, server migration guides, runbook
+```
+
+## Critical workflow facts (learned the hard way this session)
+
+- **The `django` service has NO bind mount for source code.** Editing a
+  `.py` file on the host does nothing to the running container until you
+  `docker compose build django && docker compose up -d django`. Same for
+  `frontend` (`docker compose build frontend && docker compose up -d
+  frontend`) — `build` alone does not recreate the running container.
+- **Generating a migration requires the named-container pattern**, not
+  `--rm`: `docker compose run --name tmp_X django python manage.py
+  makemigrations core`, then `docker cp tmp_X:/app/core/migrations/XXXX.py
+  ./backend-django/core/migrations/`, then `docker rm tmp_X`. A plain
+  `--rm` run destroys the generated file along with the container before it
+  can be copied out.
+- **Always run `python manage.py makemigrations --check --dry-run` before
+  committing a `models.py` change** — a missed migration (e.g. a `choices=`
+  change on an existing field) won't fail `manage.py check` but will show up
+  here. Apply + regenerate the image before committing.
+- **This dev machine's Docker Desktop is capped at 2 CPUs**, regardless of
+  the host's real core count. Every `cpus:`/`mem_limit:` value in
+  `docker-compose.yml` is `${VAR:-default}`-driven for exactly this reason
+  — override via `.env` on a real production host, never hardcode.
+- **Frontend is published on port 5180**, not 8080 — `docker compose ps`
+  to confirm before smoke-testing with curl.
+- **Bash tool + this repo's path**: the parent directory name contains
+  `O&M`, which breaks naive shell invocations that shell out through
+  `cmd.exe` (notably `npx` on Windows — it errors on the bare `&`). Run
+  `node ./node_modules/typescript/bin/tsc -b --force` and `node
+  ./node_modules/vite/bin/vite.js build` directly instead of via `npx`.
+- **Git on this checkout warns `LF will be replaced by CRLF`** on every
+  staged file — expected/harmless (`.gitattributes` config), not a sign of
+  unintended line-ending churn.
+- **Only commit when explicitly asked.** This project's established
+  pattern: build and verify first, commit as a separate, explicit step.
+
+## Conventions
+
+- Functions: `camelCase` (frontend) / `snake_case` (backend), `_`-prefixed
+  for private/internal helpers.
+- New backend feature = new `core/<feature>.py` file (not added to
+  `views.py`), wired into `core/urls.py` explicitly — no shared ViewSet
+  mixin for cross-cutting concerns like audit logging (most ViewSets
+  already override `create`/`update`/`destroy` for their own reasons,
+  which would silently shadow a mixin's hooks via MRO).
+- Singleton settings models (`BrandingSettings`, pattern to reuse for any
+  future one): `pk=1` forced in `save()`, `AllowAny` GET / superadmin-only
+  PUT, audit-logged.
+- Short-lived opaque server-side tokens (SSO login codes, MFA-pending
+  tickets): Redis `SETEX` + single-use `GETDEL`, short TTL — not a DB table.
+- Optional/external-dependency features (SSO, GeoIP, reCAPTCHA, SMTP)
+  degrade gracefully when unconfigured — env var unset means the feature is
+  inert, never a hard failure. `EMAIL_BACKEND` falling back to Django's
+  console backend when `EMAIL_HOST` is unset is the latest example.
+- Self-service password reset uses Django's own `PasswordResetTokenGenerator`
+  (HMAC, self-invalidates on password change) — no token storage table.
+
+## Current status
+
+**Done and pushed** (branch `telemetry`, as of commit `68f0931`):
+- Multi-role RBAC, System Health page, in-app current-state Documentation
+  (`/api/v2/system-doc/`), unified Audit Log (replacing the old Access Log)
+- Performance audit top-5 fixes: N+1 elimination + 500-row list caps on RF
+  Reports/DT Sessions, 3 new `Sector` indexes, 60s cache on report
+  endpoints + dashboard stats, env-var-driven Docker resource limits
+- Telemetry live-samples delta-fetch (`since` param + `server_time`
+  cursor) — map pages no longer remount on every 10s poll
+- **Forgot/change password** (`core/password_reset.py`): email-based reset
+  (anti-enumeration, rate-limited, self-invalidating token),
+  logged-in change-password, `User.email` now editable in Users admin,
+  new user-menu dropdown in `Layout.tsx` (replacing the old plain Sign Out
+  button) with Change Password + Sign Out
+
+**Done, built after `68f0931`, not yet pushed as of this writing** (commit
+when the next "commit and push" request lands):
+- **Phase C — MFA (TOTP), superadmin-togglable.** `SecuritySettings`
+  singleton (`mfa_required`), `User.totp_secret_encrypted`/`totp_enabled`,
+  `core/mfa.py` (enroll/confirm/disable/status + login-time
+  `MFAVerifyView` using a Redis `SETEX`+`GETDEL` pending ticket, same
+  shape as `sso.py`'s login code). `LoginView.post()`'s tail extracted
+  into `_finish_login()`, shared by both the no-MFA and post-verify paths.
+  A user who has enrolled is challenged on every login regardless of the
+  org-wide toggle; the toggle only forces enrollment for everyone else
+  (`mfa_setup_required` flag on the login response). SSO users entirely
+  untouched, by design. Full round-trip live-tested.
+- **VoLTE/VoNR call-quality estimation** (`core/volte_quality.py`,
+  `VolteCallSample` model, `/api/telemetry/v1/volte-samples/` ingest +
+  `/api/v2/telemetry/volte-samples/` admin list, seeded "VoLTE Quality"
+  MenuItem under Telemetry). Server-side ITU-T G.107/G.107.1 E-model MOS
+  estimator — narrowband AND wideband paths (AMR-WB needs the wideband
+  scale, a genuinely different R0/formula, not just different constants).
+  Three-tier codec coverage, `mos_is_provisional` flagging which tier a
+  given row's estimate came from: **verified** (AMR-WB, G.711, G.729 —
+  real cited ITU-T G.113 constants) vs **provisional** (EVS — real
+  constants run through the wideband formula as a stand-in for the
+  unverified fullband E-model; AMR-NB — no source at all, proxied via
+  GSM-EFR) vs **unavailable** (no entry, or packet loss reported with no
+  published robustness factor). Dormant until the mobile app has
+  carrier-privileged status (`READ_PRECISE_PHONE_STATE` is a
+  privileged/signature permission) — spec for the separate, inaccessible
+  `netplanning-telemetry-sdk` repo lives in
+  `docs/telemetry_pipeline_mobile_handoff.md`'s §12 addendum, not code
+  here. Full pipeline live-tested end-to-end through the real HTTP
+  endpoints.
+
+**In progress — Auth security hardening, Phases D–G** (plan file:
+`C:\Users\HP\.claude\plans\majestic-napping-stream.md` on the machine this
+was planned on; summarized here so that file isn't load-bearing):
+
+- **Phase D — GeoIP on Audit Log.** `geoip2` + MaxMind GeoLite2 `.mmdb`
+  (user supplies the license key later) — `core/geoip.py`, lazy reader,
+  `None`/"Unknown location" fallback when the file is absent. Read-time
+  lookup in `core/audit.py`'s row normalizers, no schema migration.
+- **Phase E — Attack-attempt detection on Audit Log.** `_annotate_suspicious()`
+  in `core/audit.py` — group already-filtered rows by IP, flag ≥3
+  failure-type events in a trailing 15-minute window (lower bar than the
+  per-username 5-attempt lockout, since this catches one IP hitting many
+  accounts). In-app badge only — no outbound notification channel exists.
+- **Phase F — Google reCAPTCHA v3 on login.** `SecuritySettings.recaptcha_enabled`
+  + `RECAPTCHA_SITE_KEY`/`RECAPTCHA_SECRET_KEY` env vars. Inert when unset.
+- **Phase G — SMS OTP, pluggable seam only (not wired).** NTC has an
+  internal SMS API but integration details were never provided. Build
+  `core/sms.py`'s `send_otp_sms()` dispatcher (`SMS_BACKEND` env var,
+  default `ConsoleSMSBackend`, stub `NtcSmsBackend` placeholder),
+  `User.mobile_number`, `SecuritySettings.sms_otp_enabled`. `MFAVerifyView`
+  must be method-agnostic from the start so wiring in the real gateway
+  later needs no rework.
+
+Verification pattern for all of the above: `ast.parse` + `manage.py check`
+after each phase; live Django-shell round-trip tests (token generation,
+TOTP enroll+verify, ticket single-use); confirm GeoIP/reCAPTCHA degrade
+correctly with no credentials present; full rebuild+redeploy
+(`docker compose build <svc> && docker compose up -d <svc>`) before calling
+any phase done.

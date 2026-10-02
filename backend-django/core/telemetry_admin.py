@@ -25,6 +25,7 @@ from django.contrib.gis.measure import D
 from django.db.models import Count, Max, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import serializers, status, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -39,6 +40,7 @@ from .models import (
     TelemetryRemoteOptOutRequest,
     TelemetrySample,
 )
+from .audit import log_audit_event
 from .telemetry import _scope_by_operator, generate_ingest_key, geohash_center, geohash_encode
 from .views import IsAdminOrSuperadmin, IsSuperadminOnly
 
@@ -85,6 +87,18 @@ class TelemetryIngestKeyViewSet(viewsets.ModelViewSet):
         )
         # In-memory only, never a column — just so create() can echo it once.
         serializer.instance._plaintext_key = full_key
+        log_audit_event(self.request, 'TELEMETRY_INGEST_KEY.CREATED', resource='telemetry_ingest_key',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.name)
+
+    def perform_update(self, serializer):
+        serializer.save()
+        log_audit_event(self.request, 'TELEMETRY_INGEST_KEY.UPDATED', resource='telemetry_ingest_key',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.name)
+
+    def perform_destroy(self, instance):
+        log_audit_event(self.request, 'TELEMETRY_INGEST_KEY.DELETED', resource='telemetry_ingest_key',
+                         resource_id=instance.pk, detail=instance.name)
+        instance.delete()
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -405,6 +419,28 @@ class TelemetryLiveSamplesView(APIView):
 
         qs = qs.order_by('-received_at')
 
+        # Delta-fetch cursor (2026-10-02 perf follow-up, "suggest me the
+        # actual efficiency... can django handle all this") -- the
+        # frontend polls this endpoint every 10s; without `since`, every
+        # poll re-fetches and re-serializes the WHOLE window even when
+        # nothing new has arrived. `since` is an ADDITIONAL lower bound on
+        # top of everything above, applied only to the ROWS query, never
+        # to `devices` below -- the device dropdown must keep reflecting
+        # every device seen in the full window, not just this delta, or it
+        # would silently shrink on every poll. Safe as a plain `received_at`
+        # cursor (not an id-based one) because core/telemetry.py's
+        # coerce_sample() stamps one `received_at` per ingest BATCH, not
+        # per sample -- so two samples can tie on it only if they came from
+        # the same batch, and a client always captures the newest
+        # `server_time` across a whole response before polling again.
+        # Omitting `since` behaves exactly as before this change.
+        rows_qs = qs
+        since_param = request.query_params.get('since')
+        if since_param:
+            since_dt = parse_datetime(since_param)
+            if since_dt is not None:
+                rows_qs = qs.filter(received_at__gt=since_dt)
+
         rows = [
             {
                 'device_id': s.device_id,
@@ -438,7 +474,7 @@ class TelemetryLiveSamplesView(APIView):
                 'ecio_db': s.ecio_db,
                 'trigger_reason': s.trigger_reason,
             }
-            for s in qs[:limit]
+            for s in rows_qs[:limit]
         ]
         # Devices list mirrors `qs`'s own filters (window + area, when an
         # area was given) rather than re-deriving from a device_id-blind
@@ -464,6 +500,10 @@ class TelemetryLiveSamplesView(APIView):
             'count': len(rows),
             'window_minutes': minutes,
             'devices': devices,
+            # Next poll's `since` cursor -- the SERVER's clock, not the
+            # client's, so there's no client/server clock-skew edge case
+            # (see this view's own `since` handling above).
+            'server_time': timezone.now().isoformat(),
         })
 
 
@@ -695,6 +735,19 @@ class TelemetryDriveTestSessionSamplesView(APIView):
 
         qs = qs.order_by('-received_at')
 
+        # Delta-fetch cursor -- same reasoning/safety as
+        # TelemetryLiveSamplesView's own `since` handling above (one
+        # `received_at` per ingest batch, not per sample, so this is a
+        # safe plain-timestamp cursor). No `devices` list here to protect
+        # from the filter -- `consent_summary` above is already computed
+        # from `session.device_ids`/`consented_ids`, not from `qs`, so
+        # `since` can apply directly to `qs` with nothing else to split out.
+        since_param = request.query_params.get('since')
+        if since_param:
+            since_dt = parse_datetime(since_param)
+            if since_dt is not None:
+                qs = qs.filter(received_at__gt=since_dt)
+
         rows = [
             {
                 'device_id': s.device_id,
@@ -740,4 +793,8 @@ class TelemetryDriveTestSessionSamplesView(APIView):
             'count': len(rows),
             'require_consent': session.require_consent,
             'consent_summary': consent_summary,
+            # Next poll's `since` cursor -- see TelemetryLiveSamplesView's
+            # own identical field for why the server's clock, not the
+            # client's.
+            'server_time': timezone.now().isoformat(),
         })

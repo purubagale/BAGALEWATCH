@@ -21,6 +21,7 @@ made via AskUserQuestion, since this app already syncs everything else
 a per-browser-only dashboard layout would be the one inconsistent
 exception.
 """
+from django.core.cache import cache
 from django.db import transaction
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -28,6 +29,18 @@ from rest_framework.views import APIView
 
 from .models import DashboardCardConfig, DriveTestSession, Site
 from .views import get_visible_menu_items
+
+# 2026-10-02 perf audit: every dashboard load (i.e. every login, every
+# home-page visit, for every user) was issuing 7 separate .count() queries
+# -- none of these numbers change more than a few times a day in practice
+# (site status/deployment changes, a new DT session), so a short-TTL cache
+# shared across ALL users (these aren't per-user values) cuts that to
+# roughly one real query set per minute network-wide instead of per
+# request. Plain TTL expiry, no write-path invalidation -- matches the
+# same tradeoff already used for the SLA/NTA/Monthly/Scatter report cache
+# in reports.py.
+DASHBOARD_STATS_CACHE_KEY = 'dashboard:stats:v1'
+DASHBOARD_STATS_CACHE_TTL = 60
 
 # Fixed catalog of stat cards — deliberately a short, hand-picked list
 # rather than something fully dynamic/admin-configurable (unlike
@@ -112,26 +125,31 @@ class DashboardView(APIView):
             })
         return cards
 
-    def _stat_value(self, key):
-        if key == 'stat-total-sites':
-            return Site.objects.count()
-        if key == 'stat-sites-crit':
-            return Site.objects.filter(status='crit').count()
-        if key == 'stat-sites-warn':
-            return Site.objects.filter(status='warn').count()
-        if key == 'stat-dt-sessions':
-            return DriveTestSession.objects.count()
-        if key == 'stat-sites-active':
-            return Site.objects.filter(deployment_status__iexact='Active').count()
-        if key == 'stat-sites-planned':
-            return Site.objects.filter(deployment_status__iexact='Planned').count()
-        if key == 'stat-sites-decommissioning':
-            return Site.objects.filter(deployment_status__iexact='Decommissioning').count()
-        return None
+    def _compute_stats(self):
+        return {
+            'stat-total-sites': Site.objects.count(),
+            'stat-sites-crit': Site.objects.filter(status='crit').count(),
+            'stat-sites-warn': Site.objects.filter(status='warn').count(),
+            'stat-dt-sessions': DriveTestSession.objects.count(),
+            'stat-sites-active': Site.objects.filter(deployment_status__iexact='Active').count(),
+            'stat-sites-planned': Site.objects.filter(deployment_status__iexact='Planned').count(),
+            'stat-sites-decommissioning': Site.objects.filter(deployment_status__iexact='Decommissioning').count(),
+        }
+
+    def _cached_stats(self):
+        stats = cache.get(DASHBOARD_STATS_CACHE_KEY)
+        if stats is None:
+            stats = self._compute_stats()
+            cache.set(DASHBOARD_STATS_CACHE_KEY, stats, DASHBOARD_STATS_CACHE_TTL)
+        return stats
 
     def get(self, request):
         catalog = self._catalog(request.user, request)
         saved = {c.card_key: c for c in DashboardCardConfig.objects.filter(user=request.user)}
+        # Fetched once per request (not per card) -- every 'stat' card
+        # below reads from this same dict instead of hitting the DB (or
+        # even Redis) once per card.
+        stats = self._cached_stats()
 
         out = []
         for i, card in enumerate(catalog):
@@ -142,7 +160,7 @@ class DashboardView(APIView):
             default_visible = card.pop('default_visible', True)
             out.append({
                 **card,
-                'value': self._stat_value(card['key']) if card['type'] == 'stat' else None,
+                'value': stats.get(card['key']) if card['type'] == 'stat' else None,
                 # Catalog order (i * 10) leaves gaps for a user's custom
                 # ordering to slot into without needing to renumber
                 # everything else — same spacing convention as MenuItem's

@@ -24,6 +24,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .audit import log_audit_event
 from .dt_serving_cell import attach_serving_cells
 from .models import (
     DriveTestSample,
@@ -183,6 +184,19 @@ def _attachment_count_expr():
     return Coalesce(Subquery(counts), 0)
 
 
+# Hard cap on the unpaginated `dt-sessions/` list (2026-10-02 perf audit
+# follow-up) -- same reasoning as RF_REPORT_LIST_CAP in rf_reports.py:
+# this table is append-only for as long as the O&M team keeps doing drive
+# tests, full DRF pagination would change the response shape and require
+# a real rework of DtSessionHistoryPage.tsx (which treats this as a flat
+# array today), and Meta.ordering = ['-date', '-saved_at'] already means
+# a list-only slice returns exactly "the N most recent sessions" -- a
+# true safety cap, not a behavior change at today's real volume (low
+# hundreds of sessions). Detail/retrieve by id is NOT capped -- see
+# get_queryset() below.
+DT_SESSION_LIST_CAP = 500
+
+
 class DriveTestSessionViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
@@ -202,10 +216,20 @@ class DriveTestSessionViewSet(
     (create/destroy): superadmin or admin only, matching v1's
     `_require_auth(roles=('superadmin', 'admin'))` on both POST and
     DELETE of `/dt-sessions`.
+
+    2026-10-02 perf audit: queryset now also select_related's
+    `uploaded_by` -- DriveTestSessionListSerializer.get_uploaded_by_name
+    was issuing one extra query per session on every list call.
     """
-    queryset = DriveTestSession.objects.all().annotate(
+    queryset = DriveTestSession.objects.all().select_related('uploaded_by').annotate(
         sample_count=Count('samples'), attachment_count=_attachment_count_expr()
     ).prefetch_related('activity_links__activity')
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.action == 'list':
+            return qs[:DT_SESSION_LIST_CAP]
+        return qs
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
@@ -226,6 +250,16 @@ class DriveTestSessionViewSet(
             # method here.
             return [IsAuthenticated()]
         return [IsAuthenticated()]
+
+    def perform_create(self, serializer):
+        serializer.save()
+        log_audit_event(self.request, 'DT_SESSION.CREATED', resource='dt_session',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.name)
+
+    def perform_destroy(self, instance):
+        log_audit_event(self.request, 'DT_SESSION.DELETED', resource='dt_session',
+                         resource_id=instance.pk, detail=instance.name)
+        instance.delete()
 
     @action(detail=True, methods=['post'])
     def samples(self, request, pk=None):
@@ -686,6 +720,13 @@ class OptimizationActivityViewSet(
     def perform_create(self, serializer):
         user = self.request.user
         serializer.save(created_by=user if user and user.is_authenticated else None)
+        log_audit_event(self.request, 'DT_ACTIVITY.CREATED', resource='dt_activity',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.name)
+
+    def perform_destroy(self, instance):
+        log_audit_event(self.request, 'DT_ACTIVITY.DELETED', resource='dt_activity',
+                         resource_id=instance.pk, detail=instance.name)
+        instance.delete()
 
     @action(detail=True, methods=['post'], url_path='sessions')
     def sessions(self, request, pk=None):

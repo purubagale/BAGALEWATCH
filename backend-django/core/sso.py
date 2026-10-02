@@ -32,7 +32,7 @@ from django.db import transaction
 from jwt import PyJWKClient
 
 from . import sso_config as cfg
-from .models import User
+from .models import Role, User
 
 logger = logging.getLogger(__name__)
 
@@ -248,27 +248,23 @@ def has_required_group(claims: dict) -> bool:
     return bool(_group_aliases(required) & _normalized_groups(claims))
 
 
-def map_role(claims: dict) -> str:
-    """Highest-privilege role among the user's mapped groups.
-
-    Ranked explicitly rather than by dict order: two mapped groups on one user
-    (someone in both `superadmin` and `viewers`) must resolve deterministically
-    to the higher role, not to whichever the claim happened to list first.
-    """
-    precedence = ['superadmin', 'admin', 'viewer']
+def matched_roles(claims: dict) -> set:
+    """Every role name whose mapped Keycloak group the user belongs to —
+    the full SET. Used by resolve_user() to assign ALL of a user's
+    matched BUILTIN roles via the real `roles` M2M (2026-10-01, "full
+    parity" RBAC feature) — the `_sync_primary_role` signal (models.py)
+    then collapses that set down to the single `role` cache value every
+    pre-existing privilege-tier check reads, via `resolve_primary_role()`'s
+    own precedence order. This used to end with its own precedence-
+    collapse step (`map_role()`), before `role` became a set-derived
+    cache instead of something this function needed to pick a winner for
+    directly — removed once nothing called it anymore."""
     mapping = cfg.role_group_map()
     present = _normalized_groups(claims)
-
-    matched = {
+    return {
         role for group, role in mapping.items()
         if _group_aliases(group) & present
     }
-    for role in precedence:
-        if role in matched:
-            return role
-    # A configured role outside the known tiers (should not happen, but do not
-    # silently discard it) then the safe default.
-    return next(iter(matched), cfg.default_role())
 
 
 # ── User resolution: link or create ──────────────────────────────────────
@@ -290,6 +286,15 @@ def resolve_user(claims: dict):
 
     The role is re-applied from Keycloak on every login, since the user chose
     Keycloak as the source of truth.
+
+    2026-10-01 ("full parity" RBAC feature) — this now ONLY re-applies
+    BUILTIN-tier role membership (superadmin/admin/viewer/rescue_operator)
+    on every login, a deliberate narrowing of the sentence above: a custom
+    role (e.g. 'ftth_leader') a superadmin granted this user separately via
+    Assign Roles is never touched here, since it has no Keycloak group of
+    its own to be "re-applied" from. SSO owns the builtin privilege tier;
+    everything else is a local, human decision that must survive every
+    subsequent login.
     """
     sub = (claims.get('sub') or '').strip()
     if not sub:
@@ -302,7 +307,6 @@ def resolve_user(claims: dict):
     email = (claims.get('email') or '').strip()
     email_verified = bool(claims.get('email_verified'))
     full_name = (claims.get('name') or '').strip()
-    role = map_role(claims)
 
     with transaction.atomic():
         user = User.objects.filter(sso_subject=sub).first()
@@ -339,12 +343,26 @@ def resolve_user(claims: dict):
 
         user.sso_subject = sub
         user.auth_source = User.AUTH_SOURCE_SSO
-        user.role = role
         if email:
             user.email = email
         if full_name:
             user.name = full_name
         user.save()
+
+        # Builtin-tier role membership only — see this function's own
+        # docstring for why a custom role must never be touched here.
+        # `matched_roles()` returns the FULL set, so a Keycloak user in
+        # e.g. both 'superadmin' and 'viewers' ends up holding both
+        # builtin roles, not just the higher-precedence one —
+        # `resolve_primary_role()` still collapses that set to one
+        # `role` cache value automatically, via the `_sync_primary_role`
+        # signal the `.roles.add()` below triggers.
+        builtin_names = {'superadmin', 'admin', 'viewer', 'rescue_operator'}
+        matched = matched_roles(claims) & builtin_names
+        if not matched:
+            matched = {cfg.default_role()}
+        user.roles.remove(*user.roles.filter(name__in=builtin_names))
+        user.roles.add(*Role.objects.filter(name__in=matched))
 
     return user, created
 

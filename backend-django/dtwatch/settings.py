@@ -546,6 +546,13 @@ LIVE_SITE_SYNC_INTERVAL_SECONDS = int(os.environ.get('LIVE_SITE_SYNC_INTERVAL_SE
 TELEMETRY_RETENTION_DAYS = int(os.environ.get('TELEMETRY_RETENTION_DAYS', 90))
 TELEMETRY_MAINTENANCE_INTERVAL_HOURS = int(os.environ.get('TELEMETRY_MAINTENANCE_INTERVAL_HOURS', 24))
 
+# Audit Log retention (2026-10-01, "should store upto 1 month log cap.
+# after that dump older") -- prune_audit_log.py prunes AuthEventLog AND
+# AuditEvent together on this same cutoff; the `audit-log-maintenance`
+# compose service runs it on a daily loop, same pattern as
+# TELEMETRY_RETENTION_DAYS/`telemetry-maintenance` above.
+AUDIT_LOG_RETENTION_DAYS = int(os.environ.get('AUDIT_LOG_RETENTION_DAYS', 30))
+
 # Continuous coverage-bin rollup (2026-09-01, `telemetry-bin-roller`
 # compose service, core/management/commands/roll_telemetry_bins.py) — runs
 # far more often than the daily retention pass above so the Coverage map
@@ -620,4 +627,29 @@ LOGGING = {
         },
     },
 }
+
+# ── Email (2026-10-02, "forget password feature in login page") ─────────
+# Entirely env-var driven, same "degrade gracefully when the external
+# piece isn't configured yet" posture as GeoIP (core/geoip.py) and
+# reCAPTCHA (SecuritySettings.recaptcha_enabled) below -- a fresh install
+# or a dev machine with no SMTP credentials set falls back to the console
+# backend (prints the email to stdout, same place `docker compose logs`
+# already captures everything else in this stack) instead of failing.
+# Only real SMTP config (EMAIL_HOST set) switches to actually sending.
+EMAIL_HOST = os.environ.get('EMAIL_HOST', '')
+if EMAIL_HOST:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+    EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
+    EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+    EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+    EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', '1') == '1'
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@dtwatch.local')
+
+# Password-reset token lifetime (2026-10-02) -- Django's own default is 3
+# days (PASSWORD_RESET_TIMEOUT, used by django.contrib.auth.tokens.
+# PasswordResetTokenGenerator.check_token()); tightened to 1 hour here,
+# a more appropriate window for this system than Django's generic default.
+PASSWORD_RESET_TIMEOUT = 3600
 

@@ -10,6 +10,7 @@ from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 
+from .audit import log_audit_event
 from .models import Issue
 from .serializers import IssueSerializer
 from .views import IsAdminOrSuperadmin
@@ -58,6 +59,13 @@ class IssueViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         user = self.request.user
         serializer.save(created_by=user if user and user.is_authenticated else None)
+        log_audit_event(self.request, 'ISSUE.CREATED', resource='issue',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.title)
+
+    def perform_destroy(self, instance):
+        log_audit_event(self.request, 'ISSUE.DELETED', resource='issue',
+                         resource_id=instance.pk, detail=instance.title)
+        instance.delete()
 
     def perform_update(self, serializer):
         # Keep `resolved_at` in sync with `status` on a direct PATCH too
@@ -78,3 +86,5 @@ class IssueViewSet(viewsets.ModelViewSet):
             serializer.save(resolved_at=None)
         else:
             serializer.save()
+        log_audit_event(self.request, 'ISSUE.UPDATED', resource='issue',
+                         resource_id=instance.pk, detail=instance.title)

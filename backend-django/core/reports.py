@@ -13,12 +13,33 @@ their own modules instead, since they're not "no new data model" work.
 """
 from datetime import datetime
 
+from django.core.cache import cache
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Site
 from .serializers import SiteScatterSerializer
+
+# 2026-10-02 perf audit: SLA/NTA/Monthly Report/Scatter each ran a full
+# Site-table scan + Python aggregation from scratch on EVERY request, with
+# identical output for every user until the underlying Site data actually
+# changes -- real KPI updates land in batches (an import, a live sync),
+# not continuously, so a short TTL is a safe, simple way to collapse
+# however many requests land within that window into one real computation.
+# Plain TTL expiry, no write-path invalidation -- a KPI update can take up
+# to this long to show up here, which is the explicit, accepted tradeoff
+# for not having to hook a cache-bust into every KPI-writing code path
+# (manual edit, Excel import, Live Site Sync).
+REPORT_CACHE_TTL_SECONDS = 60
+
+
+def _cached_report(cache_key, builder, *args):
+    result = cache.get(cache_key)
+    if result is None:
+        result = builder(*args)
+        cache.set(cache_key, result, REPORT_CACHE_TTL_SECONDS)
+    return result
 
 # ── SLA Tracker ──────────────────────────────────────────────────────────
 # Ported from bts_monitor.html's SLA_TARGETS constant (~line 8355).
@@ -392,7 +413,7 @@ class SlaReportView(APIView):
 
     def get(self, request):
         region = request.query_params.get('region', 'all')
-        return Response(build_sla_report(region))
+        return Response(_cached_report(f'sla-report:{region}', build_sla_report, region))
 
 
 class NtaReportView(APIView):
@@ -403,7 +424,7 @@ class NtaReportView(APIView):
 
     def get(self, request):
         pane = request.query_params.get('pane', 'all-sites')
-        return Response(build_nta_report(pane))
+        return Response(_cached_report(f'nta-report:{pane}', build_nta_report, pane))
 
 
 class MonthlyReportView(APIView):
@@ -420,7 +441,8 @@ class MonthlyReportView(APIView):
         month = request.query_params.get('month')
         style = request.query_params.get('style', 'executive')
         region = request.query_params.get('region', 'all')
-        return Response(build_monthly_report(month, style, region))
+        cache_key = f'monthly-report:{month}:{style}:{region}'
+        return Response(_cached_report(cache_key, build_monthly_report, month, style, region))
 
 
 class ScatterDataView(APIView):
@@ -430,4 +452,4 @@ class ScatterDataView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response(build_scatter_data())
+        return Response(_cached_report('scatter-data', build_scatter_data))

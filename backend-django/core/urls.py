@@ -2,9 +2,10 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import (api_auth, auth_log, backup, consent, dashboard, drive_test,
-               exports, issues, kpi_trend, reports, rescue, rf_audit,
-               rf_reports, site_import, sso_views, telemetry_admin, views)
+from . import (api_auth, audit, auth_log, backup, consent, dashboard, drive_test,
+               exports, issues, kpi_trend, mfa, password_reset, reports, rescue, rf_audit,
+               rf_reports, roles, site_import, sso_views, system_doc,
+               telemetry_admin, views, volte_quality)
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
@@ -22,6 +23,9 @@ router.register('issues', issues.IssueViewSet, basename='issue')
 # RfOptimizationReportViewSet's docstring in core/rf_reports.py.
 router.register('rf-reports', rf_reports.RfOptimizationReportViewSet, basename='rf-report')
 router.register('menu-items', views.MenuItemViewSet, basename='menu-item')
+# Superadmin-only CRUD for custom role definitions (2026-10-01, "full
+# parity" RBAC feature) -- see core/roles.py's module docstring.
+router.register('roles', roles.RoleViewSet, basename='role')
 # Superadmin-only management of external API credentials (2026-08-12) —
 # see core/api_auth.py's ApiKeyViewSet docstring. Distinct from the
 # API-key-AUTHENTICATED endpoints those keys unlock, which live under
@@ -36,11 +40,29 @@ router.register('telemetry/keys', telemetry_admin.TelemetryIngestKeyViewSet, bas
 
 urlpatterns = [
     path('health/', views.health, name='health'),
+    path('system-health/', views.SystemHealthView.as_view(), name='system-health'),
 
     path('auth/login/', views.LoginView.as_view(), name='auth-login'),
     path('auth/logout/', views.LogoutView.as_view(), name='auth-logout'),
     path('auth/me/', views.MeView.as_view(), name='auth-me'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='auth-refresh'),
+
+    # Forgot/change password (2026-10-02) -- see core/password_reset.py's
+    # module docstring for why these are two independent flows in one file.
+    path('auth/password-reset/', password_reset.PasswordResetRequestView.as_view(), name='auth-password-reset'),
+    path('auth/password-reset/confirm/', password_reset.PasswordResetConfirmView.as_view(), name='auth-password-reset-confirm'),
+    path('auth/change-password/', password_reset.ChangePasswordView.as_view(), name='auth-change-password'),
+
+    # MFA / TOTP (2026-10-02, Phase C) -- see core/mfa.py's module
+    # docstring. /status, /enroll/start, /enroll/confirm, /disable are all
+    # IsAuthenticated (voluntary self-service, any time); /verify is
+    # AllowAny -- it's reached mid-login, before the user has a JWT, using
+    # the short-lived ticket /auth/login/ hands back instead.
+    path('auth/mfa/status/', mfa.MFAStatusView.as_view(), name='auth-mfa-status'),
+    path('auth/mfa/enroll/start/', mfa.MFAEnrollStartView.as_view(), name='auth-mfa-enroll-start'),
+    path('auth/mfa/enroll/confirm/', mfa.MFAEnrollConfirmView.as_view(), name='auth-mfa-enroll-confirm'),
+    path('auth/mfa/disable/', mfa.MFADisableView.as_view(), name='auth-mfa-disable'),
+    path('auth/mfa/verify/', mfa.MFAVerifyView.as_view(), name='auth-mfa-verify'),
 
     # Keycloak SSO (2026-08-23). Additive: /auth/login/ above is untouched,
     # and `POST auth/sso/token/` returns the SAME payload shape it does, so
@@ -53,6 +75,15 @@ urlpatterns = [
     # module docstring. Superadmin-only read of every sign-in attempt,
     # local or SSO, successful or not.
     path('auth-events/', auth_log.AuthEventLogListView.as_view(), name='auth-event-log'),
+
+    # Unified Audit Log (2026-10-01) -- merges AuthEventLog (access events,
+    # above) with the new AuditEvent (data-change events) into one
+    # searchable, exportable feed. See core/audit.py's module docstring.
+    # Replaces AccessLogPage.tsx's old narrower view (the underlying
+    # /auth-events/ endpoint above stays, just no longer linked from the
+    # frontend's nav).
+    path('audit-log/', audit.AuditLogListView.as_view(), name='audit-log'),
+    path('audit-log/export.csv', audit.AuditLogExportView.as_view(), name='audit-log-export'),
 
     # Registered BEFORE the router's `sites/<pk>/` include below —
     # Django matches urlpatterns top-to-bottom, so this literal path must
@@ -91,6 +122,16 @@ urlpatterns = [
     path('thresholds/<str:kpi_key>/', views.ThresholdDetailView.as_view(), name='threshold-detail'),
     path('tree/', views.TreeView.as_view(), name='tree'),
     path('permissions-matrix/', views.PermissionsMatrixView.as_view(), name='permissions-matrix'),
+    # Per-role sidebar-visibility overrides (2026-10-01, "full parity" RBAC
+    # feature, Menu Visibility page) -- see MenuItemRoleVisibilityView's
+    # own docstring in views.py.
+    path('menu-visibility/', views.MenuItemRoleVisibilityView.as_view(), name='menu-visibility'),
+    # One user's full role set (2026-10-01, Assign Roles page) -- see
+    # UserRolesView's own docstring in core/roles.py. Registered before the
+    # router's `users/<pk>/` include below, same reason as sites/search/
+    # above: this literal suffix must win over the router's dynamic pk
+    # pattern.
+    path('users/<int:pk>/roles/', roles.UserRolesView.as_view(), name='user-roles'),
     # 2026-08-05, v2-only (no v1 equivalent) — see DtBandsView's docstring.
     path('dt-bands/', views.DtBandsView.as_view(), name='dt-bands'),
     # Dynamic top-nav (2026-08-08, v2-only) — see MenuTreeView's docstring.
@@ -101,6 +142,9 @@ urlpatterns = [
     # Customizable branding — logo + app name (2026-08-08, v2-only) — see
     # BrandingSettingsView's docstring.
     path('branding/', views.BrandingSettingsView.as_view(), name='branding'),
+    # Superadmin-controlled MFA-mandatory toggle (2026-10-02, Phase C) --
+    # see SecuritySettingsView's docstring.
+    path('security-settings/', views.SecuritySettingsView.as_view(), name='security-settings'),
     # Customizable Dashboard home page (2026-08-08, v2-only) — see
     # core/dashboard.py's module docstring.
     path('dashboard/', dashboard.DashboardView.as_view(), name='dashboard'),
@@ -129,6 +173,10 @@ urlpatterns = [
     path('sla/', reports.SlaReportView.as_view(), name='sla-report'),
     path('nta/', reports.NtaReportView.as_view(), name='nta-report'),
     path('monthly-report/', reports.MonthlyReportView.as_view(), name='monthly-report'),
+    # Generate Current-State System Documentation (2026-10-01) -- see
+    # core/system_doc.py's module docstring. Backs the "Generate" button
+    # on DocumentationPage.tsx.
+    path('system-doc/', system_doc.SystemDocView.as_view(), name='system-doc'),
     path('scatter/', reports.ScatterDataView.as_view(), name='scatter-data'),
     path('kpi-trend/', kpi_trend.KpiTrendView.as_view(), name='kpi-trend'),
     path('rf-audit/data/', rf_audit.RfAuditDataView.as_view(), name='rf-audit-data'),
@@ -142,6 +190,10 @@ urlpatterns = [
     path('telemetry/stats/', telemetry_admin.TelemetryStatsView.as_view(), name='telemetry-stats'),
     path('telemetry/coverage/', telemetry_admin.TelemetryCoverageView.as_view(), name='telemetry-coverage'),
     path('telemetry/live-samples/', telemetry_admin.TelemetryLiveSamplesView.as_view(), name='telemetry-live-samples'),
+    # VoLTE/VoNR call-quality dev/pilot list view (2026-10-02) -- see
+    # core/volte_quality.py's VolteQualityListView docstring. Same
+    # superadmin-only, no-MenuItem posture as live-samples above.
+    path('telemetry/volte-samples/', volte_quality.VolteQualityListView.as_view(), name='telemetry-volte-samples'),
     # Scoped drive-test sessions over the live telemetry pipeline
     # (2026-09-01) — see core/telemetry_admin.py's TelemetryDriveTestSession*
     # views for why these replace TelemetryLiveSamplesView as the

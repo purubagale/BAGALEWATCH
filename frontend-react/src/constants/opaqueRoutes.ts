@@ -96,6 +96,12 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // as a child of the "Telemetry" group -- keep this in sync with that
   // file, same convention as every other entry below.
   '/telemetry-live-samples': '/z3q8mn',
+  // VoLTE/VoNR call-quality dev/pilot list view (2026-10-02) -- see
+  // core/volte_quality.py's VolteQualityListView docstring. Seeded
+  // server-side by migration 0088_seed_volte_quality_menuitem.py, same
+  // superadmin-only posture and same reasoning as '/telemetry-live-samples'
+  // just above -- raw per-call data, not a general feature.
+  '/telemetry-volte-samples': '/w2k6tr',
   // Scoped drive-test sessions over live telemetry (2026-09-01) — seeded
   // server-side by migration 0044_seed_telemetry_dt_session_menuitem.py —
   // keep this in sync with that file, same convention as every other
@@ -121,10 +127,30 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // 0067_seed_dt_plot_catalog_menuitem.py -- keep this in sync with that
   // file, same convention as every other entry.
   '/dt-plot-catalog': '/k9d4wr',
-  // Login/access audit trail (2026-10-01) -- seeded server-side by
-  // migration 0075_seed_access_log_menuitem.py -- keep this in sync with
-  // that file, same convention as every other entry.
+  // Originally "Login/access audit trail" (2026-10-01, seeded by
+  // migration 0075_seed_access_log_menuitem.py), RELABELED in place to
+  // "Audit Log" the same day by migration
+  // 0083_relabel_access_log_menuitem.py once AccessLogPage.tsx was
+  // replaced by the broader AuditLogPage.tsx (unified access + data-change
+  // feed -- see core/audit.py). Same path/MenuItem id throughout -- this
+  // dict key is left as '/access-log' on purpose, it's an internal lookup
+  // key, not anything user-visible, and renaming it buys nothing.
   '/access-log': '/a3x9lq',
+  // Multi-role RBAC ("full parity" feature, 2026-10-01) -- seeded
+  // server-side by migration 0079_seed_rbac_menuitems.py -- keep these in
+  // sync with that file, same convention as every other entry.
+  '/manage-roles': '/q4m8rz',
+  '/assign-roles': '/v6p2nt',
+  '/menu-visibility': '/h3k9wq',
+  // System Health (2026-10-01, "idea and plan" follow-up to the UTS
+  // reference screenshots) -- seeded server-side by migration
+  // 0080_seed_system_health_menuitem.py -- keep this in sync with that
+  // file, same convention as every other entry.
+  '/system-health': '/s7m3kx',
+  // In-app Documentation (2026-10-01, same follow-up) -- seeded
+  // server-side by migration 0081_seed_documentation_menuitem.py -- keep
+  // this in sync with that file, same convention as every other entry.
+  '/documentation': '/d9w4nr',
 }
 
 export const DASHBOARD_PATH = OPAQUE_PATHS['/dashboard']
@@ -139,6 +165,12 @@ export const DT_EXPLORE_PATH = OPAQUE_PATHS['/dt-explore']
 // each imported change back to its source report.
 export const RF_REPORTS_PATH = OPAQUE_PATHS['/rf-reports']
 export const DT_PLOT_CATALOG_PATH = OPAQUE_PATHS['/dt-plot-catalog']
+// UsersPage.tsx links each row straight into Assign Roles, with a
+// `?user=<id>` param that page reads to auto-select that user.
+export const ASSIGN_ROLES_PATH = OPAQUE_PATHS['/assign-roles']
+export const MANAGE_ROLES_PATH = OPAQUE_PATHS['/manage-roles']
+export const MENU_VISIBILITY_PATH = OPAQUE_PATHS['/menu-visibility']
+export const SYSTEM_HEALTH_PATH = OPAQUE_PATHS['/system-health']
 
 /** Maps a pathname's top-level segment back to its ORIGINAL descriptive
  * name (e.g. both `/sites` and its alias `/e6t2pv` normalize to

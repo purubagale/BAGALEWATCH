@@ -22,6 +22,7 @@ from .models import (
     KpiThreshold,
     LiveSiteSource,
     MenuItem,
+    MenuItemRoleVisibility,
     MenuPermission,
     OptimizationActivity,
     OptimizationActivitySession,
@@ -29,6 +30,7 @@ from .models import (
     RfKpiSummary,
     RfOptimizationReport,
     RfReportAttachment,
+    Role,
     Sector,
     SectorConfigChange,
     Site,
@@ -237,6 +239,39 @@ class MenuPermissionSerializer(serializers.ModelSerializer):
         fields = ['role', 'menu_key', 'action', 'allowed']
 
 
+class RoleSerializer(serializers.ModelSerializer):
+    """CRUD shape for Manage Roles (2026-10-01, "full parity" RBAC
+    feature) — backs RoleViewSet. `is_builtin`/`created_at` are read-only;
+    `validate()` blocks renaming a builtin role (superadmin/admin/viewer/
+    rescue_operator), since every DRF permission class and MenuItem
+    access-tier check hardcodes those exact literal strings — see
+    Role.is_builtin's own docstring in models.py. Deletion of a builtin
+    role is blocked in RoleViewSet.destroy() instead, since DELETE has no
+    body for validate() to run against."""
+
+    class Meta:
+        model = Role
+        fields = ['id', 'name', 'label', 'description', 'is_builtin', 'created_at']
+        read_only_fields = ['is_builtin', 'created_at']
+
+    def validate(self, attrs):
+        if self.instance and self.instance.is_builtin and 'name' in attrs and attrs['name'] != self.instance.name:
+            raise serializers.ValidationError({'name': 'Builtin roles cannot be renamed.'})
+        return attrs
+
+
+class MenuItemRoleVisibilitySerializer(serializers.ModelSerializer):
+    """Thin, internal-only shape — MenuItemRoleVisibilityView (views.py)
+    builds/reads its own nested dict response by hand, same convention as
+    PermissionsMatrixView; this serializer exists only so Django admin /
+    any future direct ORM tooling has a documented field list to work
+    from, not because anything router-registers it."""
+
+    class Meta:
+        model = MenuItemRoleVisibility
+        fields = ['id', 'menu_item', 'role', 'visible']
+
+
 MAX_MENU_ICON_BYTES = 2 * 1024 * 1024  # smaller than the org logo's 5MB — this is a tiny rail icon
 
 
@@ -428,6 +463,14 @@ class LiveSiteSourceSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    # Full role list (2026-10-01, "full parity" RBAC feature) — read-only,
+    # alongside the existing `role` field (still the single cached
+    # highest-precedence value every pre-existing role check reads; see
+    # User.roles' own comment in models.py). UsersPage.tsx renders this as
+    # chips; `role` alone would hide a custom role (e.g. 'ftth_leader') a
+    # user also holds on top of their builtin tier.
+    roles = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         # `auth_source` is exposed read-only (2026-08-23) so UsersPage can
@@ -436,9 +479,12 @@ class UserSerializer(serializers.ModelSerializer):
         # person's next login, and the edit looks like a bug in this app.
         # `sso_subject` is deliberately NOT exposed: it is an internal
         # identity-provider identifier with no use in the UI.
-        fields = ['id', 'username', 'role', 'name', 'dept', 'is_active',
+        fields = ['id', 'username', 'role', 'roles', 'name', 'dept', 'email', 'is_active',
                   'last_login', 'date_joined', 'auth_source', 'operator_mncs']
         read_only_fields = ['auth_source']
+
+    def get_roles(self, obj):
+        return list(obj.roles.values_list('name', flat=True))
 
 
 class MeSerializer(UserSerializer):
@@ -456,13 +502,24 @@ class MeSerializer(UserSerializer):
         fields = UserSerializer.Meta.fields + ['permissions']
 
     def get_permissions(self, obj):
-        rows = MenuPermission.objects.filter(role=obj.role)
+        # 2026-10-01 ("full parity" RBAC feature) — was `filter(role=obj.role)`,
+        # a single value. A user can now hold multiple roles (one builtin
+        # tier plus any number of custom ones), so this merges permissions
+        # across ALL of them, most-permissive-wins per (menu_key, action) —
+        # the same "any granting source is enough" rule
+        # get_visible_menu_items()'s read_perms/visibility_override already
+        # apply elsewhere. Falls back to `{obj.role}` if `roles` is somehow
+        # empty, so this never silently returns fewer permissions than
+        # before this feature existed.
+        role_names = list(obj.roles.values_list('name', flat=True)) or [obj.role]
+        rows = MenuPermission.objects.filter(role__in=role_names)
         out = {}
         for r in rows:
             if r.menu_key in CRUD_MENUS:
-                out.setdefault(r.menu_key, {})[r.action] = r.allowed
+                bucket = out.setdefault(r.menu_key, {})
+                bucket[r.action] = bucket.get(r.action, False) or r.allowed
             else:
-                out[r.menu_key] = r.allowed
+                out[r.menu_key] = out.get(r.menu_key, False) or r.allowed
         return out
 
 
@@ -479,7 +536,7 @@ class UserWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'password', 'role', 'name', 'dept', 'is_active', 'operator_mncs']
+        fields = ['id', 'username', 'password', 'role', 'name', 'dept', 'email', 'is_active', 'operator_mncs']
 
     def validate(self, attrs):
         # Matches v1: username/password/role are required on create, but
@@ -488,6 +545,23 @@ class UserWriteSerializer(serializers.ModelSerializer):
             for required in ('username', 'password', 'role'):
                 if not attrs.get(required):
                     raise serializers.ValidationError({required: 'This field is required.'})
+
+        # Application-level uniqueness (2026-10-02, "forget password"
+        # follow-up) -- NOT a DB-level unique=True on User.email. That
+        # field is AbstractUser's own stock default (blank=True, no
+        # constraint), populated for an unknown subset of existing
+        # accounts; adding a hard DB constraint blind risks a migration
+        # failure on whatever duplicate/blank values already exist. This
+        # check only matters going forward, for the password-reset-by-
+        # email lookup (PasswordResetRequestView) to resolve unambiguously
+        # -- skipped entirely for a blank email (still optional).
+        email = attrs.get('email')
+        if email:
+            existing = User.objects.filter(email__iexact=email)
+            if self.instance is not None:
+                existing = existing.exclude(pk=self.instance.pk)
+            if existing.exists():
+                raise serializers.ValidationError({'email': 'A user with this email already exists.'})
 
         # 2026-08-07 security-audit fix: AUTH_PASSWORD_VALIDATORS is
         # configured in settings.py (minimum length, common-password
@@ -516,6 +590,12 @@ class UserWriteSerializer(serializers.ModelSerializer):
 
         return attrs
 
+    # Every role name a privilege-tier check in this codebase hardcodes —
+    # see Role.is_builtin's own docstring in models.py. Used below to swap
+    # ONLY a user's builtin-tier role membership on write, leaving any
+    # custom roles granted separately via Assign Roles untouched.
+    _BUILTIN_ROLE_NAMES = ('superadmin', 'admin', 'viewer', 'rescue_operator')
+
     def create(self, validated_data):
         password = validated_data.pop('password')
         role = validated_data.get('role', 'viewer')
@@ -524,6 +604,14 @@ class UserWriteSerializer(serializers.ModelSerializer):
         user.is_superuser = role == 'superadmin'
         user.set_password(password)
         user.save()
+        # 2026-10-01 ("full parity" RBAC feature) — seeds the new `roles`
+        # M2M alongside the `role` cache this already sets, so a
+        # brand-new user shows up correctly in Assign Roles/the
+        # Permission Matrix from the moment they're created, not just
+        # after their first `roles`-aware edit.
+        role_obj = Role.objects.filter(name=role).first()
+        if role_obj is not None:
+            user.roles.set([role_obj])
         return user
 
     def update(self, instance, validated_data):
@@ -539,6 +627,18 @@ class UserWriteSerializer(serializers.ModelSerializer):
         if password:
             instance.set_password(password)
         instance.save()
+        if 'role' in validated_data:
+            # 2026-10-01 ("full parity" RBAC feature) — swaps ONLY the
+            # builtin-tier membership (remove whichever of the 4 builtin
+            # names the user held, add the new one), preserving any
+            # custom role (e.g. 'ftth_leader') granted separately via
+            # Assign Roles. This is the Users page's simple single-role
+            # editing path; Assign Roles (UserRolesView) is the one place
+            # that edits the full `roles` set directly.
+            instance.roles.remove(*instance.roles.filter(name__in=self._BUILTIN_ROLE_NAMES))
+            new_role = Role.objects.filter(name=instance.role).first()
+            if new_role is not None:
+                instance.roles.add(new_role)
         return instance
 
 
@@ -1425,15 +1525,27 @@ class RfOptimizationReportSerializer(serializers.ModelSerializer):
                 'pre_value': row.pre_value, 'post_value': row.post_value,
                 'matched_sector_id': row.sector_id,
                 # 2026-09-29 addition ("with what value it is matched?") --
-                # select_related('sector') below avoids an N+1 for this.
+                # the `sector` select_related now lives on the VIEWSET's
+                # Prefetch('cell_kpis', queryset=...select_related('sector'))
+                # (2026-10-02 perf audit) -- calling `.select_related()`
+                # again here would build a NEW queryset and silently
+                # bypass that prefetch, issuing a fresh query per report
+                # exactly like before the fix. Plain `.all()` is what
+                # actually reads the prefetched cache.
                 'matched_site_id': row.sector.site_id if row.sector_id else None,
             }
-            for row in obj.cell_kpis.select_related('sector').all()
+            for row in obj.cell_kpis.all()
         ]
 
     def get_activities(self, obj):
+        # 2026-10-02 perf audit: `obj.activities.all()` reads the
+        # viewset's Prefetch('activities', queryset=...prefetch_related(
+        # 'session_links')) cache. `len(...)` (not `.count()`) is what
+        # reuses THAT nested prefetch in turn -- `.count()` always issues
+        # its own COUNT query regardless of prefetch_related, which was
+        # exactly the per-activity N+1 this fixes.
         return [
-            {'id': activity.id, 'name': activity.name, 'session_count': activity.session_links.count()}
+            {'id': activity.id, 'name': activity.name, 'session_count': len(activity.session_links.all())}
             for activity in obj.activities.all()
         ]
 

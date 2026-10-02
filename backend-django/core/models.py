@@ -17,6 +17,8 @@ from django.contrib.auth.models import AbstractUser
 from django.contrib.gis.db.models import PointField
 from django.contrib.gis.geos import Point
 from django.db import models
+from django.db.models.signals import m2m_changed
+from django.dispatch import receiver
 
 
 def _point_or_none(lat, lng):
@@ -101,6 +103,31 @@ class User(AbstractUser):
     # hasher without needing to revisit the prefix length again.
     password = models.CharField(max_length=255)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='viewer')
+    # Multi-role RBAC (2026-10-01, "full parity" with a reference app's
+    # Manage Roles / Assign Roles / dynamic Permission Matrix / Menu
+    # Visibility screens) — `role` above is DELIBERATELY left exactly as
+    # it was before this field existed: a real, persisted CharField, not
+    # replaced by a computed property. An earlier draft of this design
+    # tried that and it broke on contact with this codebase in at least
+    # 5 places (Django admin's `list_filter='role'` needs a real DB
+    # column; `User(**validated_data)` in UserWriteSerializer.create()
+    # and seed_legacy_data.py both pass `role=...` as a constructor
+    # kwarg, which only works for a real field; every existing test
+    # fixture does `User.objects.create(role='admin')`). Instead, `role`
+    # is now a DENORMALIZED CACHE kept in sync with this `roles` M2M by
+    # the `_sync_primary_role` signal receiver below — every one of the
+    # ~15 existing `user.role == 'x'` / `role in (...)` checks across the
+    # whole codebase (the 3 permission classes, MenuItem access tiers,
+    # the frontend's isAllowed(), etc.) keeps working completely
+    # unchanged, because a user holding {admin, ftth_leader} still
+    # resolves `.role` to 'admin' via `resolve_primary_role()`'s
+    # precedence order. Only genuinely NEW code (Manage Roles, Assign
+    # Roles, the Permission Matrix's now-dynamic role columns, Menu
+    # Visibility) needs to query `.roles` directly. A custom role beyond
+    # the 4 builtin ones NEVER changes `role`/is_staff/is_superuser or
+    # any access-tier check — it only participates in MenuPermission and
+    # MenuItemRoleVisibility lookups (see those models below).
+    roles = models.ManyToManyField('Role', blank=True, related_name='users')
     name = models.CharField(max_length=150, blank=True)
     dept = models.CharField(max_length=100, blank=True)
 
@@ -143,11 +170,123 @@ class User(AbstractUser):
         max_length=255, null=True, blank=True, unique=True, default=None
     )
 
+    # ── MFA / TOTP (2026-10-02, Phase C) ─────────────────────────────────
+    # Encrypted at rest (Fernet, core/mfa.py's encrypt_secret/decrypt_secret
+    # -- key derived from SECRET_KEY, no separate key to manage) rather than
+    # plaintext: this is a permanent shared secret that reproduces every
+    # future login code, unlike a password hash it is NOT one-way, so a
+    # database dump alone must not be enough to read it. Blank until
+    # enrollment completes -- see MFAEnrollStartView/MFAEnrollConfirmView's
+    # docstrings in core/mfa.py for why the secret is only written here
+    # AFTER the user proves they can generate a real code from it, never
+    # the moment the QR code is first generated.
+    totp_secret_encrypted = models.TextField(blank=True, default='')
+    totp_enabled = models.BooleanField(default=False)
+
     class Meta:
         db_table = 'v2_users'
 
     def __str__(self):
         return f'{self.username} ({self.role})'
+
+
+# Precedence order for collapsing a user's full role SET down to the one
+# `User.role` cache value every existing privilege-tier check in this
+# codebase reads (2026-10-01, see User.roles' own comment above for the
+# full "why a cache, not a property" reasoning). A user holding only
+# custom roles (nothing in this list) falls back to 'viewer' — matching
+# `role`'s own pre-existing field default, so a brand-new custom-roles-
+# only account is never accidentally MORE privileged than before this
+# feature existed.
+_BUILTIN_ROLE_PRECEDENCE = ['superadmin', 'admin', 'rescue_operator', 'viewer']
+
+
+def resolve_primary_role(role_names):
+    """`role_names` is any iterable of role-name strings (typically
+    `user.roles.values_list('name', flat=True)`). Returns the single
+    highest-precedence builtin name per `_BUILTIN_ROLE_PRECEDENCE`, or
+    'viewer' if none of the given names are builtin at all."""
+    names = set(role_names)
+    for candidate in _BUILTIN_ROLE_PRECEDENCE:
+        if candidate in names:
+            return candidate
+    return 'viewer'
+
+
+@receiver(m2m_changed, sender=User.roles.through)
+def _sync_primary_role(sender, instance, action, **kwargs):
+    """Keeps `User.role` (the cache) in sync with `User.roles` (the real
+    M2M) on every add/remove/clear — see `User.roles`' own comment for
+    why this exists instead of a computed property. `save(update_fields=
+    [...])` does not re-fire `m2m_changed`, so there is no recursion risk
+    here. Only runs for the "post" actions (after the through-table write
+    actually happened) — `pre_add`/`pre_remove`/`pre_clear` would compute
+    the primary role from the state BEFORE this change took effect."""
+    if action not in ('post_add', 'post_remove', 'post_clear'):
+        return
+    new_role = resolve_primary_role(instance.roles.values_list('name', flat=True))
+    if instance.role != new_role:
+        instance.role = new_role
+        instance.save(update_fields=['role'])
+
+
+class Role(models.Model):
+    """A role a user can hold (2026-10-01, "full parity" RBAC feature —
+    see the module-level plan this shipped against). `name` is the plain
+    string every existing permission check, MenuItem.access tier, and
+    MenuPermission.role column already compares against — kept a plain
+    CharField rather than promoting those other call sites to FKs, since
+    that would be a much larger, riskier change for no real benefit (a
+    role's name changing is rare and, for the 4 builtin ones, explicitly
+    blocked — see `is_builtin` below).
+
+    `is_builtin` protects 'superadmin'/'admin'/'viewer'/'rescue_operator'
+    from rename or delete: every one of the 3 DRF permission classes
+    (IsAdminOrSuperadmin/IsSuperadminOnly/IsRescueOperator, core/views.py)
+    and `own_access_ok()`'s MenuItem access-tier checks hardcode these
+    exact literal strings — renaming or deleting one out from under them
+    would silently strip privilege from every user who held it, with no
+    error anywhere. A custom role (is_builtin=False) carries none of that
+    risk: it only ever participates in MenuPermission/
+    MenuItemRoleVisibility lookups, both of which degrade gracefully to
+    "no explicit grant" if the role disappears."""
+    name = models.CharField(max_length=20, unique=True)
+    label = models.CharField(max_length=50)
+    description = models.TextField(blank=True, default='')
+    is_builtin = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_roles'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class MenuItemRoleVisibility(models.Model):
+    """Sparse, additive override on top of `MenuItem.access`'s existing
+    coarse tier (2026-10-01, Menu Visibility feature) — see
+    `get_visible_menu_items()`'s docstring in views.py for exactly how
+    this is layered in. A MISSING row for a given (menu_item, role) pair
+    means "inherit the access-tier default, as before this feature
+    existed"; a PRESENT row is an explicit admin decision made on the
+    Menu Visibility page, which is why `visible` has no default — "no
+    opinion yet" (no row) and "explicitly set" must stay distinguishable,
+    matching the reference app's own "Explicit override — click to flip,
+    or reset to inherit the default" framing exactly."""
+    menu_item = models.ForeignKey('MenuItem', on_delete=models.CASCADE, related_name='role_visibility')
+    role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='menu_visibility')
+    visible = models.BooleanField()
+
+    class Meta:
+        db_table = 'v2_menu_item_role_visibility'
+        constraints = [
+            models.UniqueConstraint(fields=['menu_item', 'role'], name='uniq_menu_item_role_visibility'),
+        ]
+
+    def __str__(self):
+        return f'{self.menu_item_id} / {self.role_id} -> {self.visible}'
 
 
 class Site(models.Model):
@@ -448,6 +587,19 @@ class Sector(models.Model):
         db_table = 'v2_sectors'
         indexes = [
             models.Index(fields=['site']),
+            # 2026-10-02 perf audit: core/dt_serving_cell.py's
+            # _candidate_sectors() matches every incoming drive-test sample
+            # batch against this table by exactly these columns -- `pci`
+            # alone for 4G, `scrambling_code` alone for 3G, `bcch`+`bsic`
+            # TOGETHER for 2G (a single composite filter, not two
+            # independent ones, hence the composite index rather than two
+            # more single-column ones). None of the four had any index
+            # before this, so every DT upload ran this match as a
+            # sequential scan across the full sector table (50,000+ rows
+            # and growing).
+            models.Index(fields=['pci']),
+            models.Index(fields=['scrambling_code']),
+            models.Index(fields=['bcch', 'bsic']),
         ]
 
     def __str__(self):
@@ -1617,6 +1769,40 @@ class BrandingSettings(models.Model):
         return self.app_name or '(default branding)'
 
 
+class SecuritySettings(models.Model):
+    """Singleton row (id forced to 1, same convention as BrandingSettings
+    above) holding org-wide auth-security toggles a superadmin controls.
+
+    `mfa_required=True` does NOT lock out a user who hasn't enrolled TOTP
+    yet -- LoginView.post() still lets them in (see its own comment) but
+    the response carries `mfa_setup_required: true` so the frontend can
+    force an immediate enrollment prompt before letting them into the rest
+    of the app. This avoids a chicken-and-egg lockout the moment an admin
+    flips this on with existing unenrolled accounts.
+
+    A user who has ALREADY enrolled TOTP (`User.totp_enabled=True`) is
+    challenged for a code at every login regardless of this toggle -- once
+    an individual has opted in, that is now part of their own account's
+    security, independent of the org-wide policy. This flag only decides
+    whether enrollment itself is optional or forced for everyone else.
+
+    Deliberately does not touch SSO/Keycloak-authenticated users at all --
+    Keycloak owns their authentication independently; if it enforces MFA,
+    that's already outside DT-WATCH's reach."""
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    mfa_required = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'v2_security_settings'
+
+    def save(self, *args, **kwargs):
+        self.id = 1
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'Security settings (MFA required: {self.mfa_required})'
+
+
 class LiveSiteSyncStatus(models.Model):
     """Singleton row (id forced to 1, same convention as BrandingSettings
     above) tracking the Live Site Directory sync's own run history — see
@@ -2066,6 +2252,87 @@ class TelemetrySample(models.Model):
         return f'{self.device_id[:8]}… @ {self.ts:%Y-%m-%d %H:%M} ({self.network_type})'
 
 
+class VolteCallSample(models.Model):
+    """One crowdsourced VoLTE/VoNR call-quality reading (2026-10-02),
+    sibling to `TelemetrySample` but intentionally a SEPARATE model --
+    different cadence (one row per completed call, not a periodic/
+    handover tick) and different fields (RTP-level call metrics, not
+    radio signal strength). See core/volte_quality.py's module docstring
+    for the full ingest pipeline and why this requires a carrier-
+    privileged app build to ever receive real data.
+
+    Same anonymization posture as `TelemetrySample`: `device_id` is
+    hashed via `hash_device_id()` before storage, no MSISDN/IMEI column,
+    covered by the same crowdsourced-telemetry opt-in (`NetTelemetry.
+    optIn()`), not a new consent category.
+
+    `r_factor`/`mos_estimate` are a SERVER-COMPUTED ITU-T G.107 E-model
+    ESTIMATE (`core/volte_quality.py`'s `compute_mos_estimate()`), never a
+    true perceptually-measured MOS -- both null whenever the codec has no
+    entry at all (see that function's own docstring) or an input was
+    missing, rather than ever holding a fabricated value. `mos_is_provisional`
+    distinguishes a value computed from a VERIFIED codec entry from one
+    computed via a deliberate approximation (an unverified codec's real
+    constants run through a different scale's formula, or a different
+    codec's constants used as a proxy) -- UI/API consumers must surface
+    this distinction, never present a provisional value with the same
+    confidence as a verified one. The raw inputs (`packet_loss_pct`/
+    `jitter_ms`/`rtt_ms`/`codec`) are kept alongside the computed fields
+    specifically so a future formula or codec-table correction can be
+    recomputed for existing rows without needing the original device
+    upload again.
+
+    No partitioning (unlike `TelemetrySample`) -- call-count volume is
+    far lower than periodic RF-sample volume, a plain indexed table is
+    sufficient at any realistic scale."""
+
+    NETWORK_TYPES = [('LTE', 'LTE (VoLTE)'), ('NR', '5G NR (VoNR)'), ('UNKNOWN', 'Unknown')]
+
+    device_id = models.CharField(max_length=64, db_index=True)
+    ts = models.DateTimeField(db_index=True)              # call end, device-reported
+    received_at = models.DateTimeField(db_index=True)     # server receipt
+
+    lat = models.FloatField(null=True, blank=True)
+    lng = models.FloatField(null=True, blank=True)
+    location = PointField(geography=True, srid=4326, null=True, blank=True, spatial_index=True)
+
+    cell_id = models.BigIntegerField(null=True, blank=True)
+    pci = models.IntegerField(null=True, blank=True)
+    tac = models.IntegerField(null=True, blank=True)
+    mcc = models.CharField(max_length=6, blank=True, default='')
+    mnc = models.CharField(max_length=6, blank=True, default='')
+    network_type = models.CharField(max_length=12, choices=NETWORK_TYPES, default='UNKNOWN')
+
+    call_duration_s = models.IntegerField(null=True, blank=True)
+    codec = models.CharField(max_length=20, blank=True, default='')
+    packet_loss_pct = models.FloatField(null=True, blank=True)
+    jitter_ms = models.FloatField(null=True, blank=True)
+    rtt_ms = models.FloatField(null=True, blank=True)
+    # Android's own CallQuality enum, kept verbatim -- a real
+    # network-reported value independent of our own estimate below, never
+    # discarded even when we can't compute an estimate ourselves.
+    quality_level = models.CharField(max_length=20, blank=True, default='')
+
+    # Server-computed estimate -- see this model's own docstring.
+    r_factor = models.FloatField(null=True, blank=True)
+    mos_estimate = models.FloatField(null=True, blank=True)
+    mos_is_provisional = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'v2_volte_call_samples'
+        indexes = [
+            models.Index(fields=['device_id', 'ts']),
+            models.Index(fields=['network_type']),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.location = _point_or_none(self.lat, self.lng)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.device_id[:8]}… @ {self.ts:%Y-%m-%d %H:%M} (MOS≈{self.mos_estimate})'
+
+
 class TelemetryCoverageBin(models.Model):
     """Aggregated coverage stats for a ~150 m geohash-7 cell, per network
     type. Written by prune_telemetry.py when a raw-sample partition
@@ -2418,6 +2685,19 @@ class AuthEventLog(models.Model):
     EVENT_SSO_LOGIN_SUCCESS = 'sso_login_success'
     EVENT_SSO_LOGIN_FAILED = 'sso_login_failed'
     EVENT_LOGOUT = 'logout'
+    # Password reset/change (2026-10-02, "forget password feature") and
+    # MFA/reCAPTCHA (2026-10-02, same auth-hardening pass) -- same
+    # "log the decision point whether it succeeded or not" convention as
+    # every event above, logged from core/password_reset.py/core/mfa.py/
+    # core/views.py's LoginView respectively. Kept under max_length=20.
+    EVENT_PWD_RESET_REQUESTED = 'pwd_reset_requested'
+    EVENT_PWD_RESET_COMPLETED = 'pwd_reset_completed'
+    EVENT_PWD_CHANGED = 'pwd_changed'
+    EVENT_MFA_CHALLENGE_SENT = 'mfa_challenge_sent'
+    EVENT_MFA_VERIFY_FAILED = 'mfa_verify_failed'
+    EVENT_MFA_ENROLLED = 'mfa_enrolled'
+    EVENT_MFA_DISABLED = 'mfa_disabled'
+    EVENT_RECAPTCHA_FAILED = 'recaptcha_failed'
     EVENT_CHOICES = [
         (EVENT_LOGIN_SUCCESS, 'Local login succeeded'),
         (EVENT_LOGIN_FAILED, 'Local login failed (bad credentials)'),
@@ -2426,6 +2706,14 @@ class AuthEventLog(models.Model):
         (EVENT_SSO_LOGIN_SUCCESS, 'SSO login succeeded'),
         (EVENT_SSO_LOGIN_FAILED, 'SSO login failed'),
         (EVENT_LOGOUT, 'Signed out'),
+        (EVENT_PWD_RESET_REQUESTED, 'Password reset requested'),
+        (EVENT_PWD_RESET_COMPLETED, 'Password reset completed'),
+        (EVENT_PWD_CHANGED, 'Password changed (self-service)'),
+        (EVENT_MFA_CHALLENGE_SENT, 'MFA challenge issued'),
+        (EVENT_MFA_VERIFY_FAILED, 'MFA code rejected'),
+        (EVENT_MFA_ENROLLED, 'MFA enrolled'),
+        (EVENT_MFA_DISABLED, 'MFA disabled'),
+        (EVENT_RECAPTCHA_FAILED, 'reCAPTCHA check failed'),
     ]
     # Events that represent a real, successful session — everything else
     # in EVENT_CHOICES is either a failure or a logout. Used by the
@@ -2450,6 +2738,65 @@ class AuthEventLog(models.Model):
 
     def __str__(self):
         return f'{self.event}: {self.username or self.user} @ {self.created_at}'
+
+
+class AuditEvent(models.Model):
+    """Generic data-change audit trail (2026-10-01, "Audit Log" follow-up
+    to AuthEventLog above -- "all system activity, data changes, and
+    access events" in one searchable place). AuthEventLog already covers
+    access events (login/logout/SSO) and stays exactly as it is; this
+    model covers everything else -- a Site/Role/User CRUD, a Backup
+    restore, a Permissions Matrix edit, a Menu Visibility override, and so
+    on. AuditLogListView (core/audit.py) merges rows from both tables into
+    one unified, paginated feed -- they stay two separate tables (not one
+    migrated schema) since their natural fields genuinely differ
+    (AuthEventLog's user_agent/event-choices are login-specific; this
+    model's resource/resource_id/payload are not), same reasoning
+    RescueLocationAccessLog/RescueConsentPolicyChangeLog already use for
+    staying their own dedicated tables rather than joining a shared one.
+
+    `action` is a dotted RESOURCE.VERB string (e.g. 'SITE.CREATED',
+    'BACKUP.RESTORED') -- a single display-ready label, matching the
+    Action column shape from the reference screenshots. `resource` is a
+    separate, lowercase slug (e.g. 'site', 'backup') kept alongside it
+    purely as a clean filter/grouping column that doesn't need to parse
+    `action`.
+
+    Written by `log_audit_event()` (core/audit.py) -- either automatically
+    via AuditedModelViewSetMixin for the app's generic ModelViewSets, or by
+    a hand-placed call at the point of success in a bespoke APIView whose
+    payload shape generic introspection can't capture meaningfully (Backup
+    restore, Permissions Matrix, Menu Visibility, Thresholds, Tree,
+    Branding, Live Site Source config, Role assignment). Same
+    swallow-its-own-errors posture as log_auth_event() -- an audit-trail
+    write must never break the real action it's recording.
+
+    No retention here either -- see prune_audit_log.py (management
+    command), which prunes both this table and AuthEventLog together on
+    the same AUDIT_LOG_RETENTION_DAYS cutoff (default 30 days, "1 month
+    log cap, dump older" per the original request)."""
+
+    actor = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='audit_events'
+    )
+    # Point-in-time snapshot, same reasoning as AuthEventLog.username vs.
+    # .user -- stays readable after the actor's account is later renamed
+    # or deleted.
+    actor_username = models.CharField(max_length=150, blank=True, default='')
+    action = models.CharField(max_length=60, db_index=True)
+    resource = models.CharField(max_length=40, blank=True, default='', db_index=True)
+    resource_id = models.CharField(max_length=40, blank=True, default='')
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    detail = models.CharField(max_length=200, blank=True, default='')
+    payload = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'v2_audit_event'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.action}: {self.actor_username} @ {self.created_at}'
 
 
 # ── Continuous coverage-bin rollup (2026-09-01) ─────────────────────────

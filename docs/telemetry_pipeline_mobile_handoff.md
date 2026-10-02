@@ -152,6 +152,38 @@ consent wording (managed by a DT-WATCH superadmin) instead of hardcoding copy th
 need a new app release to change. Purely optional — the app is equally free to hardcode
 its own wording and never call this.
 
+### 4.6 `POST /api/telemetry/v1/volte-samples/` — optional: VoLTE/VoNR call-quality upload
+
+**Added 2026-10-02. Not implemented in the reference SDK yet — see §12 for the full
+addendum (why this requires carrier-privileged app status, which Android API to use, and
+the complete field reference).** Same auth as §4.1 (`Authorization: Bearer tel_<key>` or
+`X-API-Key`), same JSON-array-of-objects shape, same 2000-per-request cap.
+
+```json
+[
+  {
+    "device_id": "3f9a1c2e-...-uuid",
+    "ts": 1758444000000,
+    "network_type": "LTE",
+    "codec": "AMR-WB",
+    "call_duration_s": 42,
+    "packet_loss_pct": 0.5,
+    "jitter_ms": 8,
+    "rtt_ms": 60,
+    "quality_level": "GOOD",
+    "lat": 27.7172,
+    "lon": 85.3240,
+    "cell_id": 123456,
+    "pci": 301,
+    "mcc": "429",
+    "mnc": "01"
+  }
+]
+```
+
+**Responses:** `202 {"accepted": N}` on success; `400`/`401`/`413` same meanings as §4.1.
+No `opt_out`/duplicate-detection handling on this endpoint (see §12 for why).
+
 ## 5. Sample fields (`TelemetrySample`)
 
 Only `device_id` and `ts` are required. Every other field degrades to `null`/omitted
@@ -299,6 +331,10 @@ building against it:
    access) — treat it as a solid, reviewed starting point, not a drop-in verified library.
    Building it in a real Android Studio project on a couple of real devices should be the
    first thing done with it.
+5. **VoLTE/VoNR call-quality collection (§4.6) isn't implemented at all** — not a gap in
+   an existing feature, a whole feature not yet started. Blocked on a real external
+   prerequisite (carrier-privileged app status), not just unwritten code — see §12 for the
+   full addendum before starting this one.
 
 ### 9.5 What's deliberately NOT in the SDK
 No UI (consent screens, a signal-quality view) — that's the host app's job. No iOS build
@@ -325,3 +361,73 @@ Backend/API questions, ingest keys, and confirming data is landing correctly: Pu
 the DT-WATCH backend/web app going forward). This document reflects the pipeline as
 deployed on 2026-09-21; if the backend adds fields or endpoints later, treat this as a
 snapshot, not a live spec — ask before assuming.
+
+## 12. VoLTE/VoNR call-quality addendum (2026-10-02)
+
+The backend's `/volte-samples/` endpoint (§4.6) and its server-side ITU-T G.107 E-model
+MOS estimator are built and live. **Nothing on the SDK side exists yet** — this section is
+the complete spec for whoever implements it, not a description of working code.
+
+### 12.1 Blocking prerequisite: carrier-privileged app status
+
+Real VoLTE call-quality metrics come from Android's `CallQuality` API, which requires the
+`READ_PRECISE_PHONE_STATE` permission. **This is a privileged/signature permission a normal
+Play Store app cannot just request and have granted** — it is restricted to apps with
+carrier privileges (a certificate relationship tied to the SIM/carrier config) or
+system/privileged apps. Getting this app carrier-privileged status is an NTC-internal
+provisioning process, not an app-code change — **do not start building §12.2 below until
+that status is confirmed to exist for your build**, since the collection code is silently
+inert without it (the permission check simply fails; there is no error to debug).
+
+### 12.2 What to collect, and which Android API
+
+- Register `TelephonyCallback.CallAttributesListener` (API 31+) or, for API 29–30,
+  `PhoneStateListener` with `LISTEN_CALL_ATTRIBUTES_CHANGED` set — both deliver a
+  `CallQuality` object during an active call.
+- At call end, read from the last-received `CallQuality`: downlink/uplink packet loss,
+  jitter, round-trip time, codec, and the call's overall `CallQuality.Level` enum
+  (`EXCELLENT`/`GOOD`/`FAIR`/`POOR`/`BAD`/`NOT_AVAILABLE`).
+- **Do not compute a MOS value on-device.** Send the raw metrics; the backend computes the
+  estimate (see §12.4 for why) — sending a client-computed MOS would just be ignored, the
+  `/volte-samples/` endpoint has no field for one.
+- Send the captured metrics as one `POST /api/telemetry/v1/volte-samples/` call per
+  completed call, using the exact field names in §4.6's example payload. Note the field
+  name differences from §4.1's RF-sample payload: `codec` (string), `packet_loss_pct`
+  (0–100 float), `jitter_ms`/`rtt_ms` (float, milliseconds), `quality_level` (the raw
+  Android enum string, sent exactly as-is — do not translate or number-code it).
+
+### 12.3 Codec coverage on the backend side — report this honestly, don't work around it
+
+**Updated 2026-10-02 (third pass).** Three tiers now, not two — every VoLTE codec produces
+*some* estimate, but the UI/API must distinguish how trustworthy each one is
+(`mos_is_provisional` on every sample, see §4.6):
+
+- **Verified** (`mos_is_provisional: false`) — AMR-WB (real ITU-T G.113 Appendix IV
+  wideband constants, 12.65 kbit/s mode), plus G.711/G.729 for general testing.
+- **Provisional** (`mos_is_provisional: true`, explicit 2026-10-02 decision: ship an
+  approximate number now rather than block, correct later) — **EVS**, real G.113 Appendix V
+  constants run through the wideband formula as a stand-in for the unverified fullband
+  E-model; **AMR-NB**, no ITU source found at all, proxied via GSM-EFR's verified
+  narrowband value (AMR-NB's 12.2 kbit/s mode is algorithmically derived from GSM-EFR, a
+  defensible stand-in, not an arbitrary one). Expect these numbers to shift once a real
+  source is found — the SDK side needs no change when that happens, only the backend table.
+- **Unavailable** (`mos_estimate: null`) — any codec with literally no entry, or any call
+  reporting packet loss for a codec with no published robustness factor to account for it.
+
+This is a known, tracked state, not something the SDK needs to work around — keep sending
+the raw metrics regardless of codec or provisional status; the estimate tier improves
+automatically as backend coverage is extended, with no SDK change needed.
+
+One thing worth flagging back if you find out otherwise: Android's `CallQuality` API
+reports a codec TYPE, not the negotiated bitrate, so the backend's AMR-WB estimate always
+uses the 12.65 kbit/s constants regardless of which of AMR-WB's 9 possible bitrates a real
+call actually negotiated — a representative-rate approximation, not a per-call exact
+match. If the SDK ever gains a way to read the actual negotiated bitrate, say so; the
+backend table has per-bitrate AMR-WB constants ready to wire in.
+
+### 12.4 Why this is a separate pipeline from §4.1's RF samples
+
+Different cadence (one upload per completed call, not a periodic/handover tick), no
+`opt_out`/duplicate-batch handling (call volume doesn't need it), and no on-device MOS
+computation (keeping that server-side means a future constant correction — see §12.3 —
+applies retroactively via a backend deploy, not an app re-release to every device).

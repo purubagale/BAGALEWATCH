@@ -8,11 +8,71 @@ import { useAuth } from '../auth/AuthContext'
 import { canonicalSection } from '../constants/opaqueRoutes'
 import { DtExploreStateProvider } from '../contexts/DtExploreStateContext'
 import FooterLine from './FooterLine'
+import ChangePasswordModal from './ChangePasswordModal'
 import { SearchModalContext } from '../contexts/SearchModalContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { useTreeStore } from '../store/treeStore'
 import AdvancedSiteSearchModal from './AdvancedSiteSearchModal'
 import { DEFAULT_ROW_LIMIT } from './RowLimitSelect'
+
+// User menu dropdown (2026-10-02, replacing the plain "Sign out" button) --
+// "Change Password" is hidden for SSO-managed accounts the same way
+// UsersPage.tsx hides the password field for them: setting a local password
+// on an SSO account would make it reachable through local login, quietly
+// undoing the point of SSO (core/password_reset.py's ChangePasswordView
+// rejects it server-side too, this just avoids showing a control that would
+// only ever 400). Closes on outside click and on Escape, same UX contract
+// as AdvancedSiteSearchModal's overlay click-to-dismiss.
+function UserMenu({ onChangePassword }: { onChangePassword: () => void }) {
+  const { user, logout } = useAuth()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    function onEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onEscape)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onEscape)
+    }
+  }, [open])
+
+  if (!user) return null
+  const ssoManaged = user.auth_source === 'sso'
+
+  return (
+    <div className="app-user-menu" ref={ref}>
+      <button type="button" className="app-user-menu-trigger" onClick={() => setOpen((v) => !v)}>
+        <span>{user.name || user.username}</span>
+        <span className="app-topbar-role">{user.role}</span>
+        <span className="app-user-menu-caret">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="app-user-menu-dropdown">
+          {!ssoManaged && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                onChangePassword()
+              }}
+            >
+              Change Password
+            </button>
+          )}
+          <button type="button" onClick={logout}>Sign out</button>
+        </div>
+      )}
+    </div>
+  )
+}
 
 const SIDEBAR_PIN_KEY = 'dtwatch_sidebar_pinned'
 
@@ -142,8 +202,9 @@ function SidebarNode({
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
   const { theme, toggleTheme } = useTheme()
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
 
   // Sidebar shell (2026-08-08 rewrite: "left panel for menu and submenu
   // (icon display with detail on hover) with collapse/expand on hover
@@ -416,9 +477,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               >
                 {theme === 'dark' ? '☀️' : '🌙'}
               </button>
-              <span>{user.name || user.username}</span>
-              <span className="app-topbar-role">{user.role}</span>
-              <button onClick={logout}>Sign out</button>
+              <UserMenu onChangePassword={() => setChangePasswordOpen(true)} />
             </div>
           </header>
         )}
@@ -460,6 +519,8 @@ export default function Layout({ children }: { children: ReactNode }) {
           setRowLimit={setSearchRowLimit}
         />
       )}
+
+      {changePasswordOpen && <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />}
     </div>
     </SearchModalContext.Provider>
   )

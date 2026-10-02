@@ -1,7 +1,18 @@
 // Mirrors core/serializers.py — kept in one place so a field rename on
 // the Django side is a one-file fix here, not a hunt through components.
 
-export type Role = 'superadmin' | 'admin' | 'viewer' | 'rescue_operator'
+// 2026-10-01 ("full parity" RBAC feature) -- was a closed 4-value union.
+// A superadmin can now create custom roles at runtime (Manage Roles), so
+// a role name is a dynamic string, not a fixed literal set. Every
+// existing `role === 'superadmin'`-style comparison across the app still
+// compiles fine against `string`; nothing exhaustively switched over the
+// old union.
+export type Role = string
+// The 4 roles every permission class / MenuItem access tier on the
+// backend hardcodes by this exact literal -- kept here purely for
+// frontend dropdowns/labels that want to distinguish a builtin tier from
+// a custom role, NOT as a type (that stays the open `Role = string` above).
+export const BUILTIN_ROLES: Role[] = ['superadmin', 'admin', 'viewer', 'rescue_operator']
 
 export type CrudPerm = { read?: boolean; write?: boolean; update?: boolean; delete?: boolean }
 /** How a user authenticates. `sso` means Keycloak owns their role and
@@ -31,8 +42,18 @@ export interface Me {
   id: number
   username: string
   role: Role
+  // Full role list (2026-10-01, "full parity" RBAC feature) -- `role`
+  // above is still the single cached highest-precedence value every
+  // pre-existing check reads; `roles` is the real set, needed to show a
+  // custom role (e.g. 'ftth_leader') a user holds alongside their builtin
+  // tier. Always present (an empty array, never undefined).
+  roles: string[]
   name: string
   dept: string
+  // Used for password-reset lookup (2026-10-02, "forget password"
+  // follow-up) -- optional, application-level-unique when set (see
+  // UserWriteSerializer.validate() in core/serializers.py).
+  email: string
   is_active: boolean
   last_login: string | null
   date_joined: string
@@ -404,8 +425,15 @@ export interface AdminUser {
   id: number
   username: string
   role: Role
+  // Full role list (2026-10-01) -- see Me.roles' own comment above, same
+  // convention.
+  roles: string[]
   name: string
   dept: string
+  // Used for password-reset lookup (2026-10-02, "forget password"
+  // follow-up) -- optional, application-level-unique when set (see
+  // UserWriteSerializer.validate() in core/serializers.py).
+  email: string
   is_active: boolean
   last_login: string | null
   date_joined: string
@@ -424,8 +452,74 @@ export interface UserWrite {
   role: Role
   name: string
   dept: string
+  email?: string
   is_active?: boolean
   operator_mncs?: string[]
+}
+
+// ── Multi-role RBAC (2026-10-01, "full parity" RBAC feature) ────────────
+// Mirrors core/serializers.py's RoleSerializer / core/roles.py's
+// UserRolesView exactly.
+export interface RoleRow {
+  id: number
+  name: string
+  label: string
+  description: string
+  is_builtin: boolean
+  created_at: string
+}
+export interface RoleWrite {
+  name: string
+  label: string
+  description?: string
+}
+/** GET/PUT /api/v2/users/:id/roles/ response shape — a flat list, not
+ * just names, so AssignRolesPage can show each role's label without a
+ * second lookup against useRoles(). */
+export interface UserRoleRow {
+  id: number
+  name: string
+  label: string
+}
+/** GET/PUT /api/v2/menu-visibility/ — sparse: a menu item id with no key
+ * here, or a role name missing within one, means "inherit the default"
+ * (see MenuItemRoleVisibilityView's own docstring, core/views.py). PUT
+ * sends the same shape back with a changed/added entry, or `null` for a
+ * value to delete that override and reset to inherited. */
+export type MenuVisibilityMatrix = Record<string, Record<string, boolean>>
+
+/** GET /api/v2/system-health/ (2026-10-01) — superadmin-only diagnostic
+ * dashboard. `disk` is null (with `disk_error` set) only if the
+ * `shutil.disk_usage()` call itself raised, which in practice should never
+ * happen under a real deployment — see SystemHealthView's docstring
+ * (core/views.py) for why Live Site Sync's own per-source state is NOT
+ * part of this shape (SystemHealthPage.tsx calls useLiveSiteSources()
+ * directly instead, to avoid a second source of truth for it). */
+/** GET /api/v2/system-doc/ (2026-10-01) -- "Generate Current System
+ * State" button on DocumentationPage.tsx. Same {markdown, meta} shape as
+ * MonthlyReport -- generated fresh server-side on every request, by
+ * introspecting the live model registry/menu tree/roles, not bundled at
+ * build time like the rest of that page's docs. */
+export interface SystemDocResponse {
+  markdown: string
+  meta: {
+    generated_at: string
+    version: string
+    build_tag: string
+    git_sha: string
+  }
+}
+
+export interface SystemHealthPayload {
+  database: { status: 'ok' | 'down'; error: string | null }
+  redis: { status: 'ok' | 'down'; error: string | null }
+  disk: { total_bytes: number; used_bytes: number; free_bytes: number } | null
+  disk_error: string | null
+  telemetry_bin_roller: { last_rolled_at: string | null }
+  version: string
+  build_tag: string
+  git_sha: string
+  checked_at: string
 }
 
 // ── Phase 3: reporting suite (read-only) ────────────────────────────────
@@ -1287,7 +1381,11 @@ export interface DtSessionCreate {
 
 // GET/PUT /permissions-matrix/ shape — excludes superadmin (see
 // PermissionsMatrixView's docstring), so only admin/viewer appear here.
-export type PermissionsMatrix = Record<'admin' | 'viewer', PermissionMap>
+// 2026-10-01 ("full parity" RBAC feature) -- was hardcoded to exactly
+// 'admin' | 'viewer'. The matrix now has one column per real Role
+// (excluding superadmin, same bypass reasoning as always), so the key
+// type widens to a plain string.
+export type PermissionsMatrix = Record<string, PermissionMap>
 
 /** Same helper the v1 client already needs for CRUD-vs-simple menus.
  *
@@ -1795,11 +1893,48 @@ export interface TelemetryLiveSample {
   trigger_reason: string
 }
 
+// VoLTE/VoNR call-quality dev/pilot sample (2026-10-02) -- see
+// core/volte_quality.py's module docstring. `mos_estimate` is a
+// server-computed ITU-T G.107 E-model ESTIMATE, never a true
+// perceptually-measured MOS -- always label it "Estimated MOS" in the UI,
+// never a bare "MOS". Both `r_factor`/`mos_estimate` are null when the
+// codec has no entry at all, or a required raw input was missing -- never
+// a fabricated number. `mos_is_provisional` (true for EVS/AMR-NB today)
+// marks a value computed from a deliberately APPROXIMATED codec entry
+// (real constants run through a different scale's formula, or a
+// different codec's constants used as a proxy) -- the UI must visually
+// distinguish this from a verified estimate (AMR-WB/G.711/G.729), never
+// show both with the same confidence.
+export interface VolteCallQualitySample {
+  device_id: string
+  ts: string
+  received_at: string
+  network_type: string
+  codec: string
+  call_duration_s: number | null
+  packet_loss_pct: number | null
+  jitter_ms: number | null
+  rtt_ms: number | null
+  quality_level: string
+  r_factor: number | null
+  mos_estimate: number | null
+  mos_is_provisional: boolean
+}
+
+export interface VolteQualityListResponse {
+  samples: VolteCallQualitySample[]
+}
+
 export interface TelemetryLiveSamplesResponse {
   samples: TelemetryLiveSample[]
   count: number
   window_minutes: number
   devices: string[]
+  // Delta-fetch cursor (2026-10-02 perf follow-up) -- pass back as `since`
+  // on the next poll to fetch only samples newer than this response,
+  // instead of re-fetching the whole window every 10s. The SERVER's
+  // clock, not the client's -- see useTelemetryLiveSamples' own handling.
+  server_time: string
 }
 
 export interface TelemetryLiveSamplesParams {
@@ -1858,6 +1993,8 @@ export interface TelemetryDriveTestSessionSamplesResponse {
   count: number
   require_consent: boolean
   consent_summary: TelemetryDriveTestConsentSummary | null
+  // Delta-fetch cursor -- see TelemetryLiveSamplesResponse's own identical field.
+  server_time: string
 }
 
 export interface TelemetryDriveTestSessionEndResponse extends TelemetryDriveTestSession {
@@ -1997,4 +2134,42 @@ export interface AuthEventLogParams {
   /** `'1'` restricts to successful events, `'0'` to failures/logout-only
    * exclusions -- see AuthEventLogListView's own docstring. */
   success?: '1' | '0'
+}
+
+// ── Unified Audit Log (2026-10-01) ──────────────────────────────────────
+// Mirrors core/audit.py's AuditLogListView exactly -- merges AuthEventLog
+// (access events, above) and the new AuditEvent (data-change events) into
+// one feed. Replaces AccessLogPage.tsx's old narrower view; the
+// AuthEventLog* types above stay (the underlying /auth-events/ endpoint
+// is unchanged) but are no longer rendered by any page.
+export type AuditLogSource = 'access' | 'data_change'
+
+export interface AuditLogEntry {
+  id: string
+  source: AuditLogSource
+  created_at: string
+  actor: string
+  action: string
+  resource: string
+  detail: string
+  ip_address: string | null
+  payload: unknown
+}
+
+export interface AuditLogPageResponse {
+  count: number
+  next: string | null
+  previous: string | null
+  results: AuditLogEntry[]
+}
+
+export interface AuditLogParams {
+  page?: number
+  page_size?: number
+  /** Free text across actor/action/resource/detail. */
+  q?: string
+  /** YYYY-MM-DD, inclusive. */
+  date_from?: string
+  date_to?: string
+  source?: AuditLogSource
 }

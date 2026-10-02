@@ -611,6 +611,56 @@ textarea:focus {
   letter-spacing: 0.04em;
 }
 
+/* User menu dropdown (2026-10-02, replacing the old plain "Sign out"
+   button) -- relatively positioned trigger + absolutely positioned
+   dropdown, same pattern as `.app-sidebar-caret-btn` elsewhere in this
+   file; `.app-user-menu-trigger` reuses `.app-topbar-actions button`'s
+   look via plain inheritance of that rule, no separate button skin
+   needed beyond layout. */
+.app-user-menu { position: relative; }
+.app-user-menu-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.app-user-menu-trigger:hover { background: var(--bg-hover); color: var(--text-primary); }
+.app-user-menu-caret { font-size: 10px; color: var(--text-muted); }
+.app-user-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+}
+.app-user-menu-dropdown button {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.app-user-menu-dropdown button:hover { background: var(--bg-hover); color: var(--text-primary); }
+
 .app-main {
   flex: 1;
   min-height: 0;
@@ -888,6 +938,23 @@ textarea:focus {
 .login-submit svg { width: 17px; height: 17px; }
 .login-submit:hover:not(:disabled) { background: var(--brand-primary-hover); }
 .login-submit:disabled { opacity: 0.5; cursor: default; }
+
+/* Forgot-password link/back-link (2026-10-02) -- plain text button, no
+   border/fill, so it reads as a link without needing an actual <a> (both
+   are pure client-side mode toggles, never a navigation). */
+.login-link-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  font-family: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  align-self: center;
+}
+.login-link-btn:hover { color: var(--brand-primary); }
 
 /* "or" between the two sign-in methods, with a rule either side drawn as
    pseudo-elements so the markup stays a single element. */
@@ -1794,6 +1861,15 @@ textarea:focus {
   background: var(--status-danger-bg-subtle);
   border: 1px solid var(--status-danger-border);
 }
+/* AuditLogPage.tsx (2026-10-01) -- reuses this same pill for its unified
+   Action column. Data-change events (SITE.CREATED, BACKUP.RESTORED, etc.)
+   aren't inherently success/fail the way an access event is, so they get
+   a third, neutral brand-colored variant instead of defaulting to green. */
+.auth-event-badge-neutral {
+  color: var(--brand-primary);
+  background: var(--brand-primary-soft);
+  border: 1px solid var(--brand-primary-soft);
+}
 
 /* RF Reports page (2026-09-15 vendor RNO report importer) -- the
    expand/collapse toggle on each imported report row, and its plain
@@ -2068,6 +2144,47 @@ textarea:focus {
 .md-report .md-table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 12px; }
 .md-report .md-table th, .md-report .md-table td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
 .md-report .md-table th { background: var(--bg-app); color: var(--text-muted); font-weight: 600; }
+/* DocumentationPage.tsx (2026-10-01) renders real prose docs through
+   `marked` (not the hand-rolled renderer above), which emits elements the
+   reporting suite's generated text never needed: h1, ordered lists, links,
+   inline/block code, blockquotes, and a plain (unclassed) <table>. Scoped
+   under the same .md-report wrapper so both renderers share one visual
+   language instead of a second, parallel style block. */
+.md-report h1 { font-size: 20px; margin: 0 0 12px; }
+.md-report ol { margin: 6px 0; padding-left: 20px; }
+.md-report li { margin: 2px 0; }
+.md-report a { color: var(--brand-primary); }
+.md-report code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; background: var(--bg-app); padding: 1px 5px; border-radius: 3px; }
+.md-report pre { background: var(--bg-app); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; overflow-x: auto; margin: 10px 0; }
+.md-report pre code { background: none; padding: 0; }
+.md-report blockquote { margin: 10px 0; padding: 4px 14px; border-left: 3px solid var(--border); color: var(--text-muted); }
+.md-report table:not(.md-table) { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 12px; }
+.md-report table:not(.md-table) th, .md-report table:not(.md-table) td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
+.md-report table:not(.md-table) th { background: var(--bg-app); color: var(--text-muted); font-weight: 600; }
+/* DocumentationPage.tsx's detail view (2026-10-02) -- main content column
+   plus a sticky "On this page" TOC sidebar, matching the reference app's
+   own right-side table-of-contents layout. Stacks on narrow viewports,
+   same breakpoint convention as AssignRolesPage.tsx's two-pane layout. */
+.doc-detail-layout { display: flex; gap: 24px; align-items: flex-start; }
+.doc-detail-main { flex: 1 1 auto; min-width: 0; }
+.doc-toc {
+  flex: 0 0 200px;
+  position: sticky;
+  top: 16px;
+  font-size: 12px;
+  border-left: 1px solid var(--border);
+  padding-left: 14px;
+}
+.doc-toc-title { font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; margin-bottom: 8px; }
+.doc-toc ul { list-style: none; margin: 0; padding: 0; }
+.doc-toc li { margin: 4px 0; }
+.doc-toc a { color: var(--text-muted); text-decoration: none; }
+.doc-toc a:hover { color: var(--brand-primary); }
+.doc-toc-sub { padding-left: 12px; }
+@media (max-width: 900px) {
+  .doc-detail-layout { flex-direction: column; }
+  .doc-toc { position: static; border-left: none; padding-left: 0; border-top: 1px solid var(--border); padding-top: 10px; }
+}
 .admin-table input[type="text"], .admin-table input:not([type]), .admin-table input[type="number"], .admin-table input[type="password"] {
   background: var(--bg-app);
   border: 1px solid var(--border);
@@ -2974,6 +3091,82 @@ textarea:focus {
   letter-spacing: 0.04em;
   vertical-align: middle;
 }
+/* Role chips (2026-10-01, "full parity" RBAC feature) -- UsersPage.tsx's
+   read-only multi-role display, same pill shape as .user-sso-tag above
+   but in the brand-blue-soft wash used for other "informational, not a
+   warning" badges elsewhere in this app, since a role isn't a caveat the
+   way "managed by SSO" is. */
+.role-chip-row { display: inline-flex; flex-wrap: wrap; gap: 4px; vertical-align: middle; }
+.role-chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--brand-primary-soft);
+  color: var(--brand-primary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.role-assign-link { display: block; margin-top: 2px; font-size: 11px; }
+/* AssignRolesPage.tsx (2026-10-01) -- two-pane layout: a searchable user
+   list on the left, the selected user's role editor on the right. Stacks
+   on narrow viewports since the user table alone is already usable full-
+   width there and side-by-side would cramp both panes. */
+.assign-roles-layout { display: flex; gap: 20px; align-items: flex-start; }
+.assign-roles-users { flex: 1 1 420px; min-width: 0; }
+.assign-roles-detail { flex: 1 1 320px; min-width: 260px; }
+@media (max-width: 860px) {
+  .assign-roles-layout { flex-direction: column; }
+}
+.admin-table-row-selected { background: var(--brand-primary-soft); }
+/* Removable chip (AssignRolesPage.tsx) -- same .role-chip pill as the
+   read-only display elsewhere, with an inline "x" button to drop that
+   role from the selected user without a separate delete action/column. */
+.role-chip-remove {
+  margin-left: 4px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.role-chip-remove:disabled { opacity: 0.5; cursor: default; }
+/* MenuVisibilityPage.tsx (2026-10-01) -- tri-state override grid. Each
+   cell is a plain button (not a checkbox) since the three states --
+   inherit/allow/deny -- don't map onto a native checkbox's two. */
+.menu-vis-cell-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 2px 8px;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.menu-vis-cell-btn:hover { background: var(--bg-hover); }
+.menu-vis-cell-btn:disabled { opacity: 0.5; cursor: default; }
+.menu-vis-cell-allow { color: var(--status-success-text-subtle); font-weight: 700; }
+.menu-vis-cell-deny { color: var(--status-danger-text-subtle); font-weight: 700; }
+.menu-vis-cell-inherit { color: var(--text-tertiary); }
+/* SystemHealthPage.tsx (2026-10-01) -- card grid, same visual recipe as
+   BackupPage.tsx's .backup-card (background/border/radius/shadow/padding)
+   but under its own page-scoped class name, matching this codebase's
+   existing convention of per-page card classes rather than one shared
+   generic card. */
+.health-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 16px; }
+.health-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  padding: 14px 16px;
+}
+.health-card-title { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; }
+.health-card-value { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+.health-card-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+.health-disk-bar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; margin-top: 8px; }
+.health-disk-bar-fill { height: 100%; background: var(--brand-primary); }
 /* ── Version + About (2026-08-23) ─────────────────────────────────*/
 /* The sidebar brand becomes two stacked lines when expanded: the app name
    and, under it, the build version as the sole entry point to /about. */

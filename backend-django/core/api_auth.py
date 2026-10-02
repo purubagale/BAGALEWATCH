@@ -46,6 +46,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 
+from .audit import log_audit_event
 from .models import ApiKey
 from .views import IsSuperadminOnly
 
@@ -217,6 +218,18 @@ class ApiKeyViewSet(viewsets.ModelViewSet):
         # never saved) purely so create() below can include it in this
         # one response.
         serializer.instance._plaintext_key = full_key
+        log_audit_event(self.request, 'API_KEY.CREATED', resource='api_key',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.name)
+
+    def perform_update(self, serializer):
+        serializer.save()
+        log_audit_event(self.request, 'API_KEY.UPDATED', resource='api_key',
+                         resource_id=serializer.instance.pk, detail=serializer.instance.name)
+
+    def perform_destroy(self, instance):
+        log_audit_event(self.request, 'API_KEY.DELETED', resource='api_key',
+                         resource_id=instance.pk, detail=instance.name)
+        instance.delete()
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

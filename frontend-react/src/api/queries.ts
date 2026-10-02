@@ -1,5 +1,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiJson } from './client'
+import { useRef } from 'react'
+import { ApiError, apiFetch, apiJson } from './client'
 import type {
   AdminUser,
   ApiKeyCreate,
@@ -38,6 +39,7 @@ import type {
   MenuItem,
   MenuItemWrite,
   MenuTreeNode,
+  MenuVisibilityMatrix,
   MonthlyReport,
   NtaReport,
   PermissionsMatrix,
@@ -61,8 +63,15 @@ import type {
   TelemetryStats,
   ThresholdMap,
   TreeState,
+  RoleRow,
+  RoleWrite,
+  UserRoleRow,
   UserWrite,
   HealthInfo,
+  SystemHealthPayload,
+  SystemDocResponse,
+  AuditLogParams,
+  AuditLogPageResponse,
   RescueConsentPolicy,
   RescueConsentPolicyWrite,
   RescueLookupParams,
@@ -302,6 +311,34 @@ export function useDeleteUser() {
   })
 }
 
+// Forgot/change password (2026-10-02). All three are plain one-shot
+// mutations with no cache to invalidate -- none of them read back into any
+// query this app keeps. Unauthenticated (first two: AllowAny on the
+// backend, no token exists yet at this point in the flow) vs authenticated
+// (the third, piggybacking on apiJson's normal bearer-token attachment) --
+// see core/password_reset.py's module docstring for why these are one file
+// server-side despite the different auth requirements.
+export function useRequestPasswordReset() {
+  return useMutation({
+    mutationFn: (email: string) =>
+      apiJson<{ detail: string }>('/api/v2/auth/password-reset/', { method: 'POST', body: JSON.stringify({ email }) }),
+  })
+}
+
+export function useConfirmPasswordReset() {
+  return useMutation({
+    mutationFn: (params: { uid: string; token: string; new_password: string }) =>
+      apiJson<{ detail: string }>('/api/v2/auth/password-reset/confirm/', { method: 'POST', body: JSON.stringify(params) }),
+  })
+}
+
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: (params: { old_password: string; new_password: string }) =>
+      apiJson<{ detail: string }>('/api/v2/auth/change-password/', { method: 'POST', body: JSON.stringify(params) }),
+  })
+}
+
 // ── Login/access audit trail (2026-10-01) ───────────────────────────────
 // Superadmin-only, server-side paginated -- see core/auth_log.py's
 // AuthEventLogListView docstring. Same `placeholderData: (prev) => prev`
@@ -319,6 +356,55 @@ export function useAuthEventLog(params: AuthEventLogParams) {
     queryFn: () => apiJson<AuthEventLogPageResponse>(`/api/v2/auth-events/?${qs.toString()}`),
     placeholderData: (prev) => prev,
   })
+}
+
+// Backs AuditLogPage.tsx (2026-10-01) -- replaces AccessLogPage.tsx's use
+// of useAuthEventLog above with the unified access+data-change feed.
+// Shared filter params only (q/date_from/date_to/source) -- pagination is
+// added separately by each caller, since the export endpoint below
+// deliberately ignores it (full filtered result set, not just one page).
+function auditLogFilterParams(params: AuditLogParams): URLSearchParams {
+  const qs = new URLSearchParams()
+  if (params.q) qs.set('q', params.q)
+  if (params.date_from) qs.set('date_from', params.date_from)
+  if (params.date_to) qs.set('date_to', params.date_to)
+  if (params.source) qs.set('source', params.source)
+  return qs
+}
+
+export function useAuditLog(params: AuditLogParams) {
+  const qs = auditLogFilterParams(params)
+  qs.set('page', String(params.page ?? 1))
+  qs.set('page_size', String(params.page_size ?? 50))
+  return useQuery({
+    queryKey: ['audit-log', params],
+    queryFn: () => apiJson<AuditLogPageResponse>(`/api/v2/audit-log/?${qs.toString()}`),
+    placeholderData: (prev) => prev,
+  })
+}
+
+// Not a useMutation -- this triggers a file download, not a cache-
+// invalidating write. Same apiFetch() + res.blob() + downloadBlob()
+// pattern BackupPage.tsx's XLSX export already uses; the server always
+// names the file 'audit_log.csv' (core/audit.py's AuditLogExportView), so
+// there's no Content-Disposition filename to parse here the way that
+// page's per-scope export needs to.
+export async function exportAuditLogCsv(params: AuditLogParams): Promise<Blob> {
+  const qs = auditLogFilterParams(params)
+  const res = await apiFetch(`/api/v2/audit-log/export.csv?${qs.toString()}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new ApiError(res.status, body)
+  }
+  return res.blob()
+}
+
+// Backs DocumentationPage.tsx's "Generate Current System State" button
+// (2026-10-01) -- a plain async function, not useQuery, since this is
+// generate-on-click rather than auto-loaded, same reasoning
+// exportAuditLogCsv() above already uses for its own on-click fetch.
+export function fetchSystemDoc(): Promise<SystemDocResponse> {
+  return apiJson<SystemDocResponse>('/api/v2/system-doc/')
 }
 
 // ── External API keys (2026-08-12) ───────────────────────────────────────
@@ -1043,6 +1129,113 @@ export function useUpdatePermissionsMatrix() {
   })
 }
 
+// ── Multi-role RBAC (2026-10-01, "full parity" RBAC feature) ────────────
+// Same hook shapes as useUsers/useCreateUser/useUpdateUser/useDeleteUser
+// above, over /api/v2/roles/ -- backs ManageRolesPage.tsx.
+export function useRoles() {
+  return useQuery({
+    queryKey: ['roles'],
+    queryFn: () => apiJson<RoleRow[]>('/api/v2/roles/'),
+  })
+}
+
+export function useCreateRole() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (role: RoleWrite) => apiJson<RoleRow>('/api/v2/roles/', { method: 'POST', body: JSON.stringify(role) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['roles'] }),
+  })
+}
+
+export function useUpdateRole(roleId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (role: Partial<RoleWrite>) =>
+      apiJson<RoleRow>(`/api/v2/roles/${roleId}/`, { method: 'PATCH', body: JSON.stringify(role) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['roles'] })
+      // A rename cascades into MenuPermission server-side (core/roles.py's
+      // RoleViewSet.update()) -- refetch the matrix too so a renamed
+      // role's column doesn't look like it lost its permissions until the
+      // next unrelated refetch.
+      qc.invalidateQueries({ queryKey: ['permissions-matrix'] })
+    },
+  })
+}
+
+export function useDeleteRole() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (roleId: number) => apiJson<void>(`/api/v2/roles/${roleId}/`, { method: 'DELETE' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['roles'] })
+      qc.invalidateQueries({ queryKey: ['permissions-matrix'] })
+      qc.invalidateQueries({ queryKey: ['menu-visibility'] })
+    },
+  })
+}
+
+// Backs AssignRolesPage.tsx -- GET/PUT one user's full role set.
+export function useUserRoles(userId: number | undefined) {
+  return useQuery({
+    queryKey: ['user-roles', userId],
+    queryFn: () => apiJson<UserRoleRow[]>(`/api/v2/users/${userId}/roles/`),
+    enabled: !!userId,
+  })
+}
+
+export function useSetUserRoles(userId: number | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (roleNames: string[]) =>
+      apiJson<UserRoleRow[]>(`/api/v2/users/${userId}/roles/`, { method: 'PUT', body: JSON.stringify({ roles: roleNames }) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['user-roles', userId] })
+      // The Users page's own role chips (AdminUser.roles) come from a
+      // DIFFERENT endpoint (/api/v2/users/) -- refetch that list too so
+      // a role change made here shows up there without a manual reload.
+      qc.invalidateQueries({ queryKey: ['users'] })
+    },
+  })
+}
+
+// Backs MenuVisibilityPage.tsx -- same nested-dict GET/per-key-upsert PUT
+// convention as usePermissionsMatrix/useUpdatePermissionsMatrix above.
+export function useMenuVisibility() {
+  return useQuery({
+    queryKey: ['menu-visibility'],
+    queryFn: () => apiJson<MenuVisibilityMatrix>('/api/v2/menu-visibility/'),
+  })
+}
+
+export function useUpdateMenuVisibility() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (changed: Record<string, Record<string, boolean | null>>) =>
+      apiJson<{ ok: true }>('/api/v2/menu-visibility/', { method: 'PUT', body: JSON.stringify(changed) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['menu-visibility'] })
+      // A visibility override changes what get_visible_menu_items()
+      // returns for whoever holds the affected role -- refetch the
+      // sidebar's own tree too so a superadmin testing this sees it
+      // reflected without a manual reload.
+      qc.invalidateQueries({ queryKey: ['menu-tree'] })
+    },
+  })
+}
+
+// Backs SystemHealthPage.tsx (2026-10-01). Polled, not just loaded once --
+// this is meant to be glanced at live, same cadence as
+// useLiveSiteSources() below, which this page also calls directly rather
+// than duplicating Live Site Sync's own per-source state server-side.
+export function useSystemHealth() {
+  return useQuery({
+    queryKey: ['system-health'],
+    queryFn: () => apiJson<SystemHealthPayload>('/api/v2/system-health/'),
+    refetchInterval: 15_000,
+  })
+}
+
 // ── Advanced Site Search (2026-08-06) ───────────────────────────────────
 // A mutation rather than a query — the modal fires a search on demand
 // (Search button / Enter), not automatically on every keystroke across
@@ -1067,24 +1260,97 @@ import type {
   TelemetryDriveTestSessionCreateInput,
   TelemetryDriveTestSessionEndResponse,
   TelemetryDriveTestSessionSamplesResponse,
+  TelemetryLiveSample,
   TelemetryLiveSamplesParams,
   TelemetryLiveSamplesResponse,
+  VolteQualityListResponse,
 } from '../api/types'
 
-export function useTelemetryLiveSamples(params: TelemetryLiveSamplesParams) {
-  const qs = new URLSearchParams()
-  if (params.minutes != null) qs.set('minutes', String(params.minutes))
-  if (params.limit != null) qs.set('limit', String(params.limit))
-  if (params.device_id) qs.set('device_id', params.device_id)
-  // Area filter (2026-09-02) -- see TelemetryLiveSamplesParams's docstring.
-  if (params.lat != null) qs.set('lat', String(params.lat))
-  if (params.lng != null) qs.set('lng', String(params.lng))
-  if (params.radius_km != null) qs.set('radius_km', String(params.radius_km))
+// Delta-fetch accumulator (2026-10-02 perf follow-up, "suggest me the
+// actual efficiency... can django handle all this") -- shared by
+// useTelemetryLiveSamples and useTelemetryDtSessionSamples below, both of
+// which poll a `{samples, server_time}`-shaped endpoint every 10s.
+// Without this, every poll re-fetched and re-rendered the ENTIRE current
+// window even when nothing new arrived, which in turn fully remounted
+// the Leaflet map on both consuming pages (see their own `mapKey` fix).
+// Fetches the full window on the first call for a given `filterKey` (or
+// whenever it changes -- a filter change means "different dataset," not
+// an incremental continuation), then only what's new on every subsequent
+// poll via `since`, prepending into a capped accumulator instead of
+// replacing it wholesale.
+//
+// Mutates plain refs inside `queryFn` rather than using React state --
+// deliberately NOT reactive state, since these values exist purely to
+// remember "what did the last poll already see," not to trigger a
+// re-render themselves (the returned query `data` is what triggers
+// re-renders, same as any other query). This assumes `queryFn` calls for
+// one logical query never run concurrently with each other, which holds
+// here: both callers are a plain 10s refetchInterval with no manual
+// refetch button on either page.
+const MAX_ACCUMULATED_SAMPLES = 2000
+
+function useDeltaSamples<T extends { samples: TelemetryLiveSample[]; server_time: string }>(
+  queryKey: unknown[],
+  filterKey: string,
+  fetchPage: (since: string | null) => Promise<T>,
+  enabled: boolean,
+) {
+  const cursorRef = useRef<string | null>(null)
+  const accumulatedRef = useRef<TelemetryLiveSample[]>([])
+  const filterKeyRef = useRef(filterKey)
+
   return useQuery({
-    queryKey: ['telemetry-live-samples', params],
-    queryFn: () => apiJson<TelemetryLiveSamplesResponse>(`/api/v2/telemetry/live-samples/?${qs}`),
+    queryKey,
+    queryFn: async () => {
+      if (filterKeyRef.current !== filterKey) {
+        cursorRef.current = null
+        accumulatedRef.current = []
+        filterKeyRef.current = filterKey
+      }
+      const page = await fetchPage(cursorRef.current)
+      cursorRef.current = page.server_time
+      // New samples are newest-first (server orders -received_at), so
+      // they belong at the FRONT of the existing newest-first accumulator.
+      accumulatedRef.current = [...page.samples, ...accumulatedRef.current].slice(0, MAX_ACCUMULATED_SAMPLES)
+      return { ...page, samples: accumulatedRef.current }
+    },
+    enabled,
     refetchInterval: 10_000,
   })
+}
+
+// VoLTE Quality dev/pilot list (2026-10-02) -- plain polling, not the
+// useDeltaSamples() machinery above: call volume is naturally far lower
+// than periodic RF-sample volume (see core/volte_quality.py's module
+// docstring), so a full refetch every 10s has none of the remount-cost
+// problem that machinery exists to solve.
+export function useVolteQualitySamples(minutes: number) {
+  return useQuery({
+    queryKey: ['telemetry-volte-samples', minutes],
+    queryFn: () => apiJson<VolteQualityListResponse>(`/api/v2/telemetry/volte-samples/?minutes=${minutes}`),
+    refetchInterval: 10_000,
+  })
+}
+
+export function useTelemetryLiveSamples(params: TelemetryLiveSamplesParams) {
+  const filterKey = JSON.stringify(params)
+  return useDeltaSamples(
+    ['telemetry-live-samples', params],
+    filterKey,
+    (since) => {
+      const qs = new URLSearchParams()
+      if (params.minutes != null) qs.set('minutes', String(params.minutes))
+      if (params.limit != null) qs.set('limit', String(params.limit))
+      if (params.device_id) qs.set('device_id', params.device_id)
+      // Area filter (2026-09-02) -- see TelemetryLiveSamplesParams's docstring.
+      if (params.lat != null) qs.set('lat', String(params.lat))
+      if (params.lng != null) qs.set('lng', String(params.lng))
+      if (params.radius_km != null) qs.set('radius_km', String(params.radius_km))
+      if (since) qs.set('since', since)
+      return apiJson<TelemetryLiveSamplesResponse>(`/api/v2/telemetry/live-samples/?${qs}`)
+    },
+    true,
+  )
 }
 
 // Scoped drive-test sessions over live telemetry (2026-09-01) — see
@@ -1208,12 +1474,17 @@ export function useDeleteTelemetryDtSession() {
 }
 
 export function useTelemetryDtSessionSamples(id: number | null) {
-  return useQuery({
-    queryKey: ['telemetry-dt-session-samples', id],
-    queryFn: () => apiJson<TelemetryDriveTestSessionSamplesResponse>(`/api/v2/telemetry/dt-sessions/${id}/samples/`),
-    enabled: id != null,
-    refetchInterval: 10_000,
-  })
+  return useDeltaSamples(
+    ['telemetry-dt-session-samples', id],
+    String(id),
+    (since) => {
+      const qs = new URLSearchParams()
+      if (since) qs.set('since', since)
+      const suffix = qs.toString() ? `?${qs}` : ''
+      return apiJson<TelemetryDriveTestSessionSamplesResponse>(`/api/v2/telemetry/dt-sessions/${id}/samples/${suffix}`)
+    },
+    id != null,
+  )
 }
 
 // ── Vendor RNO report importer (2026-09-15) ──────────────────────────────

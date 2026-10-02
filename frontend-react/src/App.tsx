@@ -45,7 +45,12 @@ const TreeAdminPage = lazy(() => import('./pages/TreeAdminPage'))
 const UsersPage = lazy(() => import('./pages/UsersPage'))
 const PermissionsPage = lazy(() => import('./pages/PermissionsPage'))
 const MenuAdminPage = lazy(() => import('./pages/MenuAdminPage'))
-const AccessLogPage = lazy(() => import('./pages/AccessLogPage'))
+const AuditLogPage = lazy(() => import('./pages/AuditLogPage'))
+const ManageRolesPage = lazy(() => import('./pages/ManageRolesPage'))
+const AssignRolesPage = lazy(() => import('./pages/AssignRolesPage'))
+const MenuVisibilityPage = lazy(() => import('./pages/MenuVisibilityPage'))
+const SystemHealthPage = lazy(() => import('./pages/SystemHealthPage'))
+const DocumentationPage = lazy(() => import('./pages/DocumentationPage'))
 const BrandingPage = lazy(() => import('./pages/BrandingPage'))
 const SlaTrackerPage = lazy(() => import('./pages/SlaTrackerPage'))
 const NtaCompliancePage = lazy(() => import('./pages/NtaCompliancePage'))
@@ -80,6 +85,9 @@ const LiveSiteSyncPage = lazy(() => import('./pages/LiveSiteSyncPage'))
 const TelemetryCoveragePage = lazy(() => import('./pages/TelemetryCoveragePage'))
 const TelemetryAdminPage = lazy(() => import('./pages/TelemetryAdminPage'))
 const TelemetryLiveSamplesPage = lazy(() => import('./pages/TelemetryLiveSamplesPage'))
+// VoLTE/VoNR call-quality dev/pilot list view (2026-10-02) -- see
+// core/volte_quality.py's module docstring.
+const VolteQualityPage = lazy(() => import('./pages/VolteQualityPage'))
 // Scoped drive-test sessions (2026-09-01) — see migration
 // 0044_seed_telemetry_dt_session_menuitem.py and core/telemetry_admin.py's
 // TelemetryDriveTestSession* views.
@@ -103,6 +111,11 @@ const DtPlotCatalogPage = lazy(() => import('./pages/DtPlotCatalogPage'))
 // chrome. Removing this trial later is deleting src/styleTest/ plus this
 // import and its one <Route> below.
 const StyleTestPage = lazy(() => import('./styleTest/StyleTestPage'))
+// Forgot/change password (2026-10-02) -- ResetPasswordPage is the page the
+// emailed reset link opens (see core/password_reset.py); lazy like most
+// pages since, unlike /sso/callback, there's no short-lived code racing a
+// chunk fetch here (the reset token lives for an hour).
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'))
 
 // Reflects customized branding (2026-08-08 follow-up) into the two
 // things that live outside React's own render tree — the document
@@ -208,6 +221,9 @@ function App() {
             chunk fetch here would add a round trip before the one-time
             code can be exchanged — and that code expires in ~60s. */}
         <Route path="/sso/callback" element={<SsoCallbackPage />} />
+        {/* Forgot-password confirm page (2026-10-02), opened from the
+            emailed link. Public, like /login. */}
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         {/* Not in the dynamic menu, so not subject to the per-menu
             permissions matrix — an About page every role can open.
             Still behind ProtectedRoute: it exposes the git SHA and
@@ -275,13 +291,19 @@ function App() {
         {withOpaqueSection('/telemetry-coverage', <TelemetryCoveragePage />)}
         {withOpaqueSection('/telemetry-admin', <TelemetryAdminPage />)}
         {withOpaqueSection('/telemetry-live-samples', <TelemetryLiveSamplesPage />)}
+        {withOpaqueSection('/telemetry-volte-samples', <VolteQualityPage />)}
         {withOpaqueSection('/telemetry-dt-sessions', <TelemetryDriveTestSessionsPage />)}
         {withOpaqueSection('/rescue-lookup', <RescueLookupPage />)}
         {withOpaqueSection('/rescue-policy', <RescuePolicyPage />)}
         {withOpaqueSection('/issues', <IssuesPage />)}
         {withOpaqueSection('/rf-reports', <RfReportsPage />)}
         {withOpaqueSection('/dt-plot-catalog', <DtPlotCatalogPage />)}
-        {withOpaqueSection('/access-log', <AccessLogPage />)}
+        {withOpaqueSection('/access-log', <AuditLogPage />)}
+        {withOpaqueSection('/manage-roles', <ManageRolesPage />)}
+        {withOpaqueSection('/assign-roles', <AssignRolesPage />)}
+        {withOpaqueSection('/menu-visibility', <MenuVisibilityPage />)}
+        {withOpaqueSection('/system-health', <SystemHealthPage />)}
+        {withOpaqueSection('/documentation', <DocumentationPage />)}
         {/* nt-frontend skill trial — no MenuSectionGate/opaque alias, this
             is a dev-only style test, not a real feature route. */}
         <Route path="/style-test" element={<ProtectedRoute><StyleTestPage /></ProtectedRoute>} />
