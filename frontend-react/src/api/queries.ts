@@ -1,4 +1,5 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useRef } from 'react'
 import { ApiError, apiFetch, apiJson } from './client'
 import type {
   AdminUser,
@@ -307,6 +308,34 @@ export function useDeleteUser() {
   return useMutation({
     mutationFn: (userId: number) => apiJson<void>(`/api/v2/users/${userId}/`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+
+// Forgot/change password (2026-10-02). All three are plain one-shot
+// mutations with no cache to invalidate -- none of them read back into any
+// query this app keeps. Unauthenticated (first two: AllowAny on the
+// backend, no token exists yet at this point in the flow) vs authenticated
+// (the third, piggybacking on apiJson's normal bearer-token attachment) --
+// see core/password_reset.py's module docstring for why these are one file
+// server-side despite the different auth requirements.
+export function useRequestPasswordReset() {
+  return useMutation({
+    mutationFn: (email: string) =>
+      apiJson<{ detail: string }>('/api/v2/auth/password-reset/', { method: 'POST', body: JSON.stringify({ email }) }),
+  })
+}
+
+export function useConfirmPasswordReset() {
+  return useMutation({
+    mutationFn: (params: { uid: string; token: string; new_password: string }) =>
+      apiJson<{ detail: string }>('/api/v2/auth/password-reset/confirm/', { method: 'POST', body: JSON.stringify(params) }),
+  })
+}
+
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: (params: { old_password: string; new_password: string }) =>
+      apiJson<{ detail: string }>('/api/v2/auth/change-password/', { method: 'POST', body: JSON.stringify(params) }),
   })
 }
 
@@ -1231,24 +1260,83 @@ import type {
   TelemetryDriveTestSessionCreateInput,
   TelemetryDriveTestSessionEndResponse,
   TelemetryDriveTestSessionSamplesResponse,
+  TelemetryLiveSample,
   TelemetryLiveSamplesParams,
   TelemetryLiveSamplesResponse,
 } from '../api/types'
 
-export function useTelemetryLiveSamples(params: TelemetryLiveSamplesParams) {
-  const qs = new URLSearchParams()
-  if (params.minutes != null) qs.set('minutes', String(params.minutes))
-  if (params.limit != null) qs.set('limit', String(params.limit))
-  if (params.device_id) qs.set('device_id', params.device_id)
-  // Area filter (2026-09-02) -- see TelemetryLiveSamplesParams's docstring.
-  if (params.lat != null) qs.set('lat', String(params.lat))
-  if (params.lng != null) qs.set('lng', String(params.lng))
-  if (params.radius_km != null) qs.set('radius_km', String(params.radius_km))
+// Delta-fetch accumulator (2026-10-02 perf follow-up, "suggest me the
+// actual efficiency... can django handle all this") -- shared by
+// useTelemetryLiveSamples and useTelemetryDtSessionSamples below, both of
+// which poll a `{samples, server_time}`-shaped endpoint every 10s.
+// Without this, every poll re-fetched and re-rendered the ENTIRE current
+// window even when nothing new arrived, which in turn fully remounted
+// the Leaflet map on both consuming pages (see their own `mapKey` fix).
+// Fetches the full window on the first call for a given `filterKey` (or
+// whenever it changes -- a filter change means "different dataset," not
+// an incremental continuation), then only what's new on every subsequent
+// poll via `since`, prepending into a capped accumulator instead of
+// replacing it wholesale.
+//
+// Mutates plain refs inside `queryFn` rather than using React state --
+// deliberately NOT reactive state, since these values exist purely to
+// remember "what did the last poll already see," not to trigger a
+// re-render themselves (the returned query `data` is what triggers
+// re-renders, same as any other query). This assumes `queryFn` calls for
+// one logical query never run concurrently with each other, which holds
+// here: both callers are a plain 10s refetchInterval with no manual
+// refetch button on either page.
+const MAX_ACCUMULATED_SAMPLES = 2000
+
+function useDeltaSamples<T extends { samples: TelemetryLiveSample[]; server_time: string }>(
+  queryKey: unknown[],
+  filterKey: string,
+  fetchPage: (since: string | null) => Promise<T>,
+  enabled: boolean,
+) {
+  const cursorRef = useRef<string | null>(null)
+  const accumulatedRef = useRef<TelemetryLiveSample[]>([])
+  const filterKeyRef = useRef(filterKey)
+
   return useQuery({
-    queryKey: ['telemetry-live-samples', params],
-    queryFn: () => apiJson<TelemetryLiveSamplesResponse>(`/api/v2/telemetry/live-samples/?${qs}`),
+    queryKey,
+    queryFn: async () => {
+      if (filterKeyRef.current !== filterKey) {
+        cursorRef.current = null
+        accumulatedRef.current = []
+        filterKeyRef.current = filterKey
+      }
+      const page = await fetchPage(cursorRef.current)
+      cursorRef.current = page.server_time
+      // New samples are newest-first (server orders -received_at), so
+      // they belong at the FRONT of the existing newest-first accumulator.
+      accumulatedRef.current = [...page.samples, ...accumulatedRef.current].slice(0, MAX_ACCUMULATED_SAMPLES)
+      return { ...page, samples: accumulatedRef.current }
+    },
+    enabled,
     refetchInterval: 10_000,
   })
+}
+
+export function useTelemetryLiveSamples(params: TelemetryLiveSamplesParams) {
+  const filterKey = JSON.stringify(params)
+  return useDeltaSamples(
+    ['telemetry-live-samples', params],
+    filterKey,
+    (since) => {
+      const qs = new URLSearchParams()
+      if (params.minutes != null) qs.set('minutes', String(params.minutes))
+      if (params.limit != null) qs.set('limit', String(params.limit))
+      if (params.device_id) qs.set('device_id', params.device_id)
+      // Area filter (2026-09-02) -- see TelemetryLiveSamplesParams's docstring.
+      if (params.lat != null) qs.set('lat', String(params.lat))
+      if (params.lng != null) qs.set('lng', String(params.lng))
+      if (params.radius_km != null) qs.set('radius_km', String(params.radius_km))
+      if (since) qs.set('since', since)
+      return apiJson<TelemetryLiveSamplesResponse>(`/api/v2/telemetry/live-samples/?${qs}`)
+    },
+    true,
+  )
 }
 
 // Scoped drive-test sessions over live telemetry (2026-09-01) — see
@@ -1372,12 +1460,17 @@ export function useDeleteTelemetryDtSession() {
 }
 
 export function useTelemetryDtSessionSamples(id: number | null) {
-  return useQuery({
-    queryKey: ['telemetry-dt-session-samples', id],
-    queryFn: () => apiJson<TelemetryDriveTestSessionSamplesResponse>(`/api/v2/telemetry/dt-sessions/${id}/samples/`),
-    enabled: id != null,
-    refetchInterval: 10_000,
-  })
+  return useDeltaSamples(
+    ['telemetry-dt-session-samples', id],
+    String(id),
+    (since) => {
+      const qs = new URLSearchParams()
+      if (since) qs.set('since', since)
+      const suffix = qs.toString() ? `?${qs}` : ''
+      return apiJson<TelemetryDriveTestSessionSamplesResponse>(`/api/v2/telemetry/dt-sessions/${id}/samples/${suffix}`)
+    },
+    id != null,
+  )
 }
 
 // ── Vendor RNO report importer (2026-09-15) ──────────────────────────────

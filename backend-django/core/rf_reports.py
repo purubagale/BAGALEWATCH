@@ -94,6 +94,7 @@ import re
 import tempfile
 
 from django.core.files.base import File
+from django.db.models import Prefetch
 from django.http import FileResponse
 from docx import Document
 from rest_framework import viewsets
@@ -104,7 +105,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .audit import log_audit_event
-from .models import RfOptimizationReport, RfReportAttachment, Sector
+from .models import OptimizationActivity, RfCellKpi, RfOptimizationReport, RfReportAttachment, Sector, SectorConfigChange
 from .serializers import RfOptimizationReportSerializer, RfReportAttachmentSerializer
 from .views import IsAdminOrSuperadmin
 
@@ -504,6 +505,21 @@ class RfReportParsePreviewView(APIView):
         })
 
 
+# Hard cap on the unpaginated `rf-reports/` list (2026-10-02 perf audit
+# follow-up) -- this table is append-only with no archival path, so
+# nothing stops it growing for as long as the RAN O&M team keeps importing
+# vendor reports. Full DRF pagination would change the response from a
+# flat array to a {count,next,previous,results} envelope, which
+# RfReportsPage.tsx isn't built to consume and would need a real rework
+# to adopt -- not justified today (real volume is dozens-to-low-hundreds
+# of rows). A list-only slice is a much smaller, response-shape-preserving
+# change: Meta.ordering = ['-imported_at'] already means ".all()[:N]"
+# returns exactly "the N most recent reports", so this is a true safety
+# cap, not a silent behavior change at current scale. Detail/retrieve by
+# id is NOT capped -- see get_queryset() below.
+RF_REPORT_LIST_CAP = 500
+
+
 class RfOptimizationReportViewSet(viewsets.ModelViewSet):
     """`/api/v2/rf-reports/` -- list/retrieve/create/delete for imported
     vendor RNO reports. `create` is really "confirm the reviewed
@@ -516,10 +532,43 @@ class RfOptimizationReportViewSet(viewsets.ModelViewSet):
     documents and MOM attachments that aren't meant for every viewer
     role to browse. Write: admin/superadmin only, same tier as every
     other write surface here.
+
+    2026-10-02 perf audit: queryset now also select_related's
+    `imported_by` and prefetches `antenna_changes` (with its own nested
+    `sector` select_related)/`attachments`/`kpi_summaries`/`cell_kpis`
+    (with its own nested `sector` select_related)/`activities` (with ITS
+    own nested `session_links`) -- RfOptimizationReportSerializer's
+    get_imported_by_name/get_lot_kpis_detail/get_cell_kpis_detail/
+    get_activities, AND the nested SectorConfigChangeSerializer's
+    get_sector_label/get_site_id (serving `antenna_changes_detail`), were
+    each issuing one extra query per report or per nested row (and
+    get_activities a SECOND extra query per activity, for
+    `session_links.count()`) on every list call. Confirmed live with
+    CaptureQueriesContext against a real report (55 antenna_changes, 559
+    cell_kpis): the `antenna_changes` plain-string prefetch alone still
+    left 55 per-row `v2_sectors` queries on the table -- the
+    `select_related('sector')` has to live on the PREFETCH queryset
+    itself, same reasoning as `cell_kpis` below it. See
+    RfOptimizationReportSerializer/SectorConfigChangeSerializer's own
+    methods for how they now read the prefetched cache instead
+    (`.all()`/`len(...)`, never `.select_related()`/`.count()` again
+    inside a serializer, which would bypass the prefetch and hit the DB
+    anyway).
     """
-    queryset = RfOptimizationReport.objects.all().prefetch_related('antenna_changes', 'attachments')
+    queryset = RfOptimizationReport.objects.all().select_related('imported_by').prefetch_related(
+        Prefetch('antenna_changes', queryset=SectorConfigChange.objects.select_related('sector')),
+        'attachments', 'kpi_summaries',
+        Prefetch('cell_kpis', queryset=RfCellKpi.objects.select_related('sector')),
+        Prefetch('activities', queryset=OptimizationActivity.objects.prefetch_related('session_links')),
+    )
     serializer_class = RfOptimizationReportSerializer
     permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.action == 'list':
+            return qs[:RF_REPORT_LIST_CAP]
+        return qs
 
     def perform_create(self, serializer):
         user = self.request.user

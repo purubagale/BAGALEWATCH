@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -26,14 +26,26 @@ function InvalidateOnResize() {
   return null
 }
 
-function FitToSamples({ samples }: { samples: TelemetryLiveSample[] }) {
+// `fitKey` (2026-10-02 perf follow-up) -- identifies "which filter
+// selection is this," NOT "which samples arrived." Fits bounds once per
+// filter change (first time samples are available after that change),
+// not on every poll -- previously this ran on every `samples` reference
+// change (i.e. every 10s poll that returned anything), which kept
+// silently re-centering/re-zooming the map out from under a user who had
+// manually panned/zoomed to look at something specific.
+function FitToSamples({ samples, fitKey }: { samples: TelemetryLiveSample[]; fitKey: string }) {
   const map = useMap()
+  const firstFitDone = useRef<string | null>(null)
   useEffect(() => {
+    if (firstFitDone.current === fitKey) return
     const pts = samples
       .filter((s) => s.lat != null && s.lng != null)
       .map((s) => [s.lat as number, s.lng as number] as [number, number])
-    if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [24, 24], maxZoom: 16, animate: false })
-  }, [map, samples])
+    if (pts.length) {
+      map.fitBounds(L.latLngBounds(pts), { padding: [24, 24], maxZoom: 16, animate: false })
+      firstFitDone.current = fitKey
+    }
+  }, [map, samples, fitKey])
   return null
 }
 
@@ -111,7 +123,14 @@ export default function TelemetryLiveSamplesPage() {
   const [deviceId, setDeviceId] = useState('')
   const { data, isLoading, error } = useTelemetryLiveSamples({ minutes, device_id: deviceId || undefined })
   const samples = useMemo(() => data?.samples ?? [], [data])
-  const mapKey = `${minutes}|${deviceId}|${samples.length}`
+  // 2026-10-02 perf follow-up: `samples.length` deliberately dropped from
+  // this key -- it used to be `${minutes}|${deviceId}|${samples.length}`,
+  // which remounted the ENTIRE Leaflet map (tiles, zoom/pan state, event
+  // handlers) on every single poll that returned a different sample
+  // count, i.e. nearly every 10s tick. The map should only remount on an
+  // actual filter change; new data arriving is handled by SamplePoints'
+  // own marker redraw and FitToSamples' own once-per-filter-change fit.
+  const mapKey = `${minutes}|${deviceId}`
 
   return (
     <div className="admin-page" style={{ maxWidth: 1200 }}>
@@ -152,7 +171,7 @@ export default function TelemetryLiveSamplesPage() {
           ) : (
             <MapContainer key={mapKey} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
               <InvalidateOnResize />
-              <FitToSamples samples={samples} />
+              <FitToSamples samples={samples} fitKey={mapKey} />
               <TileLayer
                 attribution="&copy; OpenStreetMap contributors"
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -31,14 +31,23 @@ function InvalidateOnResize() {
   return null
 }
 
-function FitToSamples({ samples }: { samples: TelemetryLiveSample[] }) {
+// fitKey (2026-10-02 perf follow-up) -- see TelemetryLiveSamplesPage.tsx's
+// identical fix for why: fits bounds once per session selection, not on
+// every 10s poll, so the map stops re-centering out from under a user who
+// has manually panned/zoomed.
+function FitToSamples({ samples, fitKey }: { samples: TelemetryLiveSample[]; fitKey: string }) {
   const map = useMap()
+  const firstFitDone = useRef<string | null>(null)
   useEffect(() => {
+    if (firstFitDone.current === fitKey) return
     const pts = samples
       .filter((s) => s.lat != null && s.lng != null)
       .map((s) => [s.lat as number, s.lng as number] as [number, number])
-    if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [24, 24], maxZoom: 16, animate: false })
-  }, [map, samples])
+    if (pts.length) {
+      map.fitBounds(L.latLngBounds(pts), { padding: [24, 24], maxZoom: 16, animate: false })
+      firstFitDone.current = fitKey
+    }
+  }, [map, samples, fitKey])
   return null
 }
 
@@ -297,7 +306,10 @@ export default function TelemetryDriveTestSessionsPage() {
   const endSession = useEndTelemetryDtSession()
   const deleteSession = useDeleteTelemetryDtSession()
   const samples = useMemo(() => samplesData?.samples ?? [], [samplesData])
-  const mapKey = `${selectedId}|${samples.length}`
+  // 2026-10-02 perf follow-up: `samples.length` dropped from this key --
+  // see TelemetryLiveSamplesPage.tsx's identical fix for why (it forced a
+  // full Leaflet map remount on nearly every 10s poll).
+  const mapKey = `${selectedId}`
 
   return (
     <div className="admin-page" style={{ maxWidth: 1200 }}>
@@ -397,7 +409,7 @@ export default function TelemetryDriveTestSessionsPage() {
           ) : (
             <MapContainer key={mapKey} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
               <InvalidateOnResize />
-              <FitToSamples samples={samples} />
+              <FitToSamples samples={samples} fitKey={mapKey} />
               <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
               <SamplePoints samples={samples} />
             </MapContainer>

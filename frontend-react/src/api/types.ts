@@ -50,6 +50,10 @@ export interface Me {
   roles: string[]
   name: string
   dept: string
+  // Used for password-reset lookup (2026-10-02, "forget password"
+  // follow-up) -- optional, application-level-unique when set (see
+  // UserWriteSerializer.validate() in core/serializers.py).
+  email: string
   is_active: boolean
   last_login: string | null
   date_joined: string
@@ -426,6 +430,10 @@ export interface AdminUser {
   roles: string[]
   name: string
   dept: string
+  // Used for password-reset lookup (2026-10-02, "forget password"
+  // follow-up) -- optional, application-level-unique when set (see
+  // UserWriteSerializer.validate() in core/serializers.py).
+  email: string
   is_active: boolean
   last_login: string | null
   date_joined: string
@@ -444,6 +452,7 @@ export interface UserWrite {
   role: Role
   name: string
   dept: string
+  email?: string
   is_active?: boolean
   operator_mncs?: string[]
 }
@@ -1889,6 +1898,11 @@ export interface TelemetryLiveSamplesResponse {
   count: number
   window_minutes: number
   devices: string[]
+  // Delta-fetch cursor (2026-10-02 perf follow-up) -- pass back as `since`
+  // on the next poll to fetch only samples newer than this response,
+  // instead of re-fetching the whole window every 10s. The SERVER's
+  // clock, not the client's -- see useTelemetryLiveSamples' own handling.
+  server_time: string
 }
 
 export interface TelemetryLiveSamplesParams {
@@ -1947,6 +1961,8 @@ export interface TelemetryDriveTestSessionSamplesResponse {
   count: number
   require_consent: boolean
   consent_summary: TelemetryDriveTestConsentSummary | null
+  // Delta-fetch cursor -- see TelemetryLiveSamplesResponse's own identical field.
+  server_time: string
 }
 
 export interface TelemetryDriveTestSessionEndResponse extends TelemetryDriveTestSession {

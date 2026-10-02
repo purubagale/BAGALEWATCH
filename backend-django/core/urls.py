@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import (api_auth, audit, auth_log, backup, consent, dashboard, drive_test,
-               exports, issues, kpi_trend, reports, rescue, rf_audit,
+               exports, issues, kpi_trend, password_reset, reports, rescue, rf_audit,
                rf_reports, roles, site_import, sso_views, system_doc,
                telemetry_admin, views)
 
@@ -46,6 +46,12 @@ urlpatterns = [
     path('auth/logout/', views.LogoutView.as_view(), name='auth-logout'),
     path('auth/me/', views.MeView.as_view(), name='auth-me'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='auth-refresh'),
+
+    # Forgot/change password (2026-10-02) -- see core/password_reset.py's
+    # module docstring for why these are two independent flows in one file.
+    path('auth/password-reset/', password_reset.PasswordResetRequestView.as_view(), name='auth-password-reset'),
+    path('auth/password-reset/confirm/', password_reset.PasswordResetConfirmView.as_view(), name='auth-password-reset-confirm'),
+    path('auth/change-password/', password_reset.ChangePasswordView.as_view(), name='auth-change-password'),
 
     # Keycloak SSO (2026-08-23). Additive: /auth/login/ above is untouched,
     # and `POST auth/sso/token/` returns the SAME payload shape it does, so

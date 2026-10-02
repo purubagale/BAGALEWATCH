@@ -574,6 +574,19 @@ class Sector(models.Model):
         db_table = 'v2_sectors'
         indexes = [
             models.Index(fields=['site']),
+            # 2026-10-02 perf audit: core/dt_serving_cell.py's
+            # _candidate_sectors() matches every incoming drive-test sample
+            # batch against this table by exactly these columns -- `pci`
+            # alone for 4G, `scrambling_code` alone for 3G, `bcch`+`bsic`
+            # TOGETHER for 2G (a single composite filter, not two
+            # independent ones, hence the composite index rather than two
+            # more single-column ones). None of the four had any index
+            # before this, so every DT upload ran this match as a
+            # sequential scan across the full sector table (50,000+ rows
+            # and growing).
+            models.Index(fields=['pci']),
+            models.Index(fields=['scrambling_code']),
+            models.Index(fields=['bcch', 'bsic']),
         ]
 
     def __str__(self):
@@ -2544,6 +2557,17 @@ class AuthEventLog(models.Model):
     EVENT_SSO_LOGIN_SUCCESS = 'sso_login_success'
     EVENT_SSO_LOGIN_FAILED = 'sso_login_failed'
     EVENT_LOGOUT = 'logout'
+    # Password reset/change (2026-10-02, "forget password feature") and
+    # MFA/reCAPTCHA (2026-10-02, same auth-hardening pass) -- same
+    # "log the decision point whether it succeeded or not" convention as
+    # every event above, logged from core/password_reset.py/core/mfa.py/
+    # core/views.py's LoginView respectively. Kept under max_length=20.
+    EVENT_PWD_RESET_REQUESTED = 'pwd_reset_requested'
+    EVENT_PWD_RESET_COMPLETED = 'pwd_reset_completed'
+    EVENT_PWD_CHANGED = 'pwd_changed'
+    EVENT_MFA_CHALLENGE_SENT = 'mfa_challenge_sent'
+    EVENT_MFA_VERIFY_FAILED = 'mfa_verify_failed'
+    EVENT_RECAPTCHA_FAILED = 'recaptcha_failed'
     EVENT_CHOICES = [
         (EVENT_LOGIN_SUCCESS, 'Local login succeeded'),
         (EVENT_LOGIN_FAILED, 'Local login failed (bad credentials)'),
@@ -2552,6 +2576,12 @@ class AuthEventLog(models.Model):
         (EVENT_SSO_LOGIN_SUCCESS, 'SSO login succeeded'),
         (EVENT_SSO_LOGIN_FAILED, 'SSO login failed'),
         (EVENT_LOGOUT, 'Signed out'),
+        (EVENT_PWD_RESET_REQUESTED, 'Password reset requested'),
+        (EVENT_PWD_RESET_COMPLETED, 'Password reset completed'),
+        (EVENT_PWD_CHANGED, 'Password changed (self-service)'),
+        (EVENT_MFA_CHALLENGE_SENT, 'MFA challenge issued'),
+        (EVENT_MFA_VERIFY_FAILED, 'MFA code rejected'),
+        (EVENT_RECAPTCHA_FAILED, 'reCAPTCHA check failed'),
     ]
     # Events that represent a real, successful session — everything else
     # in EVENT_CHOICES is either a failure or a logout. Used by the

@@ -2,8 +2,8 @@ import { useState, type FormEvent } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
-import { ApiError } from '../api/client'
-import { useBranding } from '../api/queries'
+import { apiErrorMessage, ApiError } from '../api/client'
+import { useBranding, useRequestPasswordReset } from '../api/queries'
 import { DASHBOARD_PATH } from '../constants/opaqueRoutes'
 import { APP_VERSION } from '../lib/version'
 import FooterLine from '../components/FooterLine'
@@ -36,6 +36,17 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Forgot-password (2026-10-02) -- a toggled view on this same card rather
+  // than a separate route, since it's reached by clicking a link right here,
+  // not by an external link the way /reset-password (ResetPasswordPage,
+  // opened from the emailed link) is. `requestSent` shows the generic
+  // anti-enumeration confirmation in place of the request form itself.
+  const [forgotMode, setForgotMode] = useState(false)
+  const [forgotEmail, setForgotEmail] = useState('')
+  const [requestSent, setRequestSent] = useState(false)
+  const [forgotError, setForgotError] = useState<string | null>(null)
+  const requestReset = useRequestPasswordReset()
 
   // Customizable branding (2026-08-08 follow-up) — BrandingSettingsView's
   // GET is deliberately AllowAny (not IsAuthenticated) specifically so
@@ -111,6 +122,24 @@ export default function LoginPage() {
     }
   }
 
+  async function handleForgotSubmit(e: FormEvent) {
+    e.preventDefault()
+    setForgotError(null)
+    try {
+      await requestReset.mutateAsync(forgotEmail)
+      setRequestSent(true)
+    } catch (err) {
+      setForgotError(apiErrorMessage(err))
+    }
+  }
+
+  function backToLogin() {
+    setForgotMode(false)
+    setForgotEmail('')
+    setRequestSent(false)
+    setForgotError(null)
+  }
+
   return (
     <div className="login-page">
       {/* Card layout matched to dutychart's login (2026-08-23, "put the UI
@@ -120,12 +149,14 @@ export default function LoginPage() {
           (pill badge, circular avatar, pill inputs, icon-prefixed fields) so
           the two internal apps read as one system.
 
-          Deliberately NOT carried over from that reference: "Remember me",
-          "Forgot Password?" and "Sign up". dt-watch has no password-reset
-          flow and no self-registration (accounts are admin-created or
-          JIT-created via SSO), and its tokens live in sessionStorage by a
+          "Remember me" and "Sign up" are still deliberately not carried
+          over -- no self-registration (accounts are admin-created or
+          JIT-created via SSO), and tokens live in sessionStorage by a
           deliberate choice in client.ts that Remember me would have to
-          reverse. Rendering them would be three controls that do nothing.
+          reverse. "Forgot Password?" WAS in that same deliberately-omitted
+          list until 2026-10-02 ("Add forget password feature") added a real
+          email-based reset flow -- see handleForgotSubmit above and
+          ResetPasswordPage.tsx (the page the emailed link opens).
 
           Unlike the reference, colors come from this app's theme tokens
           rather than literal white/grays — dutychart's login is light-only,
@@ -153,7 +184,41 @@ export default function LoginPage() {
 
         {ssoError && <div className="login-error">{ssoError}</div>}
 
-        {localLoginEnabled && (
+        {localLoginEnabled && forgotMode && (
+          requestSent ? (
+            <div className="login-form">
+              <div className="form-success">
+                If an account with that email exists, a password reset link has been sent.
+              </div>
+              <button type="button" className="login-submit" onClick={backToLogin}>
+                Back to login
+              </button>
+            </div>
+          ) : (
+            <form className="login-form" onSubmit={handleForgotSubmit}>
+              <p className="login-note">Enter your account email and we'll send you a reset link.</p>
+              <input
+                className="login-input"
+                type="email"
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+                autoFocus
+                autoComplete="email"
+                placeholder="Email"
+                aria-label="Email"
+              />
+              {forgotError && <div className="login-error">{forgotError}</div>}
+              <button type="submit" disabled={requestReset.isPending || !forgotEmail} className="login-submit">
+                {requestReset.isPending ? 'Sending…' : 'Send reset link'}
+              </button>
+              <button type="button" className="login-link-btn" onClick={backToLogin}>
+                Back to login
+              </button>
+            </form>
+          )
+        )}
+
+        {localLoginEnabled && !forgotMode && (
           <form className="login-form" onSubmit={handleSubmit}>
             <input
               className="login-input"
@@ -204,10 +269,13 @@ export default function LoginPage() {
             <button type="submit" disabled={loading || !username || !password} className="login-submit">
               {loading ? 'Signing in…' : buttonText}
             </button>
+            <button type="button" className="login-link-btn" onClick={() => setForgotMode(true)}>
+              Forgot password?
+            </button>
           </form>
         )}
 
-        {ssoEnabled && (
+        {ssoEnabled && !forgotMode && (
           <>
             {localLoginEnabled && <div className="login-or">or</div>}
             {/* A real link, not a fetch: this must be a top-level browser

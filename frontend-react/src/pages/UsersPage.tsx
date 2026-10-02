@@ -27,7 +27,7 @@ function RoleChips({ u }: { u: AdminUser }) {
   )
 }
 
-const emptyNewUser: UserWrite = { username: '', password: '', role: 'viewer', name: '', dept: '', operator_mncs: [] }
+const emptyNewUser: UserWrite = { username: '', password: '', role: 'viewer', name: '', dept: '', email: '', operator_mncs: [] }
 
 // operator_mncs is edited here as a plain comma-separated string and
 // parsed to/from string[] at the boundary -- a JSON array input has no
@@ -46,6 +46,7 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(u.name)
   const [dept, setDept] = useState(u.dept)
+  const [email, setEmail] = useState(u.email)
   const [isActive, setIsActive] = useState(u.is_active)
   const [password, setPassword] = useState('')
   const [mncsText, setMncsText] = useState(mncsToText(u.operator_mncs))
@@ -67,7 +68,7 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
       // `role` is deliberately NOT sent here any more (2026-10-01) —
       // this row no longer edits it at all; Assign Roles (linked from the
       // Role column below) is the one place that edits a user's roles.
-      const patch: Partial<UserWrite> = { name, dept, is_active: isActive, operator_mncs: textToMncs(mncsText) }
+      const patch: Partial<UserWrite> = { name, dept, email, is_active: isActive, operator_mncs: textToMncs(mncsText) }
       if (!ssoManaged && password) patch.password = password
       await updateUser.mutateAsync(patch)
       setPassword('')
@@ -97,6 +98,7 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
         </td>
         <td>{u.name}</td>
         <td>{u.dept}</td>
+        <td>{u.email || <span className="muted">—</span>}</td>
         <td>{u.operator_mncs?.length ? u.operator_mncs.join(', ') : <span className="muted">Unrestricted</span>}</td>
         <td>{u.is_active ? 'Active' : 'Disabled'}</td>
         <td>{u.last_login ? new Date(u.last_login).toLocaleString() : '—'}</td>
@@ -122,6 +124,15 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
       </td>
       <td><input value={name} onChange={(e) => setName(e.target.value)} /></td>
       <td><input value={dept} onChange={(e) => setDept(e.target.value)} /></td>
+      <td>
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="For password reset"
+          style={{ width: 140 }}
+        />
+      </td>
       <td>
         <input
           value={mncsText}
@@ -198,6 +209,7 @@ export default function UsersPage() {
             <th>Role</th>
             <th>Name</th>
             <th>Dept</th>
+            <th>Email</th>
             <th>Operator scope</th>
             <th>Status</th>
             <th>Last login</th>
@@ -244,6 +256,15 @@ export default function UsersPage() {
             <label>
               Dept
               <input value={newUser.dept} onChange={(e) => setNewUser({ ...newUser, dept: e.target.value })} />
+            </label>
+            <label>
+              Email
+              <input
+                type="email"
+                value={newUser.email ?? ''}
+                onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                placeholder="For password reset"
+              />
             </label>
             <label>
               Operator scope

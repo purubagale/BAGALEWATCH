@@ -611,6 +611,56 @@ textarea:focus {
   letter-spacing: 0.04em;
 }
 
+/* User menu dropdown (2026-10-02, replacing the old plain "Sign out"
+   button) -- relatively positioned trigger + absolutely positioned
+   dropdown, same pattern as `.app-sidebar-caret-btn` elsewhere in this
+   file; `.app-user-menu-trigger` reuses `.app-topbar-actions button`'s
+   look via plain inheritance of that rule, no separate button skin
+   needed beyond layout. */
+.app-user-menu { position: relative; }
+.app-user-menu-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.app-user-menu-trigger:hover { background: var(--bg-hover); color: var(--text-primary); }
+.app-user-menu-caret { font-size: 10px; color: var(--text-muted); }
+.app-user-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+}
+.app-user-menu-dropdown button {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.app-user-menu-dropdown button:hover { background: var(--bg-hover); color: var(--text-primary); }
+
 .app-main {
   flex: 1;
   min-height: 0;
@@ -888,6 +938,23 @@ textarea:focus {
 .login-submit svg { width: 17px; height: 17px; }
 .login-submit:hover:not(:disabled) { background: var(--brand-primary-hover); }
 .login-submit:disabled { opacity: 0.5; cursor: default; }
+
+/* Forgot-password link/back-link (2026-10-02) -- plain text button, no
+   border/fill, so it reads as a link without needing an actual <a> (both
+   are pure client-side mode toggles, never a navigation). */
+.login-link-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  font-family: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  align-self: center;
+}
+.login-link-btn:hover { color: var(--brand-primary); }
 
 /* "or" between the two sign-in methods, with a rule either side drawn as
    pseudo-elements so the markup stays a single element. */

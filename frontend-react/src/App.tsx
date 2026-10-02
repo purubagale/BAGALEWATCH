@@ -108,6 +108,11 @@ const DtPlotCatalogPage = lazy(() => import('./pages/DtPlotCatalogPage'))
 // chrome. Removing this trial later is deleting src/styleTest/ plus this
 // import and its one <Route> below.
 const StyleTestPage = lazy(() => import('./styleTest/StyleTestPage'))
+// Forgot/change password (2026-10-02) -- ResetPasswordPage is the page the
+// emailed reset link opens (see core/password_reset.py); lazy like most
+// pages since, unlike /sso/callback, there's no short-lived code racing a
+// chunk fetch here (the reset token lives for an hour).
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'))
 
 // Reflects customized branding (2026-08-08 follow-up) into the two
 // things that live outside React's own render tree — the document
@@ -213,6 +218,9 @@ function App() {
             chunk fetch here would add a round trip before the one-time
             code can be exchanged — and that code expires in ~60s. */}
         <Route path="/sso/callback" element={<SsoCallbackPage />} />
+        {/* Forgot-password confirm page (2026-10-02), opened from the
+            emailed link. Public, like /login. */}
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         {/* Not in the dynamic menu, so not subject to the per-menu
             permissions matrix — an About page every role can open.
             Still behind ProtectedRoute: it exposes the git SHA and

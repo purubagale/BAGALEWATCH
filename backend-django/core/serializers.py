@@ -479,7 +479,7 @@ class UserSerializer(serializers.ModelSerializer):
         # person's next login, and the edit looks like a bug in this app.
         # `sso_subject` is deliberately NOT exposed: it is an internal
         # identity-provider identifier with no use in the UI.
-        fields = ['id', 'username', 'role', 'roles', 'name', 'dept', 'is_active',
+        fields = ['id', 'username', 'role', 'roles', 'name', 'dept', 'email', 'is_active',
                   'last_login', 'date_joined', 'auth_source', 'operator_mncs']
         read_only_fields = ['auth_source']
 
@@ -536,7 +536,7 @@ class UserWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'password', 'role', 'name', 'dept', 'is_active', 'operator_mncs']
+        fields = ['id', 'username', 'password', 'role', 'name', 'dept', 'email', 'is_active', 'operator_mncs']
 
     def validate(self, attrs):
         # Matches v1: username/password/role are required on create, but
@@ -545,6 +545,23 @@ class UserWriteSerializer(serializers.ModelSerializer):
             for required in ('username', 'password', 'role'):
                 if not attrs.get(required):
                     raise serializers.ValidationError({required: 'This field is required.'})
+
+        # Application-level uniqueness (2026-10-02, "forget password"
+        # follow-up) -- NOT a DB-level unique=True on User.email. That
+        # field is AbstractUser's own stock default (blank=True, no
+        # constraint), populated for an unknown subset of existing
+        # accounts; adding a hard DB constraint blind risks a migration
+        # failure on whatever duplicate/blank values already exist. This
+        # check only matters going forward, for the password-reset-by-
+        # email lookup (PasswordResetRequestView) to resolve unambiguously
+        # -- skipped entirely for a blank email (still optional).
+        email = attrs.get('email')
+        if email:
+            existing = User.objects.filter(email__iexact=email)
+            if self.instance is not None:
+                existing = existing.exclude(pk=self.instance.pk)
+            if existing.exists():
+                raise serializers.ValidationError({'email': 'A user with this email already exists.'})
 
         # 2026-08-07 security-audit fix: AUTH_PASSWORD_VALIDATORS is
         # configured in settings.py (minimum length, common-password
@@ -1508,15 +1525,27 @@ class RfOptimizationReportSerializer(serializers.ModelSerializer):
                 'pre_value': row.pre_value, 'post_value': row.post_value,
                 'matched_sector_id': row.sector_id,
                 # 2026-09-29 addition ("with what value it is matched?") --
-                # select_related('sector') below avoids an N+1 for this.
+                # the `sector` select_related now lives on the VIEWSET's
+                # Prefetch('cell_kpis', queryset=...select_related('sector'))
+                # (2026-10-02 perf audit) -- calling `.select_related()`
+                # again here would build a NEW queryset and silently
+                # bypass that prefetch, issuing a fresh query per report
+                # exactly like before the fix. Plain `.all()` is what
+                # actually reads the prefetched cache.
                 'matched_site_id': row.sector.site_id if row.sector_id else None,
             }
-            for row in obj.cell_kpis.select_related('sector').all()
+            for row in obj.cell_kpis.all()
         ]
 
     def get_activities(self, obj):
+        # 2026-10-02 perf audit: `obj.activities.all()` reads the
+        # viewset's Prefetch('activities', queryset=...prefetch_related(
+        # 'session_links')) cache. `len(...)` (not `.count()`) is what
+        # reuses THAT nested prefetch in turn -- `.count()` always issues
+        # its own COUNT query regardless of prefetch_related, which was
+        # exactly the per-activity N+1 this fixes.
         return [
-            {'id': activity.id, 'name': activity.name, 'session_count': activity.session_links.count()}
+            {'id': activity.id, 'name': activity.name, 'session_count': len(activity.session_links.all())}
             for activity in obj.activities.all()
         ]
 

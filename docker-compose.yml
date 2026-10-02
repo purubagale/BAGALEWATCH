@@ -35,6 +35,26 @@ services:
     # does for you.
     image: postgis/postgis:16-3.5
     restart: unless-stopped
+    # Resource limits added across every service in this file (2026-10-02
+    # perf audit) -- previously NONE of the 10 services here had any
+    # mem/CPU ceiling at all, meaning one runaway container (a large
+    # RF-report parse, a stuck query) could exhaust the whole host and
+    # starve every sibling container on it. `cpus:` is a ceiling per
+    # container, not a reservation -- several containers can each be
+    # capped near a host's full core count and still correctly timeshare,
+    # Docker's CFS quota handles that; what it CANNOT do is accept a
+    # per-container value above the engine's own total allocatable CPUs
+    # (confirmed live: a hardcoded "4" here failed outright on this dev
+    # machine's Docker Desktop, which is itself configured for only 2
+    # CPUs regardless of the host's real core count -- a classic Docker
+    # Desktop gotcha, distinct from whatever a production host actually
+    # has). Every limit in this file is therefore env-var-driven with a
+    # conservative default that works on a minimal 2-CPU/low-RAM box --
+    # override via .env (e.g. `DB_CPU_LIMIT=4`) to match a real
+    # production host's actual specs; see RUNBOOK.md/SERVER_MIGRATION.md
+    # for where that .env lives on a deployed server.
+    mem_limit: ${DB_MEM_LIMIT:-1g}
+    cpus: "${DB_CPU_LIMIT:-1.5}"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-dtwatch_db}
       POSTGRES_USER: ${POSTGRES_USER:-dtwatch_user}
@@ -95,6 +115,12 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # Lightweight workload (login-lockout counter, SSO one-time codes/
+    # transactions, telemetry ingest rate-limit buckets) -- see the `db`
+    # service's own comment above for why every service in this file now
+    # has a limit, and why these are env-var-driven rather than fixed.
+    mem_limit: ${REDIS_MEM_LIMIT:-256m}
+    cpus: "${REDIS_CPU_LIMIT:-0.5}"
     # AOF persistence, in the project folder for the same reason as the
     # Postgres mount above (2026-08-23). This service previously had NO volume
     # at all, so its contents were lost on every restart. Survivable while
@@ -125,6 +151,15 @@ services:
     # environments agree on the same name).
     image: dtwatch-backend-django
     restart: unless-stopped
+    # The main compute -- gthread workers sharing CPU via I/O-bound
+    # context switches (not one physical core per worker), so this
+    # doesn't need literal (workers x threads) cores. Env-var-driven, same
+    # reasoning as the `db` service's own comment above -- raise
+    # DJANGO_CPU_LIMIT/DJANGO_MEM_LIMIT in .env on a real production host
+    # with more than this dev machine's 2 CPUs to give gunicorn's worker
+    # pool real headroom.
+    mem_limit: ${DJANGO_MEM_LIMIT:-1g}
+    cpus: "${DJANGO_CPU_LIMIT:-1.5}"
     env_file:
       # Single root .env for the whole stack (2026-08-21 — "do i need .env in
       # every folder in dt-watch or one in root is okey"). This used to be
@@ -220,6 +255,14 @@ services:
   site-sync:
     image: dtwatch-backend-django
     restart: unless-stopped
+    # Periodic background loop, not a request-serving worker -- same
+    # shared MAINTENANCE_* defaults as the other three maintenance-loop
+    # services below (telemetry-maintenance/telemetry-bin-roller/
+    # audit-log-maintenance), since all four have the same lightweight
+    # resource profile; see the `db` service's own comment for why every
+    # service here now has a limit.
+    mem_limit: ${MAINTENANCE_MEM_LIMIT:-256m}
+    cpus: "${MAINTENANCE_CPU_LIMIT:-0.5}"
     command: ["python", "manage.py", "sync_live_sites", "--loop"]
     env_file:
       - ./.env
@@ -246,6 +289,8 @@ services:
   telemetry-maintenance:
     image: dtwatch-backend-django
     restart: unless-stopped
+    mem_limit: ${MAINTENANCE_MEM_LIMIT:-256m}
+    cpus: "${MAINTENANCE_CPU_LIMIT:-0.5}"
     command: ["python", "manage.py", "telemetry_maintenance", "--loop"]
     env_file:
       - ./.env
@@ -269,6 +314,8 @@ services:
   audit-log-maintenance:
     image: dtwatch-backend-django
     restart: unless-stopped
+    mem_limit: ${MAINTENANCE_MEM_LIMIT:-256m}
+    cpus: "${MAINTENANCE_CPU_LIMIT:-0.5}"
     command: ["python", "manage.py", "prune_audit_log", "--loop"]
     env_file:
       - ./.env
@@ -293,6 +340,8 @@ services:
   telemetry-bin-roller:
     image: dtwatch-backend-django
     restart: unless-stopped
+    mem_limit: ${MAINTENANCE_MEM_LIMIT:-256m}
+    cpus: "${MAINTENANCE_CPU_LIMIT:-0.5}"
     command: ["python", "manage.py", "roll_telemetry_bins", "--loop"]
     env_file:
       - ./.env
@@ -318,6 +367,8 @@ services:
     profiles: ["future"]
     build: ./backend-node
     restart: unless-stopped
+    mem_limit: ${NODE_GATEWAY_MEM_LIMIT:-256m}
+    cpus: "${NODE_GATEWAY_CPU_LIMIT:-0.5}"
     env_file:
       # Same single root .env as django — see its comment above.
       - ./.env
@@ -351,6 +402,8 @@ services:
     profiles: ["future"]
     build: ./backend-go
     restart: unless-stopped
+    mem_limit: ${GO_WORKER_MEM_LIMIT:-256m}
+    cpus: "${GO_WORKER_CPU_LIMIT:-0.5}"
     environment:
       PORT: 8070
       REDIS_URL: redis://redis:6379
@@ -404,6 +457,11 @@ services:
         VITE_BUILD_TAG: ${BUILD_TAG:-}
         VITE_GIT_SHA: ${GIT_SHA:-}
     restart: unless-stopped
+    # Static asset serving + reverse proxy only -- the lightest real
+    # workload in this file; see the `db` service's own comment for why
+    # every service here now has a limit.
+    mem_limit: ${FRONTEND_MEM_LIMIT:-256m}
+    cpus: "${FRONTEND_CPU_LIMIT:-0.5}"
     depends_on:
       # node-gateway dropped from here (2026-08-31) — it's now behind the
       # `future` profile so it isn't running to depend on, and the SPA
