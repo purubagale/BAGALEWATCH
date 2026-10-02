@@ -2094,6 +2094,30 @@ textarea:focus {
 .md-report table:not(.md-table) { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 12px; }
 .md-report table:not(.md-table) th, .md-report table:not(.md-table) td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
 .md-report table:not(.md-table) th { background: var(--bg-app); color: var(--text-muted); font-weight: 600; }
+/* DocumentationPage.tsx's detail view (2026-10-02) -- main content column
+   plus a sticky "On this page" TOC sidebar, matching the reference app's
+   own right-side table-of-contents layout. Stacks on narrow viewports,
+   same breakpoint convention as AssignRolesPage.tsx's two-pane layout. */
+.doc-detail-layout { display: flex; gap: 24px; align-items: flex-start; }
+.doc-detail-main { flex: 1 1 auto; min-width: 0; }
+.doc-toc {
+  flex: 0 0 200px;
+  position: sticky;
+  top: 16px;
+  font-size: 12px;
+  border-left: 1px solid var(--border);
+  padding-left: 14px;
+}
+.doc-toc-title { font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; margin-bottom: 8px; }
+.doc-toc ul { list-style: none; margin: 0; padding: 0; }
+.doc-toc li { margin: 4px 0; }
+.doc-toc a { color: var(--text-muted); text-decoration: none; }
+.doc-toc a:hover { color: var(--brand-primary); }
+.doc-toc-sub { padding-left: 12px; }
+@media (max-width: 900px) {
+  .doc-detail-layout { flex-direction: column; }
+  .doc-toc { position: static; border-left: none; padding-left: 0; border-top: 1px solid var(--border); padding-top: 10px; }
+}
 .admin-table input[type="text"], .admin-table input:not([type]), .admin-table input[type="number"], .admin-table input[type="password"] {
   background: var(--bg-app);
   border: 1px solid var(--border);
