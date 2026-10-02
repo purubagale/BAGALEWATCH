@@ -19,3 +19,8 @@ requests==2.33.1
 # and recommendation tables out of an uploaded vendor .docx. See
 # core/rf_reports.py's module docstring.
 python-docx==1.1.2
+# TOTP-based MFA (2026-10-02, Phase C) -- pyotp generates/verifies codes,
+# qrcode renders the enrollment QR (Pillow, already above, is its image
+# backend). See core/mfa.py's module docstring.
+pyotp==2.9.0
+qrcode==7.4.2

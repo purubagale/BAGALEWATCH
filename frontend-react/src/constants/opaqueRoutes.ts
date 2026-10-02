@@ -96,6 +96,12 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // as a child of the "Telemetry" group -- keep this in sync with that
   // file, same convention as every other entry below.
   '/telemetry-live-samples': '/z3q8mn',
+  // VoLTE/VoNR call-quality dev/pilot list view (2026-10-02) -- see
+  // core/volte_quality.py's VolteQualityListView docstring. Seeded
+  // server-side by migration 0088_seed_volte_quality_menuitem.py, same
+  // superadmin-only posture and same reasoning as '/telemetry-live-samples'
+  // just above -- raw per-call data, not a general feature.
+  '/telemetry-volte-samples': '/w2k6tr',
   // Scoped drive-test sessions over live telemetry (2026-09-01) — seeded
   // server-side by migration 0044_seed_telemetry_dt_session_menuitem.py —
   // keep this in sync with that file, same convention as every other

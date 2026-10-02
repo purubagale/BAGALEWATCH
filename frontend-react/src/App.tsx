@@ -85,6 +85,9 @@ const LiveSiteSyncPage = lazy(() => import('./pages/LiveSiteSyncPage'))
 const TelemetryCoveragePage = lazy(() => import('./pages/TelemetryCoveragePage'))
 const TelemetryAdminPage = lazy(() => import('./pages/TelemetryAdminPage'))
 const TelemetryLiveSamplesPage = lazy(() => import('./pages/TelemetryLiveSamplesPage'))
+// VoLTE/VoNR call-quality dev/pilot list view (2026-10-02) -- see
+// core/volte_quality.py's module docstring.
+const VolteQualityPage = lazy(() => import('./pages/VolteQualityPage'))
 // Scoped drive-test sessions (2026-09-01) — see migration
 // 0044_seed_telemetry_dt_session_menuitem.py and core/telemetry_admin.py's
 // TelemetryDriveTestSession* views.
@@ -288,6 +291,7 @@ function App() {
         {withOpaqueSection('/telemetry-coverage', <TelemetryCoveragePage />)}
         {withOpaqueSection('/telemetry-admin', <TelemetryAdminPage />)}
         {withOpaqueSection('/telemetry-live-samples', <TelemetryLiveSamplesPage />)}
+        {withOpaqueSection('/telemetry-volte-samples', <VolteQualityPage />)}
         {withOpaqueSection('/telemetry-dt-sessions', <TelemetryDriveTestSessionsPage />)}
         {withOpaqueSection('/rescue-lookup', <RescueLookupPage />)}
         {withOpaqueSection('/rescue-policy', <RescuePolicyPage />)}

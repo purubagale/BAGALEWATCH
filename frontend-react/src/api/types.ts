@@ -1893,6 +1893,38 @@ export interface TelemetryLiveSample {
   trigger_reason: string
 }
 
+// VoLTE/VoNR call-quality dev/pilot sample (2026-10-02) -- see
+// core/volte_quality.py's module docstring. `mos_estimate` is a
+// server-computed ITU-T G.107 E-model ESTIMATE, never a true
+// perceptually-measured MOS -- always label it "Estimated MOS" in the UI,
+// never a bare "MOS". Both `r_factor`/`mos_estimate` are null when the
+// codec has no entry at all, or a required raw input was missing -- never
+// a fabricated number. `mos_is_provisional` (true for EVS/AMR-NB today)
+// marks a value computed from a deliberately APPROXIMATED codec entry
+// (real constants run through a different scale's formula, or a
+// different codec's constants used as a proxy) -- the UI must visually
+// distinguish this from a verified estimate (AMR-WB/G.711/G.729), never
+// show both with the same confidence.
+export interface VolteCallQualitySample {
+  device_id: string
+  ts: string
+  received_at: string
+  network_type: string
+  codec: string
+  call_duration_s: number | null
+  packet_loss_pct: number | null
+  jitter_ms: number | null
+  rtt_ms: number | null
+  quality_level: string
+  r_factor: number | null
+  mos_estimate: number | null
+  mos_is_provisional: boolean
+}
+
+export interface VolteQualityListResponse {
+  samples: VolteCallQualitySample[]
+}
+
 export interface TelemetryLiveSamplesResponse {
   samples: TelemetryLiveSample[]
   count: number

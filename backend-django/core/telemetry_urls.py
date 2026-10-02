@@ -7,10 +7,15 @@ from django.urls import path
 from .consent import DriveTestConsentMessageView, DriveTestConsentView
 from .rescue import RescueEnrollView
 from .telemetry import TelemetryHealthView, TelemetryIngestView
+from .volte_quality import VolteSampleIngestView
 
 urlpatterns = [
     path('samples/', TelemetryIngestView.as_view(), name='telemetry-ingest'),
     path('health/', TelemetryHealthView.as_view(), name='telemetry-health'),
+    # VoLTE/VoNR call-quality ingest (2026-10-02) -- same ingest-key auth,
+    # dormant until the app has carrier-privileged status. See
+    # core/volte_quality.py's module docstring.
+    path('volte-samples/', VolteSampleIngestView.as_view(), name='volte-samples'),
     # Rescue-beacon opt-in/opt-out (2026-09-01) — same ingest-key auth as
     # samples/ above, called by the device itself. See core/rescue.py.
     path('rescue-enroll/', RescueEnrollView.as_view(), name='rescue-enroll'),

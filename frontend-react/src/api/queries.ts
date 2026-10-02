@@ -1263,6 +1263,7 @@ import type {
   TelemetryLiveSample,
   TelemetryLiveSamplesParams,
   TelemetryLiveSamplesResponse,
+  VolteQualityListResponse,
 } from '../api/types'
 
 // Delta-fetch accumulator (2026-10-02 perf follow-up, "suggest me the
@@ -1314,6 +1315,19 @@ function useDeltaSamples<T extends { samples: TelemetryLiveSample[]; server_time
       return { ...page, samples: accumulatedRef.current }
     },
     enabled,
+    refetchInterval: 10_000,
+  })
+}
+
+// VoLTE Quality dev/pilot list (2026-10-02) -- plain polling, not the
+// useDeltaSamples() machinery above: call volume is naturally far lower
+// than periodic RF-sample volume (see core/volte_quality.py's module
+// docstring), so a full refetch every 10s has none of the remount-cost
+// problem that machinery exists to solve.
+export function useVolteQualitySamples(minutes: number) {
+  return useQuery({
+    queryKey: ['telemetry-volte-samples', minutes],
+    queryFn: () => apiJson<VolteQualityListResponse>(`/api/v2/telemetry/volte-samples/?minutes=${minutes}`),
     refetchInterval: 10_000,
   })
 }

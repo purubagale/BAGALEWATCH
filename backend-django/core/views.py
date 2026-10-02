@@ -21,6 +21,7 @@ from . import sso_config
 from .imageutils import DataUrlImageError, decode_data_url_image
 from .sector_expansion import sector_matches_mode, site_matches_sector_expansion
 from .models import (
+    AuthEventLog,
     BrandingSettings,
     DriveTestSession,
     DtBand,
@@ -29,6 +30,7 @@ from .models import (
     MenuItemRoleVisibility,
     MenuPermission,
     Role,
+    SecuritySettings,
     Sector,
     Site,
     SiteAssignment,
@@ -296,21 +298,56 @@ class LoginView(APIView):
             return Response({'detail': 'This account is disabled.'}, status=status.HTTP_403_FORBIDDEN)
 
         cache.delete(cache_key)
-        # Last Login fix (2026-10-01, "last login is displayed only in sso
-        # login, not in application direct login... make it for
-        # application user also") -- this is a custom User model, not
-        # Django's AbstractUser/ModelBackend flow that normally updates
-        # last_login via the user_logged_in signal, so nothing was ever
-        # writing it for a local sign-in -- sso_views.py's SSOCallbackView
-        # was the only place that did. Mirrors that exact update.
-        user.last_login = timezone.now()
-        user.save(update_fields=['last_login'])
-        log_auth_event(request, 'login_success', user=user)
-        refresh = RefreshToken.for_user(user)
-        data = MeSerializer(user).data
-        data['access'] = str(refresh.access_token)
-        data['refresh'] = str(refresh)
-        return Response(data)
+
+        # MFA (2026-10-02, Phase C) -- a user who has ALREADY enrolled TOTP
+        # is challenged for a code on EVERY login, regardless of the
+        # superadmin-controlled SecuritySettings.mfa_required toggle below:
+        # once an individual has opted in, that's part of their own
+        # account's security now, independent of org-wide policy. Local
+        # import for the same circular-import reason log_auth_event is
+        # imported locally above -- core/mfa.py imports _finish_login FROM
+        # this module.
+        if user.totp_enabled:
+            from . import mfa
+            ticket = mfa.create_pending_ticket(user.id)
+            log_auth_event(request, AuthEventLog.EVENT_MFA_CHALLENGE_SENT, user=user)
+            return Response({'mfa_required': True, 'mfa_ticket': ticket})
+
+        response = _finish_login(request, user)
+        # Org-wide mandatory-MFA policy, for a user who has NOT enrolled
+        # yet (the branch above already handled "has enrolled"). Still lets
+        # them log in normally -- flipping this on must not lock out every
+        # existing account that hasn't set up TOTP -- but flags the
+        # response so the frontend can force an immediate enrollment
+        # prompt before showing the rest of the app. See SecuritySettings'
+        # own docstring for the full reasoning.
+        if SecuritySettings.objects.filter(pk=1, mfa_required=True).exists():
+            response.data['mfa_setup_required'] = True
+        return response
+
+
+def _finish_login(request, user):
+    """The actual "log a successful sign-in and hand back tokens" tail,
+    shared by LoginView (when MFA is off or not required for this user)
+    and MFAVerifyView (core/mfa.py, once a pending ticket's code has been
+    confirmed) -- extracted 2026-10-02 so both paths end in exactly the
+    same place rather than maintaining two copies of token minting."""
+    from .auth_log import log_auth_event
+    # Last Login fix (2026-10-01, "last login is displayed only in sso
+    # login, not in application direct login... make it for
+    # application user also") -- this is a custom User model, not
+    # Django's AbstractUser/ModelBackend flow that normally updates
+    # last_login via the user_logged_in signal, so nothing was ever
+    # writing it for a local sign-in -- sso_views.py's SSOCallbackView
+    # was the only place that did. Mirrors that exact update.
+    user.last_login = timezone.now()
+    user.save(update_fields=['last_login'])
+    log_auth_event(request, 'login_success', user=user)
+    refresh = RefreshToken.for_user(user)
+    data = MeSerializer(user).data
+    data['access'] = str(refresh.access_token)
+    data['refresh'] = str(refresh)
+    return Response(data)
 
 
 class LogoutView(APIView):
@@ -1537,6 +1574,43 @@ class BrandingSettingsView(APIView):
             changed_fields.append('logo')
         log_audit_event(request, 'BRANDING.UPDATED', resource='branding', detail=', '.join(changed_fields))
         return Response(BrandingSettingsSerializer(obj, context={'request': request}).data)
+
+
+class SecuritySettingsView(APIView):
+    """GET/PUT /api/v2/security-settings/ -- the superadmin-controlled
+    `mfa_required` toggle (2026-10-02, Phase C). GET is IsAuthenticated
+    (not AllowAny like Branding) -- unlike app branding, whether MFA is
+    mandatory isn't something a pre-login visitor needs to know, and the
+    Security page that reads this (to show the right copy about whether
+    enrollment is optional or required) only ever renders for a logged-in
+    user. PUT is superadmin-only, same tier as every other app-wide toggle
+    in this app, audit-logged the same way BrandingSettingsView.put() is."""
+    permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method == 'PUT':
+            return [IsAuthenticated(), IsSuperadminOnly()]
+        return [IsAuthenticated()]
+
+    def get_object(self):
+        obj, _ = SecuritySettings.objects.get_or_create(pk=1)
+        return obj
+
+    def get(self, request):
+        obj = self.get_object()
+        return Response({'mfa_required': obj.mfa_required})
+
+    def put(self, request):
+        obj = self.get_object()
+        if 'mfa_required' in request.data:
+            obj.mfa_required = bool(request.data['mfa_required'])
+            obj.save()
+        from .audit import log_audit_event
+        log_audit_event(
+            request, 'SECURITY_SETTINGS.UPDATED', resource='security_settings',
+            detail=f'mfa_required={obj.mfa_required}',
+        )
+        return Response({'mfa_required': obj.mfa_required})
 
 
 class UserViewSet(viewsets.ModelViewSet):

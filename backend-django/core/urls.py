@@ -3,9 +3,9 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import (api_auth, audit, auth_log, backup, consent, dashboard, drive_test,
-               exports, issues, kpi_trend, password_reset, reports, rescue, rf_audit,
+               exports, issues, kpi_trend, mfa, password_reset, reports, rescue, rf_audit,
                rf_reports, roles, site_import, sso_views, system_doc,
-               telemetry_admin, views)
+               telemetry_admin, views, volte_quality)
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
@@ -52,6 +52,17 @@ urlpatterns = [
     path('auth/password-reset/', password_reset.PasswordResetRequestView.as_view(), name='auth-password-reset'),
     path('auth/password-reset/confirm/', password_reset.PasswordResetConfirmView.as_view(), name='auth-password-reset-confirm'),
     path('auth/change-password/', password_reset.ChangePasswordView.as_view(), name='auth-change-password'),
+
+    # MFA / TOTP (2026-10-02, Phase C) -- see core/mfa.py's module
+    # docstring. /status, /enroll/start, /enroll/confirm, /disable are all
+    # IsAuthenticated (voluntary self-service, any time); /verify is
+    # AllowAny -- it's reached mid-login, before the user has a JWT, using
+    # the short-lived ticket /auth/login/ hands back instead.
+    path('auth/mfa/status/', mfa.MFAStatusView.as_view(), name='auth-mfa-status'),
+    path('auth/mfa/enroll/start/', mfa.MFAEnrollStartView.as_view(), name='auth-mfa-enroll-start'),
+    path('auth/mfa/enroll/confirm/', mfa.MFAEnrollConfirmView.as_view(), name='auth-mfa-enroll-confirm'),
+    path('auth/mfa/disable/', mfa.MFADisableView.as_view(), name='auth-mfa-disable'),
+    path('auth/mfa/verify/', mfa.MFAVerifyView.as_view(), name='auth-mfa-verify'),
 
     # Keycloak SSO (2026-08-23). Additive: /auth/login/ above is untouched,
     # and `POST auth/sso/token/` returns the SAME payload shape it does, so
@@ -131,6 +142,9 @@ urlpatterns = [
     # Customizable branding — logo + app name (2026-08-08, v2-only) — see
     # BrandingSettingsView's docstring.
     path('branding/', views.BrandingSettingsView.as_view(), name='branding'),
+    # Superadmin-controlled MFA-mandatory toggle (2026-10-02, Phase C) --
+    # see SecuritySettingsView's docstring.
+    path('security-settings/', views.SecuritySettingsView.as_view(), name='security-settings'),
     # Customizable Dashboard home page (2026-08-08, v2-only) — see
     # core/dashboard.py's module docstring.
     path('dashboard/', dashboard.DashboardView.as_view(), name='dashboard'),
@@ -176,6 +190,10 @@ urlpatterns = [
     path('telemetry/stats/', telemetry_admin.TelemetryStatsView.as_view(), name='telemetry-stats'),
     path('telemetry/coverage/', telemetry_admin.TelemetryCoverageView.as_view(), name='telemetry-coverage'),
     path('telemetry/live-samples/', telemetry_admin.TelemetryLiveSamplesView.as_view(), name='telemetry-live-samples'),
+    # VoLTE/VoNR call-quality dev/pilot list view (2026-10-02) -- see
+    # core/volte_quality.py's VolteQualityListView docstring. Same
+    # superadmin-only, no-MenuItem posture as live-samples above.
+    path('telemetry/volte-samples/', volte_quality.VolteQualityListView.as_view(), name='telemetry-volte-samples'),
     # Scoped drive-test sessions over the live telemetry pipeline
     # (2026-09-01) — see core/telemetry_admin.py's TelemetryDriveTestSession*
     # views for why these replace TelemetryLiveSamplesView as the

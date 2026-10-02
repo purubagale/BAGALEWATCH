@@ -170,6 +170,19 @@ class User(AbstractUser):
         max_length=255, null=True, blank=True, unique=True, default=None
     )
 
+    # ── MFA / TOTP (2026-10-02, Phase C) ─────────────────────────────────
+    # Encrypted at rest (Fernet, core/mfa.py's encrypt_secret/decrypt_secret
+    # -- key derived from SECRET_KEY, no separate key to manage) rather than
+    # plaintext: this is a permanent shared secret that reproduces every
+    # future login code, unlike a password hash it is NOT one-way, so a
+    # database dump alone must not be enough to read it. Blank until
+    # enrollment completes -- see MFAEnrollStartView/MFAEnrollConfirmView's
+    # docstrings in core/mfa.py for why the secret is only written here
+    # AFTER the user proves they can generate a real code from it, never
+    # the moment the QR code is first generated.
+    totp_secret_encrypted = models.TextField(blank=True, default='')
+    totp_enabled = models.BooleanField(default=False)
+
     class Meta:
         db_table = 'v2_users'
 
@@ -1756,6 +1769,40 @@ class BrandingSettings(models.Model):
         return self.app_name or '(default branding)'
 
 
+class SecuritySettings(models.Model):
+    """Singleton row (id forced to 1, same convention as BrandingSettings
+    above) holding org-wide auth-security toggles a superadmin controls.
+
+    `mfa_required=True` does NOT lock out a user who hasn't enrolled TOTP
+    yet -- LoginView.post() still lets them in (see its own comment) but
+    the response carries `mfa_setup_required: true` so the frontend can
+    force an immediate enrollment prompt before letting them into the rest
+    of the app. This avoids a chicken-and-egg lockout the moment an admin
+    flips this on with existing unenrolled accounts.
+
+    A user who has ALREADY enrolled TOTP (`User.totp_enabled=True`) is
+    challenged for a code at every login regardless of this toggle -- once
+    an individual has opted in, that is now part of their own account's
+    security, independent of the org-wide policy. This flag only decides
+    whether enrollment itself is optional or forced for everyone else.
+
+    Deliberately does not touch SSO/Keycloak-authenticated users at all --
+    Keycloak owns their authentication independently; if it enforces MFA,
+    that's already outside DT-WATCH's reach."""
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    mfa_required = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'v2_security_settings'
+
+    def save(self, *args, **kwargs):
+        self.id = 1
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'Security settings (MFA required: {self.mfa_required})'
+
+
 class LiveSiteSyncStatus(models.Model):
     """Singleton row (id forced to 1, same convention as BrandingSettings
     above) tracking the Live Site Directory sync's own run history — see
@@ -2205,6 +2252,87 @@ class TelemetrySample(models.Model):
         return f'{self.device_id[:8]}… @ {self.ts:%Y-%m-%d %H:%M} ({self.network_type})'
 
 
+class VolteCallSample(models.Model):
+    """One crowdsourced VoLTE/VoNR call-quality reading (2026-10-02),
+    sibling to `TelemetrySample` but intentionally a SEPARATE model --
+    different cadence (one row per completed call, not a periodic/
+    handover tick) and different fields (RTP-level call metrics, not
+    radio signal strength). See core/volte_quality.py's module docstring
+    for the full ingest pipeline and why this requires a carrier-
+    privileged app build to ever receive real data.
+
+    Same anonymization posture as `TelemetrySample`: `device_id` is
+    hashed via `hash_device_id()` before storage, no MSISDN/IMEI column,
+    covered by the same crowdsourced-telemetry opt-in (`NetTelemetry.
+    optIn()`), not a new consent category.
+
+    `r_factor`/`mos_estimate` are a SERVER-COMPUTED ITU-T G.107 E-model
+    ESTIMATE (`core/volte_quality.py`'s `compute_mos_estimate()`), never a
+    true perceptually-measured MOS -- both null whenever the codec has no
+    entry at all (see that function's own docstring) or an input was
+    missing, rather than ever holding a fabricated value. `mos_is_provisional`
+    distinguishes a value computed from a VERIFIED codec entry from one
+    computed via a deliberate approximation (an unverified codec's real
+    constants run through a different scale's formula, or a different
+    codec's constants used as a proxy) -- UI/API consumers must surface
+    this distinction, never present a provisional value with the same
+    confidence as a verified one. The raw inputs (`packet_loss_pct`/
+    `jitter_ms`/`rtt_ms`/`codec`) are kept alongside the computed fields
+    specifically so a future formula or codec-table correction can be
+    recomputed for existing rows without needing the original device
+    upload again.
+
+    No partitioning (unlike `TelemetrySample`) -- call-count volume is
+    far lower than periodic RF-sample volume, a plain indexed table is
+    sufficient at any realistic scale."""
+
+    NETWORK_TYPES = [('LTE', 'LTE (VoLTE)'), ('NR', '5G NR (VoNR)'), ('UNKNOWN', 'Unknown')]
+
+    device_id = models.CharField(max_length=64, db_index=True)
+    ts = models.DateTimeField(db_index=True)              # call end, device-reported
+    received_at = models.DateTimeField(db_index=True)     # server receipt
+
+    lat = models.FloatField(null=True, blank=True)
+    lng = models.FloatField(null=True, blank=True)
+    location = PointField(geography=True, srid=4326, null=True, blank=True, spatial_index=True)
+
+    cell_id = models.BigIntegerField(null=True, blank=True)
+    pci = models.IntegerField(null=True, blank=True)
+    tac = models.IntegerField(null=True, blank=True)
+    mcc = models.CharField(max_length=6, blank=True, default='')
+    mnc = models.CharField(max_length=6, blank=True, default='')
+    network_type = models.CharField(max_length=12, choices=NETWORK_TYPES, default='UNKNOWN')
+
+    call_duration_s = models.IntegerField(null=True, blank=True)
+    codec = models.CharField(max_length=20, blank=True, default='')
+    packet_loss_pct = models.FloatField(null=True, blank=True)
+    jitter_ms = models.FloatField(null=True, blank=True)
+    rtt_ms = models.FloatField(null=True, blank=True)
+    # Android's own CallQuality enum, kept verbatim -- a real
+    # network-reported value independent of our own estimate below, never
+    # discarded even when we can't compute an estimate ourselves.
+    quality_level = models.CharField(max_length=20, blank=True, default='')
+
+    # Server-computed estimate -- see this model's own docstring.
+    r_factor = models.FloatField(null=True, blank=True)
+    mos_estimate = models.FloatField(null=True, blank=True)
+    mos_is_provisional = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'v2_volte_call_samples'
+        indexes = [
+            models.Index(fields=['device_id', 'ts']),
+            models.Index(fields=['network_type']),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.location = _point_or_none(self.lat, self.lng)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.device_id[:8]}… @ {self.ts:%Y-%m-%d %H:%M} (MOS≈{self.mos_estimate})'
+
+
 class TelemetryCoverageBin(models.Model):
     """Aggregated coverage stats for a ~150 m geohash-7 cell, per network
     type. Written by prune_telemetry.py when a raw-sample partition
@@ -2567,6 +2695,8 @@ class AuthEventLog(models.Model):
     EVENT_PWD_CHANGED = 'pwd_changed'
     EVENT_MFA_CHALLENGE_SENT = 'mfa_challenge_sent'
     EVENT_MFA_VERIFY_FAILED = 'mfa_verify_failed'
+    EVENT_MFA_ENROLLED = 'mfa_enrolled'
+    EVENT_MFA_DISABLED = 'mfa_disabled'
     EVENT_RECAPTCHA_FAILED = 'recaptcha_failed'
     EVENT_CHOICES = [
         (EVENT_LOGIN_SUCCESS, 'Local login succeeded'),
@@ -2581,6 +2711,8 @@ class AuthEventLog(models.Model):
         (EVENT_PWD_CHANGED, 'Password changed (self-service)'),
         (EVENT_MFA_CHALLENGE_SENT, 'MFA challenge issued'),
         (EVENT_MFA_VERIFY_FAILED, 'MFA code rejected'),
+        (EVENT_MFA_ENROLLED, 'MFA enrolled'),
+        (EVENT_MFA_DISABLED, 'MFA disabled'),
         (EVENT_RECAPTCHA_FAILED, 'reCAPTCHA check failed'),
     ]
     # Events that represent a real, successful session — everything else

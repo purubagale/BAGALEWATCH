@@ -50,6 +50,7 @@ const KNOWN_ROUTES: { path: string; label: string }[] = [
   { path: '/t7m2kq', label: 'Telemetry Coverage' },
   { path: '/t4v9cx', label: 'Telemetry Admin' },
   { path: '/t6q9lp', label: 'Telemetry Drive Test' },
+  { path: '/w2k6tr', label: 'VoLTE Quality' },
   { path: '/r5t8mq', label: 'Rescue Lookup' },
   { path: '/r2p6ky', label: 'Rescue Policy' },
   { path: '/i8s4kw', label: 'Issues' },
