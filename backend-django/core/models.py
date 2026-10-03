@@ -19,6 +19,7 @@ from django.contrib.gis.geos import Point
 from django.db import models
 from django.db.models.signals import m2m_changed
 from django.dispatch import receiver
+from django.utils import timezone
 
 
 def _point_or_none(lat, lng):
