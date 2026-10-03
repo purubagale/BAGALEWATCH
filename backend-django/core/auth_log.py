@@ -35,11 +35,26 @@ logger = logging.getLogger(__name__)
 
 
 def _client_ip(request):
-    # Same X-Forwarded-For-first convention as every other client-IP read
-    # in this codebase would need behind the nginx reverse proxy (see
-    # nginx.conf's X-Real-IP/X-Forwarded-For headers on the /api/ location)
-    # -- REMOTE_ADDR alone would just be the docker network's internal
-    # nginx container address, not the real client.
+    # X-Real-IP FIRST (2026-10-02 fix) -- nginx sets this directly from the
+    # TCP peer (`$remote_addr` in nginx.conf), so a client cannot forge it;
+    # the value below only ever reflects who actually connected to nginx.
+    # X-Forwarded-For was tried first until this fix, but nginx builds it
+    # via `$proxy_add_x_forwarded_for`, which APPENDS the real client to
+    # whatever a client already sent -- a request arriving with its own
+    # `X-Forwarded-For: 1.2.3.4` header becomes `1.2.3.4, <real_ip>`
+    # upstream, and `.split(',')[0]` would trust the attacker-supplied
+    # value instead of the real one. That was a low-stakes bug while this
+    # value only ever fed passive logging; it became a real one once
+    # core/ip_block.py started using the same value to decide ACTUAL
+    # blocks -- a forged first hop lets an attacker evade being blocked by
+    # rotating fake values, or frame an innocent IP by spoofing it into
+    # failed-login attempts. X-Forwarded-For stays as the fallback only
+    # for local dev (no nginx in front, so X-Real-IP is never set) --
+    # REMOTE_ADDR alone there would just be the docker network's internal
+    # address, not the real client.
+    real_ip = request.META.get('HTTP_X_REAL_IP')
+    if real_ip:
+        return real_ip.strip()
     xff = request.META.get('HTTP_X_FORWARDED_FOR')
     if xff:
         return xff.split(',')[0].strip()

@@ -2144,6 +2144,10 @@ export interface AuthEventLogParams {
 // is unchanged) but are no longer rendered by any page.
 export type AuditLogSource = 'access' | 'data_change'
 
+// is_suspicious/suspicious_reason (2026-10-02, Phase E attack-attempt
+// detection) -- flags a burst of >=3 failed-login-type access events from
+// the SAME IP within a trailing 15 minutes, across potentially different
+// usernames. See core/audit.py's _annotate_suspicious() docstring.
 export interface AuditLogEntry {
   id: string
   source: AuditLogSource
@@ -2154,6 +2158,8 @@ export interface AuditLogEntry {
   detail: string
   ip_address: string | null
   payload: unknown
+  is_suspicious: boolean
+  suspicious_reason: string
 }
 
 export interface AuditLogPageResponse {
@@ -2172,4 +2178,20 @@ export interface AuditLogParams {
   date_from?: string
   date_to?: string
   source?: AuditLogSource
+}
+
+// Active IP blocking (2026-10-02, Phase E2) -- see core/ip_block.py's
+// module docstring. `blocked_by_username: null` means an AUTOMATIC block
+// (the 3-failures-in-15-minutes auto-trigger); a real username means a
+// superadmin manually blocked this IP -- the UI must show these
+// differently, never collapse both into one look.
+export interface BlockedIpEntry {
+  id: number
+  ip_address: string
+  reason: string
+  blocked_at: string
+  blocked_by_username: string | null
+  is_active: boolean
+  unblocked_at: string | null
+  unblocked_by_username: string | null
 }

@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { exportAuditLogCsv, useAuditLog } from '../api/queries'
+import { useMemo, useState } from 'react'
+import { exportAuditLogCsv, useAuditLog, useBlockedIps } from '../api/queries'
 import type { AuditLogEntry, AuditLogSource } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 
@@ -50,6 +50,17 @@ export default function AuditLogPage() {
     date_to: dateTo || undefined,
     source: source || undefined,
   })
+  // Active IP blocking cross-reference (2026-10-02, Phase E2) -- so a
+  // superadmin reading a ⚠ flag here doesn't have to separately check the
+  // Blocked IPs page to know enforcement already kicked in for that IP.
+  // Harmless if this fails to load (page still renders, just without the
+  // "already blocked" note) -- not worth a loading/error state of its own
+  // for a secondary cross-reference.
+  const { data: blockedIps } = useBlockedIps()
+  const blockedIpSet = useMemo(
+    () => new Set((blockedIps ?? []).filter((b) => b.is_active).map((b) => b.ip_address)),
+    [blockedIps],
+  )
 
   if (!me) return null
   if (me.role !== 'superadmin') {
@@ -57,6 +68,13 @@ export default function AuditLogPage() {
   }
 
   const totalPages = data ? Math.max(1, Math.ceil(data.count / pageSize)) : 1
+  // Attack-attempt detection (2026-10-02, Phase E) -- summary banner when
+  // any row on the CURRENT page is flagged. Deliberately page-scoped, not
+  // a separate full-history query: the flag already reflects whatever
+  // _filtered_rows() assembled server-side for this exact view/filter, so
+  // the banner should match what's actually visible, not claim knowledge
+  // of pages not currently shown.
+  const suspiciousOnPage = (data?.results ?? []).filter((r) => r.is_suspicious)
 
   function resetToFirstPage<T>(setter: (v: T) => void) {
     return (v: T) => {
@@ -132,6 +150,24 @@ export default function AuditLogPage() {
       {error && <div className="page-status page-status-error">Could not load the audit log.</div>}
       {isLoading && !data && <div className="page-status">Loading…</div>}
 
+      {suspiciousOnPage.length > 0 && (
+        <div
+          style={{
+            color: 'var(--status-warning)',
+            background: 'var(--status-warning-bg)',
+            border: '1px solid var(--status-warning)',
+            borderRadius: 'var(--radius-md, 6px)',
+            padding: '8px 12px',
+            fontSize: 13,
+            marginBottom: 12,
+          }}
+        >
+          ⚠ {suspiciousOnPage.length} suspicious entr{suspiciousOnPage.length === 1 ? 'y' : 'ies'} on this page — 3+
+          failed login attempts from the same IP within 15 minutes, across potentially different accounts. Marked
+          below.
+        </div>
+      )}
+
       {data && (
         <>
           <div className="report-table-wrap">
@@ -148,7 +184,7 @@ export default function AuditLogPage() {
               </thead>
               <tbody>
                 {data.results.map((row) => (
-                  <tr key={row.id}>
+                  <tr key={row.id} style={row.is_suspicious ? { background: 'var(--status-warning-bg)' } : undefined}>
                     <td style={{ whiteSpace: 'nowrap' }}>{new Date(row.created_at).toLocaleString()}</td>
                     <td>{row.actor}</td>
                     <td>
@@ -158,7 +194,21 @@ export default function AuditLogPage() {
                     <td className="muted" title={payloadPreview(row)} style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {payloadPreview(row)}
                     </td>
-                    <td className="admin-table-key">{row.ip_address || '—'}</td>
+                    <td className="admin-table-key">
+                      {row.ip_address || '—'}
+                      {row.is_suspicious && (
+                        <span
+                          title={
+                            row.ip_address && blockedIpSet.has(row.ip_address)
+                              ? `${row.suspicious_reason} — already blocked (see Blocked IPs)`
+                              : row.suspicious_reason
+                          }
+                          style={{ marginLeft: 6, color: 'var(--status-warning)' }}
+                        >
+                          ⚠{row.ip_address && blockedIpSet.has(row.ip_address) ? ' 🚫' : ''}
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 ))}
                 {data.results.length === 0 && (

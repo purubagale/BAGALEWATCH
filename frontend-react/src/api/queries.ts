@@ -72,6 +72,7 @@ import type {
   SystemDocResponse,
   AuditLogParams,
   AuditLogPageResponse,
+  BlockedIpEntry,
   RescueConsentPolicy,
   RescueConsentPolicyWrite,
   RescueLookupParams,
@@ -397,6 +398,33 @@ export async function exportAuditLogCsv(params: AuditLogParams): Promise<Blob> {
     throw new ApiError(res.status, body)
   }
   return res.blob()
+}
+
+// Active IP blocking (2026-10-02, Phase E2) -- backs BlockedIPsPage.tsx.
+// See core/ip_block.py's module docstring.
+export function useBlockedIps() {
+  return useQuery({
+    queryKey: ['blocked-ips'],
+    queryFn: () => apiJson<BlockedIpEntry[]>('/api/v2/blocked-ips/'),
+  })
+}
+
+export function useCreateBlockedIp() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params: { ip_address: string; reason: string }) =>
+      apiJson<BlockedIpEntry>('/api/v2/blocked-ips/', { method: 'POST', body: JSON.stringify(params) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['blocked-ips'] }),
+  })
+}
+
+export function useUnblockIp() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ip: string) =>
+      apiJson<BlockedIpEntry>(`/api/v2/blocked-ips/${encodeURIComponent(ip)}/unblock/`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['blocked-ips'] }),
+  })
 }
 
 // Backs DocumentationPage.tsx's "Generate Current System State" button

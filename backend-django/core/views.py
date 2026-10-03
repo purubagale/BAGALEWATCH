@@ -257,15 +257,18 @@ class LoginView(APIView):
     LOCKOUT_SECONDS = 15 * 60
 
     def post(self, request):
-        # Local import -- see core/auth_log.py's module docstring for why
+        # Local imports -- see core/auth_log.py's module docstring for why
         # this can't be a top-level import here: auth_log.py itself
         # imports IsSuperadminOnly FROM this module, and this module is
         # usually the first of the two actually loaded (core/urls.py's
         # `from . import (..., sso_views, ..., views)` would otherwise
         # try to fully load views.py again, mid-load, through auth_log --
         # a real circular import. Deferring this one import to call time
-        # breaks the cycle without restructuring either module.
-        from .auth_log import log_auth_event
+        # breaks the cycle without restructuring either module. core.ip_block
+        # needs the same treatment (2026-10-02, Phase E2) for the identical
+        # reason -- it imports IsSuperadminOnly from this module too.
+        from .auth_log import _client_ip, log_auth_event
+        from .ip_block import is_ip_blocked, maybe_auto_block
 
         # SSO-only cutover switch (2026-08-23). Checked before anything else,
         # including the lockout counter, so a disabled password endpoint does
@@ -276,12 +279,25 @@ class LoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # Active IP block (2026-10-02, Phase E2) -- checked before the
+        # per-username lockout counter and before authenticate() is ever
+        # called, so a blocked source spends no password-hash-verify cycle
+        # and gets no enumeration signal either way.
+        ip = _client_ip(request)
+        if is_ip_blocked(ip):
+            log_auth_event(request, AuthEventLog.EVENT_LOGIN_IP_BLOCKED, detail='blocked IP retried')
+            return Response(
+                {'detail': 'Too many failed attempts from this network. Contact an administrator.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         username = request.data.get('username', '')
         password = request.data.get('password', '')
         cache_key = f'login_fail:{username.strip().lower()}'
 
         if username and cache.get(cache_key, 0) >= self.MAX_ATTEMPTS:
             log_auth_event(request, 'login_locked', username=username)
+            maybe_auto_block(request, ip)
             return Response(
                 {'detail': 'Too many failed login attempts. Try again in 15 minutes.'},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -292,6 +308,7 @@ class LoginView(APIView):
             if username:
                 cache.set(cache_key, cache.get(cache_key, 0) + 1, self.LOCKOUT_SECONDS)
             log_auth_event(request, 'login_failed', username=username)
+            maybe_auto_block(request, ip)
             return Response({'detail': 'Invalid username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
         if not user.is_active:
             log_auth_event(request, 'login_disabled', username=username, user=user)

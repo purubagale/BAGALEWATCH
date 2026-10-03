@@ -136,6 +136,10 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // dict key is left as '/access-log' on purpose, it's an internal lookup
   // key, not anything user-visible, and renaming it buys nothing.
   '/access-log': '/a3x9lq',
+  // Active IP blocking (2026-10-02, Phase E2) -- seeded server-side by
+  // migration 0091_seed_blocked_ips_menuitem.py -- keep in sync with that
+  // file and MenuAdminPage.tsx's KNOWN_ROUTES list.
+  '/blocked-ips': '/b3n7qz',
   // Multi-role RBAC ("full parity" feature, 2026-10-01) -- seeded
   // server-side by migration 0079_seed_rbac_menuitems.py -- keep these in
   // sync with that file, same convention as every other entry.
