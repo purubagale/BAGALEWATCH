@@ -354,50 +354,36 @@ textarea:focus {
    The gold ring (`border: 3px solid var(--brand-accent)` plus a
    `0 0 0 3px var(--header-bg)` spacer shadow that only existed to hold
    that ring off the sidebar) was dropped 2026-08-23 — "the circle in gold
-   logo is not good, may be remove gold circle". The default mark is now
-   the gold NT emblem itself (nt-logo-gold.png), so a gold ring around a
-   gold glyph read as a double outline. The faint disc behind it comes
-   from `.app-sidebar-brand .app-logo` further down and stays: pre-2026-10-03
-   the emblem was transparent-backed and needed something to sit on.
+   logo is not good, may be remove gold circle". The default mark is the
+   gold NT emblem itself (nt-logo-gold.webp), so a gold ring around a gold
+   glyph read as a double outline. The faint disc behind it comes from
+   `.app-sidebar-brand .app-logo` further down and stays: the emblem is
+   transparent-backed and needs something to sit on.
 
-   nt-logo-gold.png history, all 2026-10-03:
-   1. First replacement ("custom logo display is not centralized or looks
-      a little bit off") -- the file up to that point was the full emblem
-      INCLUDING its long decorative tail-swoosh on a tall (non-square)
-      canvas, so `object-fit`'s square/circular crop in every consumer
-      (`.app-logo`, `.login-logo`) was centering on the image's geometric
-      middle, not the visual middle of the actual circular icon -- the
-      tail ate into the crop and the recognizable circle+tower+hands sat
-      off-center. Re-cropped from NTC's official square logo artwork (the
-      same one `ntc-logo.jpg` above was itself derived from) down to just
-      the circular swoosh/tower/hands portion, excluding the tail.
-   2. Second replacement, same day ("can we make this logo with circular
-      approach including the logo and text inside?") -- tried the FULL
-      official lockup (both Devanagari text bands plus the emblem,
-      circularly masked) instead of the bare emblem. Looked pale/washed
-      out once rendered at this image's actual sizes (see .app-logo's own
-      size-history note) -- too much fine detail for a 56-120px circle,
-      and the flat edge-to-edge blue fill read as a dull disc rather than
-      a crisp mark at that scale.
-   3. Reverted back to #1's bare-emblem crop ("create and display custom
-      logo as previous... only change in the layout") -- the emblem-only
-      version is the one that actually reads cleanly at these sizes.
-      Lesson for next time: changes from here should stay confined to
-      layout/CSS (size, padding, background contrast), not the image
-      content, unless explicitly asked to swap the picture again. Same as
-      #1, this crop keeps its original solid blue background (not
-      transparent) -- the white disc backing described above is still
-      moot for this specific file, kept only for whatever a superadmin
-      uploads as a custom logo instead, which may be transparent-backed. */
+   2026-10-03 postscript -- a reported "custom logo display is not
+   centralized or looks a little bit off" turned into several rounds of
+   re-cropping/replacing this file (a bare-emblem crop, then a full
+   text+emblem circular version), none of which were actually the right
+   fix and all since reverted -- nt-logo-gold.webp is back to byte-identical
+   with what it always was. **The real root cause**, found only after those
+   detours: this file is a TALL (407x695) image, and `object-fit: cover`
+   (which `.app-logo` and `.branding-logo-preview` both used) scales a tall
+   image to fill a square box by WIDTH, cropping the top and/or bottom off
+   -- exactly what read as "off-center". `.login-logo` never had this
+   problem because it already used `contain`, which shows the complete
+   image letterboxed instead of cropping it. Both of the other two now use
+   `contain` too (see their own comments) -- the actual fix needed was two
+   `object-fit` keywords, not a different picture. */
 .app-logo {
-  /* 2026-10-03 ("increase both inner and outer ring for logo for clean
-     view") -- was 48px. The full logo+text circular badge (see this
-     file's note above) reads much better a bit larger; 56px is the most
-     this can grow and still comfortably fit the collapsed sidebar rail
-     (`.app-sidebar`'s own width is 64px -- see that rule). */
+  /* 2026-10-03 -- was 48px; 56px is the most this can grow and still
+     comfortably fit the collapsed sidebar rail (`.app-sidebar`'s own
+     width is 64px -- see that rule). */
   height: 56px;
   width: 56px;
-  object-fit: cover;
+  /* `contain`, not `cover` -- see the "2026-10-03 postscript" comment
+     right above this rule for the full story (nt-logo-gold.webp is a TALL
+     407x695 image; `cover` was cropping its top/bottom off). */
+  object-fit: contain;
   border-radius: 50%;
   background: #ffffff;
   flex-shrink: 0;
@@ -3050,13 +3036,16 @@ textarea:focus {
    hairline replaces it — the tile still needs an edge, because a
    transparent-backed logo on a white disc otherwise has no boundary. */
 .branding-logo-preview {
-  /* 2026-10-03 ("increase both inner and outer ring for logo for clean
-     view") -- was 80px; this tile previews the same full logo+text
-     circular badge as .app-logo/.login-logo (see their own notes), and
-     this settings page has no tight layout constraint forcing it small. */
+  /* 2026-10-03 -- was 80px; sized up since this settings page has no
+     tight layout constraint forcing it small. */
   width: 110px;
   height: 110px;
-  object-fit: cover;
+  /* `contain`, not `cover` -- this was the actual root cause of the
+     original "off-center" report (see `.app-logo`'s "2026-10-03
+     postscript" comment, in the sidebar-brand section of this file, for
+     the full story); matching `.login-logo`'s existing `contain` fixes
+     this tile without touching the shared image file at all. */
+  object-fit: contain;
   border-radius: 50%;
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);

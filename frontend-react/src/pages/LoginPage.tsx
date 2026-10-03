@@ -57,7 +57,7 @@ export default function LoginPage() {
   // asset dutychart's login uses. This page was restyled to match that one,
   // and a matching mark is most of why the two read as one system. A logo
   // uploaded on the Branding page still overrides it.
-  const brandLogoSrc = branding?.logo_url || '/nt-logo-gold.png'
+  const brandLogoSrc = branding?.logo_url || '/nt-logo-gold.webp'
   const brandName = branding?.app_name || 'DT-WATCH BTS'
   // Login-page text customization (2026-08-08 follow-up: "let superadmin
   // to customize the login interface texts also") — same fallback
@@ -283,7 +283,7 @@ export default function LoginPage() {
                 carry the state cookie. An XHR would be blocked by CORS at
                 the identity provider and could not show a login form. */}
             <a className="login-sso-btn" href="/api/v2/auth/sso/login/">
-              <img src="/nt-logo-gold.png" alt="" className="login-sso-logo" />
+              <img src="/nt-logo-gold.webp" alt="" className="login-sso-logo" />
               Login with NT SSO
             </a>
           </>
