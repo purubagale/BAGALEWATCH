@@ -360,23 +360,43 @@ textarea:focus {
    from `.app-sidebar-brand .app-logo` further down and stays: pre-2026-10-03
    the emblem was transparent-backed and needed something to sit on.
 
-   nt-logo-gold.png REPLACED 2026-10-03 ("custom logo display is not
-   centralized or looks a little bit off") -- the file up to that point
-   was the full emblem INCLUDING its long decorative tail-swoosh on a tall
-   (non-square) canvas, so `object-fit`'s square/circular crop in every
-   consumer (`.app-logo`, `.login-logo`) was centering on the image's
-   geometric middle, not the visual middle of the actual circular icon --
-   the tail ate into the crop and the recognizable circle+tower+hands sat
-   off-center. Re-cropped from NTC's official square logo artwork (the
-   same one `ntc-logo.jpg` above was itself derived from) down to just the
-   circular swoosh/tower/hands portion, EXCLUDING the tail, on its
-   original solid blue background -- no longer transparent, so the white
-   disc backing described above is now moot for this specific file (kept
-   for whatever a superadmin uploads as a custom logo instead, which may
-   still be transparent-backed). */
+   nt-logo-gold.png history, all 2026-10-03:
+   1. First replacement ("custom logo display is not centralized or looks
+      a little bit off") -- the file up to that point was the full emblem
+      INCLUDING its long decorative tail-swoosh on a tall (non-square)
+      canvas, so `object-fit`'s square/circular crop in every consumer
+      (`.app-logo`, `.login-logo`) was centering on the image's geometric
+      middle, not the visual middle of the actual circular icon -- the
+      tail ate into the crop and the recognizable circle+tower+hands sat
+      off-center. Re-cropped from NTC's official square logo artwork (the
+      same one `ntc-logo.jpg` above was itself derived from) down to just
+      the circular swoosh/tower/hands portion, excluding the tail.
+   2. Second replacement, same day ("can we make this logo with circular
+      approach including the logo and text inside?") -- tried the FULL
+      official lockup (both Devanagari text bands plus the emblem,
+      circularly masked) instead of the bare emblem. Looked pale/washed
+      out once rendered at this image's actual sizes (see .app-logo's own
+      size-history note) -- too much fine detail for a 56-120px circle,
+      and the flat edge-to-edge blue fill read as a dull disc rather than
+      a crisp mark at that scale.
+   3. Reverted back to #1's bare-emblem crop ("create and display custom
+      logo as previous... only change in the layout") -- the emblem-only
+      version is the one that actually reads cleanly at these sizes.
+      Lesson for next time: changes from here should stay confined to
+      layout/CSS (size, padding, background contrast), not the image
+      content, unless explicitly asked to swap the picture again. Same as
+      #1, this crop keeps its original solid blue background (not
+      transparent) -- the white disc backing described above is still
+      moot for this specific file, kept only for whatever a superadmin
+      uploads as a custom logo instead, which may be transparent-backed. */
 .app-logo {
-  height: 48px;
-  width: 48px;
+  /* 2026-10-03 ("increase both inner and outer ring for logo for clean
+     view") -- was 48px. The full logo+text circular badge (see this
+     file's note above) reads much better a bit larger; 56px is the most
+     this can grow and still comfortably fit the collapsed sidebar rail
+     (`.app-sidebar`'s own width is 64px -- see that rule). */
+  height: 56px;
+  width: 56px;
   object-fit: cover;
   border-radius: 50%;
   background: #ffffff;
@@ -825,10 +845,20 @@ textarea:focus {
   margin-bottom: 6px;
 }
 .login-logo {
-  width: 84px;
-  height: 84px;
+  /* 2026-10-03 ("increase both inner and outer ring for logo for clean
+     view") -- was 84px. The full logo+text circular badge (see .app-logo's
+     own note) needs real size for the wordmark to read at all; 320px is
+     this card's own max-width (see `.login-card`), so 120px stays well
+     proportioned against it. */
+  width: 120px;
+  height: 120px;
   box-sizing: border-box;
-  padding: 10px;
+  /* 2026-10-03 ("increase size of the inner logo ring to marginal less
+     than outer ring") -- was 10px, which left a wide ring of plain
+     background visible around the inner emblem. 3px (matching the
+     sidebar's own `.app-sidebar-brand .app-logo` padding) lets the inner
+     image fill nearly the whole circle, just shy of the outer edge. */
+  padding: 3px;
   border-radius: 50%;
   object-fit: contain;
   background: var(--brand-primary-soft);
@@ -3020,8 +3050,12 @@ textarea:focus {
    hairline replaces it — the tile still needs an edge, because a
    transparent-backed logo on a white disc otherwise has no boundary. */
 .branding-logo-preview {
-  width: 80px;
-  height: 80px;
+  /* 2026-10-03 ("increase both inner and outer ring for logo for clean
+     view") -- was 80px; this tile previews the same full logo+text
+     circular badge as .app-logo/.login-logo (see their own notes), and
+     this settings page has no tight layout constraint forcing it small. */
+  width: 110px;
+  height: 110px;
   object-fit: cover;
   border-radius: 50%;
   border: 1px solid var(--border);
