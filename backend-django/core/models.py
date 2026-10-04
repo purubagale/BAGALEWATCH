@@ -3166,8 +3166,11 @@ class TraceRequest(models.Model):
         User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
     )
     phone_consent_ref = models.CharField(max_length=200, blank=True, default='')
+    # Set when an operator records a phone-call consent. Attestation alone never
+    # ACCEPTS a request: the device must still tap Accept on the phone.
+    phone_consent_at = models.DateTimeField(null=True, blank=True)
     policy_mode = models.CharField(max_length=16, blank=True, default='')
-    ttl_minutes = models.PositiveIntegerField(default=60)
+    ttl_minutes = models.PositiveIntegerField(default=120)
     expires_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     ended_at = models.DateTimeField(null=True, blank=True)

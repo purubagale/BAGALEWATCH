@@ -670,7 +670,7 @@ PLAY_INTEGRITY_PACKAGE_NAME = os.environ.get('PLAY_INTEGRITY_PACKAGE_NAME', '')
 PLAY_INTEGRITY_REQUIRED = os.environ.get('PLAY_INTEGRITY_REQUIRED', 'true').lower() in ('1', 'true', 'yes')
 
 # Trace duration: default and cap, in minutes.
-TRACE_DEFAULT_TTL_MINUTES = int(os.environ.get('TRACE_DEFAULT_TTL_MINUTES', '60'))
+TRACE_DEFAULT_TTL_MINUTES = int(os.environ.get('TRACE_DEFAULT_TTL_MINUTES', '120'))
 TRACE_MAX_TTL_MINUTES = int(os.environ.get('TRACE_MAX_TTL_MINUTES', '1440'))
 
 # Shared `tel_` APK key cutoff (2026-10-04). Unset = still accepted, so

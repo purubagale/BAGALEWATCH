@@ -2218,6 +2218,7 @@ export interface TraceRequestEntry {
   consent_at: string | null
   consent_recorded_by: string | null
   phone_consent_ref: string
+  phone_consent_at: string | null
   policy_mode: string
   ttl_minutes: number
   expires_at: string | null

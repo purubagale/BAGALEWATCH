@@ -9,7 +9,9 @@ post trace data.
 Lifecycle of a TraceRequest:
     PENDING --accept-------------> ACCEPTED --stop----> REVOKED
     PENDING --reject-------------> REJECTED
-    PENDING --phone-consent------> ACCEPTED (consent_method=PHONE_CALL)
+    PENDING --phone-consent------> PENDING, phone_consent_at set (operator attestation)
+            (the device's accept after attestation is what ACCEPTs it;
+             consent_method=PHONE_CALL, otherwise APP)
     ACCEPTED or PENDING --cancel--> CANCELLED   (operator)
     any open state past expires_at -> EXPIRED   (lazy, on every read/write)
     RescueConsentPolicy optional --> created ACCEPTED (consent_method=POLICY_BYPASS)
@@ -80,6 +82,9 @@ def _device_view(trace):
     return {
         'id': str(trace.id),
         'status': trace.status,
+        # Lets the phone say "an operator recorded your agreement by phone,
+        # tap Accept to continue" rather than presenting a bare request.
+        'operator_attested': trace.phone_consent_at is not None,
         'consent_at': trace.consent_at,
         'expires_at': trace.expires_at,
         'created_at': trace.created_at,
@@ -96,6 +101,7 @@ def _operator_view(trace):
         'consent_at': trace.consent_at,
         'consent_recorded_by': trace.consent_recorded_by.username if trace.consent_recorded_by else None,
         'phone_consent_ref': trace.phone_consent_ref,
+        'phone_consent_at': trace.phone_consent_at,
         'policy_mode': trace.policy_mode,
         'ttl_minutes': trace.ttl_minutes,
         'expires_at': trace.expires_at,
@@ -255,7 +261,11 @@ class DeviceTraceRespondView(APIView):
                 return Response({'detail': f'cannot accept a {trace.status} request'},
                                 status=status.HTTP_409_CONFLICT)
             trace.status = TraceRequest.STATUS_ACCEPTED
-            trace.consent_method = TraceRequest.CONSENT_APP
+            # An operator's phone-call attestation is recorded, but the device's
+            # own Accept is the act that starts the trace. Name both in the record.
+            trace.consent_method = (
+                TraceRequest.CONSENT_PHONE if trace.phone_consent_at else TraceRequest.CONSENT_APP
+            )
             trace.consent_at = now
         elif action == 'reject':
             if trace.status != TraceRequest.STATUS_PENDING:
@@ -403,11 +413,12 @@ class TraceRequestDetailView(APIView):
 
 class TraceRequestPhoneConsentView(APIView):
     """`POST /api/v2/trace-requests/<id>/phone-consent/` -- body
-    `{"phone_consent_ref": "<call or record reference>"}`. Records consent
-    the operator obtained by phone. Only valid while PENDING; sets ACCEPTED
-    and stamps who recorded it. The device picks the state up on its next
-    poll or push, and still needs OS location permission to send anything.
-    Consent is never recorded without a stated reference."""
+    `{"phone_consent_ref": "<call or record reference>"}`. Records that the
+    operator obtained the user's agreement by phone. It does NOT start the
+    trace: the request stays PENDING, and the phone must still tap Accept
+    (and the OS grant location permission) before anything is sent. A
+    fresh push tells the phone to show the prompt. Only valid while PENDING
+    and not already attested. Attestation is never recorded without a ref."""
     permission_classes = [IsRescueOperator]
 
     def post(self, request, trace_id):
@@ -422,16 +433,18 @@ class TraceRequestPhoneConsentView(APIView):
         if trace.status != TraceRequest.STATUS_PENDING:
             return Response({'detail': f'cannot record phone consent on a {trace.status} request'},
                             status=status.HTTP_409_CONFLICT)
+        if trace.phone_consent_at is not None:
+            return Response({'detail': 'phone consent is already recorded for this request'},
+                            status=status.HTTP_409_CONFLICT)
 
-        trace.status = TraceRequest.STATUS_ACCEPTED
-        trace.consent_method = TraceRequest.CONSENT_PHONE
-        trace.consent_at = timezone.now()
-        trace.consent_recorded_by = request.user
         trace.phone_consent_ref = ref
+        trace.phone_consent_at = timezone.now()
+        trace.consent_recorded_by = request.user
         trace.save()
+        push_sent = send_trace_push(trace.device.fcm_token, trace.id)
         log_audit_event(request, 'TRACE.PHONE_CONSENT', resource='trace_request',
-                        resource_id=str(trace.id), detail=f'ref={ref}')
-        return Response(_operator_view(trace))
+                        resource_id=str(trace.id), detail=f'ref={ref} push={push_sent}')
+        return Response({**_operator_view(trace), 'push_sent': push_sent})
 
 
 class TraceRequestCancelView(APIView):

@@ -11,9 +11,10 @@ import { useAuth } from '../auth/AuthContext'
 
 // Device-bound, consent-gated tracing (2026-10-04) -- the operator console for
 // core/device_trace.py. A request only ever reaches a phone the user has
-// accepted on-device (or that an operator recorded a phone-call consent for),
-// and the device still needs OS location permission before it sends anything.
-// This page never shows, or asks for, location data itself.
+// accepted on-device. A phone-call consent recorded here is attestation only:
+// it prompts the phone, and the user must still tap Accept there. The device
+// also needs OS location permission before it sends anything. This page never
+// shows, or asks for, location data itself.
 
 const STATUS_LABEL: Record<TraceRequestStatus, string> = {
   PENDING: 'Awaiting consent',
@@ -109,8 +110,9 @@ export default function TraceRequestsPage() {
     <div className="admin-page">
       <h1>Trace Requests</h1>
       <p className="muted">
-        A trace is only sent to a phone whose user has accepted it, or whose consent you have recorded from a phone
-        call. Even then, the phone sends location only while location permission is on. Every request is audited.
+        A trace is only sent once the user has tapped Accept on their phone. Recording phone consent prompts the
+        phone but does not start the trace on its own. Even then, the phone sends location only while location
+        permission is on. Every request is audited.
       </p>
 
       <section>
@@ -177,13 +179,16 @@ export default function TraceRequestsPage() {
                       ) : (
                         <span className="muted">None yet</span>
                       )}
+                      {row.status === 'PENDING' && row.phone_consent_at && (
+                        <div className="muted">Phone consent recorded. Waiting for the user to tap Accept.</div>
+                      )}
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {row.expires_at ? new Date(row.expires_at).toLocaleString() : '—'}
                     </td>
                     <td>{row.requested_by ?? '—'}</td>
                     <td className="admin-table-actions">
-                      {row.status === 'PENDING' && (
+                      {row.status === 'PENDING' && !row.phone_consent_at && (
                         phoneFor === row.id ? (
                           <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
                             <input

@@ -516,6 +516,11 @@ A replayed nonce gets `401`, and so does a timestamp outside the window.
    both go to `POST /api/telemetry/v1/device/trace-requests/<id>/respond/` with
    `{"action": "accept" | "reject"}`. Each action is valid only from one specific
    state, and any other state returns `409`.
+   If the response has `"operator_attested": true`, an operator has recorded the
+   user's agreement by phone. Show the prompt as "An NTC operator recorded your
+   agreement by phone. Tap Accept to continue." The phone-call record does not
+   start the trace. Only this on-device Accept does, so the user always makes the
+   final decision on their own phone.
 2. **Only after Accept**, request `ACCESS_FINE_LOCATION` at runtime. If the
    user refuses the OS grant, keep the request `ACCEPTED` on the server and tell
    the user location is off. Do not send anything.
