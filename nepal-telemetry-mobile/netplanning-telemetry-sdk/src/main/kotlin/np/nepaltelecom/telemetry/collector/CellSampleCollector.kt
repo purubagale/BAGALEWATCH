@@ -25,6 +25,12 @@ import np.nepaltelecom.telemetry.model.Sample
 import np.nepaltelecom.telemetry.storage.DeviceIdentity
 import kotlin.coroutines.resume
 
+// Location quality targets (2026-10-04). A fix at or under GOOD_FIX_ACCURACY_M
+// is accepted at once; otherwise up to LOCATION_ATTEMPTS requests are made and
+// the most accurate one is kept.
+private const val GOOD_FIX_ACCURACY_M = 15f
+private const val LOCATION_ATTEMPTS = 3
+
 /**
  * Turns "what's the phone's current cell/signal/location state" into one
  * [Sample]. Deliberately reads everything fresh at call time rather than
@@ -53,9 +59,19 @@ internal class CellSampleCollector(
     suspend fun collect(triggerReason: String): Sample? {
         if (!identity.optedIn) return null // defense in depth -- see NetTelemetry.optIn/optOut
         if (!hasLocationPermission()) return null
+        return sampleFrom(readLocationWithTimeout(), triggerReason)
+    }
+
+    /**
+     * Builds a sample from a location the caller already has. Drive-test
+     * tracking uses this so each fix doesn't wait for a fresh location request.
+     */
+    @SuppressLint("MissingPermission") // guarded by hasLocationPermission() below
+    fun sampleFrom(location: android.location.Location?, triggerReason: String): Sample? {
+        if (!identity.optedIn) return null
+        if (!hasLocationPermission()) return null
 
         val cell = readServingCell()
-        val location = readLocationWithTimeout()
 
         return Sample(
             deviceId = identity.deviceId,
@@ -84,8 +100,26 @@ internal class CellSampleCollector(
         )
     }
 
+    /**
+     * One location for a sample, held to an accuracy target. Attempts repeat
+     * until a fix at or under [GOOD_FIX_ACCURACY_M] arrives, or until
+     * [LOCATION_ATTEMPTS] are used. The most accurate fix seen is kept. A
+     * single attempt often returns a coarse network-assisted fix, which is
+     * what made routes look jagged.
+     */
+    private suspend fun readLocationWithTimeout(): android.location.Location? {
+        var best: android.location.Location? = null
+        repeat(LOCATION_ATTEMPTS) {
+            val fix = requestOneFix()
+            if (fix != null && (best?.accuracy ?: Float.MAX_VALUE) > fix.accuracy) best = fix
+            val current = best
+            if (current != null && current.accuracy <= GOOD_FIX_ACCURACY_M) return current
+        }
+        return best
+    }
+
     /** A short-lived, one-shot location request -- not a continuous fix, to keep GPS-on time minimal. */
-    private suspend fun readLocationWithTimeout(): android.location.Location? =
+    private suspend fun requestOneFix(): android.location.Location? =
         suspendCancellableCoroutine { cont ->
             val cancelSource = CancellationTokenSource()
             cont.invokeOnCancellation { cancelSource.cancel() }

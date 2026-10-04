@@ -100,6 +100,22 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, LiveParamsActivity::class.java))
         }
 
+        // Drive-test tracking (2026-10-04). Needs opt-in and location permission;
+        // the service shows a notification with its own Stop button while it runs.
+        findViewById<Button>(R.id.driveTestStartButton).setOnClickListener {
+            if (!hasLocationPermission()) {
+                Toast.makeText(this, "Opt in first, so location permission is granted", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            NetTelemetry.startDriveTest(this)
+            Toast.makeText(this, "Drive test started", Toast.LENGTH_SHORT).show()
+        }
+
+        findViewById<Button>(R.id.driveTestStopButton).setOnClickListener {
+            NetTelemetry.stopDriveTest(this)
+            Toast.makeText(this, "Drive test stopped", Toast.LENGTH_SHORT).show()
+        }
+
         refreshStatus()
     }
 

@@ -1,6 +1,8 @@
 package np.nepaltelecom.telemetry
 
 import android.content.Context
+import android.content.Intent
+import androidx.core.content.ContextCompat
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -16,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import np.nepaltelecom.telemetry.collector.CellSampleCollector
+import np.nepaltelecom.telemetry.collector.DriveTestService
 import np.nepaltelecom.telemetry.collector.HandoverListener
 import np.nepaltelecom.telemetry.collector.SamplingWorker
 import np.nepaltelecom.telemetry.storage.DeviceIdentity
@@ -143,6 +146,25 @@ object NetTelemetry {
             val sample = CellSampleCollector(appContext, DeviceIdentity(appContext)).collect(triggerReason = "manual")
             onResult(sample)
         }
+    }
+
+    /**
+     * Starts continuous drive-test tracking (see DriveTestService): a fix
+     * every 2 seconds while running, shown with a persistent notification.
+     * Does nothing unless the device has opted in. The host app must already
+     * hold location permission, or the service stops itself.
+     */
+    fun startDriveTest(context: Context) {
+        check(::appContext.isInitialized) { "NetTelemetry.init() must be called before startDriveTest()" }
+        if (!isOptedIn()) return
+        ContextCompat.startForegroundService(context, Intent(context, DriveTestService::class.java))
+    }
+
+    /** Ends drive-test tracking started by [startDriveTest]. Safe to call when it isn't running. */
+    fun stopDriveTest(context: Context) {
+        context.startService(
+            Intent(context, DriveTestService::class.java).setAction(DriveTestService.ACTION_STOP),
+        )
     }
 
     /**

@@ -9,6 +9,8 @@
     <string name="drive_test_consent">Drive-Test Consent</string>
     <string name="drive_test_consent_fallback">Include this device\'s network-quality data in a drive-test coverage session?</string>
     <string name="live_parameters">Live Parameters</string>
+    <string name="drive_test_start">Start Drive Test</string>
+    <string name="drive_test_stop">Stop Drive Test</string>
     <string name="live_params_refresh">Refresh Readings</string>
     <string name="live_params_reading">Reading the cell and location now…</string>
     <string name="live_params_none">No reading. Location permission may not be granted, or no cell information is available.</string>

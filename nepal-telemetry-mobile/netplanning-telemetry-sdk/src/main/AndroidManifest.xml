@@ -21,4 +21,17 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Drive-test tracking (2026-10-04): a foreground service that keeps
+         asking for location while a test runs. It shows a notification, and
+         the user can stop it from there. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <application>
+        <service
+            android:name="np.nepaltelecom.telemetry.collector.DriveTestService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+    </application>
+
 </manifest>
