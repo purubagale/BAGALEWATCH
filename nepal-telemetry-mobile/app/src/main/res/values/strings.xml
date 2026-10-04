@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">NetTelemetry Demo</string>
+    <string name="status_placeholder">Status will appear here.</string>
+    <string name="opt_in">Opt In</string>
+    <string name="opt_out">Opt Out</string>
+    <string name="sample_now">Sample Now</string>
+    <string name="refresh_status">Refresh Status</string>
+    <string name="upload_now">Upload Now</string>
+    <string name="drive_test_consent">Drive-Test Consent</string>
+    <string name="drive_test_consent_fallback">Include this device\'s network-quality data in a drive-test coverage session?</string>
+    <string name="live_parameters">Live Parameters</string>
+    <string name="live_params_refresh">Refresh Readings</string>
+    <string name="live_params_reading">Reading the cell and location now…</string>
+    <string name="live_params_none">No reading. Location permission may not be granted, or no cell information is available.</string>
+    <string name="rescue_enroll">Rescue Location Beacon</string>
+    <string name="rescue_enroll_prompt">Registering shares this device\'s last known location with verified rescue operators only, searchable by this phone number during a disaster. You can withdraw at any time.</string>
+</resources>

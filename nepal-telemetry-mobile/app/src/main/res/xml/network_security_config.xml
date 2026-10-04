@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext HTTP is scoped to a short, explicit list of dev-only hosts -
+  enough to reach a locally running bagalewatch-v2 stack, and nothing
+  broader:
+    - 10.0.2.2: the standard Android emulator's host-loopback alias.
+      Genymotion uses 10.0.3.2 instead; add that too if testing there.
+    - 192.168.100.6: the dev PC's real Wi-Fi LAN IP (2026-09-02, added so
+      DemoApplication.kt's same build/install can be used on a real
+      phone on the same Wi-Fi, not just the emulator - see that file's
+      own comment on why this exact address and not one of `ipconfig`'s
+      other listed adapters). This one WILL change if the router
+      reassigns it - update it here (and in DemoApplication.kt) together
+      if uploads stop reaching the backend after a network change.
+
+  This file is a development convenience, not a template for a production
+  build: a real pilot deployment talks to a real HTTPS endpoint and needs
+  no cleartext exception at all. Don't widen this domain list "just in
+  case" - narrow, expiring exceptions are the point.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="false">192.168.100.6</domain>
+    </domain-config>
+</network-security-config>
