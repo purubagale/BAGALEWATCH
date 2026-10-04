@@ -9,6 +9,10 @@
       if this ever needs to be verified directly.
     -->
 
+    <!-- Wi-Fi scan for the phone-only Wi-Fi tab (2026-10-04). Results stay on the phone. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
     <application
         android:name=".DemoApplication"
         android:allowBackup="true"

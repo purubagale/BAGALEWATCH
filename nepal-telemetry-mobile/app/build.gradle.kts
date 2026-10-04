@@ -40,4 +40,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
+    // Map tab (2026-10-04): OpenStreetMap tiles, no API key needed.
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
 }

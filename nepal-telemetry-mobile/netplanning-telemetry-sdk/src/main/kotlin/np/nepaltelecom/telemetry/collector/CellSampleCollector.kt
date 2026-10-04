@@ -21,6 +21,7 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.suspendCancellableCoroutine
+import np.nepaltelecom.telemetry.model.CellReading
 import np.nepaltelecom.telemetry.model.Sample
 import np.nepaltelecom.telemetry.storage.DeviceIdentity
 import kotlin.coroutines.resume
@@ -67,7 +68,11 @@ internal class CellSampleCollector(
      * tracking uses this so each fix doesn't wait for a fresh location request.
      */
     @SuppressLint("MissingPermission") // guarded by hasLocationPermission() below
-    fun sampleFrom(location: android.location.Location?, triggerReason: String): Sample? {
+    fun sampleFrom(
+        location: android.location.Location?,
+        triggerReason: String,
+        driveSessionId: String? = null,
+    ): Sample? {
         if (!identity.optedIn) return null
         if (!hasLocationPermission()) return null
 
@@ -97,6 +102,7 @@ internal class CellSampleCollector(
             bsic = cell?.bsic,
             batteryPct = readBatteryPct(),
             triggerReason = triggerReason,
+            driveSessionId = driveSessionId,
         )
     }
 
@@ -272,6 +278,95 @@ internal class CellSampleCollector(
             rscpDbm = null,
             ecioDb = null,
         )
+    }
+
+    /**
+     * Every cell the modem reports right now: the serving cell plus neighbours.
+     * Empty when location permission is missing. Local read only; the caller
+     * decides what, if anything, to do with the result.
+     */
+    @SuppressLint("MissingPermission") // guarded by hasLocationPermission() below
+    fun readAllCells(): List<CellReading> {
+        if (!hasLocationPermission()) return emptyList()
+        val infos = telephonyManager.allCellInfo ?: return emptyList()
+        return infos.mapNotNull { cellReadingFrom(it) }
+    }
+
+    private fun cellReadingFrom(info: CellInfo): CellReading? = when (info) {
+        is CellInfoLte -> {
+            val id = info.cellIdentity
+            val sig = info.cellSignalStrength
+            CellReading(
+                networkType = "LTE",
+                isServing = info.isRegistered,
+                mcc = id.mccCompat(),
+                mnc = id.mncCompat(),
+                cellId = id.ci.cellIdToLongOrNull(),
+                pci = id.pci.toIntOrNull(),
+                tac = id.tac.toIntOrNull(),
+                earfcn = id.earfcn.toIntOrNull(),
+                scramblingCode = null,
+                bcch = null,
+                bsic = null,
+                rsrpDbm = sig.rsrp.toIntOrNull(),
+                rsrqDb = sig.rsrq.toIntOrNull(),
+                sinrDb = sig.rssnr.toIntOrNull(),
+                rssiDbm = sig.dbm.toIntOrNull(),
+                rscpDbm = null,
+                ecioDb = null,
+            )
+        }
+        is CellInfoWcdma -> {
+            val id = info.cellIdentity
+            val sig = info.cellSignalStrength
+            CellReading(
+                networkType = "UMTS",
+                isServing = info.isRegistered,
+                mcc = id.mccCompat(),
+                mnc = id.mncCompat(),
+                cellId = id.cid.cellIdToLongOrNull(),
+                pci = null,
+                tac = id.lac.toIntOrNull(),
+                earfcn = id.uarfcn.toIntOrNull(),
+                scramblingCode = id.psc.toIntOrNull(),
+                bcch = null,
+                bsic = null,
+                rsrpDbm = null,
+                rsrqDb = null,
+                sinrDb = null,
+                rssiDbm = sig.dbm.toIntOrNull(),
+                rscpDbm = sig.dbm.toIntOrNull(),
+                ecioDb = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    sig.ecNo.toIntOrNull()
+                } else {
+                    null
+                },
+            )
+        }
+        is CellInfoGsm -> {
+            val id = info.cellIdentity
+            val sig = info.cellSignalStrength
+            CellReading(
+                networkType = "GSM",
+                isServing = info.isRegistered,
+                mcc = id.mccCompat(),
+                mnc = id.mncCompat(),
+                cellId = id.cid.cellIdToLongOrNull(),
+                pci = null,
+                tac = id.lac.toIntOrNull(),
+                earfcn = null,
+                scramblingCode = null,
+                bcch = id.arfcn.toIntOrNull(),
+                bsic = id.bsic.toIntOrNull(),
+                rsrpDbm = null,
+                rsrqDb = null,
+                sinrDb = null,
+                rssiDbm = sig.dbm.toIntOrNull(),
+                rscpDbm = null,
+                ecioDb = null,
+            )
+        }
+        else -> null // NR and anything else: not shown in this version
     }
 
     private fun readBatteryPct(): Int? {

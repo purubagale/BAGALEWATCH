@@ -50,7 +50,10 @@ data class Sample(
     val bcch: Int? = null,
     val bsic: Int? = null,
     val batteryPct: Int?,
-    val triggerReason: String,      // "periodic" | "handover" | "manual"
+    val triggerReason: String,      // "periodic" | "handover" | "manual" | "drive" | "drive_start" | "drive_stop"
+    // Set on fixes and markers taken during a drive test (2026-10-04). One UUID
+    // per drive, so the server can match a drive's samples exactly.
+    val driveSessionId: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("device_id", deviceId)
@@ -76,6 +79,7 @@ data class Sample(
         putOpt("bsic", bsic)
         putOpt("battery_pct", batteryPct)
         put("trigger_reason", triggerReason)
+        putOpt("drive_session_id", driveSessionId)
     }
 
     companion object {
@@ -103,6 +107,7 @@ data class Sample(
             bsic = o.optIntOrNull("bsic"),
             batteryPct = o.optIntOrNull("battery_pct"),
             triggerReason = o.optString("trigger_reason", "periodic"),
+            driveSessionId = o.optString("drive_session_id", "").takeIf { it.isNotEmpty() },
         )
     }
 }

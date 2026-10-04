@@ -24,12 +24,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import np.nepaltelecom.telemetry.storage.DeviceIdentity
 import np.nepaltelecom.telemetry.storage.SampleQueue
+import java.util.UUID
 
 /**
  * Drive-test tracking (2026-10-04). While this service runs it asks for a
  * location fix every [FIX_INTERVAL_MS], so the route is continuous rather than
  * a scatter of one-off samples. Each fix at or under [MAX_TRACK_ACCURACY_M]
- * becomes a Sample in the normal upload queue.
+ * becomes a Sample in the upload queue, tagged with this drive's id.
+ *
+ * Each drive also has:
+ *  - a start and a stop marker, uploaded like samples, so the server can tell
+ *    exactly which fixes belong to this drive;
+ *  - a copy kept on the phone (see DriveHistoryStore) for review without a
+ *    network connection.
  *
  * It runs as a foreground service with a persistent notification and a Stop
  * action. It only runs when started through NetTelemetry.startDriveTest(),
@@ -39,6 +46,9 @@ class DriveTestService : Service() {
 
     private var fused: FusedLocationProviderClient? = null
     private var callback: LocationCallback? = null
+    private var sessionId: String? = null
+    private lateinit var history: DriveHistoryStore
+    private val unsaved = ArrayList<RouteTrail.Point>()
     private val scope = CoroutineScope(Dispatchers.Default)
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -53,7 +63,7 @@ class DriveTestService : Service() {
     }
 
     override fun onDestroy() {
-        stopLocationUpdates()
+        stopTracking()
         super.onDestroy()
     }
 
@@ -68,6 +78,14 @@ class DriveTestService : Service() {
             buildNotification(),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
         )
+
+        val id = UUID.randomUUID().toString()
+        sessionId = id
+        history = DriveHistoryStore(this)
+        RouteTrail.clear()
+        unsaved.clear()
+        history.begin(id, System.currentTimeMillis())
+        sendMarker("drive_start", id)
 
         val client = LocationServices.getFusedLocationProviderClient(this)
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, FIX_INTERVAL_MS).build()
@@ -88,10 +106,33 @@ class DriveTestService : Service() {
 
     private fun onFix(location: Location) {
         if (!location.hasAccuracy() || location.accuracy > MAX_TRACK_ACCURACY_M) return
+        val id = sessionId ?: return
+        val point = RouteTrail.Point(location.latitude, location.longitude, location.accuracy, location.time)
+        RouteTrail.add(point)
+        unsaved.add(point)
+        if (unsaved.size >= SAVE_EVERY) flushPoints(id)
+
         scope.launch {
             // Cell state is read on a background thread, off the location callback.
             val sample = CellSampleCollector(this@DriveTestService, DeviceIdentity(this@DriveTestService))
-                .sampleFrom(location, triggerReason = TRIGGER_REASON)
+                .sampleFrom(location, triggerReason = TRIGGER_REASON, driveSessionId = id)
+            sample?.let { SampleQueue(this@DriveTestService).append(it) }
+        }
+    }
+
+    /** Saves fixes not yet written to the phone's history for this drive. */
+    private fun flushPoints(id: String) {
+        if (unsaved.isEmpty()) return
+        val batch = unsaved.toList()
+        unsaved.clear()
+        scope.launch { history.addPoints(id, batch) }
+    }
+
+    /** A start or stop marker: a location-less sample that tells the server a drive began or ended. */
+    private fun sendMarker(trigger: String, id: String) {
+        scope.launch {
+            val sample = CellSampleCollector(this@DriveTestService, DeviceIdentity(this@DriveTestService))
+                .sampleFrom(null, triggerReason = trigger, driveSessionId = id)
             sample?.let { SampleQueue(this@DriveTestService).append(it) }
         }
     }
@@ -104,6 +145,13 @@ class DriveTestService : Service() {
 
     private fun stopTracking() {
         stopLocationUpdates()
+        val id = sessionId
+        if (id != null) {
+            sessionId = null
+            flushPoints(id)
+            scope.launch { history.end(id, System.currentTimeMillis()) }
+            sendMarker("drive_stop", id)
+        }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -141,9 +189,9 @@ class DriveTestService : Service() {
         private const val NOTIFICATION_ID = 4201
         private const val FIX_INTERVAL_MS = 2_000L
         private const val MAX_TRACK_ACCURACY_M = 30f
+        private const val SAVE_EVERY = 10
 
-        // Tracked fixes are stored as "manual" samples. The server only accepts
-        // periodic, handover, or manual for now.
-        private const val TRIGGER_REASON = "manual"
+        /** Tracked fixes are uploaded as "drive" samples, so the server can tell them from other kinds. */
+        private const val TRIGGER_REASON = "drive"
     }
 }

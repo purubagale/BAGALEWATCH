@@ -18,7 +18,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import np.nepaltelecom.telemetry.collector.CellSampleCollector
+import np.nepaltelecom.telemetry.collector.DriveHistoryStore
 import np.nepaltelecom.telemetry.collector.DriveTestService
+import np.nepaltelecom.telemetry.collector.RouteTrail
+import np.nepaltelecom.telemetry.model.CellReading
+import np.nepaltelecom.telemetry.model.DriveSession
 import np.nepaltelecom.telemetry.collector.HandoverListener
 import np.nepaltelecom.telemetry.collector.SamplingWorker
 import np.nepaltelecom.telemetry.storage.DeviceIdentity
@@ -146,6 +150,55 @@ object NetTelemetry {
             val sample = CellSampleCollector(appContext, DeviceIdentity(appContext)).collect(triggerReason = "manual")
             onResult(sample)
         }
+    }
+
+    /**
+     * Reads the current cell and signal state with no location fix, so a
+     * screen can refresh every few seconds without waiting on GPS. Passes null
+     * when the device hasn't opted in or location permission is missing.
+     * Nothing is queued or uploaded.
+     */
+    fun readLiveCell(onResult: (Sample?) -> Unit) {
+        check(::appContext.isInitialized) { "NetTelemetry.init() must be called before readLiveCell()" }
+        scope.launch {
+            onResult(CellSampleCollector(appContext, DeviceIdentity(appContext)).sampleFrom(null, "manual"))
+        }
+    }
+
+    /**
+     * Reads every cell the modem reports right now, serving cell and
+     * neighbours alike. Passes an empty list when location permission is
+     * missing. Local read only, with nothing queued or uploaded.
+     */
+    fun readCellsNow(onResult: (List<CellReading>) -> Unit) {
+        check(::appContext.isInitialized) { "NetTelemetry.init() must be called before readCellsNow()" }
+        scope.launch {
+            onResult(CellSampleCollector(appContext, DeviceIdentity(appContext)).readAllCells())
+        }
+    }
+
+    /** Fixes accepted by the current drive test, in order. Lives in memory only. */
+    fun routeTrail(): List<RouteTrail.Point> = RouteTrail.points()
+
+    /** Clears the on-phone route trail. Does not touch anything already queued for upload. */
+    fun clearRouteTrail() = RouteTrail.clear()
+
+    /** Past drive tests kept on this phone, newest first. Local only. */
+    fun driveSessions(): List<DriveSession> {
+        check(::appContext.isInitialized) { "NetTelemetry.init() must be called before driveSessions()" }
+        return DriveHistoryStore(appContext).list()
+    }
+
+    /** The fixes saved for one past drive, in order. Local only. */
+    fun driveSessionPoints(sessionId: String): List<RouteTrail.Point> {
+        check(::appContext.isInitialized) { "NetTelemetry.init() must be called before driveSessionPoints()" }
+        return DriveHistoryStore(appContext).points(sessionId)
+    }
+
+    /** Deletes one past drive from this phone. Anything already uploaded stays on the server. */
+    fun deleteDriveSession(sessionId: String) {
+        check(::appContext.isInitialized) { "NetTelemetry.init() must be called before deleteDriveSession()" }
+        DriveHistoryStore(appContext).delete(sessionId)
     }
 
     /**
