@@ -1553,7 +1553,10 @@ export function useTelemetryDtSessionSamples(id: number | null) {
     (since) => {
       const qs = new URLSearchParams()
       if (since) qs.set('since', since)
-      const suffix = qs.toString() ? `?${qs}` : ''
+      // Route smoothing (2026-10-04): 5-fix moving average per device, for the
+      // route line. Raw lat/lng are still returned alongside it.
+      qs.set('smooth', '5')
+      const suffix = `?${qs}`
       return apiJson<TelemetryDriveTestSessionSamplesResponse>(`/api/v2/telemetry/dt-sessions/${id}/samples/${suffix}`)
     },
     id != null,

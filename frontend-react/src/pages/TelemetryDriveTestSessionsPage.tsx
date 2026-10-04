@@ -91,6 +91,34 @@ function formatSignal(s: TelemetryLiveSample): string {
   return '-'
 }
 
+// Route line (2026-10-04): one polyline per device through its fixes in time
+// order. Uses the server's smoothed coordinates where present, so the line
+// reads as a route rather than scattered dots. Points still show on top.
+function RouteLines({ samples }: { samples: TelemetryLiveSample[] }) {
+  const map = useMap()
+  useEffect(() => {
+    const layer = L.layerGroup().addTo(map)
+    const byDevice = new Map<string, TelemetryLiveSample[]>()
+    for (const s of samples) {
+      if (s.lat == null || s.lng == null) continue
+      const list = byDevice.get(s.device_id) ?? []
+      list.push(s)
+      byDevice.set(s.device_id, list)
+    }
+    for (const list of byDevice.values()) {
+      list.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
+      const pts = list.map((s) => [s.lat_smooth ?? s.lat!, s.lng_smooth ?? s.lng!] as [number, number])
+      if (pts.length > 1) {
+        L.polyline(pts, { color: '#2563eb', weight: 3, opacity: 0.7 }).addTo(layer)
+      }
+    }
+    return () => {
+      map.removeLayer(layer)
+    }
+  }, [map, samples])
+  return null
+}
+
 function SamplePoints({ samples }: { samples: TelemetryLiveSample[] }) {
   const map = useMap()
   useEffect(() => {
@@ -411,6 +439,7 @@ export default function TelemetryDriveTestSessionsPage() {
               <InvalidateOnResize />
               <FitToSamples samples={samples} fitKey={mapKey} />
               <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+              <RouteLines samples={samples} />
               <SamplePoints samples={samples} />
             </MapContainer>
           )}

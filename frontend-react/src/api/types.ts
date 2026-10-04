@@ -1891,6 +1891,12 @@ export interface TelemetryLiveSample {
   // 0-15, higher is better. An estimate, not a measured value (see backend
   // telemetry.py's cqi_from_sinr). Null for non-LTE samples.
   cqi_derived?: number | null
+  // GPS accuracy of this fix in metres (2026-10-04). Route endpoint only.
+  gps_accuracy_m?: number | null
+  // Moving-average coordinates for route lines (2026-10-04). Route endpoint
+  // only, present when ?smooth= is requested.
+  lat_smooth?: number | null
+  lng_smooth?: number | null
   trigger_reason: string
 }
 

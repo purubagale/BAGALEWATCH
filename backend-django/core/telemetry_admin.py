@@ -22,7 +22,7 @@ from datetime import timedelta
 
 from django.contrib.gis.geos import Point
 from django.contrib.gis.measure import D
-from django.db.models import Count, Max, Sum
+from django.db.models import Count, Max, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -684,6 +684,30 @@ class TelemetryDriveTestSessionEndView(APIView):
         return Response(data)
 
 
+# Route plots drop fixes whose GPS accuracy is worse than this (metres).
+# A 50 m circle is too loose to place a point on a road reliably. Raw
+# samples are never deleted; this only affects what the route endpoint
+# returns. Fixes with no accuracy reported are kept.
+ROUTE_MAX_ACCURACY_M = 50.0
+_MAX_SMOOTH_WINDOW = 9
+
+
+def _smooth_route(rows, window):
+    """Adds `lat_smooth` / `lng_smooth` to each route row: a moving average
+    over `window` neighbouring fixes of the same device, in time order. The
+    raw `lat`/`lng` are left untouched. Display only -- nothing stored."""
+    by_device = {}
+    for r in rows:
+        by_device.setdefault(r['device_id'], []).append(r)
+    half = window // 2
+    for group in by_device.values():
+        group.sort(key=lambda r: r['ts'])
+        for i, r in enumerate(group):
+            seg = group[max(0, i - half):min(len(group), i + half + 1)]
+            r['lat_smooth'] = round(sum(p['lat'] for p in seg) / len(seg), 7)
+            r['lng_smooth'] = round(sum(p['lng'] for p in seg) / len(seg), 7)
+
+
 class TelemetryDriveTestSessionSamplesView(APIView):
     """`GET /api/v2/telemetry/dt-sessions/<id>/samples/` — raw samples
     from this session's enrolled devices only, from `started_at` to
@@ -730,6 +754,14 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 lat__gte=session.area_min_lat, lat__lte=session.area_max_lat,
                 lng__gte=session.area_min_lng, lng__lte=session.area_max_lng,
             )
+
+        # GPS accuracy gate for route plots (see ROUTE_MAX_ACCURACY_M).
+        qs = qs.filter(Q(gps_accuracy_m__lte=ROUTE_MAX_ACCURACY_M) | Q(gps_accuracy_m__isnull=True))
+        try:
+            smooth = int(request.query_params.get('smooth', 0))
+        except (TypeError, ValueError):
+            smooth = 0
+        smooth = max(0, min(_MAX_SMOOTH_WINDOW, smooth))
 
         consent_summary = None
         if session.require_consent:
@@ -795,9 +827,15 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 'rscp_dbm': s.rscp_dbm,
                 'ecio_db': s.ecio_db,
                 'trigger_reason': s.trigger_reason,
+                # GPS accuracy of this fix, in metres (see ROUTE_MAX_ACCURACY_M).
+                'gps_accuracy_m': s.gps_accuracy_m,
             }
             for s in qs[:limit]
         ]
+        # Optional route smoothing (`?smooth=N`, N = fixes in the window).
+        # Adds lat_smooth/lng_smooth; the raw lat/lng stay as they were.
+        if smooth > 1:
+            _smooth_route(rows, smooth)
         return Response({
             'session': TelemetryDriveTestSessionSerializer(session).data,
             'samples': rows,
