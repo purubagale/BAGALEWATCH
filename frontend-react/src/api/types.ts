@@ -1887,9 +1887,10 @@ export interface TelemetryLiveSample {
   rx_qual: number | null
   rscp_dbm: number | null
   ecio_db: number | null
-  // cqi (2026-09-15) -- LTE/NR-only Channel Quality Indicator, 0-15,
-  // higher is better (see backend TelemetrySample.cqi).
-  cqi?: number | null
+  // cqi_derived (2026-10-04) -- LTE CQI estimated from this sample's SINR,
+  // 0-15, higher is better. An estimate, not a measured value (see backend
+  // telemetry.py's cqi_from_sinr). Null for non-LTE samples.
+  cqi_derived?: number | null
   trigger_reason: string
 }
 
@@ -2194,4 +2195,31 @@ export interface BlockedIpEntry {
   is_active: boolean
   unblocked_at: string | null
   unblocked_by_username: string | null
+}
+
+// Device-bound, consent-gated tracing (2026-10-04) -- mirrors the operator
+// payload from core/device_trace.py's _operator_view(). The device-facing
+// shape never carries msisdn or case_reference, so it has no type here.
+export type TraceRequestStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CANCELLED' | 'REVOKED'
+export type TraceConsentMethod = '' | 'APP' | 'PHONE_CALL' | 'POLICY_BYPASS'
+
+export interface TraceRequestEntry {
+  id: string
+  msisdn: string
+  case_reference: string
+  status: TraceRequestStatus
+  consent_method: TraceConsentMethod
+  consent_at: string | null
+  consent_recorded_by: string | null
+  phone_consent_ref: string
+  policy_mode: string
+  ttl_minutes: number
+  expires_at: string | null
+  created_at: string
+  ended_at: string | null
+  requested_by: string | null
+}
+
+export interface TraceRequestCreateResponse extends TraceRequestEntry {
+  push_sent: boolean
 }

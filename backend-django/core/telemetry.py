@@ -22,6 +22,7 @@ surface (explicit decision) — see TelemetryIngestKey in models.py.
 import hashlib
 import io
 import json
+import logging
 import secrets
 from datetime import datetime, timezone as dt_timezone
 
@@ -35,6 +36,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import TelemetryBatch, TelemetryIngestKey, _point_or_none
+
+logger = logging.getLogger(__name__)
 
 # The SDK batches at 200 (UploadWorker.BATCH_SIZE); accept a generous
 # multiple so a client that batches differently still works, but cap it so
@@ -60,6 +63,38 @@ def _key_from_request(request):
     if auth.lower().startswith('bearer '):
         return auth[7:].strip()
     return request.META.get('HTTP_X_API_KEY') or None
+
+
+def legacy_shared_key_accepted():
+    """Whether the shared `tel_` APK key is still honored on ingest. The key
+    ships inside every installed APK, so it is a bearer credential anyone can
+    extract; device-signed calls (core/device_auth.py) replace it. Left
+    accepted (None) until TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL is set, so
+    installed app builds keep uploading until they are retired."""
+    until = getattr(settings, 'TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL', None)
+    return until is None or timezone.now() <= until
+
+
+def resolve_ingest_caller(request):
+    """Returns (device, key, error_detail) for an ingest request. A signed
+    device call is preferred. The shared key is only accepted while
+    legacy_shared_key_accepted() holds. Exactly one of device/key is set on
+    success."""
+    if request.META.get('HTTP_X_SIGNATURE'):
+        # Imported here: core/device_auth.py imports hash_device_id from this module.
+        from rest_framework.exceptions import AuthenticationFailed
+        from .device_auth import DeviceSignatureAuthentication
+        try:
+            device, _ = DeviceSignatureAuthentication().authenticate(request)
+        except AuthenticationFailed as e:
+            return None, None, str(e.detail)
+        return device, None, None
+    if not legacy_shared_key_accepted():
+        return None, None, 'shared telemetry key retired; update the app'
+    key = _resolve_key(_key_from_request(request))
+    if key is None:
+        return None, None, 'invalid or missing telemetry ingest key'
+    return None, key, None
 
 
 def _resolve_key(raw):
@@ -243,13 +278,88 @@ def coerce_sample(raw, received_at):
         'rx_qual': _i16(raw.get('rx_qual')),
         'rscp_dbm': _i16(raw.get('rscp_dbm')),
         'ecio_db': _i16(raw.get('ecio_db')),
-        # cqi (2026-09-15) -- LTE/NR-only Channel Quality Indicator, 0-15,
-        # higher is better. See models.py's TelemetrySample.cqi comment.
+        # cqi (2026-09-15) -- device-reported CQI. The SDK no longer sends it
+        # (the modem value isn't a direct reading on every device), so this
+        # is normally null. See cqi_derived below for the value the UI shows.
         'cqi': _i16(raw.get('cqi')),
+        # cqi_derived (2026-10-04) -- LTE CQI estimated from the sample's own
+        # SINR, using the same threshold table as the drive-test path
+        # (frontend lib/cqiFromSinr.ts). An estimate, not a direct reading.
+        'cqi_derived': cqi_from_sinr(_i16(raw.get('sinr_db'))) if nt == 'LTE' else None,
+        # Serving-cell identities for 3G/2G (2026-10-04). PCI for LTE is
+        # `pci` above. See models.py's TelemetrySample for the full note.
+        'scrambling_code': _i16(raw.get('scrambling_code')),
+        'bcch': _i16(raw.get('bcch')),
+        'bsic': _i16(raw.get('bsic')),
         'battery_pct': _i16(raw.get('battery_pct')),
         'trigger_reason': tr if tr in _TRIGGERS else 'periodic',
         'region': '',
+        # Filled by attach_telemetry_serving_cells() before the COPY insert.
+        'serving_site_id': '',
+        'serving_cell_name': '',
+        'serving_sector': '',
+        'serving_local_cell_id': None,
+        'serving_dist_km': None,
     }
+
+
+# Distance cap for telemetry serving-cell matching (2026-10-04). Tighter
+# than the drive-test path's 15 km: a handset's own serving cell is
+# normally within a few km, and a looser cap would attribute a sample to a
+# same-id sector far away.
+TELEMETRY_MATCH_MAX_KM = 5.0
+
+# LTE CQI from SINR (dB): the lowest SINR at which each CQI index is usable.
+# Brueninghaus et al., PIMRC 2005, the table ns-3's LTE module uses. Same
+# values as frontend-react/src/lib/cqiFromSinr.ts -- keep the two in step.
+# An approximation of what a UE reports, not a direct measurement.
+_CQI_SINR_THRESHOLDS_DB = [
+    (1, -6.7), (2, -4.7), (3, -2.3), (4, 0.2), (5, 2.4), (6, 4.3),
+    (7, 5.9), (8, 8.1), (9, 10.3), (10, 11.7), (11, 14.1), (12, 16.3),
+    (13, 18.7), (14, 21.0), (15, 22.7),
+]
+
+
+def cqi_from_sinr(sinr_db):
+    """CQI index (0-15) for a SINR in dB, or None when SINR is unknown.
+    Below the lowest threshold the result is 0, matching 3GPP's own
+    out-of-range convention."""
+    if sinr_db is None:
+        return None
+    cqi = 0
+    for index, min_sinr in _CQI_SINR_THRESHOLDS_DB:
+        if sinr_db >= min_sinr:
+            cqi = index
+        else:
+            break
+    return cqi
+
+
+# Network type -> the physical-layer id family dt_serving_cell.py matches on.
+_TECH_FOR_NETWORK = {'LTE': '4G', 'UMTS': '3G', 'GSM': '2G'}
+
+
+def attach_telemetry_serving_cells(rows):
+    """Stamps serving-cell attribution and `region` (the matched site's
+    province) onto a coerced batch, grouped by technology. Older app builds
+    (before the scrambling_code field) put a UMTS scrambling code in `pci`,
+    so a 3G row with no scrambling_code falls back to its `pci` for
+    matching. Never raises: a matching failure leaves the batch stored
+    unattributed rather than rejecting the upload."""
+    from .dt_serving_cell import attach_serving_cells_per_sample
+    by_tech = {}
+    for r in rows:
+        tech = _TECH_FOR_NETWORK.get(r['network_type'])
+        if tech is None:
+            continue
+        if tech == '3G' and r.get('scrambling_code') is None and r.get('pci') is not None:
+            r['scrambling_code'] = r['pci']
+        by_tech.setdefault(tech, []).append(r)
+    for tech, group in by_tech.items():
+        try:
+            attach_serving_cells_per_sample(group, tech, max_km=TELEMETRY_MATCH_MAX_KM, region_key='region')
+        except Exception:
+            logger.exception('serving-cell attribution failed for %s batch; storing unattributed', tech)
 
 
 # ── COPY bulk insert (same pattern as _bulk_insert_dt_samples) ─────────
@@ -258,7 +368,9 @@ _COPY_COLS = (
     'device_id', 'ts', 'received_at', 'lat', 'lng', 'location', 'gps_accuracy_m',
     'cell_id', 'pci', 'tac', 'mcc', 'mnc', 'network_type',
     'rsrp_dbm', 'rsrq_db', 'rssi_dbm', 'sinr_db', 'rx_qual', 'rscp_dbm', 'ecio_db',
-    'battery_pct', 'trigger_reason', 'region', 'cqi',
+    'battery_pct', 'trigger_reason', 'region', 'cqi', 'cqi_derived',
+    'scrambling_code', 'bcch', 'bsic',
+    'serving_site_id', 'serving_cell_name', 'serving_sector', 'serving_local_cell_id', 'serving_dist_km',
 )
 _COPY_SQL = 'COPY v2_telemetry_samples (' + ', '.join(_COPY_COLS) + ') FROM STDIN WITH (FORMAT text)'
 
@@ -355,7 +467,11 @@ def bulk_insert_samples(rows):
             _cf(r['rsrp_dbm']), _cf(r['rsrq_db']), _cf(r['rssi_dbm']), _cf(r['sinr_db']),
             _cf(r['rx_qual']), _cf(r['rscp_dbm']), _cf(r['ecio_db']),
             _cf(r['battery_pct']), _cf(r['trigger_reason']), _cf(r['region']),
-            _cf(r['cqi']),
+            _cf(r['cqi']), _cf(r['cqi_derived']),
+            _cf(r['scrambling_code']), _cf(r['bcch']), _cf(r['bsic']),
+            _cf(r.get('serving_site_id') or ''), _cf(r.get('serving_cell_name') or ''),
+            _cf(r.get('serving_sector') or ''), _cf(r.get('serving_local_cell_id')),
+            _cf(r.get('serving_dist_km')),
         )) + '\n')
     buf.seek(0)
     with connection.cursor() as cur:
@@ -409,19 +525,21 @@ class TelemetryIngestView(APIView):
     permission_classes = [AllowAny]  # this endpoint does its own key check
 
     def post(self, request):
-        key = _resolve_key(_key_from_request(request))
-        if key is None:
-            return Response({'detail': 'invalid or missing telemetry ingest key'},
-                            status=status.HTTP_401_UNAUTHORIZED)
+        device, key, err = resolve_ingest_caller(request)
+        if err:
+            return Response({'detail': err}, status=status.HTTP_401_UNAUTHORIZED)
 
-        # Rate limit: batches/min per key, in the shared cache.
-        bucket = f'tel:rl:{key.key_prefix}:{int(timezone.now().timestamp() // 60)}'
+        # Rate limit: batches/min per key (or per device, for signed calls),
+        # in the shared cache.
+        scope = key.key_prefix if key else device.device_hash[:12]
+        limit = key.rate_limit_per_min if key else settings.TELEMETRY_DEVICE_RATE_PER_MIN
+        bucket = f'tel:rl:{scope}:{int(timezone.now().timestamp() // 60)}'
         try:
             n = cache.incr(bucket)
         except ValueError:
             cache.set(bucket, 1, timeout=120)
             n = 1
-        if n > key.rate_limit_per_min:
+        if n > limit:
             return Response({'detail': 'rate limit exceeded'},
                             status=status.HTTP_429_TOO_MANY_REQUESTS)
 
@@ -450,10 +568,18 @@ class TelemetryIngestView(APIView):
         except serializers.ValidationError as e:
             return Response({'detail': e.detail}, status=status.HTTP_400_BAD_REQUEST)
 
+        # A signed device may only write rows for itself: the body's own
+        # device_id is ignored, so one device cannot post for another.
+        if device:
+            for r in rows:
+                r['device_id'] = device.device_hash
+
+        attach_telemetry_serving_cells(rows)
+
         _batch, created = TelemetryBatch.objects.get_or_create(
             batch_hash=digest,
             defaults={
-                'key_prefix': key.key_prefix,
+                'key_prefix': key.key_prefix if key else 'device',
                 'device_count': len({r['device_id'] for r in rows}),
                 'sample_count': len(rows),
             },
@@ -464,7 +590,8 @@ class TelemetryIngestView(APIView):
         bulk_insert_samples(rows)
         _upsert_rescue_locations(rows)
 
-        TelemetryIngestKey.objects.filter(pk=key.pk).update(last_used_at=now)
+        if key:
+            TelemetryIngestKey.objects.filter(pk=key.pk).update(last_used_at=now)
         opt_out = _check_and_fulfill_remote_optout({r['device_id'] for r in rows})
         return Response({'accepted': len(rows), 'opt_out': opt_out}, status=status.HTTP_202_ACCEPTED)
 

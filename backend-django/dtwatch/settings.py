@@ -653,3 +653,34 @@ DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@dtwatch.local
 # a more appropriate window for this system than Django's generic default.
 PASSWORD_RESET_TIMEOUT = 3600
 
+
+
+# ── Device-bound, consent-gated tracing (2026-10-04) ───────────────────
+# core/device_trace.py, core/fcm.py, core/play_integrity.py. All three
+# external pieces degrade safely when unset: no FCM credential means the
+# push is skipped and the device learns of requests by polling; Play
+# Integrity fails CLOSED in production (registration refused) unless
+# explicitly turned off for development.
+
+# Path to a Firebase service-account JSON file, or the JSON itself.
+FCM_SERVICE_ACCOUNT_JSON = os.environ.get('FCM_SERVICE_ACCOUNT_JSON', '')
+
+# Android package name the Play Integrity verdict must be issued for.
+PLAY_INTEGRITY_PACKAGE_NAME = os.environ.get('PLAY_INTEGRITY_PACKAGE_NAME', '')
+PLAY_INTEGRITY_REQUIRED = os.environ.get('PLAY_INTEGRITY_REQUIRED', 'true').lower() in ('1', 'true', 'yes')
+
+# Trace duration: default and cap, in minutes.
+TRACE_DEFAULT_TTL_MINUTES = int(os.environ.get('TRACE_DEFAULT_TTL_MINUTES', '60'))
+TRACE_MAX_TTL_MINUTES = int(os.environ.get('TRACE_MAX_TTL_MINUTES', '1440'))
+
+# Shared `tel_` APK key cutoff (2026-10-04). Unset = still accepted, so
+# installed builds keep uploading until they are retired. Set to an ISO
+# datetime (e.g. 2027-01-31T00:00:00+05:45) to refuse the shared key after
+# it. Device-signed calls are unaffected either way. See
+# core/telemetry.py's legacy_shared_key_accepted().
+from django.utils.dateparse import parse_datetime as _parse_datetime  # noqa: E402
+
+TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL = _parse_datetime(os.environ.get('TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL', '') or '') or None
+# Per-device batches/min for signed calls. Shared-key calls keep their
+# per-key limit (TelemetryIngestKey.rate_limit_per_min).
+TELEMETRY_DEVICE_RATE_PER_MIN = int(os.environ.get('TELEMETRY_DEVICE_RATE_PER_MIN', '60'))

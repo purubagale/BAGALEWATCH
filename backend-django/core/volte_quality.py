@@ -95,7 +95,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import VolteCallSample
-from .telemetry import MAX_SAMPLES_PER_REQUEST, _f, _int, _key_from_request, _resolve_key, _scope_by_operator, hash_device_id
+from .telemetry import MAX_SAMPLES_PER_REQUEST, _f, _int, _scope_by_operator, hash_device_id, resolve_ingest_caller
 from .views import IsSuperadminOnly
 
 _NET_TYPES = {'LTE', 'NR', 'UNKNOWN'}
@@ -298,10 +298,9 @@ class VolteSampleIngestView(APIView):
     permission_classes = [AllowAny]  # this endpoint does its own key check
 
     def post(self, request):
-        key = _resolve_key(_key_from_request(request))
-        if key is None:
-            return Response({'detail': 'invalid or missing telemetry ingest key'},
-                            status=status.HTTP_401_UNAUTHORIZED)
+        device, _key, err = resolve_ingest_caller(request)
+        if err:
+            return Response({'detail': err}, status=status.HTTP_401_UNAUTHORIZED)
 
         payload = request.data
         if not isinstance(payload, list):
@@ -318,6 +317,11 @@ class VolteSampleIngestView(APIView):
             rows = [_coerce_volte_sample(s, now) for s in payload]
         except serializers.ValidationError as e:
             return Response({'detail': e.detail}, status=status.HTTP_400_BAD_REQUEST)
+
+        # A signed device may only write rows for itself (see TelemetryIngestView).
+        if device:
+            for r in rows:
+                r['device_id'] = device.device_hash
 
         # Plain per-row .save() (not bulk_create()) -- deliberately, so the
         # model's own save() override computes `location` from lat/lng for

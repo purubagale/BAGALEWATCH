@@ -457,9 +457,9 @@ class TelemetryLiveSamplesView(APIView):
                 'rsrp_dbm': s.rsrp_dbm,
                 'rsrq_db': s.rsrq_db,
                 'sinr_db': s.sinr_db,
-                # cqi (2026-09-15) -- LTE/NR-only Channel Quality Indicator,
-                # 0-15, higher is better (see models.py's TelemetrySample.cqi).
-                'cqi': s.cqi,
+                # cqi_derived (2026-10-04) -- LTE CQI estimated from this
+                # sample's SINR (see models.py's TelemetrySample.cqi_derived).
+                'cqi_derived': s.cqi_derived,
                 # rssi_dbm (2026-09-03) -- GSM/UMTS (2G/3G) samples only
                 # ever populate this, never rsrp_dbm/rsrq_db/sinr_db (LTE/
                 # NR-only fields, see CellSampleCollector.kt's
@@ -473,6 +473,17 @@ class TelemetryLiveSamplesView(APIView):
                 'rscp_dbm': s.rscp_dbm,
                 'ecio_db': s.ecio_db,
                 'trigger_reason': s.trigger_reason,
+                # Serving-cell identity and attribution (2026-10-04). The
+                # physical-layer ids the phone reported, plus the site/sector
+                # they matched to within 5 km (blank when nothing matched).
+                'scrambling_code': s.scrambling_code,
+                'bcch': s.bcch,
+                'bsic': s.bsic,
+                'region': s.region,
+                'serving_site_id': s.serving_site_id,
+                'serving_cell_name': s.serving_cell_name,
+                'serving_sector': s.serving_sector,
+                'serving_dist_km': s.serving_dist_km,
             }
             for s in rows_qs[:limit]
         ]
@@ -767,9 +778,9 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 'rsrp_dbm': s.rsrp_dbm,
                 'rsrq_db': s.rsrq_db,
                 'sinr_db': s.sinr_db,
-                # cqi (2026-09-15) -- LTE/NR-only Channel Quality Indicator,
-                # 0-15, higher is better (see models.py's TelemetrySample.cqi).
-                'cqi': s.cqi,
+                # cqi_derived (2026-10-04) -- LTE CQI estimated from SINR
+                # (see models.py's TelemetrySample.cqi_derived).
+                'cqi_derived': s.cqi_derived,
                 # rssi_dbm (2026-09-03, "need to collect any 2g, 3g or 4g
                 # data") -- GSM/UMTS samples only ever populate this, never
                 # rsrp_dbm/rsrq_db/sinr_db (LTE/NR-only fields -- see

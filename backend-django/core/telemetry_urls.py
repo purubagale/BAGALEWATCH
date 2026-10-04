@@ -4,6 +4,7 @@
 the isolation decision in models.py's TelemetryIngestKey docstring."""
 from django.urls import path
 
+from . import device_trace
 from .consent import DriveTestConsentMessageView, DriveTestConsentView
 from .rescue import RescueEnrollView
 from .telemetry import TelemetryHealthView, TelemetryIngestView
@@ -25,4 +26,13 @@ urlpatterns = [
     # Fetches the (superadmin-editable) copy shown before a subscriber
     # answers the above — see core/consent.py's DriveTestConsentMessageView.
     path('drive-test-consent-message/', DriveTestConsentMessageView.as_view(), name='drive-test-consent-message'),
+
+    # Device-bound, consent-gated tracing (2026-10-04) -- signed device
+    # calls, not the shared APK key. See core/device_trace.py's docstring.
+    path('device/challenge/', device_trace.DeviceChallengeView.as_view(), name='device-challenge'),
+    path('device/register/', device_trace.DeviceRegisterView.as_view(), name='device-register'),
+    path('device/fcm-token/', device_trace.DeviceFcmTokenView.as_view(), name='device-fcm-token'),
+    path('device/trace-requests/', device_trace.DeviceTraceListView.as_view(), name='device-trace-list'),
+    path('device/trace-requests/<uuid:trace_id>/respond/', device_trace.DeviceTraceRespondView.as_view(), name='device-trace-respond'),
+    path('device/trace-requests/<uuid:trace_id>/samples/', device_trace.DeviceTraceSamplesView.as_view(), name='device-trace-samples'),
 ]

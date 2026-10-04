@@ -1,6 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef } from 'react'
 import { ApiError, apiFetch, apiJson } from './client'
+import type { TraceRequestCreateResponse, TraceRequestEntry } from './types'
 import type {
   AdminUser,
   ApiKeyCreate,
@@ -424,6 +425,50 @@ export function useUnblockIp() {
     mutationFn: (ip: string) =>
       apiJson<BlockedIpEntry>(`/api/v2/blocked-ips/${encodeURIComponent(ip)}/unblock/`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['blocked-ips'] }),
+  })
+}
+
+// Device-bound, consent-gated tracing (2026-10-04) -- operator console for
+// core/device_trace.py. Lists poll lightly so a pending request's status
+// flips to ACCEPTED/REJECTED on the page without a manual refresh.
+export function useTraceRequests() {
+  return useQuery({
+    queryKey: ['trace-requests'],
+    queryFn: () => apiJson<TraceRequestEntry[]>('/api/v2/trace-requests/'),
+    refetchInterval: 15_000,
+  })
+}
+
+export function useCreateTraceRequest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params: { msisdn: string; case_reference: string; ttl_minutes?: number }) =>
+      apiJson<TraceRequestCreateResponse>('/api/v2/trace-requests/', {
+        method: 'POST',
+        body: JSON.stringify(params),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['trace-requests'] }),
+  })
+}
+
+export function useRecordTracePhoneConsent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params: { id: string; phone_consent_ref: string }) =>
+      apiJson<TraceRequestEntry>(`/api/v2/trace-requests/${params.id}/phone-consent/`, {
+        method: 'POST',
+        body: JSON.stringify({ phone_consent_ref: params.phone_consent_ref }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['trace-requests'] }),
+  })
+}
+
+export function useCancelTraceRequest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiJson<TraceRequestEntry>(`/api/v2/trace-requests/${id}/cancel/`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['trace-requests'] }),
   })
 }
 

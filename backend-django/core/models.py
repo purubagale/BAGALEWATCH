@@ -2224,6 +2224,18 @@ class TelemetrySample(models.Model):
     # standard 0-15 integer scale, higher is better. Null on 2G/3G samples
     # and on any device whose SDK build predates this field.
     cqi = models.SmallIntegerField(null=True, blank=True)
+    # cqi_derived (2026-10-04) -- LTE CQI estimated from this sample's own
+    # sinr_db via core/telemetry.py's cqi_from_sinr(). An estimate, not a
+    # measured value; null for non-LTE samples and where SINR is unknown.
+    cqi_derived = models.SmallIntegerField(null=True, blank=True)
+    # Serving-cell identity for the 2G/3G cases (2026-10-04). PCI for LTE
+    # already lives in `pci` above; these add the other two physical-layer
+    # ids so the serving cell can be matched on every technology:
+    #   - scrambling_code: UMTS primary scrambling code (0-511).
+    #   - bcch / bsic: GSM BCCH ARFCN and BSIC (BSIC 0-63).
+    scrambling_code = models.SmallIntegerField(null=True, blank=True)
+    bcch = models.SmallIntegerField(null=True, blank=True)
+    bsic = models.SmallIntegerField(null=True, blank=True)
     battery_pct = models.SmallIntegerField(null=True, blank=True)
     trigger_reason = models.CharField(max_length=10, choices=TRIGGERS, default='periodic')
 
@@ -2231,6 +2243,18 @@ class TelemetrySample(models.Model):
     # filter/group by province without a spatial join every time; null
     # until the site directory is populated, backfillable later.
     region = models.CharField(max_length=100, blank=True, default='', db_index=True)
+
+    # Serving-cell attribution (2026-10-04): the Site/Sector this sample's
+    # physical-layer id resolved to, within 5 km of the sample. Blank when
+    # no same-id sector lies within that distance. Set at upload time by
+    # core/dt_serving_cell.py's attach_serving_cells(), same matcher the
+    # drive-test path uses. `serving_dist_km` is this sample's own distance
+    # to the matched site.
+    serving_site_id = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    serving_cell_name = models.CharField(max_length=255, blank=True, default='')
+    serving_sector = models.CharField(max_length=100, blank=True, default='')
+    serving_local_cell_id = models.IntegerField(null=True, blank=True)
+    serving_dist_km = models.FloatField(null=True, blank=True)
 
     objects = GeoSyncQuerySet.as_manager()
 
@@ -3061,3 +3085,105 @@ class TelemetryRemoteOptOutRequest(models.Model):
 
     def __str__(self):
         return f'{self.device_id[:8]}… {"fulfilled" if self.fulfilled_at else "pending"}'
+
+
+# ── Device-bound, consent-gated tracing (2026-10-04) ───────────────────
+# See the approved plan for the full design. Summary: DT-WATCH operators
+# create a TraceRequest for one MSISDN; the carrier-privileged app is
+# pushed a data-only notice, the user accepts on-device, and only then
+# does the device send GPS samples, each signed with a Keystore key that
+# never leaves the phone. Nothing on the device can post trace data
+# without an ACCEPTED request from DT-WATCH.
+
+class DeviceCredential(models.Model):
+    """One registered app installation. Keyed by the salted hash of the
+    public-key fingerprint (`core.telemetry.hash_device_id`), so the
+    fingerprint itself is the device's id and cannot be replaced by
+    re-registering with a different key -- a new key is a new device.
+
+    `msisdn` is self-declared by the carrier-privileged app (read from
+    the SIM) and trusted only as far as that app's Play Integrity verdict
+    is trusted. One MSISDN may be bound to one active device at a time;
+    a conflicting claim is refused, never silently rebound."""
+    device_hash = models.CharField(max_length=32, unique=True)
+    public_key_pem = models.TextField()
+    msisdn = models.CharField(max_length=24, blank=True, default='', db_index=True)
+    fcm_token = models.CharField(max_length=512, blank=True, default='')
+    app_version = models.CharField(max_length=40, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'v2_device_credential'
+
+    def __str__(self):
+        return f'{self.msisdn or "?"} ({self.device_hash[:8]}…)'
+
+
+class TraceRequest(models.Model):
+    """One DT-WATCH-initiated trace for one device. Every state change is
+    audit-logged by the view that makes it. Expiry is evaluated lazily
+    (`core/device_trace.py`'s `_refresh()`), so no scheduled job is needed."""
+    STATUS_PENDING = 'PENDING'
+    STATUS_ACCEPTED = 'ACCEPTED'
+    STATUS_REJECTED = 'REJECTED'
+    STATUS_EXPIRED = 'EXPIRED'
+    STATUS_CANCELLED = 'CANCELLED'
+    STATUS_REVOKED = 'REVOKED'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_ACCEPTED, 'Accepted'),
+        (STATUS_REJECTED, 'Rejected'),
+        (STATUS_EXPIRED, 'Expired'),
+        (STATUS_CANCELLED, 'Cancelled'),
+        (STATUS_REVOKED, 'Revoked by user'),
+    ]
+    CONSENT_APP = 'APP'
+    CONSENT_PHONE = 'PHONE_CALL'
+    CONSENT_POLICY = 'POLICY_BYPASS'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    device = models.ForeignKey(DeviceCredential, on_delete=models.CASCADE, related_name='trace_requests')
+    msisdn = models.CharField(max_length=24)
+    requested_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    case_reference = models.CharField(max_length=200)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    consent_method = models.CharField(max_length=16, blank=True, default='')
+    consent_at = models.DateTimeField(null=True, blank=True)
+    consent_recorded_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    phone_consent_ref = models.CharField(max_length=200, blank=True, default='')
+    policy_mode = models.CharField(max_length=16, blank=True, default='')
+    ttl_minutes = models.PositiveIntegerField(default=60)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'v2_trace_request'
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['device', 'status'], name='v2_trace_dev_status_idx')]
+
+    def __str__(self):
+        return f'{self.msisdn} {self.status} ({str(self.id)[:8]})'
+
+
+class TraceLocationSample(models.Model):
+    """GPS fix sent by a device while its TraceRequest is ACCEPTED. Kept
+    per-trace (not in TelemetrySample) so it can never leak into the
+    anonymous coverage aggregation, and never joins SubscriberLastLocation."""
+    trace = models.ForeignKey(TraceRequest, on_delete=models.CASCADE, related_name='samples')
+    ts = models.DateTimeField()
+    lat = models.FloatField()
+    lng = models.FloatField()
+    location = PointField(geography=True, srid=4326, null=True, blank=True, spatial_index=True)
+    accuracy_m = models.FloatField(null=True, blank=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_trace_location_sample'
+        indexes = [models.Index(fields=['trace', 'ts'], name='v2_trace_sample_ts_idx')]

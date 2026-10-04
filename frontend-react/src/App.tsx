@@ -49,6 +49,7 @@ const AuditLogPage = lazy(() => import('./pages/AuditLogPage'))
 // Active IP blocking (2026-10-02, Phase E2) -- see core/ip_block.py's
 // module docstring.
 const BlockedIPsPage = lazy(() => import('./pages/BlockedIPsPage'))
+const TraceRequestsPage = lazy(() => import('./pages/TraceRequestsPage'))
 const ManageRolesPage = lazy(() => import('./pages/ManageRolesPage'))
 const AssignRolesPage = lazy(() => import('./pages/AssignRolesPage'))
 const MenuVisibilityPage = lazy(() => import('./pages/MenuVisibilityPage'))
@@ -303,6 +304,7 @@ function App() {
         {withOpaqueSection('/dt-plot-catalog', <DtPlotCatalogPage />)}
         {withOpaqueSection('/access-log', <AuditLogPage />)}
         {withOpaqueSection('/blocked-ips', <BlockedIPsPage />)}
+        {withOpaqueSection('/trace-requests', <TraceRequestsPage />)}
         {withOpaqueSection('/manage-roles', <ManageRolesPage />)}
         {withOpaqueSection('/assign-roles', <AssignRolesPage />)}
         {withOpaqueSection('/menu-visibility', <MenuVisibilityPage />)}

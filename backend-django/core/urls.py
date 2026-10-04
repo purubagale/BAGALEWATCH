@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import (api_auth, audit, auth_log, backup, consent, dashboard, drive_test,
+from . import (api_auth, audit, auth_log, backup, consent, dashboard, device_trace, drive_test,
                exports, ip_block, issues, kpi_trend, mfa, password_reset, reports, rescue, rf_audit,
                rf_reports, roles, site_import, sso_views, system_doc,
                telemetry_admin, views, volte_quality)
@@ -220,6 +220,12 @@ urlpatterns = [
     # Superadmin-only mandatory/optional consent-policy control (2026-09-02)
     # for the rescue lane — see core/rescue.py's RescueConsentPolicyView.
     path('rescue/policy/', rescue.RescueConsentPolicyView.as_view(), name='rescue-consent-policy'),
+    # Device-bound consent-gated tracing, operator side (2026-10-04) --
+    # IsRescueOperator-gated. See core/device_trace.py's docstring.
+    path('trace-requests/', device_trace.TraceRequestListCreateView.as_view(), name='trace-requests'),
+    path('trace-requests/<uuid:trace_id>/', device_trace.TraceRequestDetailView.as_view(), name='trace-request-detail'),
+    path('trace-requests/<uuid:trace_id>/phone-consent/', device_trace.TraceRequestPhoneConsentView.as_view(), name='trace-request-phone-consent'),
+    path('trace-requests/<uuid:trace_id>/cancel/', device_trace.TraceRequestCancelView.as_view(), name='trace-request-cancel'),
     # Superadmin-editable copy for the drive-test consent prompt
     # (2026-09-02) — see core/consent.py's DriveTestConsentMessageAdminView.
     path('telemetry/consent-message/', consent.DriveTestConsentMessageAdminView.as_view(), name='telemetry-consent-message'),
