@@ -178,7 +178,7 @@ def geohash_center(gh):
 #    _coerce_dt_sample path) ─────────────────────────────────────────────
 
 _NET_TYPES = {'LTE', 'NR', 'UMTS', 'GSM', 'UNKNOWN'}
-_TRIGGERS = {'periodic', 'handover', 'manual'}
+_TRIGGERS = {'periodic', 'handover', 'manual', 'drive', 'drive_start', 'drive_stop'}
 
 
 def _f(v):
@@ -293,6 +293,8 @@ def coerce_sample(raw, received_at):
         'bsic': _i16(raw.get('bsic')),
         'battery_pct': _i16(raw.get('battery_pct')),
         'trigger_reason': tr if tr in _TRIGGERS else 'periodic',
+        # drive_session_id (2026-10-04): groups a drive's fixes and markers.
+        'drive_session_id': str(raw.get('drive_session_id') or '').strip()[:36],
         'region': '',
         # Filled by attach_telemetry_serving_cells() before the COPY insert.
         'serving_site_id': '',
@@ -371,6 +373,7 @@ _COPY_COLS = (
     'battery_pct', 'trigger_reason', 'region', 'cqi', 'cqi_derived',
     'scrambling_code', 'bcch', 'bsic',
     'serving_site_id', 'serving_cell_name', 'serving_sector', 'serving_local_cell_id', 'serving_dist_km',
+    'drive_session_id',
 )
 _COPY_SQL = 'COPY v2_telemetry_samples (' + ', '.join(_COPY_COLS) + ') FROM STDIN WITH (FORMAT text)'
 
@@ -472,6 +475,7 @@ def bulk_insert_samples(rows):
             _cf(r.get('serving_site_id') or ''), _cf(r.get('serving_cell_name') or ''),
             _cf(r.get('serving_sector') or ''), _cf(r.get('serving_local_cell_id')),
             _cf(r.get('serving_dist_km')),
+            _cf(r.get('drive_session_id') or ''),
         )) + '\n')
     buf.seek(0)
     with connection.cursor() as cur:

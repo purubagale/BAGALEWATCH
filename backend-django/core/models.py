@@ -2185,7 +2185,13 @@ class TelemetrySample(models.Model):
     NETWORK_TYPES = [
         ('LTE', 'LTE'), ('NR', '5G NR'), ('UMTS', 'UMTS'), ('GSM', 'GSM'), ('UNKNOWN', 'Unknown'),
     ]
-    TRIGGERS = [('periodic', 'Periodic'), ('handover', 'Handover'), ('manual', 'Manual')]
+    # drive / drive_start / drive_stop (2026-10-04): tracked drive-test fixes
+    # and the start/stop markers the phone sends around each drive. Markers
+    # carry no location; they're listed separately, never drawn as points.
+    TRIGGERS = [
+        ('periodic', 'Periodic'), ('handover', 'Handover'), ('manual', 'Manual'),
+        ('drive', 'Drive test'), ('drive_start', 'Drive start'), ('drive_stop', 'Drive stop'),
+    ]
 
     device_id = models.CharField(max_length=64, db_index=True)
     ts = models.DateTimeField(db_index=True)              # device-reported time (from `ts` epoch ms)
@@ -2237,7 +2243,10 @@ class TelemetrySample(models.Model):
     bcch = models.SmallIntegerField(null=True, blank=True)
     bsic = models.SmallIntegerField(null=True, blank=True)
     battery_pct = models.SmallIntegerField(null=True, blank=True)
-    trigger_reason = models.CharField(max_length=10, choices=TRIGGERS, default='periodic')
+    trigger_reason = models.CharField(max_length=16, choices=TRIGGERS, default='periodic')
+    # Groups a drive's fixes and markers (2026-10-04). Set by the phone, a UUID
+    # per drive. Blank for samples not taken during a tracked drive.
+    drive_session_id = models.CharField(max_length=36, blank=True, default='', db_index=True)
 
     # Derived server-side (nearest Site.region) so coverage queries can
     # filter/group by province without a spatial join every time; null

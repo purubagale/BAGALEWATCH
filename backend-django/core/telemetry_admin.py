@@ -755,6 +755,12 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 lng__gte=session.area_min_lng, lng__lte=session.area_max_lng,
             )
 
+        # One drive only (2026-10-04): the phone tags each tracked drive with
+        # a session id, so its fixes can be picked out exactly.
+        drive_session_id = (request.query_params.get('drive_session_id') or '').strip()
+        if drive_session_id:
+            qs = qs.filter(drive_session_id=drive_session_id)
+
         # GPS accuracy gate for route plots (see ROUTE_MAX_ACCURACY_M).
         qs = qs.filter(Q(gps_accuracy_m__lte=ROUTE_MAX_ACCURACY_M) | Q(gps_accuracy_m__isnull=True))
         try:
@@ -829,9 +835,31 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 'trigger_reason': s.trigger_reason,
                 # GPS accuracy of this fix, in metres (see ROUTE_MAX_ACCURACY_M).
                 'gps_accuracy_m': s.gps_accuracy_m,
+                'drive_session_id': s.drive_session_id,
             }
             for s in qs[:limit]
         ]
+        # Drive start/stop markers (2026-10-04). They carry no location, so they
+        # never appear in `rows`; they're listed on their own, in time order.
+        marker_qs = _scope_by_operator(
+            TelemetrySample.objects.filter(
+                device_id__in=session.device_ids, ts__gte=session.started_at, ts__lte=window_end,
+                trigger_reason__in=['drive_start', 'drive_stop'],
+            ),
+            request.user,
+        ).order_by('ts')
+        if drive_session_id:
+            marker_qs = marker_qs.filter(drive_session_id=drive_session_id)
+        drive_markers = [
+            {
+                'event': m.trigger_reason,
+                'ts': m.ts,
+                'device_id': m.device_id,
+                'drive_session_id': m.drive_session_id,
+            }
+            for m in marker_qs[:500]
+        ]
+
         # Optional route smoothing (`?smooth=N`, N = fixes in the window).
         # Adds lat_smooth/lng_smooth; the raw lat/lng stay as they were.
         if smooth > 1:
@@ -839,6 +867,7 @@ class TelemetryDriveTestSessionSamplesView(APIView):
         return Response({
             'session': TelemetryDriveTestSessionSerializer(session).data,
             'samples': rows,
+            'drive_markers': drive_markers,
             'count': len(rows),
             'require_consent': session.require_consent,
             'consent_summary': consent_summary,
