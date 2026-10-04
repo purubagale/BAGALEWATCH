@@ -41,9 +41,16 @@ internal class HandoverListener(
     // CellSampleCollector.kt.
     private var modernCallback: TelephonyCallback? = null
 
+    // Both are needed: READ_PHONE_STATE for the listener, and a location
+    // permission for the cell data it reports. Checking only the first let
+    // the listener start after location was revoked, and the app crashed on launch.
     private fun hasPermission() =
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) ==
-            PackageManager.PERMISSION_GRANTED
+            PackageManager.PERMISSION_GRANTED &&
+            (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED)
 
     @SuppressLint("MissingPermission") // guarded by hasPermission()
     fun start() {

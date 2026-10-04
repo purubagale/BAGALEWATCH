@@ -39,7 +39,12 @@
     <string name="map_no_trail">No route yet. Start a drive test to draw one.</string>
     <string name="nav_settings">Settings</string>
     <string name="signal_title">Signal</string>
-    <string name="signal_no_reading">Opt in and grant location to see live readings.</string>
+    <string name="signal_no_reading">Grant location to see live readings.</string>
+    <string name="quick_setup_title">Quick setup</string>
+    <string name="quick_setup_body">Allow location so this app can show your live signal, cells, and Wi-Fi networks.\n\nAllowing location also lets the app share anonymous network-quality data with NTC. Nothing you see on screen is uploaded, and you can turn uploads off at any time in Settings.</string>
+    <string name="quick_setup_grant">Grant permissions</string>
+    <string name="quick_setup_later">Not now</string>
+    <string name="quick_setup_denied">Location is needed to show live readings. You can allow it later from Settings.</string>
     <string name="signal_history_caption">Last 3 minutes</string>
     <string name="signal_full_parameters">Full parameters</string>
     <string name="label_operator">Operator</string>

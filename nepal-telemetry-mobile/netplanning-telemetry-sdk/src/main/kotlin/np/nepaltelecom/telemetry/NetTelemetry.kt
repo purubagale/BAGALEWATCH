@@ -154,14 +154,17 @@ object NetTelemetry {
 
     /**
      * Reads the current cell and signal state with no location fix, so a
-     * screen can refresh every few seconds without waiting on GPS. Passes null
-     * when the device hasn't opted in or location permission is missing.
+     * screen can refresh every few seconds without waiting on GPS. Needs only
+     * location permission, not opt-in. Passes null when permission is missing.
      * Nothing is queued or uploaded.
      */
     fun readLiveCell(onResult: (Sample?) -> Unit) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before readLiveCell()" }
         scope.launch {
-            onResult(CellSampleCollector(appContext, DeviceIdentity(appContext)).sampleFrom(null, "manual"))
+            onResult(
+                CellSampleCollector(appContext, DeviceIdentity(appContext))
+                    .sampleFrom(null, "manual", requireOptIn = false),
+            )
         }
     }
 
@@ -410,7 +413,11 @@ object NetTelemetry {
                 val sample = CellSampleCollector(appContext, identity).collect(triggerReason = "handover")
                 sample?.let { SampleQueue(appContext).append(it) }
             }
-        }.also { it.start() }
+        }.also {
+            // A revoked permission must never crash the host app at launch: the
+            // listener simply stays off until the permission is granted again.
+            runCatching { it.start() }
+        }
     }
 }
 

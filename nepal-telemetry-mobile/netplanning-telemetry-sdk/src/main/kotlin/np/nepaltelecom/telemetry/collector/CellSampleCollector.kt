@@ -72,8 +72,11 @@ internal class CellSampleCollector(
         location: android.location.Location?,
         triggerReason: String,
         driveSessionId: String? = null,
+        requireOptIn: Boolean = true,
     ): Sample? {
-        if (!identity.optedIn) return null
+        // Uploads need opt-in. A local live read (requireOptIn = false) only
+        // shows the phone its own readings and never queues anything.
+        if (requireOptIn && !identity.optedIn) return null
         if (!hasLocationPermission()) return null
 
         val cell = readServingCell()
