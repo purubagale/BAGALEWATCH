@@ -36,8 +36,15 @@ class MainActivity : AppCompatActivity() {
             true
         }
 
+        applyStaffGate()
         if (savedInstanceState == null) {
-            if (hasLocation()) showSignal() else show(QuickSetupFragment())
+            if (!StaffMode.isEmployee(this)) {
+                bottomNav.selectedItemId = R.id.nav_settings
+            } else if (hasLocation()) {
+                showSignal()
+            } else {
+                show(QuickSetupFragment())
+            }
         }
     }
 
@@ -45,6 +52,30 @@ class MainActivity : AppCompatActivity() {
     fun showSignal() {
         bottomNav.selectedItemId = R.id.nav_signal
         show(SignalFragment())
+    }
+
+    /**
+     * Until "I am an NTC employee" is ticked in Settings, only Settings is
+     * usable. Signal, Cells, Map and Wi-Fi are disabled (2026-10-05).
+     */
+    fun applyStaffGate() {
+        val employee = StaffMode.isEmployee(this)
+        val menu = bottomNav.menu
+        listOf(R.id.nav_signal, R.id.nav_cells, R.id.nav_map, R.id.nav_wifi).forEach { id ->
+            menu.findItem(id).isEnabled = employee
+        }
+    }
+
+    /** Called by Settings when the employee box changes. */
+    fun onStaffModeChanged() {
+        applyStaffGate()
+        if (!StaffMode.isEmployee(this)) {
+            bottomNav.selectedItemId = R.id.nav_settings
+            return
+        }
+        // The Signal listener shows the screen. Quick Setup replaces it if location is still missing.
+        bottomNav.selectedItemId = R.id.nav_signal
+        if (!hasLocation()) show(QuickSetupFragment())
     }
 
     private fun hasLocation(): Boolean =

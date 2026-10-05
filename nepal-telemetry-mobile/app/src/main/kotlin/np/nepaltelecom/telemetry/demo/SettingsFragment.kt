@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.text.InputType
 import android.view.View
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
@@ -52,6 +53,13 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                     )
                 )
             }
+        }
+
+        val employeeBox = view.findViewById<CheckBox>(R.id.employeeCheck)
+        employeeBox.isChecked = StaffMode.isEmployee(requireContext())
+        employeeBox.setOnCheckedChangeListener { _, checked ->
+            StaffMode.setEmployee(requireContext(), checked)
+            (activity as? MainActivity)?.onStaffModeChanged()
         }
 
         view.findViewById<Button>(R.id.optOutButton).setOnClickListener {

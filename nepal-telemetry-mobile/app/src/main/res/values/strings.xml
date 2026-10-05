@@ -60,6 +60,8 @@
     <string name="label_sinr">SINR</string>
     <string name="label_cqi">CQI (4G)</string>
     <string name="label_updated">Updated</string>
+    <string name="employee_check">I am an NTC employee</string>
+    <string name="employee_hint">Only Settings is available until this is ticked. Your choice is kept on this phone for now. It will come from the NTC app login once that is connected.</string>
     <string name="speed_title">Speed test</string>
     <string name="speed_caption">Measures ping, download and upload. Runs only when you tap Start, and uses about 8 MB of mobile data.</string>
     <string name="speed_start">Start speed test</string>

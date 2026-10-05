@@ -17,6 +17,24 @@
             android:textStyle="bold"
             android:layout_marginBottom="12dp" />
 
+        <!-- Employee choice (2026-10-05): until the NTC app login is connected, this is self-declared. -->
+        <CheckBox
+            android:id="@+id/employeeCheck"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:buttonTint="@color/brand_accent"
+            android:text="@string/employee_check"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:text="@string/employee_hint"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
