@@ -4,6 +4,7 @@
 the isolation decision in models.py's TelemetryIngestKey docstring."""
 from django.urls import path
 
+from . import device_identity, device_trace, speed_test, trace_speed
 from .consent import DriveTestConsentMessageView, DriveTestConsentView
 from .rescue import RescueEnrollView
 from .telemetry import TelemetryHealthView, TelemetryIngestView
@@ -12,6 +13,13 @@ from .volte_quality import VolteSampleIngestView
 urlpatterns = [
     path('samples/', TelemetryIngestView.as_view(), name='telemetry-ingest'),
     path('health/', TelemetryHealthView.as_view(), name='telemetry-health'),
+    # Device identity (MSISDN, IMEI, model), registered signed devices only (2026-10-05).
+    path('device-identity/', device_identity.DeviceIdentityUploadView.as_view(), name='device-identity'),
+    # Active speed test (2026-10-05) -- public but size-capped and rate-limited,
+    # and the app runs it only on a user tap. See core/speed_test.py.
+    path('speedtest/ping/', speed_test.SpeedTestPingView.as_view(), name='speedtest-ping'),
+    path('speedtest/download/', speed_test.SpeedTestDownloadView.as_view(), name='speedtest-download'),
+    path('speedtest/upload/', speed_test.SpeedTestUploadView.as_view(), name='speedtest-upload'),
     # VoLTE/VoNR call-quality ingest (2026-10-02) -- same ingest-key auth,
     # dormant until the app has carrier-privileged status. See
     # core/volte_quality.py's module docstring.
@@ -25,4 +33,19 @@ urlpatterns = [
     # Fetches the (superadmin-editable) copy shown before a subscriber
     # answers the above — see core/consent.py's DriveTestConsentMessageView.
     path('drive-test-consent-message/', DriveTestConsentMessageView.as_view(), name='drive-test-consent-message'),
+
+    # Device-bound, consent-gated tracing (2026-10-04) -- signed device
+    # calls, not the shared APK key. See core/device_trace.py's docstring.
+    path('device/challenge/', device_trace.DeviceChallengeView.as_view(), name='device-challenge'),
+    path('device/register/', device_trace.DeviceRegisterView.as_view(), name='device-register'),
+    path('device/fcm-token/', device_trace.DeviceFcmTokenView.as_view(), name='device-fcm-token'),
+    path('device/trace-requests/', device_trace.DeviceTraceListView.as_view(), name='device-trace-list'),
+    path('device/trace-requests/<uuid:trace_id>/respond/', device_trace.DeviceTraceRespondView.as_view(), name='device-trace-respond'),
+    path('device/trace-requests/<uuid:trace_id>/samples/', device_trace.DeviceTraceSamplesView.as_view(), name='device-trace-samples'),
+    # Speed test bound to an accepted trace (2026-10-05): device-signed, and only
+    # while the trace is ACCEPTED and not expired. See core/trace_speed.py.
+    path('device/trace-requests/<uuid:trace_id>/speedtest/ping/', trace_speed.TraceSpeedPingView.as_view(), name='device-trace-speedtest-ping'),
+    path('device/trace-requests/<uuid:trace_id>/speedtest/download/', trace_speed.TraceSpeedDownloadView.as_view(), name='device-trace-speedtest-download'),
+    path('device/trace-requests/<uuid:trace_id>/speedtest/upload/', trace_speed.TraceSpeedUploadView.as_view(), name='device-trace-speedtest-upload'),
+    path('device/trace-requests/<uuid:trace_id>/speedtest/result/', trace_speed.TraceSpeedResultView.as_view(), name='device-trace-speedtest-result'),
 ]

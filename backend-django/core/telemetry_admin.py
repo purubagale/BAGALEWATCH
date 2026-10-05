@@ -22,7 +22,7 @@ from datetime import timedelta
 
 from django.contrib.gis.geos import Point
 from django.contrib.gis.measure import D
-from django.db.models import Count, Max, Sum
+from django.db.models import Count, Max, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -457,9 +457,9 @@ class TelemetryLiveSamplesView(APIView):
                 'rsrp_dbm': s.rsrp_dbm,
                 'rsrq_db': s.rsrq_db,
                 'sinr_db': s.sinr_db,
-                # cqi (2026-09-15) -- LTE/NR-only Channel Quality Indicator,
-                # 0-15, higher is better (see models.py's TelemetrySample.cqi).
-                'cqi': s.cqi,
+                # cqi_derived (2026-10-04) -- LTE CQI estimated from this
+                # sample's SINR (see models.py's TelemetrySample.cqi_derived).
+                'cqi_derived': s.cqi_derived,
                 # rssi_dbm (2026-09-03) -- GSM/UMTS (2G/3G) samples only
                 # ever populate this, never rsrp_dbm/rsrq_db/sinr_db (LTE/
                 # NR-only fields, see CellSampleCollector.kt's
@@ -473,6 +473,17 @@ class TelemetryLiveSamplesView(APIView):
                 'rscp_dbm': s.rscp_dbm,
                 'ecio_db': s.ecio_db,
                 'trigger_reason': s.trigger_reason,
+                # Serving-cell identity and attribution (2026-10-04). The
+                # physical-layer ids the phone reported, plus the site/sector
+                # they matched to within 5 km (blank when nothing matched).
+                'scrambling_code': s.scrambling_code,
+                'bcch': s.bcch,
+                'bsic': s.bsic,
+                'region': s.region,
+                'serving_site_id': s.serving_site_id,
+                'serving_cell_name': s.serving_cell_name,
+                'serving_sector': s.serving_sector,
+                'serving_dist_km': s.serving_dist_km,
             }
             for s in rows_qs[:limit]
         ]
@@ -673,6 +684,30 @@ class TelemetryDriveTestSessionEndView(APIView):
         return Response(data)
 
 
+# Route plots drop fixes whose GPS accuracy is worse than this (metres).
+# A 50 m circle is too loose to place a point on a road reliably. Raw
+# samples are never deleted; this only affects what the route endpoint
+# returns. Fixes with no accuracy reported are kept.
+ROUTE_MAX_ACCURACY_M = 50.0
+_MAX_SMOOTH_WINDOW = 9
+
+
+def _smooth_route(rows, window):
+    """Adds `lat_smooth` / `lng_smooth` to each route row: a moving average
+    over `window` neighbouring fixes of the same device, in time order. The
+    raw `lat`/`lng` are left untouched. Display only -- nothing stored."""
+    by_device = {}
+    for r in rows:
+        by_device.setdefault(r['device_id'], []).append(r)
+    half = window // 2
+    for group in by_device.values():
+        group.sort(key=lambda r: r['ts'])
+        for i, r in enumerate(group):
+            seg = group[max(0, i - half):min(len(group), i + half + 1)]
+            r['lat_smooth'] = round(sum(p['lat'] for p in seg) / len(seg), 7)
+            r['lng_smooth'] = round(sum(p['lng'] for p in seg) / len(seg), 7)
+
+
 class TelemetryDriveTestSessionSamplesView(APIView):
     """`GET /api/v2/telemetry/dt-sessions/<id>/samples/` — raw samples
     from this session's enrolled devices only, from `started_at` to
@@ -719,6 +754,20 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 lat__gte=session.area_min_lat, lat__lte=session.area_max_lat,
                 lng__gte=session.area_min_lng, lng__lte=session.area_max_lng,
             )
+
+        # One drive only (2026-10-04): the phone tags each tracked drive with
+        # a session id, so its fixes can be picked out exactly.
+        drive_session_id = (request.query_params.get('drive_session_id') or '').strip()
+        if drive_session_id:
+            qs = qs.filter(drive_session_id=drive_session_id)
+
+        # GPS accuracy gate for route plots (see ROUTE_MAX_ACCURACY_M).
+        qs = qs.filter(Q(gps_accuracy_m__lte=ROUTE_MAX_ACCURACY_M) | Q(gps_accuracy_m__isnull=True))
+        try:
+            smooth = int(request.query_params.get('smooth', 0))
+        except (TypeError, ValueError):
+            smooth = 0
+        smooth = max(0, min(_MAX_SMOOTH_WINDOW, smooth))
 
         consent_summary = None
         if session.require_consent:
@@ -767,9 +816,9 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 'rsrp_dbm': s.rsrp_dbm,
                 'rsrq_db': s.rsrq_db,
                 'sinr_db': s.sinr_db,
-                # cqi (2026-09-15) -- LTE/NR-only Channel Quality Indicator,
-                # 0-15, higher is better (see models.py's TelemetrySample.cqi).
-                'cqi': s.cqi,
+                # cqi_derived (2026-10-04) -- LTE CQI estimated from SINR
+                # (see models.py's TelemetrySample.cqi_derived).
+                'cqi_derived': s.cqi_derived,
                 # rssi_dbm (2026-09-03, "need to collect any 2g, 3g or 4g
                 # data") -- GSM/UMTS samples only ever populate this, never
                 # rsrp_dbm/rsrq_db/sinr_db (LTE/NR-only fields -- see
@@ -784,12 +833,41 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 'rscp_dbm': s.rscp_dbm,
                 'ecio_db': s.ecio_db,
                 'trigger_reason': s.trigger_reason,
+                # GPS accuracy of this fix, in metres (see ROUTE_MAX_ACCURACY_M).
+                'gps_accuracy_m': s.gps_accuracy_m,
+                'drive_session_id': s.drive_session_id,
             }
             for s in qs[:limit]
         ]
+        # Drive start/stop markers (2026-10-04). They carry no location, so they
+        # never appear in `rows`; they're listed on their own, in time order.
+        marker_qs = _scope_by_operator(
+            TelemetrySample.objects.filter(
+                device_id__in=session.device_ids, ts__gte=session.started_at, ts__lte=window_end,
+                trigger_reason__in=['drive_start', 'drive_stop'],
+            ),
+            request.user,
+        ).order_by('ts')
+        if drive_session_id:
+            marker_qs = marker_qs.filter(drive_session_id=drive_session_id)
+        drive_markers = [
+            {
+                'event': m.trigger_reason,
+                'ts': m.ts,
+                'device_id': m.device_id,
+                'drive_session_id': m.drive_session_id,
+            }
+            for m in marker_qs[:500]
+        ]
+
+        # Optional route smoothing (`?smooth=N`, N = fixes in the window).
+        # Adds lat_smooth/lng_smooth; the raw lat/lng stay as they were.
+        if smooth > 1:
+            _smooth_route(rows, smooth)
         return Response({
             'session': TelemetryDriveTestSessionSerializer(session).data,
             'samples': rows,
+            'drive_markers': drive_markers,
             'count': len(rows),
             'require_consent': session.require_consent,
             'consent_summary': consent_summary,

@@ -24,3 +24,8 @@ python-docx==1.1.2
 # backend). See core/mfa.py's module docstring.
 pyotp==2.9.0
 qrcode==7.4.2
+
+# Device-bound tracing (2026-10-04) -- FCM HTTP v1 push and Play Integrity
+# verdicts, both via google-auth service-account credentials. See
+# core/fcm.py and core/play_integrity.py.
+google-auth==2.35.0

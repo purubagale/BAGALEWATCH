@@ -58,6 +58,7 @@ const KNOWN_ROUTES: { path: string; label: string }[] = [
   { path: '/k9d4wr', label: 'DT Plot Catalog' },
   { path: '/a3x9lq', label: 'Audit Log' },
   { path: '/b3n7qz', label: 'Blocked IPs' },
+  { path: '/t7ak2m', label: 'Trace Requests' },
   { path: '/q4m8rz', label: 'Manage Roles' },
   { path: '/v6p2nt', label: 'Assign Roles' },
   { path: '/h3k9wq', label: 'Menu Visibility' },

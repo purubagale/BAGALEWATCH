@@ -65,7 +65,30 @@ from .models import (
 )
 from .subscriber_network_resolver import resolve_subscriber_network_info
 from .telemetry import _key_from_request, _resolve_key, _scope_by_operator, hash_device_id
-from .views import IsRescueOperator, IsSuperadminOnly
+from .access import CanRescueSearch
+from .emergency import EMERGENCY_OFF_DETAIL, active_emergency, rescue_search_enabled
+
+# Written to RescueLocationAccessLog.policy_mode for every lookup. Fits its 10-char field.
+EMERGENCY_LOG_MODE = 'emergency'
+
+# Columns for a bulk-lookup CSV export (2026-10-05). Same fields as the JSON result.
+CSV_COLUMNS = ['msisdn', 'found', 'lat', 'lng', 'accuracy_m', 'source', 'last_seen_ts', 'imsi']
+
+
+def _csv_response(rows, filename):
+    import csv
+    import io
+    from django.http import HttpResponse
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=CSV_COLUMNS, extrasaction='ignore')
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    response = HttpResponse(buf.getvalue(), content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+from .views import IsSuperadminOnly
 
 # Loose sanity check, not a strict E.164 validator — this app has no
 # control over what format a subscriber's own phone app hands it, and
@@ -116,12 +139,6 @@ class RescueEnrollView(APIView):
         consent = bool(request.data.get('consent'))
 
         if not consent:
-            policy = RescueConsentPolicy.objects.filter(pk=1).first()
-            if policy and policy.is_optional_active():
-                updated = SubscriberLastLocation.objects.filter(device_id=device_id).update(
-                    rescue_consent=False,
-                )
-                return Response({'enrolled': False, 'removed': False, 'soft_withdrawn': updated > 0})
             deleted, _ = SubscriberLastLocation.objects.filter(device_id=device_id).delete()
             return Response({'enrolled': False, 'removed': deleted > 0})
 
@@ -178,7 +195,7 @@ class RescueLookupView(APIView):
     effect (`policy_mode` on RescueLocationAccessLog), so an emergency
     override is never invisible in the audit trail.
     """
-    permission_classes = [IsAuthenticated, IsRescueOperator]
+    permission_classes = [IsAuthenticated, CanRescueSearch]
 
     def _log(self, request, msisdn, case_reference, found, policy_mode):
         RescueLocationAccessLog.objects.create(
@@ -190,6 +207,8 @@ class RescueLookupView(APIView):
         )
 
     def get(self, request):
+        if not rescue_search_enabled():
+            return Response({'detail': EMERGENCY_OFF_DETAIL}, status=status.HTTP_403_FORBIDDEN)
         msisdn = _clean_msisdn(request.query_params.get('msisdn'))
         case_reference = (request.query_params.get('case_reference') or '').strip()
         if not msisdn or not case_reference:
@@ -198,10 +217,7 @@ class RescueLookupView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        policy = RescueConsentPolicy.objects.filter(pk=1).first()
-        optional_active = bool(policy and policy.is_optional_active())
-        base_qs = SubscriberLastLocation.objects.filter(msisdn=msisdn)
-        base_qs = base_qs if optional_active else base_qs.filter(rescue_consent=True)
+        base_qs = SubscriberLastLocation.objects.filter(msisdn=msisdn, rescue_consent=True)
 
         match = (
             _scope_by_operator(base_qs, request.user, field='last_mnc')
@@ -209,8 +225,7 @@ class RescueLookupView(APIView):
             .first()
         )
         found = bool(match and match.last_seen_ts is not None)
-        policy_mode = RescueConsentPolicy.MODE_OPTIONAL if optional_active else RescueConsentPolicy.MODE_MANDATORY
-        self._log(request, msisdn, case_reference, found, policy_mode)
+        self._log(request, msisdn, case_reference, found, EMERGENCY_LOG_MODE)
 
         if not found:
             return Response({'found': False})
@@ -266,10 +281,12 @@ class RescueBulkLookupView(APIView):
     does and does not unlock, and why an out-of-scope match is reported
     exactly like no match at all.
     """
-    permission_classes = [IsAuthenticated, IsRescueOperator]
+    permission_classes = [IsAuthenticated, CanRescueSearch]
     MAX_BULK_MSISDNS = 500
 
     def post(self, request):
+        if not rescue_search_enabled():
+            return Response({'detail': EMERGENCY_OFF_DETAIL}, status=status.HTTP_403_FORBIDDEN)
         raw_list = request.data.get('msisdns')
         case_reference = (request.data.get('case_reference') or '').strip()
         if not isinstance(raw_list, list) or not raw_list or not case_reference:
@@ -292,12 +309,8 @@ class RescueBulkLookupView(APIView):
         ))
         invalid_count = len(raw_list) - len(cleaned)
 
-        policy = RescueConsentPolicy.objects.filter(pk=1).first()
-        optional_active = bool(policy and policy.is_optional_active())
-        policy_mode = RescueConsentPolicy.MODE_OPTIONAL if optional_active else RescueConsentPolicy.MODE_MANDATORY
-
-        base_qs = SubscriberLastLocation.objects.filter(msisdn__in=cleaned)
-        base_qs = base_qs if optional_active else base_qs.filter(rescue_consent=True)
+        policy_mode = EMERGENCY_LOG_MODE
+        base_qs = SubscriberLastLocation.objects.filter(msisdn__in=cleaned, rescue_consent=True)
         scoped = _scope_by_operator(base_qs, request.user, field='last_mnc')
 
         # One row per msisdn even if SubscriberLastLocation somehow has
@@ -335,6 +348,12 @@ class RescueBulkLookupView(APIView):
             for msisdn in cleaned
         ])
 
+        # Not 'format': DRF reads that query parameter for content negotiation and 404s on csv.
+        if (request.query_params.get('export') or '').lower() == 'csv':
+            from .audit import log_audit_event
+            log_audit_event(request, 'RESCUE.EXPORT', resource='rescue_bulk',
+                            detail=f'rows={len(results)} found={len(by_msisdn)} case={case_reference}')
+            return _csv_response(results, 'rescue-bulk-lookup.csv')
         return Response({
             'results': results,
             'requested_count': len(raw_list),
@@ -343,60 +362,24 @@ class RescueBulkLookupView(APIView):
         })
 
 
-class RescueConsentPolicySerializer(serializers.Serializer):
-    mode = serializers.ChoiceField(choices=RescueConsentPolicy.MODE_CHOICES)
-    reason = serializers.CharField(required=False, allow_blank=True, max_length=255)
-    active_until = serializers.DateTimeField(required=False, allow_null=True)
-
-
 class RescueConsentPolicyView(APIView):
-    """`GET/POST /api/v2/rescue/policy/` — superadmin-only control for
-    RescueConsentPolicy (see its docstring, core/models.py, for exactly
-    what 'mandatory' vs 'optional' changes). Superadmin-only rather than
-    IsRescueOperator: flipping this affects every rescue operator's
-    lookups and the ingest pipeline's tracking behavior system-wide, a
-    materially bigger blast radius than a single lookup.
-
-    GET always reports `is_optional_active` (the EFFECTIVE state, after
-    checking `active_until`) alongside the raw stored `mode` — an expired
-    override still shows `mode: "optional"` until someone explicitly
-    changes it, but `is_optional_active: false`, so the UI never has to
-    duplicate the expiry check itself.
-
-    Every POST is written to RescueConsentPolicyChangeLog — same
-    "no silent capability change" posture as every other consequential
-    action in this module.
-    """
+    """`GET /api/v2/rescue/policy/` -- kept so the old admin page still loads.
+    Retired 2026-10-05: the emergency switch replaced the optional-consent
+    override. GET reports the emergency state under the old field names;
+    POST returns 410 Gone and points to /api/v2/emergency/declare/."""
     permission_classes = [IsAuthenticated, IsSuperadminOnly]
 
     def get(self, request):
-        policy, _ = RescueConsentPolicy.objects.get_or_create(pk=1)
+        current = active_emergency()
         return Response({
-            'mode': policy.mode,
-            'reason': policy.reason,
-            'active_until': policy.active_until,
-            'is_optional_active': policy.is_optional_active(),
-            'updated_at': policy.updated_at,
+            'mode': 'emergency' if current else 'mandatory',
+            'reason': current.reason if current else '',
+            'active_until': current.expires_at if current else None,
+            'is_optional_active': current is not None,
         })
 
     def post(self, request):
-        serializer = RescueConsentPolicySerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-
-        policy, _ = RescueConsentPolicy.objects.get_or_create(pk=1)
-        policy.mode = data['mode']
-        policy.reason = data.get('reason', '')
-        policy.active_until = data.get('active_until')
-        policy.changed_by = request.user
-        policy.save(update_fields=['mode', 'reason', 'active_until', 'changed_by', 'updated_at'])
-
-        RescueConsentPolicyChangeLog.objects.create(
-            changed_by=request.user, mode=policy.mode, reason=policy.reason, active_until=policy.active_until,
+        return Response(
+            {'detail': 'Retired. Use /api/v2/emergency/declare/ or /api/v2/emergency/end/.'},
+            status=status.HTTP_410_GONE,
         )
-        return Response({
-            'mode': policy.mode,
-            'reason': policy.reason,
-            'active_until': policy.active_until,
-            'is_optional_active': policy.is_optional_active(),
-        })

@@ -82,7 +82,6 @@ function formatSignal(s: TelemetryLiveSample): string {
     if (s.rsrp_dbm != null) parts.push(`RSRP ${s.rsrp_dbm} dBm`)
     if (s.rsrq_db != null) parts.push(`RSRQ ${s.rsrq_db} dB`)
     if (s.sinr_db != null) parts.push(`SINR ${s.sinr_db} dB`)
-    if (s.cqi != null) parts.push(`CQI ${s.cqi}`)
     return parts.join(', ')
   }
   if (s.rssi_dbm != null) return `${s.rssi_dbm} dBm (RSSI)`
@@ -188,6 +187,8 @@ export default function TelemetryLiveSamplesPage() {
                 <th>Network</th>
                 <th>Operator (MCC/MNC)</th>
                 <th>Signal</th>
+                {/* CQI is derived from SINR on the server (estimate, not measured). LTE only. */}
+                <th title="Estimated from SINR, LTE only">CQI (4G, est.)</th>
                 <th>Lat</th>
                 <th>Lng</th>
                 <th>Trigger</th>
@@ -205,6 +206,7 @@ export default function TelemetryLiveSamplesPage() {
                       for GSM, RSCP+Ec/Io for WCDMA (falling back to RSSI on
                       pre-Android-10 devices where those aren't available). */}
                   <td>{formatSignal(s)}</td>
+                  <td>{s.network_type === 'LTE' && s.cqi_derived != null ? s.cqi_derived : '-'}</td>
                   <td>{s.lat?.toFixed(5)}</td>
                   <td>{s.lng?.toFixed(5)}</td>
                   <td>{s.trigger_reason}</td>

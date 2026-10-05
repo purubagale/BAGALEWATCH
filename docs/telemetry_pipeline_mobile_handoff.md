@@ -431,3 +431,135 @@ Different cadence (one upload per completed call, not a periodic/handover tick),
 `opt_out`/duplicate-batch handling (call volume doesn't need it), and no on-device MOS
 computation (keeping that server-side means a future constant correction — see §12.3 —
 applies retroactively via a backend deploy, not an app re-release to every device).
+
+## 13. Device-bound, consent-gated tracing (2026-10-04)
+
+Written for: the Android SDK team. This section replaces the shared-key device
+model for two things: trace uploads (new) and every ingest call (retirement
+below). Only DT-WATCH operators can start a trace. The app never starts one
+itself, and it never sends location until the user has accepted and the OS
+location permission is granted.
+
+### 13.1 Credential: a Keystore keypair, never the APK key
+
+- On first launch, generate an EC P-256 keypair in the Android Keystore with the
+  private key non-exportable. Keep it there. Never write it to disk, prefs, or logs.
+- The device id is the SHA-256 of the public key's DER encoding
+  (`SubjectPublicKeyInfo`), first 32 hex chars. The server recomputes it from the
+  PEM you send, so the id cannot be chosen independently of the key.
+- The shared `tel_` key is retired (§13.6). Do not add new uses of it.
+
+### 13.2 Registration: silent, on install and on every update
+
+No user prompt. Run it at app start whenever no registration exists for the
+current key, and again after an app update.
+
+1. `GET /api/telemetry/v1/device/challenge/` → `{"challenge": "...", "expires_in": 300}`.
+   The challenge is single-use and expires after 5 minutes.
+2. Request a Play Integrity token with the challenge as its nonce.
+3. `POST /api/telemetry/v1/device/register/` with JSON:
+   `{"public_key": "<PEM>", "challenge": "...", "play_integrity_token": "...", "msisdn": "+977...", "fcm_token": "...", "app_version": "1.2.3"}`.
+   `msisdn` comes from the SIM through the carrier-privileged API. The app never
+   asks the user for it.
+
+Responses: `200 {"device_id": "...", "registered": true, "created": bool}`;
+`403` on a failed integrity check or a revoked device (the detail is always
+generic, so a probing client learns nothing); `409` if the MSISDN is already
+bound to a different device; `400` on a bad challenge or key; `429` on too many
+attempts from one IP.
+
+Re-registering the same key updates msisdn, fcm_token, and app_version. It never
+un-revokes a device.
+
+### 13.3 Signing every device call
+
+Every call after registration, except the two above, carries four headers:
+
+| Header | Value |
+|---|---|
+| `X-Device-Id` | the `device_id` from registration |
+| `X-Timestamp` | current epoch **seconds** (not ms); must be within ±120 s of server time |
+| `X-Nonce` | 8–128 chars of `[A-Za-z0-9_-]`, unique per request |
+| `X-Signature` | base64 (standard, padded) of the DER ECDSA-SHA256 signature |
+
+The signed string is one line, UTF-8, with no trailing newline:
+
+```
+METHOD|PATH|TIMESTAMP|NONCE|SHA256_HEX_OF_BODY
+```
+
+- `METHOD` is uppercase. `PATH` is the request path including the leading `/api/…`
+  and with no query string.
+- `SHA256_HEX_OF_BODY` is the lowercase hex SHA-256 of the exact body bytes you
+  send. For GET and other body-less requests it is the hash of the empty string.
+- Send the same bytes you hashed. Do not re-serialize JSON after signing.
+
+Use the Keystore's `Signature.getInstance("SHA256withECDSA")`. Encode the result
+as standard base64 (not URL-safe).
+
+A replayed nonce gets `401`, and so does a timestamp outside the window.
+
+### 13.4 Push and polling
+
+- FCM data messages only, with `{"type": "trace_request", "request_id": "<uuid>"}`.
+  The push carries no MSISDN, case reference, or location. Do not show the push
+  payload to the user as-is.
+- On a `trace_request` push, and also on every app start and every ~15 minutes,
+  call `GET /api/telemetry/v1/device/trace-requests/`. That returns only open
+  requests (`PENDING` or `ACCEPTED`) with `id`, `status`, `consent_at`, `expires_at`,
+  and `created_at`. Push is an accelerator. Polling is the reliable path.
+- Renew the FCM token with `PUT /api/telemetry/v1/device/fcm-token/` whenever FCM rotates it.
+
+### 13.5 Consent and sampling
+
+1. For a `PENDING` request, show a full-screen consent prompt. Accept and Reject
+   both go to `POST /api/telemetry/v1/device/trace-requests/<id>/respond/` with
+   `{"action": "accept" | "reject"}`. Each action is valid only from one specific
+   state, and any other state returns `409`.
+   If the response has `"operator_attested": true`, an operator has recorded the
+   user's agreement by phone. Show the prompt as "An NTC operator recorded your
+   agreement by phone. Tap Accept to continue." The phone-call record does not
+   start the trace. Only this on-device Accept does, so the user always makes the
+   final decision on their own phone.
+2. **Only after Accept**, request `ACCESS_FINE_LOCATION` at runtime. If the
+   user refuses the OS grant, keep the request `ACCEPTED` on the server and tell
+   the user location is off. Do not send anything.
+3. While sampling, run a foreground service with a persistent notification:
+   "Location shared with NTC network team until HH:MM — Stop". Its Stop action
+   calls `respond/` with `{"action": "stop"}`, which moves the request to `REVOKED`.
+4. Send fixes in batches to `POST /api/telemetry/v1/device/trace-requests/<id>/samples/`
+   as a JSON array of `{"ts": <epoch ms>, "lat": ..., "lon": ..., "accuracy_m": ...}`.
+   The server accepts a fix only if `ts` is inside `[consent_at, expires_at]`.
+   Out-of-window and malformed items are counted in `rejected` and dropped, and
+   they never fail the batch. Keep `ts` honest: use the fix's own time. Do not
+   back-date it.
+5. Stop sampling when the request expires, is `REVOKED`, `CANCELLED`, or
+   `EXPIRED`, or when the user revokes. A `409` on samples means the request
+   is no longer `ACCEPTED`. Stop the service and do not retry.
+
+### 13.6 Retiring the shared key
+
+- Crowdsourced ingest (`samples/`, `volte-samples/`) accepts signed device calls
+  right away. Ship signing in the next build.
+- The shared `tel_` key still works until `TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL`
+  is set on the server. After that date it returns `401 "shared telemetry key
+  retired; update the app"`. A device-signed call is unaffected either way.
+- Until then, the key stays in the APK, and anyone who extracts it can still post
+  crowdsourced rows. That is the risk the cutoff closes. Tracing is not affected,
+  because trace samples are accepted only on device-signed calls.
+- Crowdsourced rows from a signed device are always owned by that device. A body
+  `device_id` is ignored.
+
+### 13.7 Blocking external prerequisites
+
+- **Firebase project** for FCM, with the service-account credential supplied to
+  the server (`FCM_SERVICE_ACCOUNT_JSON`) and `google-services.json` in the app.
+- **Play Integrity** linked to the Google Cloud project that holds that service
+  account, with the package name set on the server (`PLAY_INTEGRITY_PACKAGE_NAME`).
+  `PLAY_INTEGRITY_REQUIRED` defaults to true, so registration fails closed until
+  this is in place.
+- **Carrier-privileged status** for the SIM MSISDN read (§12.1). Without it, the
+  app has no number to register.
+- The server's push and integrity checks are inert until the first two are
+  configured. A trace still works by polling, but registration cannot succeed
+  until Play Integrity is configured or explicitly turned off on a dev server.

@@ -2,7 +2,8 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import (api_auth, audit, auth_log, backup, consent, dashboard, drive_test,
+from . import (api_auth, audit, auth_log, backup, collection, consent, dashboard, device_identity,
+               device_trace, drive_test, emergency,
                exports, ip_block, issues, kpi_trend, mfa, password_reset, reports, rescue, rf_audit,
                rf_reports, roles, site_import, sso_views, system_doc,
                telemetry_admin, views, volte_quality)
@@ -88,6 +89,12 @@ urlpatterns = [
     # Active IP blocking (2026-10-02, Phase E2) -- escalates the Audit
     # Log's own suspicious-burst detection into actual enforcement. See
     # core/ip_block.py's module docstring.
+    # Crowd and staff identity, collection sessions, emergency switch (2026-10-05).
+    path('device-identities/', device_identity.DeviceIdentityLookupView.as_view(), name='device-identities'),
+    path('collection-sessions/', collection.CollectionSessionListView.as_view(), name='collection-sessions'),
+    path('emergency/', emergency.EmergencyStatusView.as_view(), name='emergency-status'),
+    path('emergency/declare/', emergency.EmergencyDeclareView.as_view(), name='emergency-declare'),
+    path('emergency/end/', emergency.EmergencyEndView.as_view(), name='emergency-end'),
     path('blocked-ips/', ip_block.BlockedIPListView.as_view(), name='blocked-ips-list'),
     path('blocked-ips/<str:ip>/unblock/', ip_block.BlockedIPUnblockView.as_view(), name='blocked-ips-unblock'),
 
@@ -220,6 +227,12 @@ urlpatterns = [
     # Superadmin-only mandatory/optional consent-policy control (2026-09-02)
     # for the rescue lane — see core/rescue.py's RescueConsentPolicyView.
     path('rescue/policy/', rescue.RescueConsentPolicyView.as_view(), name='rescue-consent-policy'),
+    # Device-bound consent-gated tracing, operator side (2026-10-04) --
+    # IsRescueOperator-gated. See core/device_trace.py's docstring.
+    path('trace-requests/', device_trace.TraceRequestListCreateView.as_view(), name='trace-requests'),
+    path('trace-requests/<uuid:trace_id>/', device_trace.TraceRequestDetailView.as_view(), name='trace-request-detail'),
+    path('trace-requests/<uuid:trace_id>/phone-consent/', device_trace.TraceRequestPhoneConsentView.as_view(), name='trace-request-phone-consent'),
+    path('trace-requests/<uuid:trace_id>/cancel/', device_trace.TraceRequestCancelView.as_view(), name='trace-request-cancel'),
     # Superadmin-editable copy for the drive-test consent prompt
     # (2026-09-02) — see core/consent.py's DriveTestConsentMessageAdminView.
     path('telemetry/consent-message/', consent.DriveTestConsentMessageAdminView.as_view(), name='telemetry-consent-message'),
