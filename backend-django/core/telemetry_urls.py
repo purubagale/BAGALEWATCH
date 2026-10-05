@@ -4,7 +4,7 @@
 the isolation decision in models.py's TelemetryIngestKey docstring."""
 from django.urls import path
 
-from . import device_identity, device_trace, speed_test
+from . import device_identity, device_trace, speed_test, trace_speed
 from .consent import DriveTestConsentMessageView, DriveTestConsentView
 from .rescue import RescueEnrollView
 from .telemetry import TelemetryHealthView, TelemetryIngestView
@@ -42,4 +42,10 @@ urlpatterns = [
     path('device/trace-requests/', device_trace.DeviceTraceListView.as_view(), name='device-trace-list'),
     path('device/trace-requests/<uuid:trace_id>/respond/', device_trace.DeviceTraceRespondView.as_view(), name='device-trace-respond'),
     path('device/trace-requests/<uuid:trace_id>/samples/', device_trace.DeviceTraceSamplesView.as_view(), name='device-trace-samples'),
+    # Speed test bound to an accepted trace (2026-10-05): device-signed, and only
+    # while the trace is ACCEPTED and not expired. See core/trace_speed.py.
+    path('device/trace-requests/<uuid:trace_id>/speedtest/ping/', trace_speed.TraceSpeedPingView.as_view(), name='device-trace-speedtest-ping'),
+    path('device/trace-requests/<uuid:trace_id>/speedtest/download/', trace_speed.TraceSpeedDownloadView.as_view(), name='device-trace-speedtest-download'),
+    path('device/trace-requests/<uuid:trace_id>/speedtest/upload/', trace_speed.TraceSpeedUploadView.as_view(), name='device-trace-speedtest-upload'),
+    path('device/trace-requests/<uuid:trace_id>/speedtest/result/', trace_speed.TraceSpeedResultView.as_view(), name='device-trace-speedtest-result'),
 ]

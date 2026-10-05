@@ -14,7 +14,7 @@ Lifecycle of a TraceRequest:
              consent_method=PHONE_CALL, otherwise APP)
     ACCEPTED or PENDING --cancel--> CANCELLED   (operator)
     any open state past expires_at -> EXPIRED   (lazy, on every read/write)
-    RescueConsentPolicy optional --> created ACCEPTED (consent_method=POLICY_BYPASS)
+    active emergency + case kind --> created ACCEPTED (consent_method=POLICY_BYPASS)
 
 Device endpoints  (/api/telemetry/v1/device/, signed):
     GET  challenge/                   unsigned, issues a Play Integrity nonce
@@ -40,6 +40,7 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 from django.conf import settings
 from django.contrib.gis.geos import Point
 from django.core.cache import cache
+from django.db.models import F
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny
@@ -52,7 +53,8 @@ from .device_auth import (
     DeviceSignatureAuthentication, IsDevice, fingerprint_from_pem, load_ec_p256_public_key,
 )
 from .fcm import send_trace_push
-from .models import DeviceCredential, RescueConsentPolicy, TraceLocationSample, TraceRequest
+from .emergency import active_emergency
+from .models import CollectionSession, DeviceCredential, TraceLocationSample, TraceRequest, TraceSpeedResult
 from .play_integrity import verify_integrity_token
 from .rescue import _clean_msisdn
 from .telemetry import hash_device_id
@@ -291,6 +293,34 @@ class DeviceTraceRespondView(APIView):
         return Response(_device_view(trace))
 
 
+def _qos_fields(item):
+    """Optional signal and QoS values sent with a fix (2026-10-05). A bad value
+    becomes None rather than dropping the fix, same posture as crowd samples."""
+    def integer(key, lo, hi):
+        try:
+            v = int(item[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return v if lo <= v <= hi else None
+
+    def text(key, limit):
+        return str(item.get(key) or '').strip().upper()[:limit]
+
+    return {
+        'network_type': text('network_type', 8),
+        'cell_id': integer('cell_id', 0, 2**40),
+        'pci': integer('pci', 0, 1007),
+        'tac': integer('tac', 0, 65535),
+        'mcc': text('mcc', 6),
+        'mnc': text('mnc', 6),
+        'rsrp_dbm': integer('rsrp_dbm', -160, 0),
+        'rsrq_db': integer('rsrq_db', -40, 10),
+        'sinr_db': integer('sinr_db', -30, 60),
+        'rssi_dbm': integer('rssi_dbm', -160, 0),
+        'cqi': integer('cqi', 0, 15),
+    }
+
+
 class DeviceTraceSamplesView(APIView):
     """`POST /api/telemetry/v1/device/trace-requests/<id>/samples/` -- body
     is a JSON array of `{"ts": <epoch ms>, "lat": .., "lon": .., "accuracy_m": ..}`.
@@ -336,10 +366,15 @@ class DeviceTraceSamplesView(APIView):
             rows.append(TraceLocationSample(
                 trace=trace, ts=ts, lat=lat, lng=lng,
                 location=Point(lng, lat, srid=4326), accuracy_m=acc,
+                **_qos_fields(item),
             ))
 
         if rows:
             TraceLocationSample.objects.bulk_create(rows)
+            ensure_trace_session(trace)
+            CollectionSession.objects.filter(trace=trace).update(
+                sample_count=F('sample_count') + len(rows), last_sample_at=timezone.now(),
+            )
         return Response({'accepted': len(rows), 'rejected': rejected},
                         status=status.HTTP_202_ACCEPTED)
 
@@ -390,8 +425,9 @@ class TraceRequestListCreateView(APIView):
 
         now = timezone.now()
         ttl = _ttl_minutes(request.data.get('ttl_minutes'))
-        policy = RescueConsentPolicy.objects.filter(pk=1).first()
-        bypass = bool(policy and policy.is_optional_active())
+        # An active emergency lets a case trace skip the device Accept. The OS
+        # location permission still applies. Investigations always need Accept.
+        bypass = active_emergency() is not None and kind == TraceRequest.KIND_CASE
 
         trace = TraceRequest(
             device=device, msisdn=msisdn, requested_by=request.user,
@@ -402,7 +438,7 @@ class TraceRequestListCreateView(APIView):
             trace.status = TraceRequest.STATUS_ACCEPTED
             trace.consent_method = TraceRequest.CONSENT_POLICY
             trace.consent_at = now
-            trace.policy_mode = policy.mode
+            trace.policy_mode = 'emergency'
         trace.save()
         if trace.status == TraceRequest.STATUS_ACCEPTED:
             ensure_trace_session(trace)
@@ -424,7 +460,18 @@ class TraceRequestDetailView(APIView):
         trace = TraceRequest.objects.select_related('requested_by', 'consent_recorded_by').filter(pk=trace_id).first()
         if trace is None:
             return Response({'detail': 'not found'}, status=status.HTTP_404_NOT_FOUND)
-        return Response(_operator_view(_refresh(trace)))
+        trace = _refresh(trace)
+        payload = _operator_view(trace)
+        payload['sample_count'] = trace.samples.count()
+        payload['speed_results'] = [
+            {
+                'ran_at': r.ran_at, 'ping_median_ms': r.ping_median_ms, 'jitter_ms': r.jitter_ms,
+                'download_mbps': r.download_mbps, 'upload_mbps': r.upload_mbps,
+                'network_type': r.network_type, 'rsrp_dbm': r.rsrp_dbm,
+            }
+            for r in TraceSpeedResult.objects.filter(trace=trace)
+        ]
+        return Response(payload)
 
 
 class TraceRequestPhoneConsentView(APIView):

@@ -2582,6 +2582,9 @@ class RescueLocationAccessLog(models.Model):
 # in the first place (see RescueConsentPolicy's docstring for the exact
 # boundary of what "optional" does and does not unlock).
 
+# Retired 2026-10-05. The emergency switch (EmergencyDeclaration, core/emergency.py)
+# replaced the optional-consent override. is_optional_active() always returns False
+# now, so no path widens consent. The row and its change log stay for history.
 class RescueConsentPolicy(models.Model):
     """Singleton (pk=1). Controls two things, both normally gated on
     `rescue_consent=True`:
@@ -2637,11 +2640,8 @@ class RescueConsentPolicy(models.Model):
         db_table = 'v2_rescue_consent_policy'
 
     def is_optional_active(self):
-        if self.mode != self.MODE_OPTIONAL:
-            return False
-        if self.active_until and timezone.now() > self.active_until:
-            return False
-        return True
+        # Retired 2026-10-05: see the note above this class. Always off.
+        return False
 
     def __str__(self):
         return f'{self.mode} (until {self.active_until or "no expiry"})'
@@ -3200,6 +3200,19 @@ class TraceLocationSample(models.Model):
     lng = models.FloatField()
     location = PointField(geography=True, srid=4326, null=True, blank=True, spatial_index=True)
     accuracy_m = models.FloatField(null=True, blank=True)
+    # Signal and QoS sent with each fix (2026-10-05). All optional, so a fix
+    # without them is still stored. Same meaning as the crowd sample fields.
+    network_type = models.CharField(max_length=8, blank=True, default='')
+    cell_id = models.BigIntegerField(null=True, blank=True)
+    pci = models.IntegerField(null=True, blank=True)
+    tac = models.IntegerField(null=True, blank=True)
+    mcc = models.CharField(max_length=6, blank=True, default='')
+    mnc = models.CharField(max_length=6, blank=True, default='')
+    rsrp_dbm = models.IntegerField(null=True, blank=True)
+    rsrq_db = models.IntegerField(null=True, blank=True)
+    sinr_db = models.IntegerField(null=True, blank=True)
+    rssi_dbm = models.IntegerField(null=True, blank=True)
+    cqi = models.IntegerField(null=True, blank=True)
     received_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -3310,3 +3323,22 @@ class EmergencyDeclaration(models.Model):
     class Meta:
         db_table = 'v2_emergency_declaration'
         ordering = ['-declared_at']
+
+
+class TraceSpeedResult(models.Model):
+    """One speed test run on an accepted operator trace (2026-10-05). Values
+    are the device's own measurements. Kept with the trace so the operator
+    sees the test next to the fixes it came with."""
+    trace = models.ForeignKey(TraceRequest, on_delete=models.CASCADE, related_name='speed_results')
+    ran_at = models.DateTimeField()
+    ping_median_ms = models.FloatField(null=True, blank=True)
+    jitter_ms = models.FloatField(null=True, blank=True)
+    download_mbps = models.FloatField(null=True, blank=True)
+    upload_mbps = models.FloatField(null=True, blank=True)
+    network_type = models.CharField(max_length=8, blank=True, default='')
+    rsrp_dbm = models.IntegerField(null=True, blank=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_trace_speed_result'
+        ordering = ['ran_at']

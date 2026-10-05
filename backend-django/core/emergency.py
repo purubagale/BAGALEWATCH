@@ -5,9 +5,10 @@ turns it on for 7 days by default (up to 30). The superadmin can change the
 reason or the end date while it's active, or end it early. It also switches
 itself off when it expires.
 
-This is a separate control from RescueConsentPolicy (core/models.py). That
-one widens how strictly consent is checked. This one gates whether rescue
-search is available at all.
+This is the only emergency control. It replaced the optional-consent
+override in RescueConsentPolicy (2026-10-05). Consent is always strict: a
+lookup only matches devices that opted in. An active emergency also lets a
+case trace skip the device Accept (see core/device_trace.py).
 """
 from datetime import timedelta
 

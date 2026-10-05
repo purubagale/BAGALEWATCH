@@ -409,25 +409,15 @@ def _upsert_rescue_locations(rows):
     # Local import: avoids a module-import cycle (core.rescue imports
     # from this module) and keeps this rescue-specific branch visually
     # separate from the hot anonymous-ingest path above it.
-    from .models import RescueConsentPolicy, SubscriberLastLocation
+    from .models import SubscriberLastLocation
 
     device_ids = {r['device_id'] for r in rows}
     if not device_ids:
         return
 
-    qs = SubscriberLastLocation.objects.filter(device_id__in=device_ids)
-    policy = RescueConsentPolicy.objects.filter(pk=1).first()
-    if policy and policy.is_optional_active():
-        # Emergency override (RescueConsentPolicy.docstring): keep every
-        # already-enrolled device's location fresh regardless of its
-        # current rescue_consent value, not just the consenting ones —
-        # this can only ever affect a device that has SOME enrollment
-        # record on file (an msisdn was set at some point); it never
-        # starts tracking a device that never went through
-        # RescueEnrollView at all.
-        qs = qs.exclude(msisdn__isnull=True).exclude(msisdn='')
-    else:
-        qs = qs.filter(rescue_consent=True)
+    # Only consenting devices are kept fresh. The emergency switch controls
+    # search, not consent (2026-10-05).
+    qs = SubscriberLastLocation.objects.filter(device_id__in=device_ids, rescue_consent=True)
     enrolled = set(qs.values_list('device_id', flat=True))
     if not enrolled:
         return
