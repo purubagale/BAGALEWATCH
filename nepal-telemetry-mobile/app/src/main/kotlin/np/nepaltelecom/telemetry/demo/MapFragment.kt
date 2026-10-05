@@ -63,11 +63,16 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         statusText = view.findViewById(R.id.mapStatus)
         deleteButton = view.findViewById(R.id.mapDeleteDrive)
 
-        view.findViewById<Button>(R.id.mapDriveStart).setOnClickListener { startDrive() }
-        view.findViewById<Button>(R.id.mapDriveStop).setOnClickListener {
+        startButton = view.findViewById(R.id.mapDriveStart)
+        stopButton = view.findViewById(R.id.mapDriveStop)
+        startButton.setOnClickListener { startDrive() }
+        stopButton.setOnClickListener {
             NetTelemetry.stopDriveTest(requireContext())
+            driveRunning = false
+            paintDriveButtons()
             toast("Drive test stopped")
         }
+        paintDriveButtons()
         view.findViewById<Button>(R.id.mapDriveUpload).setOnClickListener {
             NetTelemetry.uploadNow()
             toast("Upload requested. Check Logcat for the result")
@@ -94,6 +99,15 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         super.onPause()
     }
 
+    private lateinit var startButton: Button
+    private lateinit var stopButton: Button
+
+    /** Start is green and Stop red while a drive runs. Both go back to their defaults when it stops. */
+    private fun paintDriveButtons() {
+        ButtonFeedback.paint(startButton, if (driveRunning) ButtonFeedback.GREEN else null)
+        ButtonFeedback.paint(stopButton, if (driveRunning) ButtonFeedback.RED else null)
+    }
+
     private fun startDrive() {
         val granted = ContextCompat.checkSelfPermission(
             requireContext(), Manifest.permission.ACCESS_FINE_LOCATION,
@@ -104,6 +118,8 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         }
         showLive()
         NetTelemetry.startDriveTest(requireContext())
+        driveRunning = true
+        paintDriveButtons()
         toast("Drive test started")
     }
 
@@ -202,5 +218,8 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         private const val KATHMANDU_LAT = 27.7172
         private const val KATHMANDU_LNG = 85.3240
         private val dateFormat = SimpleDateFormat("d MMM HH:mm", Locale.getDefault())
+
+        /** Kept for the whole app session, so the buttons keep their colours when the tab is re-entered. */
+        private var driveRunning = false
     }
 }
