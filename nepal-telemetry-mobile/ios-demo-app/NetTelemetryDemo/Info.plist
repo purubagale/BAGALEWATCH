@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Reference Info.plist for the demo app -- see ../README.md, step 3, for
+  how to get these keys into a real Xcode project. Modern Xcode (13+)
+  generates Info.plist keys from Build Settings by default and has no
+  physical file to edit directly; the two easiest ways to apply this are:
+    (a) in the target's "Info" tab, add each key below by hand through the
+        UI, or
+    (b) set Build Settings > "Generate Info.plist File" to No and point
+        Build Settings > "Info.plist File" at a copy of this file instead.
+  Either way, the KEYS are what matter -- this file exists so they're all
+  in one place to copy from, not because it has to be used verbatim.
+-->
+<plist version="1.0">
+<dict>
+    <!-- Real, subscriber-facing copy required here for App Store review --
+         this is boilerplate placeholder text, replace before submitting. -->
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>This app collects anonymous network coverage data (location, network type) to help Nepal Telecom improve service in your area. You can opt out at any time.</string>
+
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>processing</string>
+    </array>
+
+    <!-- Must exactly match SamplingScheduler.samplingTaskIdentifier /
+         .uploadTaskIdentifier in the NetTelemetry package -- keep these in
+         sync if either identifier ever changes. -->
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array>
+        <string>np.nepaltelecom.telemetry.sampling</string>
+        <string>np.nepaltelecom.telemetry.upload</string>
+    </array>
+</dict>
+</plist>

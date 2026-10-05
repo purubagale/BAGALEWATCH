@@ -1,0 +1,193 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/signal_title"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Setup banner: shown only when this phone's settings block cell readings (2026-10-04). -->
+        <LinearLayout
+            android:id="@+id/signalBanner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/bg_card"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="12dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/signalBannerText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="@color/brand_accent"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/signalBannerButton"
+                style="@style/Widget.App.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/banner_open_settings" />
+        </LinearLayout>
+
+        <!-- Gauge card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <np.nepaltelecom.telemetry.demo.GaugeView
+                android:id="@+id/gauge"
+                android:layout_width="match_parent"
+                android:layout_height="200dp" />
+
+            <TextView
+                android:id="@+id/qualityText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="@string/signal_no_reading"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- History card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/signal_history_caption"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <np.nepaltelecom.telemetry.demo.SparklineView
+                android:id="@+id/sparkline"
+                android:layout_width="match_parent"
+                android:layout_height="100dp"
+                android:layout_marginTop="8dp" />
+        </LinearLayout>
+
+        <!-- Serving cell card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <LinearLayout style="@style/CellRow">
+                <TextView style="@style/CellLabel" android:text="@string/label_operator" />
+                <TextView android:id="@+id/valOperator" style="@style/CellValue" />
+            </LinearLayout>
+            <LinearLayout style="@style/CellRow">
+                <TextView style="@style/CellLabel" android:text="@string/label_network" />
+                <TextView android:id="@+id/valNetwork" style="@style/CellValue" />
+            </LinearLayout>
+            <LinearLayout style="@style/CellRow">
+                <TextView style="@style/CellLabel" android:text="@string/label_cell" />
+                <TextView android:id="@+id/valCell" style="@style/CellValue" />
+            </LinearLayout>
+            <LinearLayout style="@style/CellRow">
+                <TextView style="@style/CellLabel" android:text="@string/label_tac" />
+                <TextView android:id="@+id/valTac" style="@style/CellValue" />
+            </LinearLayout>
+            <LinearLayout style="@style/CellRow">
+                <TextView style="@style/CellLabel" android:text="@string/label_pci" />
+                <TextView android:id="@+id/valPci" style="@style/CellValue" />
+            </LinearLayout>
+            <LinearLayout style="@style/CellRow">
+                <TextView style="@style/CellLabel" android:text="@string/label_rsrq" />
+                <TextView android:id="@+id/valRsrq" style="@style/CellValue" />
+            </LinearLayout>
+            <LinearLayout style="@style/CellRow">
+                <TextView style="@style/CellLabel" android:text="@string/label_sinr" />
+                <TextView android:id="@+id/valSinr" style="@style/CellValue" />
+            </LinearLayout>
+            <LinearLayout style="@style/CellRow">
+                <TextView style="@style/CellLabel" android:text="@string/label_cqi" />
+                <TextView android:id="@+id/valCqi" style="@style/CellValue" />
+            </LinearLayout>
+            <LinearLayout style="@style/CellRow">
+                <TextView style="@style/CellLabel" android:text="@string/label_updated" />
+                <TextView android:id="@+id/valUpdated" style="@style/CellValue" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/detailsButton"
+            style="@style/Widget.App.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/signal_full_parameters" />
+
+        <!-- Speed test card: runs only when the user taps Start (2026-10-05) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/speed_title"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/speed_caption"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/speedStartButton"
+                style="@style/Widget.App.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/speed_start" />
+
+            <TextView
+                android:id="@+id/speedResult"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/speed_not_run"
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

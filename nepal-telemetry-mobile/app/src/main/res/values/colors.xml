@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DT-WATCH brand palette (from frontend-react/src/App.css) plus the signal
+     quality bands used by the web app's RSRP colour scale. -->
+<resources>
+    <color name="brand_primary">#0153A5</color>
+    <color name="brand_primary_dark">#012E5B</color>
+    <color name="brand_accent">#E4B54D</color>
+
+    <color name="surface">#0B1626</color>
+    <color name="surface_card">#132338</color>
+    <color name="surface_card_alt">#1B2E47</color>
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#9FB3CC</color>
+
+    <color name="q_poor">#DC2626</color>
+    <color name="q_moderate">#F97316</color>
+    <color name="q_fair">#EAB308</color>
+    <color name="q_good">#84CC16</color>
+    <color name="q_excellent">#16A34A</color>
+    <color name="q_nodata">#94A3B8</color>
+</resources>

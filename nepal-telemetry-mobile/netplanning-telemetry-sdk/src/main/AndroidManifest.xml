@@ -1,0 +1,37 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Needed to read GPS position for each sample. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- Only required if the host app wants sampling to continue while it is
+         backgrounded. Google Play policy requires a specific, user-facing
+         justification for this permission at Play Console review time -
+         confirm with Nepal Telecom's app team before declaring it; the SDK
+         works in foreground-only mode without it (see README, "Background
+         sampling"). Left commented so it's an explicit host-app decision,
+         not something this module silently opts them into.
+    -->
+    <!-- <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" /> -->
+
+    <!-- Defensive: some OEMs still gate getAllCellInfo()/signal-strength
+         callbacks on this even post-Android 10, despite ACCESS_FINE_LOCATION
+         being the documented requirement. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Drive-test tracking (2026-10-04): a foreground service that keeps
+         asking for location while a test runs. It shows a notification, and
+         the user can stop it from there. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <application>
+        <service
+            android:name="np.nepaltelecom.telemetry.collector.DriveTestService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+    </application>
+
+</manifest>
