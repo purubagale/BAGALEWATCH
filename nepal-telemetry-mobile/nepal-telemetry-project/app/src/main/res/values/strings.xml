@@ -1,9 +1,0 @@
-<resources>
-    <string name="app_name">NetTelemetry Demo</string>
-    <string name="status_placeholder">Status will appear here.</string>
-    <string name="opt_in">Opt In</string>
-    <string name="opt_out">Opt Out</string>
-    <string name="sample_now">Sample Now</string>
-    <string name="refresh_status">Refresh Status</string>
-    <string name="upload_now">Upload Now</string>
-</resources>
