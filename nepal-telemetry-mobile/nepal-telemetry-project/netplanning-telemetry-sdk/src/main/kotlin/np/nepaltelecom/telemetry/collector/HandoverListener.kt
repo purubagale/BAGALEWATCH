@@ -41,16 +41,9 @@ internal class HandoverListener(
     // CellSampleCollector.kt.
     private var modernCallback: TelephonyCallback? = null
 
-    // Both are needed: READ_PHONE_STATE for the listener, and a location
-    // permission for the cell data it reports. Checking only the first let
-    // the listener start after location was revoked, and the app crashed on launch.
     private fun hasPermission() =
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) ==
-            PackageManager.PERMISSION_GRANTED &&
-            (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
-                PackageManager.PERMISSION_GRANTED ||
-                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
-                PackageManager.PERMISSION_GRANTED)
+            PackageManager.PERMISSION_GRANTED
 
     @SuppressLint("MissingPermission") // guarded by hasPermission()
     fun start() {
@@ -60,10 +53,7 @@ internal class HandoverListener(
                 TelephonyCallback.SignalStrengthsListener,
                 TelephonyCallback.CellInfoListener {
                 override fun onSignalStrengthsChanged(signalStrength: SignalStrength) = onCellOrSignalChanged()
-                override fun onCellInfoChanged(cellInfo: MutableList<android.telephony.CellInfo>) {
-                    CellInfoCache.update(cellInfo)
-                    onCellOrSignalChanged()
-                }
+                override fun onCellInfoChanged(cellInfo: MutableList<android.telephony.CellInfo>) = onCellOrSignalChanged()
             }
             telephonyManager.registerTelephonyCallback(context.mainExecutor, callback)
             modernCallback = callback
@@ -78,10 +68,7 @@ internal class HandoverListener(
                 @Deprecated("Deprecated in Java")
                 override fun onSignalStrengthsChanged(signalStrength: SignalStrength?) = onCellOrSignalChanged()
                 @Deprecated("Deprecated in Java")
-                override fun onCellInfoChanged(cellInfo: MutableList<android.telephony.CellInfo>?) {
-                    CellInfoCache.update(cellInfo)
-                    onCellOrSignalChanged()
-                }
+                override fun onCellInfoChanged(cellInfo: MutableList<android.telephony.CellInfo>?) = onCellOrSignalChanged()
             }
             @Suppress("DEPRECATION")
             telephonyManager.listen(
@@ -93,9 +80,7 @@ internal class HandoverListener(
     }
 
     fun stop() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            modernCallback?.let { telephonyManager.unregisterTelephonyCallback(it) }
-        }
+        modernCallback?.let { telephonyManager.unregisterTelephonyCallback(it) }
         modernCallback = null
         legacyListener?.let {
             @Suppress("DEPRECATION")

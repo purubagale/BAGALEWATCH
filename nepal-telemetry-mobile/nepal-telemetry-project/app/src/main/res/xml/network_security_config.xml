@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext HTTP is scoped to the Android emulator's host-loopback alias
+  (10.0.2.2) only — enough to reach a locally running bagalewatch-v2 stack
+  during development, and nothing broader. Genymotion uses 10.0.3.2 instead
+  of the standard emulator's 10.0.2.2; add that domain here too if testing
+  on Genymotion rather than the standard AVD emulator.
+
+  This file is a development convenience, not a template for a production
+  build: a real pilot deployment talks to a real HTTPS endpoint and needs
+  no cleartext exception at all. Don't widen this domain list "just in
+  case" — narrow, expiring exceptions are the point.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

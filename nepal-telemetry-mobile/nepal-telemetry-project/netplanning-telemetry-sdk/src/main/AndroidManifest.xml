@@ -1,0 +1,36 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Needed to read GPS position for each sample. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- Only required if the host app wants sampling to continue while it is
+         backgrounded. Google Play policy requires a specific, user-facing
+         justification for this permission at Play Console review time —
+         confirm with Nepal Telecom's app team before declaring it; the SDK
+         works in foreground-only mode without it (see README, "Background
+         sampling"). Left commented so it's an explicit host-app decision,
+         not something this module silently opts them into.
+    -->
+    <!-- <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" /> -->
+
+    <!-- Defensive: some OEMs still gate getAllCellInfo()/signal-strength
+         callbacks on this even post-Android 10, despite ACCESS_FINE_LOCATION
+         being the documented requirement. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Only takes effect for VoLTE/VoNR call-quality collection (mobile
+         guide §12, TelemetryConfig.volteSamplesUrl / VolteCallQualityListener)
+         -- a privileged/signature permission ordinary Play Store apps cannot
+         request and have granted. It requires carrier-privileged app status
+         (an NTC-internal certificate/provisioning process, not an app-code
+         change); declaring it here is necessary but not sufficient on its
+         own. Without that status, the OS denies it silently -- no crash, no
+         exception, the collection code just never receives anything. Do not
+         read "no errors" as "this feature is working."
+    -->
+    <uses-permission android:name="android.permission.READ_PRECISE_PHONE_STATE" />
+
+</manifest>

@@ -44,6 +44,10 @@
     <string name="quick_setup_body">Allow location so this app can show your live signal, cells, and Wi-Fi networks.\n\nAllowing location also lets the app share anonymous network-quality data with NTC. Nothing you see on screen is uploaded, and you can turn uploads off at any time in Settings.</string>
     <string name="quick_setup_grant">Grant permissions</string>
     <string name="quick_setup_later">Not now</string>
+    <string name="banner_open_settings">Open settings</string>
+    <string name="banner_permission_missing">Location permission is off for this app. Signal, Cells, and Wi-Fi need it.</string>
+    <string name="banner_location_off">Phone location is off. Turn it on to see cell and Wi-Fi readings.</string>
+    <string name="banner_high_accuracy_off">GPS is off, so this phone may not report cells. Set Location to High accuracy.</string>
     <string name="quick_setup_denied">Location is needed to show live readings. You can allow it later from Settings.</string>
     <string name="signal_history_caption">Last 3 minutes</string>
     <string name="signal_full_parameters">Full parameters</string>

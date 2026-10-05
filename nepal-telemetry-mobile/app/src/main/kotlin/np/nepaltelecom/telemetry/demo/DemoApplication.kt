@@ -1,4 +1,4 @@
-﻿package np.nepaltelecom.telemetry.demo
+package np.nepaltelecom.telemetry.demo
 
 import android.app.Application
 import np.nepaltelecom.telemetry.NetTelemetry

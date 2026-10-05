@@ -1,0 +1,19 @@
+# Gradle
+.gradle/
+build/
+.kotlin/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Machine-local SDK path — must not be checked in (see README)
+local.properties
+
+# OS
+.DS_Store
+Thumbs.db

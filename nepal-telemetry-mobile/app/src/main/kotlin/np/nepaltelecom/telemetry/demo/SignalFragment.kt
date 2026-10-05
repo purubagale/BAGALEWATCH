@@ -3,7 +3,9 @@ package np.nepaltelecom.telemetry.demo
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
+import android.net.Uri
 import android.os.Looper
+import android.provider.Settings
 import android.view.View
 import android.widget.Button
 import android.widget.TextView
@@ -41,6 +43,9 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
     private lateinit var valRsrq: TextView
     private lateinit var valSinr: TextView
     private lateinit var valUpdated: TextView
+    private lateinit var banner: View
+    private lateinit var bannerText: TextView
+    private lateinit var bannerButton: Button
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -56,6 +61,10 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
         valSinr = view.findViewById(R.id.valSinr)
         valUpdated = view.findViewById(R.id.valUpdated)
 
+        banner = view.findViewById(R.id.signalBanner)
+        bannerText = view.findViewById(R.id.signalBannerText)
+        bannerButton = view.findViewById(R.id.signalBannerButton)
+
         view.findViewById<Button>(R.id.detailsButton).setOnClickListener {
             startActivity(Intent(requireContext(), LiveParamsActivity::class.java))
         }
@@ -63,12 +72,46 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
 
     override fun onResume() {
         super.onResume()
+        updateBanner()
         handler.post(poll)
     }
 
     override fun onPause() {
         handler.removeCallbacks(poll)
         super.onPause()
+    }
+
+    /**
+     * Shows a setup banner when this phone's own settings would stop it
+     * reporting cells. The button opens the settings screen that fixes it.
+     */
+    private fun updateBanner() {
+        val problems = PhoneChecks.problems(requireContext())
+        banner.visibility = if (problems.isEmpty()) View.GONE else View.VISIBLE
+        if (problems.isEmpty()) return
+
+        val first = problems.first()
+        bannerText.text = problems.joinToString("\n") { messageFor(it) }
+        bannerButton.setOnClickListener { openSettingsFor(first) }
+    }
+
+    private fun messageFor(problem: PhoneChecks.Problem): String = getString(
+        when (problem) {
+            PhoneChecks.Problem.PERMISSION_MISSING -> R.string.banner_permission_missing
+            PhoneChecks.Problem.LOCATION_SERVICES_OFF -> R.string.banner_location_off
+            PhoneChecks.Problem.HIGH_ACCURACY_OFF -> R.string.banner_high_accuracy_off
+        }
+    )
+
+    private fun openSettingsFor(problem: PhoneChecks.Problem) {
+        val intent = when (problem) {
+            PhoneChecks.Problem.PERMISSION_MISSING -> Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", requireContext().packageName, null),
+            )
+            else -> Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+        }
+        startActivity(intent)
     }
 
     private fun readCell() {

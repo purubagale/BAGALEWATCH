@@ -1,4 +1,4 @@
-package np.nepaltelecom.telemetry.collector
+﻿package np.nepaltelecom.telemetry.collector
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -14,6 +14,7 @@ import android.telephony.CellInfoGsm
 import android.telephony.CellInfoLte
 import android.telephony.CellInfoNr
 import android.telephony.CellInfoWcdma
+import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.CurrentLocationRequest
@@ -29,6 +30,7 @@ import kotlin.coroutines.resume
 // Location quality targets (2026-10-04). A fix at or under GOOD_FIX_ACCURACY_M
 // is accepted at once; otherwise up to LOCATION_ATTEMPTS requests are made and
 // the most accurate one is kept.
+private const val TAG = "NetTelemetry.Cells"
 private const val GOOD_FIX_ACCURACY_M = 15f
 private const val LOCATION_ATTEMPTS = 3
 
@@ -48,8 +50,7 @@ internal class CellSampleCollector(
     private val context: Context,
     private val identity: DeviceIdentity,
 ) {
-    private val telephonyManager =
-        context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+    private val telephonyManager = defaultDataTelephony(context)
     private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
 
     private fun hasLocationPermission() =
@@ -148,11 +149,7 @@ internal class CellSampleCollector(
 
     @SuppressLint("MissingPermission")
     private fun readServingCell(): ParsedCell? {
-        val allCellInfo: List<CellInfo> = try {
-            telephonyManager.allCellInfo ?: emptyList()
-        } catch (e: SecurityException) {
-            emptyList()
-        }
+        val allCellInfo: List<CellInfo> = readTelephonyCells().ifEmpty { CellInfoCache.fresh() }
         // Prefer the registered (serving) cell; if none is flagged registered
         // (seen on a few OEMs), fall back to the first entry rather than
         // reporting nothing.
@@ -291,8 +288,42 @@ internal class CellSampleCollector(
     @SuppressLint("MissingPermission") // guarded by hasLocationPermission() below
     fun readAllCells(): List<CellReading> {
         if (!hasLocationPermission()) return emptyList()
-        val infos = telephonyManager.allCellInfo ?: return emptyList()
+        val infos = readTelephonyCells().ifEmpty { CellInfoCache.fresh() }
         return infos.mapNotNull { cellReadingFrom(it) }
+    }
+
+    /**
+     * A direct cell read across every active SIM (2026-10-04). On dual-SIM
+     * phones the default data SIM can have no registered cell while the other
+     * SIM does, so the first SIM that reports cells wins. Empty when none does.
+     */
+    private fun readTelephonyCells(): List<CellInfo> {
+        val managers = activeSimTelephonyManagers()
+        for ((i, tm) in managers.withIndex()) {
+            val cells = try {
+                tm.allCellInfo
+            } catch (e: SecurityException) {
+                android.util.Log.d(TAG, "sim $i allCellInfo denied: ${e.message}")
+                null
+            }
+            android.util.Log.d(TAG, "sim $i of ${managers.size}: ${cells?.size ?: -1} cells")
+            if (!cells.isNullOrEmpty()) return cells
+        }
+        android.util.Log.d(TAG, "no SIM reported cells; cache size ${CellInfoCache.fresh().size}")
+        return emptyList()
+    }
+
+    private fun activeSimTelephonyManagers(): List<TelephonyManager> {
+        val base = telephonyManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                val subs = SubscriptionManager.from(context).getActiveSubscriptionInfoList().orEmpty()
+                if (subs.isNotEmpty()) return subs.map { base.createForSubscriptionId(it.subscriptionId) }
+            } catch (e: SecurityException) {
+                // Phone-state permission not granted: use the plain manager.
+            }
+        }
+        return listOf(base)
     }
 
     private fun cellReadingFrom(info: CellInfo): CellReading? = when (info) {
@@ -445,4 +476,23 @@ private fun Int.legacyPlmnOrNull(width: Int): String? =
 // a real RxQual/BER reading is always 0-7, so 99 needs its own check or it
 // would be stored as a bogus "RxQual 99".
 private fun Int.bitErrorRateOrNull(): Int? = if (this == 99) null else this.toIntOrNull()
+
+// Dual-SIM phones (2026-10-04): the plain TelephonyManager can be bound to a SIM
+// with no service. On Android 12+ bind to the default data SIM instead, which
+// is the one carrying traffic. Falls back to the plain manager on older
+// Android or when the default SIM can't be read.
+private fun defaultDataTelephony(context: Context): TelephonyManager {
+    val base = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        try {
+            val subId = SubscriptionManager.getDefaultDataSubscriptionId()
+            if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                return base.createForSubscriptionId(subId)
+            }
+        } catch (e: SecurityException) {
+            // Phone-state permission not granted yet: use the plain manager.
+        }
+    }
+    return base
+}
 

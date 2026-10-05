@@ -18,6 +18,35 @@
             android:textStyle="bold"
             android:layout_marginBottom="12dp" />
 
+        <!-- Setup banner: shown only when this phone's settings block cell readings (2026-10-04). -->
+        <LinearLayout
+            android:id="@+id/signalBanner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/bg_card"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="12dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/signalBannerText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="@color/brand_accent"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/signalBannerButton"
+                style="@style/Widget.App.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/banner_open_settings" />
+        </LinearLayout>
+
         <!-- Gauge card -->
         <LinearLayout
             android:layout_width="match_parent"
