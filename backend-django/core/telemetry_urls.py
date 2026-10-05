@@ -4,7 +4,7 @@
 the isolation decision in models.py's TelemetryIngestKey docstring."""
 from django.urls import path
 
-from . import device_trace
+from . import device_trace, speed_test
 from .consent import DriveTestConsentMessageView, DriveTestConsentView
 from .rescue import RescueEnrollView
 from .telemetry import TelemetryHealthView, TelemetryIngestView
@@ -13,6 +13,11 @@ from .volte_quality import VolteSampleIngestView
 urlpatterns = [
     path('samples/', TelemetryIngestView.as_view(), name='telemetry-ingest'),
     path('health/', TelemetryHealthView.as_view(), name='telemetry-health'),
+    # Active speed test (2026-10-05) -- public but size-capped and rate-limited,
+    # and the app runs it only on a user tap. See core/speed_test.py.
+    path('speedtest/ping/', speed_test.SpeedTestPingView.as_view(), name='speedtest-ping'),
+    path('speedtest/download/', speed_test.SpeedTestDownloadView.as_view(), name='speedtest-download'),
+    path('speedtest/upload/', speed_test.SpeedTestUploadView.as_view(), name='speedtest-upload'),
     # VoLTE/VoNR call-quality ingest (2026-10-02) -- same ingest-key auth,
     # dormant until the app has carrier-privileged status. See
     # core/volte_quality.py's module docstring.
