@@ -26,4 +26,5 @@ data class CellReading(
     val rssiDbm: Int?,
     val rscpDbm: Int?,
     val ecioDb: Int?,
+    val cqi: Int? = null,           // LTE CQI the modem reports (API 29+), or null
 )

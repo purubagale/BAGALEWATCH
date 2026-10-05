@@ -1,8 +1,8 @@
 <resources>
     <string name="app_name">NetTelemetry Demo</string>
     <string name="status_placeholder">Status will appear here.</string>
-    <string name="opt_in">Opt In</string>
-    <string name="opt_out">Opt Out</string>
+    <string name="opt_in">Share with NTC</string>
+    <string name="opt_out">Stop sharing</string>
     <string name="sample_now">Sample Now</string>
     <string name="refresh_status">Refresh Status</string>
     <string name="upload_now">Upload Now</string>
@@ -17,7 +17,7 @@
     <string name="nav_wifi">Wi-Fi</string>
     <string name="cells_title">Cells in view</string>
     <string name="cells_caption">Serving cell first, then neighbours. Refreshes every 5 seconds.</string>
-    <string name="cells_empty">No cells visible. Opt in and grant location to see them.</string>
+    <string name="cells_empty">No cells reported right now. Keep location on, and it will refresh on its own.</string>
     <string name="wifi_title">Wi-Fi networks</string>
     <string name="wifi_phone_only">Shown on this phone only. Nothing here is uploaded.</string>
     <string name="wifi_scan">Scan again</string>
@@ -58,7 +58,16 @@
     <string name="label_pci">PCI</string>
     <string name="label_rsrq">RSRQ</string>
     <string name="label_sinr">SINR</string>
+    <string name="label_cqi">CQI (4G)</string>
     <string name="label_updated">Updated</string>
+    <string name="speed_title">Speed test</string>
+    <string name="speed_caption">Measures ping, download and upload. Runs only when you tap Start, and uses about 8 MB of mobile data.</string>
+    <string name="speed_start">Start speed test</string>
+    <string name="speed_running">Testing. Keep the app open for about 20 seconds.</string>
+    <string name="speed_not_run">Not run yet.</string>
+    <string name="speed_result">Ping %1$s ms · jitter %2$s ms\nDownload %3$s Mbps · Upload %4$s Mbps\nRadio at test: %5$s</string>
+    <string name="speed_no_radio">no reading</string>
+    <string name="speed_error">Test failed: %1$s</string>
     <string name="drive_title">Drive test</string>
     <string name="drive_intro">Records a location fix every 2 seconds while it runs. A notification stays on screen, and its Stop button ends the test.</string>
     <string name="drive_upload">Upload now</string>

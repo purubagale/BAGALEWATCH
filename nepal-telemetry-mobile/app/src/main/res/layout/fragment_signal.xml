@@ -131,6 +131,10 @@
                 <TextView android:id="@+id/valSinr" style="@style/CellValue" />
             </LinearLayout>
             <LinearLayout style="@style/CellRow">
+                <TextView style="@style/CellLabel" android:text="@string/label_cqi" />
+                <TextView android:id="@+id/valCqi" style="@style/CellValue" />
+            </LinearLayout>
+            <LinearLayout style="@style/CellRow">
                 <TextView style="@style/CellLabel" android:text="@string/label_updated" />
                 <TextView android:id="@+id/valUpdated" style="@style/CellValue" />
             </LinearLayout>
@@ -143,5 +147,47 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:text="@string/signal_full_parameters" />
+
+        <!-- Speed test card: runs only when the user taps Start (2026-10-05) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/speed_title"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/speed_caption"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/speedStartButton"
+                style="@style/Widget.App.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/speed_start" />
+
+            <TextView
+                android:id="@+id/speedResult"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/speed_not_run"
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp" />
+        </LinearLayout>
     </LinearLayout>
 </ScrollView>

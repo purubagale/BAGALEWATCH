@@ -112,7 +112,7 @@ class CellsFragment : Fragment(R.layout.fragment_cells) {
     }
 
     private fun qualityLine(c: CellReading): String = when (c.networkType) {
-        "LTE" -> "RSRQ ${c.rsrqDb?.let { "$it dB" } ?: DASH} · SINR ${c.sinrDb?.let { "$it dB" } ?: DASH}"
+        "LTE" -> "RSRQ ${c.rsrqDb?.let { "$it dB" } ?: DASH} · SINR ${c.sinrDb?.let { "$it dB" } ?: DASH} · CQI ${RfMath.cqiText(c.cqi, c.sinrDb)}"
         "UMTS" -> c.ecioDb?.let { "Ec/Io $it dB" } ?: ""
         else -> ""
     }

@@ -29,6 +29,40 @@ object RfMath {
         return band ?: "EARFCN $e"
     }
 
+    /*
+     * LTE CQI from SINR (dB): the lowest SINR at which each CQI index is usable.
+     * Brueninghaus et al., PIMRC 2005. Same table as the server's
+     * backend-django/core/telemetry.py `_CQI_SINR_THRESHOLDS_DB` -- keep the two in step.
+     */
+    private val cqiSinrThresholdsDb = listOf(
+        1 to -6.7, 2 to -4.7, 3 to -2.3, 4 to 0.2, 5 to 2.4, 6 to 4.3,
+        7 to 5.9, 8 to 8.1, 9 to 10.3, 10 to 11.7, 11 to 14.1, 12 to 16.3,
+        13 to 18.7, 14 to 21.0, 15 to 22.7,
+    )
+
+    /**
+     * Estimated LTE CQI (0..15) for a SINR in dB, or null when SINR is unknown.
+     * Below the lowest threshold the result is 0. This is an estimate from SINR,
+     * not a value the modem reports, so every screen labels it "est.".
+     */
+    fun cqiFromSinr(sinrDb: Int?): Int? {
+        val sinr = sinrDb ?: return null
+        var cqi = 0
+        for ((index, min) in cqiSinrThresholdsDb) {
+            if (sinr >= min) cqi = index else break
+        }
+        return cqi
+    }
+
+    /**
+     * CQI as shown to the user. The modem's own value wins when it reports one.
+     * Otherwise the SINR estimate is shown and marked "(est.)", as the server does.
+     */
+    fun cqiText(reported: Int?, sinrDb: Int?): String = when {
+        reported != null -> reported.toString()
+        else -> cqiFromSinr(sinrDb)?.let { "$it (est.)" } ?: "—"
+    }
+
     /** Fraction 0..1 of a -140 to -40 dBm range, for drawing a signal bar. */
     fun barFraction(dbm: Int?): Float {
         val v = dbm ?: return 0f

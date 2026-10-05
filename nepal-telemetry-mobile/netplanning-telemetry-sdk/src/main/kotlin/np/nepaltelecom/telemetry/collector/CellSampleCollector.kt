@@ -65,6 +65,16 @@ internal class CellSampleCollector(
     }
 
     /**
+     * A local read for the phone's own screens (2026-10-05). Needs only location
+     * permission, not opt-in, and nothing it returns is queued or uploaded.
+     */
+    @SuppressLint("MissingPermission") // guarded by hasLocationPermission() below
+    suspend fun collectLive(triggerReason: String): Sample? {
+        if (!hasLocationPermission()) return null
+        return sampleFrom(readLocationWithTimeout(), triggerReason, requireOptIn = false)
+    }
+
+    /**
      * Builds a sample from a location the caller already has. Drive-test
      * tracking uses this so each fix doesn't wait for a fresh location request.
      */
@@ -98,6 +108,7 @@ internal class CellSampleCollector(
             rsrqDb = cell?.rsrqDb,
             rssiDbm = cell?.rssiDbm,
             sinrDb = cell?.sinrDb,
+            cqi = cell?.cqi,
             rxQual = cell?.rxQual,
             rscpDbm = cell?.rscpDbm,
             ecioDb = cell?.ecioDb,
@@ -176,6 +187,8 @@ internal class CellSampleCollector(
             // LTE equivalent exposed here and is conventionally reported as
             // the SINR field for LTE in tools like this one.
             sinrDb = info.cellSignalStrength.rssnr.toIntOrNull(),
+            // CQI is API 29+ on LTE; no public CQI getter on older releases.
+            cqi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) info.cellSignalStrength.cqi.toIntOrNull() else null,
             rxQual = null,
             rscpDbm = null,
             ecioDb = null,
@@ -348,6 +361,7 @@ internal class CellSampleCollector(
                 rssiDbm = sig.dbm.toIntOrNull(),
                 rscpDbm = null,
                 ecioDb = null,
+                cqi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) sig.cqi.toIntOrNull() else null,
             )
         }
         is CellInfoWcdma -> {
@@ -432,6 +446,8 @@ internal class CellSampleCollector(
         val scramblingCode: Int? = null,
         val bcch: Int? = null,
         val bsic: Int? = null,
+        // 2026-10-05 -- LTE CQI the modem reports (API 29+). Null for other RATs.
+        val cqi: Int? = null,
     )
 }
 

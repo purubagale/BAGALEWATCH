@@ -54,6 +54,9 @@ data class Sample(
     // Set on fixes and markers taken during a drive test (2026-10-04). One UUID
     // per drive, so the server can match a drive's samples exactly.
     val driveSessionId: String? = null,
+    // LTE CQI the modem reports (API 29+, CellSignalStrengthLte.getCqi()). Null
+    // where the device gives none. Separate from the CQI the server estimates from SINR.
+    val cqi: Int? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("device_id", deviceId)
@@ -80,6 +83,7 @@ data class Sample(
         putOpt("battery_pct", batteryPct)
         put("trigger_reason", triggerReason)
         putOpt("drive_session_id", driveSessionId)
+        putOpt("cqi", cqi)
     }
 
     companion object {
@@ -108,6 +112,7 @@ data class Sample(
             batteryPct = o.optIntOrNull("battery_pct"),
             triggerReason = o.optString("trigger_reason", "periodic"),
             driveSessionId = o.optString("drive_session_id", "").takeIf { it.isNotEmpty() },
+            cqi = o.optIntOrNull("cqi"),
         )
     }
 }

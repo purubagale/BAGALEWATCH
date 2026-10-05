@@ -147,7 +147,7 @@ object NetTelemetry {
     fun readLiveSample(onResult: (Sample?) -> Unit) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before readLiveSample()" }
         scope.launch {
-            val sample = CellSampleCollector(appContext, DeviceIdentity(appContext)).collect(triggerReason = "manual")
+            val sample = CellSampleCollector(appContext, DeviceIdentity(appContext)).collectLive(triggerReason = "manual")
             onResult(sample)
         }
     }

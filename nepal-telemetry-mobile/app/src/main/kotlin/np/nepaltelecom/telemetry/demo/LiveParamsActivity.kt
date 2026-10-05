@@ -36,26 +36,48 @@ class LiveParamsActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Only the serving cell's technology is shown: the radio the phone is camped
+     * on. Neighbour and other-RAT fields are left out, because they're empty for
+     * the serving cell and only add dashes.
+     */
     private fun format(s: Sample?): String {
         if (s == null) return getString(R.string.live_params_none)
         return buildString {
             section("Time", Date(s.timestampMs).toString())
             section("Trigger", s.triggerReason)
-            section("Network", s.networkType)
+            section("Serving network", s.networkType)
             section("Operator (MCC / MNC)", "${s.mcc.orDash()} / ${s.mnc.orDash()}")
-            section("Cell ID", s.cellId.orDash())
-            section("PCI (LTE)", s.pci.orDash())
-            section("TAC / LAC", s.tac.orDash())
-            section("Scrambling code (3G)", s.scramblingCode.orDash())
-            section("BCCH (2G)", s.bcch.orDash())
-            section("BSIC (2G)", s.bsic.orDash())
-            section("RSRP", s.rsrpDbm.withUnit("dBm"))
-            section("RSRQ", s.rsrqDb.withUnit("dB"))
-            section("SINR", s.sinrDb.withUnit("dB"))
-            section("RSSI", s.rssiDbm.withUnit("dBm"))
-            section("RSCP (3G)", s.rscpDbm.withUnit("dBm"))
-            section("Ec/Io (3G)", s.ecioDb.withUnit("dB"))
-            section("Rx quality (2G)", s.rxQual.orDash())
+            when (s.networkType) {
+                "LTE" -> {
+                    section("Cell ID (ECI)", s.cellId.orDash())
+                    section("eNB : sector", s.cellId?.let { "${it shr 8} : ${it and 0xFFL}" }.orDash())
+                    section("PCI", s.pci.orDash())
+                    section("TAC", s.tac.orDash())
+                    section("RSRP", s.rsrpDbm.withUnit("dBm"))
+                    section("RSRQ", s.rsrqDb.withUnit("dB"))
+                    section("SINR", s.sinrDb.withUnit("dB"))
+                    section("CQI (4G)", RfMath.cqiText(s.cqi, s.sinrDb))
+                    section("RSSI", s.rssiDbm.withUnit("dBm"))
+                }
+                "UMTS" -> {
+                    section("Cell ID", s.cellId.orDash())
+                    section("Scrambling code (PSC)", s.scramblingCode.orDash())
+                    section("LAC", s.tac.orDash())
+                    section("RSCP", s.rscpDbm.withUnit("dBm"))
+                    section("Ec/Io", s.ecioDb.withUnit("dB"))
+                    section("RSSI", s.rssiDbm.withUnit("dBm"))
+                }
+                "GSM" -> {
+                    section("Cell ID", s.cellId.orDash())
+                    section("BCCH (ARFCN)", s.bcch.orDash())
+                    section("BSIC", s.bsic.orDash())
+                    section("LAC", s.tac.orDash())
+                    section("RSSI", s.rssiDbm.withUnit("dBm"))
+                    section("Rx quality", s.rxQual.orDash())
+                }
+                else -> section("Cell", "No serving cell reported on this network")
+            }
             section("Latitude", s.lat.orDash())
             section("Longitude", s.lon.orDash())
             section("GPS accuracy", s.gpsAccuracyM.withUnit("m"))

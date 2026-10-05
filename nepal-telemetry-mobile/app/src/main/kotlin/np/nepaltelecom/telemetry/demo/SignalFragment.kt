@@ -42,10 +42,16 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
     private lateinit var valPci: TextView
     private lateinit var valRsrq: TextView
     private lateinit var valSinr: TextView
+    private lateinit var valCqi: TextView
     private lateinit var valUpdated: TextView
     private lateinit var banner: View
     private lateinit var bannerText: TextView
     private lateinit var bannerButton: Button
+    private lateinit var speedButton: Button
+    private lateinit var speedResult: TextView
+
+    /** The last reading, kept so a speed test can record the radio it ran on. */
+    private var lastSample: Sample? = null
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -59,6 +65,7 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
         valPci = view.findViewById(R.id.valPci)
         valRsrq = view.findViewById(R.id.valRsrq)
         valSinr = view.findViewById(R.id.valSinr)
+        valCqi = view.findViewById(R.id.valCqi)
         valUpdated = view.findViewById(R.id.valUpdated)
 
         banner = view.findViewById(R.id.signalBanner)
@@ -68,7 +75,41 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
         view.findViewById<Button>(R.id.detailsButton).setOnClickListener {
             startActivity(Intent(requireContext(), LiveParamsActivity::class.java))
         }
+
+        speedButton = view.findViewById(R.id.speedStartButton)
+        speedResult = view.findViewById(R.id.speedResult)
+        speedButton.setOnClickListener { runSpeedTest() }
     }
+
+    /** Runs on the user's tap only. The test is blocking, so it goes on a background thread. */
+    private fun runSpeedTest() {
+        speedButton.isEnabled = false
+        speedResult.text = getString(R.string.speed_running)
+        Thread {
+            val result = SpeedTest.run()
+            activity?.runOnUiThread {
+                if (isAdded) showSpeedResult(result)
+            }
+        }.start()
+    }
+
+    private fun showSpeedResult(r: SpeedTest.Result) {
+        speedButton.isEnabled = true
+        if (r.error != null) {
+            speedResult.text = getString(R.string.speed_error, r.error)
+            return
+        }
+        val radio = lastSample?.let { s ->
+            val level = s.rsrpDbm ?: s.rscpDbm ?: s.rssiDbm
+            "${s.networkType}${level?.let { ", $it dBm" } ?: ""}"
+        } ?: getString(R.string.speed_no_radio)
+        speedResult.text = getString(
+            R.string.speed_result,
+            fmt(r.pingMedianMs), fmt(r.jitterMs), fmt(r.downloadMbps), fmt(r.uploadMbps), radio,
+        )
+    }
+
+    private fun fmt(v: Double?): String = v?.let { "%.1f".format(java.util.Locale.US, it) } ?: "—"
 
     override fun onResume() {
         super.onResume()
@@ -123,11 +164,12 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
     }
 
     private fun render(s: Sample?) {
+        lastSample = s
         if (s == null) {
             gauge.setValue(null)
             qualityText.text = getString(R.string.signal_no_reading)
             qualityText.setTextColor(ContextCompat.getColor(requireContext(), R.color.q_nodata))
-            listOf(valOperator, valNetwork, valCell, valTac, valPci, valRsrq, valSinr, valUpdated)
+            listOf(valOperator, valNetwork, valCell, valTac, valPci, valRsrq, valSinr, valCqi, valUpdated)
                 .forEach { it.text = DASH }
             return
         }
@@ -145,6 +187,7 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
         valPci.text = s.pci?.toString() ?: DASH
         valRsrq.text = s.rsrqDb?.let { "$it dB" } ?: DASH
         valSinr.text = s.sinrDb?.let { "$it dB" } ?: DASH
+        valCqi.text = if (s.networkType == "LTE") RfMath.cqiText(s.cqi, s.sinrDb) else DASH
         valUpdated.text = timeFormat.format(Date())
     }
 
