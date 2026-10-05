@@ -56,7 +56,8 @@ from .models import DeviceCredential, RescueConsentPolicy, TraceLocationSample, 
 from .play_integrity import verify_integrity_token
 from .rescue import _clean_msisdn
 from .telemetry import hash_device_id
-from .views import IsRescueOperator
+from .access import PERM_TRACE_CASE, PERM_TRACE_INVESTIGATE, IsTraceOperator, user_has
+from .collection import ensure_trace_session
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +285,8 @@ class DeviceTraceRespondView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         trace.save()
+        if trace.status == TraceRequest.STATUS_ACCEPTED:
+            ensure_trace_session(trace)
         logger.info('trace %s: device %s -> %s', trace.id, request.user.device_hash[:8], trace.status)
         return Response(_device_view(trace))
 
@@ -353,7 +356,7 @@ class TraceRequestListCreateView(APIView):
     trace. When RescueConsentPolicy is in its optional (emergency) mode the
     request is created ACCEPTED with consent_method=POLICY_BYPASS; the push
     still goes out, and the OS location permission still applies on-device."""
-    permission_classes = [IsRescueOperator]
+    permission_classes = [IsTraceOperator]
 
     def get(self, request):
         traces = TraceRequest.objects.select_related('requested_by', 'consent_recorded_by')[:200]
@@ -363,9 +366,20 @@ class TraceRequestListCreateView(APIView):
         msisdn = _clean_msisdn(request.data.get('msisdn'))
         if not msisdn:
             return Response({'detail': 'a valid msisdn is required'}, status=status.HTTP_400_BAD_REQUEST)
+        # 2026-10-05: an investigation starts from the MSISDN alone; a case also
+        # needs a case reference. Each kind has its own permission.
+        kind = str(request.data.get('kind') or TraceRequest.KIND_INVESTIGATION).strip().lower()
+        if kind not in (TraceRequest.KIND_INVESTIGATION, TraceRequest.KIND_CASE):
+            return Response({'detail': "kind must be 'investigation' or 'case'"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        needed = PERM_TRACE_CASE if kind == TraceRequest.KIND_CASE else PERM_TRACE_INVESTIGATE
+        if not user_has(request.user, needed):
+            return Response({'detail': f'your account lacks the {needed} permission'},
+                            status=status.HTTP_403_FORBIDDEN)
         case_reference = str(request.data.get('case_reference') or '').strip()[:200]
-        if not case_reference:
-            return Response({'detail': 'case_reference is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if kind == TraceRequest.KIND_CASE and not case_reference:
+            return Response({'detail': 'case_reference is required for a case'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         device = DeviceCredential.objects.filter(
             msisdn=msisdn, revoked_at__isnull=True,
@@ -381,7 +395,7 @@ class TraceRequestListCreateView(APIView):
 
         trace = TraceRequest(
             device=device, msisdn=msisdn, requested_by=request.user,
-            case_reference=case_reference, ttl_minutes=ttl,
+            kind=kind, case_reference=case_reference, ttl_minutes=ttl,
             expires_at=now + timedelta(minutes=ttl),
         )
         if bypass:
@@ -390,6 +404,8 @@ class TraceRequestListCreateView(APIView):
             trace.consent_at = now
             trace.policy_mode = policy.mode
         trace.save()
+        if trace.status == TraceRequest.STATUS_ACCEPTED:
+            ensure_trace_session(trace)
 
         push_sent = send_trace_push(device.fcm_token, trace.id)
         log_audit_event(
@@ -402,7 +418,7 @@ class TraceRequestListCreateView(APIView):
 
 class TraceRequestDetailView(APIView):
     """`GET /api/v2/trace-requests/<id>/`."""
-    permission_classes = [IsRescueOperator]
+    permission_classes = [IsTraceOperator]
 
     def get(self, request, trace_id):
         trace = TraceRequest.objects.select_related('requested_by', 'consent_recorded_by').filter(pk=trace_id).first()
@@ -419,7 +435,7 @@ class TraceRequestPhoneConsentView(APIView):
     (and the OS grant location permission) before anything is sent. A
     fresh push tells the phone to show the prompt. Only valid while PENDING
     and not already attested. Attestation is never recorded without a ref."""
-    permission_classes = [IsRescueOperator]
+    permission_classes = [IsTraceOperator]
 
     def post(self, request, trace_id):
         ref = str(request.data.get('phone_consent_ref') or '').strip()[:200]
@@ -450,7 +466,7 @@ class TraceRequestPhoneConsentView(APIView):
 class TraceRequestCancelView(APIView):
     """`POST /api/v2/trace-requests/<id>/cancel/` -- ends an open request.
     The device learns on its next poll; a cancel push is not sent in this version."""
-    permission_classes = [IsRescueOperator]
+    permission_classes = [IsTraceOperator]
 
     def post(self, request, trace_id):
         trace = TraceRequest.objects.filter(pk=trace_id).first()

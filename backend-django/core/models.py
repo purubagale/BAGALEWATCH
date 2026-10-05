@@ -3158,7 +3158,13 @@ class TraceRequest(models.Model):
     requested_by = models.ForeignKey(
         User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
     )
-    case_reference = models.CharField(max_length=200)
+    # 2026-10-05: 'investigation' starts from the subscriber's MSISDN alone; 'case'
+    # (rescue lookup) needs a case reference. Existing rows were all cases.
+    KIND_INVESTIGATION = 'investigation'
+    KIND_CASE = 'case'
+    KIND_CHOICES = [(KIND_INVESTIGATION, 'Subscriber investigation'), (KIND_CASE, 'Case')]
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=KIND_CASE)
+    case_reference = models.CharField(max_length=200, blank=True, default='')
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_PENDING)
     consent_method = models.CharField(max_length=16, blank=True, default='')
     consent_at = models.DateTimeField(null=True, blank=True)
@@ -3199,3 +3205,108 @@ class TraceLocationSample(models.Model):
     class Meta:
         db_table = 'v2_trace_location_sample'
         indexes = [models.Index(fields=['trace', 'ts'], name='v2_trace_sample_ts_idx')]
+
+
+# ── Crowd identity, collection sessions, emergency switch (2026-10-05) ──
+
+class RolePermission(models.Model):
+    """A permission code granted to a Role (2026-10-05). Builtin role checks
+    stay as they are; this adds finer grants (e.g. device.view_identity) so a
+    role can get one capability without being made superadmin. Codes live in
+    core/access.py."""
+    role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='permissions')
+    code = models.CharField(max_length=40)
+    granted_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    granted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_role_permission'
+        constraints = [
+            models.UniqueConstraint(fields=['role', 'code'], name='uniq_role_permission'),
+        ]
+
+
+class DeviceIdentity(models.Model):
+    """Who a crowd or staff device belongs to (2026-10-05): MSISDN, IMEI and
+    phone model, so a reported problem can be traced to a person. This
+    overrides the earlier 'no MSISDN column by design' rule for these devices,
+    by an explicit decision. Restricted: read only through core/device_identity.py
+    with device.view_identity, and every read is audited. MSISDN and IMEI are
+    encrypted at rest (core/mfa.py's Fernet helper); msisdn_lookup is a keyed
+    hash used to search by number without decrypting every row."""
+    USER_GENERAL = 'general'
+    USER_EMPLOYEE = 'employee'
+    USER_TYPE_CHOICES = [(USER_GENERAL, 'General user'), (USER_EMPLOYEE, 'NTC employee')]
+
+    device_hash = models.CharField(max_length=64, unique=True)
+    msisdn_enc = models.TextField(blank=True, default='')
+    msisdn_lookup = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    imei_enc = models.TextField(blank=True, default='')
+    phone_model = models.CharField(max_length=80, blank=True, default='')
+    manufacturer = models.CharField(max_length=80, blank=True, default='')
+    # Declared by the app for now; will come from the NTC app login later.
+    user_type = models.CharField(max_length=10, choices=USER_TYPE_CHOICES, default=USER_GENERAL)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_device_identity'
+
+
+class CollectionSession(models.Model):
+    """One collection: a drive from the crowd or staff app, an operator
+    investigation or case trace, or a team drive-test. Every session has a
+    source, so the Collections page and DT Data Manager can filter by it."""
+    SOURCE_CROWD_DRIVE = 'crowd_drive'
+    SOURCE_STAFF_DRIVE = 'staff_drive'
+    SOURCE_INVESTIGATION = 'operator_investigation'
+    SOURCE_CASE = 'operator_case'
+    SOURCE_DRIVE_TEST = 'drive_test'
+    SOURCE_CHOICES = [
+        (SOURCE_CROWD_DRIVE, 'Crowd drive'),
+        (SOURCE_STAFF_DRIVE, 'Staff drive'),
+        (SOURCE_INVESTIGATION, 'Operator investigation'),
+        (SOURCE_CASE, 'Operator case'),
+        (SOURCE_DRIVE_TEST, 'Drive test (team)'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    source = models.CharField(max_length=24, choices=SOURCE_CHOICES)
+    device_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    # Drive sessions carry the app's drive_session_id; trace sessions link to
+    # their TraceRequest instead.
+    drive_session_id = models.CharField(max_length=36, null=True, blank=True, unique=True)
+    trace = models.ForeignKey(
+        'TraceRequest', null=True, blank=True, on_delete=models.SET_NULL, related_name='collection_sessions'
+    )
+    user_type = models.CharField(max_length=10, default=DeviceIdentity.USER_GENERAL)
+    sample_count = models.PositiveIntegerField(default=0)
+    started_at = models.DateTimeField(default=timezone.now)
+    last_sample_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'v2_collection_session'
+        ordering = ['-started_at']
+        indexes = [models.Index(fields=['source', 'started_at'], name='v2_coll_source_started_idx')]
+
+
+class EmergencyDeclaration(models.Model):
+    """A superadmin's emergency declaration (2026-10-05). While one is active,
+    rescue search is on. It turns off by itself at expires_at (7 days by
+    default), or when a superadmin ends it. Every declare, modify, and end is
+    audited."""
+    reason = models.CharField(max_length=255)
+    declared_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    declared_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    ended_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+
+    class Meta:
+        db_table = 'v2_emergency_declaration'
+        ordering = ['-declared_at']

@@ -4,7 +4,7 @@
 the isolation decision in models.py's TelemetryIngestKey docstring."""
 from django.urls import path
 
-from . import device_trace, speed_test
+from . import device_identity, device_trace, speed_test
 from .consent import DriveTestConsentMessageView, DriveTestConsentView
 from .rescue import RescueEnrollView
 from .telemetry import TelemetryHealthView, TelemetryIngestView
@@ -13,6 +13,8 @@ from .volte_quality import VolteSampleIngestView
 urlpatterns = [
     path('samples/', TelemetryIngestView.as_view(), name='telemetry-ingest'),
     path('health/', TelemetryHealthView.as_view(), name='telemetry-health'),
+    # Device identity (MSISDN, IMEI, model), registered signed devices only (2026-10-05).
+    path('device-identity/', device_identity.DeviceIdentityUploadView.as_view(), name='device-identity'),
     # Active speed test (2026-10-05) -- public but size-capped and rate-limited,
     # and the app runs it only on a user tap. See core/speed_test.py.
     path('speedtest/ping/', speed_test.SpeedTestPingView.as_view(), name='speedtest-ping'),

@@ -65,7 +65,9 @@ from .models import (
 )
 from .subscriber_network_resolver import resolve_subscriber_network_info
 from .telemetry import _key_from_request, _resolve_key, _scope_by_operator, hash_device_id
-from .views import IsRescueOperator, IsSuperadminOnly
+from .access import CanRescueSearch
+from .emergency import EMERGENCY_OFF_DETAIL, rescue_search_enabled
+from .views import IsSuperadminOnly
 
 # Loose sanity check, not a strict E.164 validator — this app has no
 # control over what format a subscriber's own phone app hands it, and
@@ -178,7 +180,7 @@ class RescueLookupView(APIView):
     effect (`policy_mode` on RescueLocationAccessLog), so an emergency
     override is never invisible in the audit trail.
     """
-    permission_classes = [IsAuthenticated, IsRescueOperator]
+    permission_classes = [IsAuthenticated, CanRescueSearch]
 
     def _log(self, request, msisdn, case_reference, found, policy_mode):
         RescueLocationAccessLog.objects.create(
@@ -190,6 +192,8 @@ class RescueLookupView(APIView):
         )
 
     def get(self, request):
+        if not rescue_search_enabled():
+            return Response({'detail': EMERGENCY_OFF_DETAIL}, status=status.HTTP_403_FORBIDDEN)
         msisdn = _clean_msisdn(request.query_params.get('msisdn'))
         case_reference = (request.query_params.get('case_reference') or '').strip()
         if not msisdn or not case_reference:
@@ -266,10 +270,12 @@ class RescueBulkLookupView(APIView):
     does and does not unlock, and why an out-of-scope match is reported
     exactly like no match at all.
     """
-    permission_classes = [IsAuthenticated, IsRescueOperator]
+    permission_classes = [IsAuthenticated, CanRescueSearch]
     MAX_BULK_MSISDNS = 500
 
     def post(self, request):
+        if not rescue_search_enabled():
+            return Response({'detail': EMERGENCY_OFF_DETAIL}, status=status.HTTP_403_FORBIDDEN)
         raw_list = request.data.get('msisdns')
         case_reference = (request.data.get('case_reference') or '').strip()
         if not isinstance(raw_list, list) or not raw_list or not case_reference:

@@ -37,6 +37,8 @@ from rest_framework.views import APIView
 
 from .models import TelemetryBatch, TelemetryIngestKey, _point_or_none
 
+from .collection import record_collection_sessions
+
 logger = logging.getLogger(__name__)
 
 # The SDK batches at 200 (UploadWorker.BATCH_SIZE); accept a generous
@@ -592,6 +594,10 @@ class TelemetryIngestView(APIView):
             return Response({'accepted': 0, 'duplicate': True}, status=status.HTTP_200_OK)
 
         bulk_insert_samples(rows)
+        try:
+            record_collection_sessions(rows)
+        except Exception:  # session bookkeeping must never fail an upload
+            logger.exception('collection session bookkeeping failed')
         _upsert_rescue_locations(rows)
 
         if key:
