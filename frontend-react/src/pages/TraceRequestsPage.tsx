@@ -1,9 +1,15 @@
 import { useState } from 'react'
+import { CircleMarker, MapContainer, Polyline, TileLayer } from 'react-leaflet'
+import 'leaflet/dist/leaflet.css'
+import { RSRP_BANDS, bandColor } from '../lib/dtBands'
 import { apiErrorMessage } from '../api/client'
 import {
   useCancelTraceRequest,
+  useCompleteTraceRequest,
   useCreateTraceRequest,
   useRecordTracePhoneConsent,
+  useTraceFixes,
+  useTraceRequestDetail,
   useTraceRequests,
 } from '../api/queries'
 import type { TraceRequestEntry, TraceRequestStatus } from '../api/types'
@@ -22,6 +28,7 @@ const STATUS_LABEL: Record<TraceRequestStatus, string> = {
   REJECTED: 'Rejected by user',
   EXPIRED: 'Expired',
   CANCELLED: 'Cancelled',
+  COMPLETED: 'Completed',
   REVOKED: 'Stopped by user',
 }
 
@@ -42,6 +49,10 @@ export default function TraceRequestsPage() {
   const create = useCreateTraceRequest()
   const recordPhone = useRecordTracePhoneConsent()
   const cancel = useCancelTraceRequest()
+  const complete = useCompleteTraceRequest()
+  const [detailId, setDetailId] = useState<string | null>(null)
+  const detail = useTraceRequestDetail(detailId)
+  const fixes = useTraceFixes(detailId)
 
   const [msisdn, setMsisdn] = useState('')
   const [caseRef, setCaseRef] = useState('')
@@ -92,6 +103,15 @@ export default function TraceRequestsPage() {
       setPhoneRef('')
     } catch (err) {
       setRowError(apiErrorMessage(err, 'Could not record phone consent.'))
+    }
+  }
+
+  async function handleComplete(id: string) {
+    setRowError(null)
+    try {
+      await complete.mutateAsync(id)
+    } catch (err) {
+      setRowError(apiErrorMessage(err, 'Could not complete this request.'))
     }
   }
 
@@ -219,6 +239,21 @@ export default function TraceRequestsPage() {
                           </button>
                         )
                       )}
+                      <button
+                        className="btn-secondary btn-small"
+                        onClick={() => setDetailId(detailId === row.id ? null : row.id)}
+                      >
+                        {detailId === row.id ? 'Hide' : 'Details'}
+                      </button>
+                      {row.status === 'ACCEPTED' && (
+                        <button
+                          className="btn-primary btn-small"
+                          onClick={() => handleComplete(row.id)}
+                          disabled={complete.isPending}
+                        >
+                          Complete
+                        </button>
+                      )}
                       {open && (
                         <button
                           className="btn-secondary btn-small"
@@ -239,6 +274,121 @@ export default function TraceRequestsPage() {
               )}
             </tbody>
           </table>
+        )}
+        {detailId && detail.data && (
+          <section style={{ marginTop: 24 }}>
+            <h2>Trace detail</h2>
+            <p className="muted">
+              {detail.data.msisdn} · {STATUS_LABEL[detail.data.status] ?? detail.data.status} · {detail.data.sample_count} fixes
+            </p>
+            <p className="muted">
+              Case {detail.data.case_reference || '—'} · Created {new Date(detail.data.created_at).toLocaleString()}
+              {detail.data.expires_at && ` · Expires ${new Date(detail.data.expires_at).toLocaleString()}`}
+            </p>
+            {detail.data.session ? (
+              <p className="muted">
+                Session: {detail.data.session.source} · {detail.data.session.sample_count} fixes ·{' '}
+                {detail.data.session.ended_at
+                  ? `ended ${new Date(detail.data.session.ended_at).toLocaleString()}`
+                  : 'open'}
+              </p>
+            ) : (
+              <p className="muted">No session yet. It starts when the phone accepts.</p>
+            )}
+
+            <h3>Speed test</h3>
+            {detail.data.speed_results.length === 0 ? (
+              <p className="muted">No speed test has run on this trace.</p>
+            ) : (
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Ran at</th>
+                    <th>Ping (ms)</th>
+                    <th>Jitter (ms)</th>
+                    <th>Download (Mbps)</th>
+                    <th>Upload (Mbps)</th>
+                    <th>Radio</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.data.speed_results.map((r, i) => (
+                    <tr key={i}>
+                      <td>{new Date(r.ran_at).toLocaleString()}</td>
+                      <td>{r.ping_median_ms ?? '—'}</td>
+                      <td>{r.jitter_ms ?? '—'}</td>
+                      <td>{r.download_mbps ?? '—'}</td>
+                      <td>{r.upload_mbps ?? '—'}</td>
+                      <td>{[r.network_type, r.rsrp_dbm != null ? `${r.rsrp_dbm} dBm` : ''].filter(Boolean).join(' ') || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <h3>Fixes</h3>
+            {fixes.data && fixes.data.results.length === 0 && <p className="muted">No fixes received yet.</p>}
+            {fixes.data && fixes.data.results.length > 0 && (
+              <div style={{ height: 320, marginBottom: 12 }}>
+                <MapContainer
+                  center={[fixes.data.results[0].lat, fixes.data.results[0].lng]}
+                  zoom={16}
+                  style={{ height: '100%', width: '100%' }}
+                >
+                  <TileLayer
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    attribution="&copy; OpenStreetMap contributors"
+                  />
+                  <Polyline
+                    positions={fixes.data.results.map((f) => [f.lat, f.lng] as [number, number])}
+                    pathOptions={{ color: '#0153A5', weight: 3 }}
+                  />
+                  {fixes.data.results.map((f, i) => (
+                    <CircleMarker
+                      key={i}
+                      center={[f.lat, f.lng]}
+                      radius={5}
+                      pathOptions={{ color: '#ffffff', weight: 1, fillColor: bandColor(RSRP_BANDS, f.rsrp_dbm), fillOpacity: 1 }}
+                    />
+                  ))}
+                </MapContainer>
+              </div>
+            )}
+            {fixes.data && fixes.data.results.length > 0 && (
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Lat</th>
+                    <th>Lng</th>
+                    <th>Accuracy (m)</th>
+                    <th>Network</th>
+                    <th>RSRP</th>
+                    <th>RSRQ</th>
+                    <th>SINR</th>
+                    <th>CQI</th>
+                    <th>PCI</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fixes.data.results.map((f, i) => (
+                    <tr key={i}>
+                      <td>{new Date(f.ts).toLocaleTimeString()}</td>
+                      <td>{f.lat.toFixed(5)}</td>
+                      <td>{f.lng.toFixed(5)}</td>
+                      <td>{f.accuracy_m ?? '—'}</td>
+                      <td>{f.network_type || '—'}</td>
+                      <td>{f.rsrp_dbm ?? '—'}</td>
+                      <td>{f.rsrq_db ?? '—'}</td>
+                      <td>{f.sinr_db ?? '—'}</td>
+                      <td>{f.cqi ?? '—'}</td>
+                      <td>{f.pci ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
         )}
       </section>
     </div>

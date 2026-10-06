@@ -2206,7 +2206,7 @@ export interface BlockedIpEntry {
 // Device-bound, consent-gated tracing (2026-10-04) -- mirrors the operator
 // payload from core/device_trace.py's _operator_view(). The device-facing
 // shape never carries msisdn or case_reference, so it has no type here.
-export type TraceRequestStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CANCELLED' | 'REVOKED'
+export type TraceRequestStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CANCELLED' | 'REVOKED' | 'COMPLETED'
 export type TraceConsentMethod = '' | 'APP' | 'PHONE_CALL' | 'POLICY_BYPASS'
 
 export interface TraceRequestEntry {
@@ -2229,4 +2229,60 @@ export interface TraceRequestEntry {
 
 export interface TraceRequestCreateResponse extends TraceRequestEntry {
   push_sent: boolean
+}
+
+export interface TraceFix {
+  ts: string
+  lat: number
+  lng: number
+  accuracy_m: number | null
+  network_type: string
+  cell_id: number | null
+  pci: number | null
+  tac: number | null
+  mcc: string
+  mnc: string
+  rsrp_dbm: number | null
+  rsrq_db: number | null
+  sinr_db: number | null
+  rssi_dbm: number | null
+  cqi: number | null
+}
+
+export interface TraceSpeedResult {
+  ran_at: string
+  ping_median_ms: number | null
+  jitter_ms: number | null
+  download_mbps: number | null
+  upload_mbps: number | null
+  network_type: string
+  rsrp_dbm: number | null
+}
+
+export interface TraceSession {
+  id: string
+  source: string
+  sample_count: number
+  started_at: string
+  last_sample_at: string | null
+  ended_at: string | null
+}
+
+export interface CollectionSessionRow {
+  id: string
+  source: string
+  drive_session_id: string | null
+  trace_id: string | null
+  user_type: string
+  sample_count: number
+  started_at: string
+  last_sample_at: string | null
+  ended_at: string | null
+  device_hash?: string | null
+}
+
+export interface TraceRequestDetail extends TraceRequestEntry {
+  sample_count: number
+  speed_results: TraceSpeedResult[]
+  session: TraceSession | null
 }

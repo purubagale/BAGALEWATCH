@@ -143,6 +143,7 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // Device-bound tracing operator console (2026-10-04). Seeded server-side by
   // core/migrations/0093_seed_trace_requests_menuitem.py.
   '/trace-requests': '/t7ak2m',
+  '/collections': '/c5w8hn',
   // Multi-role RBAC ("full parity" feature, 2026-10-01) -- seeded
   // server-side by migration 0079_seed_rbac_menuitems.py -- keep these in
   // sync with that file, same convention as every other entry.

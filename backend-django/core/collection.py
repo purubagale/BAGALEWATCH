@@ -111,6 +111,14 @@ def record_collection_sessions(rows):
         )
 
 
+def close_trace_session(trace):
+    """Records when a trace's session ended. Called wherever a trace reaches a
+    terminal state: completed, cancelled, stopped by the user, or expired."""
+    CollectionSession.objects.filter(trace=trace, ended_at__isnull=True).update(
+        ended_at=trace.ended_at or timezone.now(),
+    )
+
+
 def ensure_trace_session(trace):
     """One CollectionSession per accepted trace. Called when the device
     accepts (or a policy bypass creates an accepted trace)."""
@@ -160,6 +168,7 @@ class CollectionSessionListView(APIView):
                 'sample_count': s.sample_count,
                 'started_at': s.started_at,
                 'last_sample_at': s.last_sample_at,
+                'ended_at': s.ended_at,
             }
             if can_see_identity:
                 row['device_hash'] = s.device_hash or None

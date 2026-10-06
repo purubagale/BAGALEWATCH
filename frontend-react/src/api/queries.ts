@@ -1,7 +1,13 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef } from 'react'
 import { ApiError, apiFetch, apiJson } from './client'
-import type { TraceRequestCreateResponse, TraceRequestEntry } from './types'
+import type {
+  CollectionSessionRow,
+  TraceFix,
+  TraceRequestCreateResponse,
+  TraceRequestDetail,
+  TraceRequestEntry,
+} from './types'
 import type {
   AdminUser,
   ApiKeyCreate,
@@ -459,6 +465,46 @@ export function useRecordTracePhoneConsent() {
         method: 'POST',
         body: JSON.stringify({ phone_consent_ref: params.phone_consent_ref }),
       }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['trace-requests'] }),
+  })
+}
+
+// Collection sessions (drives and traces) for the Collections page (2026-10-06).
+export function useCollectionSessions(source: string) {
+  const query = source ? `&source=${encodeURIComponent(source)}` : ''
+  return useQuery({
+    queryKey: ['collection-sessions', source],
+    queryFn: () => apiJson<{ results: CollectionSessionRow[] }>(`/api/v2/collection-sessions/?limit=200${query}`),
+    refetchInterval: 30_000,
+  })
+}
+
+// One trace's detail: timeline, session, speed results (2026-10-06).
+export function useTraceRequestDetail(id: string | null) {
+  return useQuery({
+    queryKey: ['trace-request', id],
+    queryFn: () => apiJson<TraceRequestDetail>(`/api/v2/trace-requests/${id}/`),
+    enabled: !!id,
+    refetchInterval: 15_000,
+  })
+}
+
+// The fixes a trace has received, oldest first.
+export function useTraceFixes(id: string | null) {
+  return useQuery({
+    queryKey: ['trace-fixes', id],
+    queryFn: () => apiJson<{ results: TraceFix[] }>(`/api/v2/trace-requests/${id}/samples/?limit=500`),
+    enabled: !!id,
+    refetchInterval: 15_000,
+  })
+}
+
+// Operator ends an accepted trace on purpose (2026-10-06). The phone stops on its next upload.
+export function useCompleteTraceRequest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiJson<TraceRequestEntry>(`/api/v2/trace-requests/${id}/complete/`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['trace-requests'] }),
   })
 }

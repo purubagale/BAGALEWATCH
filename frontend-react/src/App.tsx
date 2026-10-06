@@ -50,6 +50,7 @@ const AuditLogPage = lazy(() => import('./pages/AuditLogPage'))
 // module docstring.
 const BlockedIPsPage = lazy(() => import('./pages/BlockedIPsPage'))
 const TraceRequestsPage = lazy(() => import('./pages/TraceRequestsPage'))
+const CollectionsPage = lazy(() => import('./pages/CollectionsPage'))
 const ManageRolesPage = lazy(() => import('./pages/ManageRolesPage'))
 const AssignRolesPage = lazy(() => import('./pages/AssignRolesPage'))
 const MenuVisibilityPage = lazy(() => import('./pages/MenuVisibilityPage'))
@@ -305,6 +306,7 @@ function App() {
         {withOpaqueSection('/access-log', <AuditLogPage />)}
         {withOpaqueSection('/blocked-ips', <BlockedIPsPage />)}
         {withOpaqueSection('/trace-requests', <TraceRequestsPage />)}
+        {withOpaqueSection('/collections', <CollectionsPage />)}
         {withOpaqueSection('/manage-roles', <ManageRolesPage />)}
         {withOpaqueSection('/assign-roles', <AssignRolesPage />)}
         {withOpaqueSection('/menu-visibility', <MenuVisibilityPage />)}
