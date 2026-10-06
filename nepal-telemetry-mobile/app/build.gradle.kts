@@ -42,4 +42,13 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     // Map tab (2026-10-04): OpenStreetMap tiles, no API key needed.
     implementation("org.osmdroid:osmdroid-android:6.1.18")
+    // Push for trace requests (2026-10-06). Works only once google-services.json is in place.
+    implementation(platform("com.google.firebase:firebase-bom:33.1.2"))
+    implementation("com.google.firebase:firebase-messaging")
+}
+
+// Apply the Google services plugin only once the Firebase config file exists,
+// so the app still builds before the Firebase project is set up.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }

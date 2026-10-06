@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".DemoApplication"
         android:allowBackup="true"
@@ -28,6 +30,23 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".TraceMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".TraceActionReceiver"
+            android:exported="false" />
+
+        <service
+            android:name=".TraceSharingService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <activity
             android:name=".LiveParamsActivity"

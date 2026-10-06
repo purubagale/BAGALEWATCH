@@ -25,6 +25,7 @@ import java.util.Date
 class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private lateinit var statusText: TextView
+    private var requests: TraceRequestsPanel? = null
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -86,11 +87,19 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         view.findViewById<Button>(R.id.rescueEnrollButton).setOnClickListener {
             showRescueEnrollDialog()
         }
+
+        requests = TraceRequestsPanel(view, this).also { it.bind() }
     }
 
     override fun onResume() {
         super.onResume()
         refresh()
+        requests?.start()
+    }
+
+    override fun onPause() {
+        requests?.stop()
+        super.onPause()
     }
 
     /**
