@@ -3005,6 +3005,29 @@ class TelemetryDriveTestSession(models.Model):
 # device-level toggle, not a per-session prompt) and keeping the SDK-side
 # API (NetTelemetry.setDriveTestConsent) as simple as rescue enrollment.
 
+class TelemetrySpeedResult(models.Model):
+    """One speed test run from the public, user-tapped Speed test card
+    (2026-10-07) -- separate from TraceSpeedResult, which is for a consented
+    operator trace. Not tied to any session ID on the wire: a
+    TelemetryDriveTestSession scopes by device_id + time window already (see
+    that model's docstring), so this table is found by the same filter,
+    with nothing extra needed to "belong" to a session."""
+    device_id = models.CharField(max_length=64, db_index=True)
+    ts = models.DateTimeField()
+    ping_median_ms = models.FloatField(null=True, blank=True)
+    jitter_ms = models.FloatField(null=True, blank=True)
+    download_mbps = models.FloatField(null=True, blank=True)
+    upload_mbps = models.FloatField(null=True, blank=True)
+    network_type = models.CharField(max_length=8, blank=True, default='')
+    rsrp_dbm = models.IntegerField(null=True, blank=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_telemetry_speed_result'
+        ordering = ['-ts']
+        indexes = [models.Index(fields=['device_id', 'ts'], name='v2_tel_speed_dev_ts_idx')]
+
+
 class TelemetryDriveTestConsent(models.Model):
     """Set via the SDK's `setDriveTestConsent()` call
     (core/consent.py's DriveTestConsentView) — the same ingest-key-

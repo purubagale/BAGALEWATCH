@@ -475,6 +475,38 @@ export default function TelemetryDriveTestSessionsPage() {
           <p className="muted" style={{ fontSize: 11, marginTop: 6 }}>
             {samples.length.toLocaleString()} sample(s) for this session -- auto-refreshes every 10s
           </p>
+
+          <h2 style={{ marginTop: 24 }}>Speed tests</h2>
+          {!samplesData?.speed_results?.length ? (
+            <div className="page-status">No speed tests from this session's devices yet.</div>
+          ) : (
+            <table className="admin-table" style={{ marginTop: 8 }}>
+              <thead>
+                <tr>
+                  <th>Device</th>
+                  <th>Time</th>
+                  <th>Ping (ms)</th>
+                  <th>Jitter (ms)</th>
+                  <th>Download (Mbps)</th>
+                  <th>Upload (Mbps)</th>
+                  <th>Radio</th>
+                </tr>
+              </thead>
+              <tbody>
+                {samplesData.speed_results.slice(0, 50).map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.device_id.slice(0, 12)}...</td>
+                    <td>{new Date(r.ts).toLocaleTimeString()}</td>
+                    <td>{r.ping_median_ms ?? '-'}</td>
+                    <td>{r.jitter_ms ?? '-'}</td>
+                    <td>{r.download_mbps ?? '-'}</td>
+                    <td>{r.upload_mbps ?? '-'}</td>
+                    <td>{[r.network_type, r.rsrp_dbm != null ? `${r.rsrp_dbm} dBm` : ''].filter(Boolean).join(' ') || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </>
       )}
     </div>

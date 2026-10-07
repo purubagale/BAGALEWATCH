@@ -13,6 +13,8 @@ through the server. The app sends no MSISDN or device id here.
 """
 import os
 import time
+from datetime import datetime
+from datetime import timezone as dt_timezone
 
 from django.core.cache import cache
 from django.http import HttpResponse, StreamingHttpResponse
@@ -22,6 +24,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .auth_log import _client_ip
+from .models import TelemetrySpeedResult
+from .telemetry import hash_device_id, resolve_ingest_caller
 
 MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -100,3 +104,81 @@ class SpeedTestUploadView(_SpeedTestView):
             if received > MAX_UPLOAD_BYTES:
                 return Response({'detail': 'upload too large'}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
         return Response({'received_bytes': received})
+
+
+# ── General speed test results (2026-10-07) ──────────────────────────────
+# From the public, user-tapped Speed test card -- separate from the
+# device-signed, trace-bound speed test above. Same ingest auth (shared key
+# or signed device) as the regular sample batch endpoint.
+
+SPEED_RESULT_RATE_PER_MIN = 20
+
+
+def _speed_num(data, key, limit):
+    value = data.get(key)
+    if value is None:
+        return None
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if 0 <= value <= limit else None
+
+
+class TelemetrySpeedResultIngestView(APIView):
+    """`POST /api/telemetry/v1/speed-samples/` -- one result from the demo
+    app's Speed test card. Body:
+    `{"device_id": "<raw sdk id>", "ts": <epoch ms>, "ping_median_ms": ..,
+      "jitter_ms": .., "download_mbps": .., "upload_mbps": ..,
+      "network_type": "LTE", "rsrp_dbm": -90}`.
+
+    Stored with the same hashed device_id a regular sample would carry, so a
+    TelemetryDriveTestSession's existing device_id + time-window scope picks
+    it up with no extra wiring -- see that model's docstring.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]  # does its own ingest-key check, like TelemetryIngestView
+
+    def post(self, request):
+        device, key, err = resolve_ingest_caller(request)
+        if err:
+            return Response({'detail': err}, status=status.HTTP_401_UNAUTHORIZED)
+
+        bucket_scope = key.key_prefix if key else (device.device_hash[:12] if device else 'unknown')
+        bucket = f'telspeed:rl:{bucket_scope}:{int(time.time() // 60)}'
+        cache.add(bucket, 0, timeout=120)
+        try:
+            if cache.incr(bucket) > SPEED_RESULT_RATE_PER_MIN:
+                return Response(status=status.HTTP_429_TOO_MANY_REQUESTS)
+        except ValueError:
+            pass
+
+        data = request.data if isinstance(request.data, dict) else {}
+        raw_device_id = str(data.get('device_id') or '').strip()
+        if device is None and not raw_device_id:
+            return Response({'detail': 'device_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        device_id = device.device_hash if device else hash_device_id(raw_device_id)
+
+        try:
+            ts = datetime.fromtimestamp(int(data['ts']) / 1000, tz=dt_timezone.utc)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return Response({'detail': 'ts (epoch ms) is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        rsrp = data.get('rsrp_dbm')
+        try:
+            rsrp = int(rsrp) if rsrp is not None else None
+            if rsrp is not None and not -160 <= rsrp <= 0:
+                rsrp = None
+        except (TypeError, ValueError):
+            rsrp = None
+
+        TelemetrySpeedResult.objects.create(
+            device_id=device_id, ts=ts,
+            ping_median_ms=_speed_num(data, 'ping_median_ms', 10_000),
+            jitter_ms=_speed_num(data, 'jitter_ms', 10_000),
+            download_mbps=_speed_num(data, 'download_mbps', 10_000),
+            upload_mbps=_speed_num(data, 'upload_mbps', 10_000),
+            network_type=str(data.get('network_type') or '').strip().upper()[:8],
+            rsrp_dbm=rsrp,
+        )
+        return Response({'stored': True}, status=status.HTTP_201_CREATED)

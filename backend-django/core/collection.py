@@ -85,6 +85,9 @@ def record_collection_sessions(rows):
         return
 
     now = timezone.now()
+    # A drive_stop marker from the phone ends its session (2026-10-07, share window).
+    stops = {(r['device_id'], r['drive_session_id']) for r in rows
+             if r.get('drive_session_id') and r.get('trigger_reason') == 'drive_stop'}
     device_hashes = {device_hash for device_hash, _ in counts}
     user_types = dict(
         DeviceIdentity.objects.filter(device_hash__in=device_hashes).values_list('device_hash', 'user_type')
@@ -109,6 +112,8 @@ def record_collection_sessions(rows):
             sample_count=F('sample_count') + n,
             last_sample_at=now,
         )
+    for device_hash, dsid in stops:
+        CollectionSession.objects.filter(drive_session_id=dsid, ended_at__isnull=True).update(ended_at=now)
 
 
 def close_trace_session(trace):

@@ -1994,9 +1994,24 @@ export interface TelemetryDriveTestConsentSummary {
   pending: number
 }
 
+export interface TelemetryDriveTestSpeedResult {
+  device_id: string
+  ts: string
+  ping_median_ms: number | null
+  jitter_ms: number | null
+  download_mbps: number | null
+  upload_mbps: number | null
+  network_type: string
+  rsrp_dbm: number | null
+}
+
 export interface TelemetryDriveTestSessionSamplesResponse {
   session: TelemetryDriveTestSession
   samples: TelemetryLiveSample[]
+  // Speed test results from this session's enrolled devices (2026-10-07) --
+  // from the public Speed test card, scoped by the same device + time window
+  // as `samples`.
+  speed_results: TelemetryDriveTestSpeedResult[]
   count: number
   require_consent: boolean
   consent_summary: TelemetryDriveTestConsentSummary | null

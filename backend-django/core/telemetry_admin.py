@@ -39,6 +39,7 @@ from .models import (
     TelemetryIngestKey,
     TelemetryRemoteOptOutRequest,
     TelemetrySample,
+    TelemetrySpeedResult,
 )
 from .audit import log_audit_event
 from .telemetry import _scope_by_operator, generate_ingest_key, geohash_center, geohash_encode
@@ -860,6 +861,33 @@ class TelemetryDriveTestSessionSamplesView(APIView):
             for m in marker_qs[:500]
         ]
 
+        # Speed test results from this session's devices and window
+        # (2026-10-07). Not joined to a session ID on the wire -- the same
+        # device_id + time-window scope this view already uses picks them up.
+        speed_qs = TelemetrySpeedResult.objects.filter(
+            device_id__in=session.device_ids, ts__gte=session.started_at, ts__lte=window_end,
+        )
+        if session.require_consent:
+            consented_speed_ids = set(
+                TelemetryDriveTestConsent.objects
+                .filter(device_id__in=session.device_ids, consent=True)
+                .values_list('device_id', flat=True)
+            )
+            speed_qs = speed_qs.filter(device_id__in=consented_speed_ids) if consented_speed_ids else speed_qs.none()
+        speed_results = [
+            {
+                'device_id': r.device_id,
+                'ts': r.ts,
+                'ping_median_ms': r.ping_median_ms,
+                'jitter_ms': r.jitter_ms,
+                'download_mbps': r.download_mbps,
+                'upload_mbps': r.upload_mbps,
+                'network_type': r.network_type,
+                'rsrp_dbm': r.rsrp_dbm,
+            }
+            for r in speed_qs.order_by('-ts')[:200]
+        ]
+
         # Optional route smoothing (`?smooth=N`, N = fixes in the window).
         # Adds lat_smooth/lng_smooth; the raw lat/lng stay as they were.
         if smooth > 1:
@@ -868,6 +896,7 @@ class TelemetryDriveTestSessionSamplesView(APIView):
             'session': TelemetryDriveTestSessionSerializer(session).data,
             'samples': rows,
             'drive_markers': drive_markers,
+            'speed_results': speed_results,
             'count': len(rows),
             'require_consent': session.require_consent,
             'consent_summary': consent_summary,
