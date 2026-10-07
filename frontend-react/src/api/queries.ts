@@ -87,6 +87,7 @@ import type {
   RescueLookupResult,
   RescueBulkLookupParams,
   RescueBulkLookupResponse,
+  RescueEnrolledRow,
   DriveTestConsentMessage,
 } from './types'
 
@@ -1588,6 +1589,17 @@ export function useRescueBulkLookup() {
         method: 'POST',
         body: JSON.stringify(params),
       }),
+  })
+}
+
+// Superadmin-only enrolled-device list (2026-10-07) -- mirrors
+// core/rescue.py's RescueEnrolledListView. A mutation (fired on demand by
+// a button), not a useQuery, same reasoning as useRescueLookup above:
+// every call is audit-logged server-side, so this must never silently
+// auto-refire from React Query's own caching/refetch-on-focus behavior.
+export function useRescueEnrolledList() {
+  return useMutation({
+    mutationFn: () => apiJson<{ results: RescueEnrolledRow[]; count: number }>('/api/v2/rescue/enrolled/'),
   })
 }
 

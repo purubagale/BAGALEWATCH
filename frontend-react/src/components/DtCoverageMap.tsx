@@ -4,6 +4,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { DtSample, DtServingCell, DtTech } from '../api/types'
 import { bandColor, subsampleForMap, type DtMetric } from '../lib/dtBands'
+import { declusterForPlot } from '../lib/declusterPlot'
 import { buildWedgePolygon } from '../lib/sectorWedge'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 import { useDtMetrics } from '../lib/useDtMetrics'
@@ -140,13 +141,17 @@ function CoverageDots({
       map.closePopup()
       pinned = false
     }
-    function showLink(s: DtSample, openPopup: boolean) {
+    // fromLat/fromLng (2026-10-07) -- the DRAWN position (post-decluster),
+    // not necessarily s.lat/s.lng, so the connector line starts exactly at
+    // the dot the user is hovering, even when that dot has been nudged a
+    // few metres off its sample's true coordinate (see declusterForPlot).
+    function showLink(s: DtSample, openPopup: boolean, fromLat: number, fromLng: number) {
       const cell = s.serving_site_id ? cellBySite.get(s.serving_site_id) : undefined
       if (!cell || cell.site_lat == null || cell.site_lng == null) return
       linkLayer.clearLayers()
       L.polyline(
         [
-          [s.lat as number, s.lng as number],
+          [fromLat, fromLng],
           [cell.site_lat, cell.site_lng],
         ],
         { color: '#1d4ed8', weight: 2, dashArray: '5,4', opacity: 0.9 },
@@ -169,7 +174,7 @@ function CoverageDots({
           cell.azimuth != null ? `Az ${cell.azimuth}°` : null,
         ].filter(Boolean)
         L.popup({ offset: [0, -4] })
-          .setLatLng([s.lat as number, s.lng as number])
+          .setLatLng([fromLat, fromLng])
           .setContent(`<b>${cell.site_name}</b><br>${parts.join(' · ')}`)
           .openOn(map)
         pinned = true
@@ -177,10 +182,28 @@ function CoverageDots({
     }
 
     const withGps = samples.filter((s) => s.lat != null && s.lng != null)
-    for (const s of withGps) {
+    // Overlap management (2026-10-07, "manage plot with worst and best
+    // data with no overlapping ... manage this in all telemetry sessions")
+    // -- see lib/declusterPlot.ts's own header. RxQual is the one metric
+    // in this app where LOWER is the better reading (see dtBands.ts's own
+    // POOR_COLORS comment) -- every other metric/tech here is higher-is-
+    // better, so that's the only special case worth naming rather than
+    // threading a direction flag through DtMetric itself.
+    const higherIsBetter = metric.key !== 'rx_qual'
+    const points = declusterForPlot(withGps, (s) => {
+      const raw = s[metric.key] as number | null
+      return {
+        lat: s.lat as number,
+        lng: s.lng as number,
+        siteKey: `${s.serving_site_id ?? ''}|${s.serving_sector ?? ''}`,
+        score: raw == null ? null : higherIsBetter ? raw : -raw,
+      }
+    })
+    for (const p of points) {
+      const s = p.item
       const v = s[metric.key] as number | null
       const color = bandColor(metric.bands, v)
-      const dot = L.circleMarker([s.lat as number, s.lng as number], {
+      const dot = L.circleMarker([p.lat, p.lng], {
         radius: 4,
         color,
         fillColor: color,
@@ -188,17 +211,20 @@ function CoverageDots({
         weight: 0,
       })
       const valueText = v != null ? `${v}${metric.unit}` : 'No data'
-      dot.bindTooltip(`${metric.label}: ${valueText}${s.serving_site_name ? ` — ${s.serving_site_name}` : ''}`)
+      const roleText = p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : ''
+      dot.bindTooltip(
+        `${metric.label}: ${valueText}${s.serving_site_name ? ` — ${s.serving_site_name}` : ''}${roleText}`,
+      )
       if (s.serving_site_id && cellBySite.has(s.serving_site_id)) {
         dot.on('mouseover', () => {
-          if (!pinned) showLink(s, false)
+          if (!pinned) showLink(s, false, p.lat, p.lng)
         })
         dot.on('mouseout', () => {
           if (!pinned) linkLayer.clearLayers()
         })
         dot.on('click', (e) => {
           L.DomEvent.stopPropagation(e)
-          showLink(s, true)
+          showLink(s, true, p.lat, p.lng)
         })
       }
       layer.addLayer(dot)

@@ -8,6 +8,7 @@ import type { DtSample, DtServingCell, DtSessionDetail, DtTech, SiteListItem } f
 import { ACTIVITY_ROLE_LABELS } from './AttachActivityModal'
 import { clusterDtSessionsByArea, type DtSessionCluster } from '../lib/dtSessionClustering'
 import { ALL_TECHS, bandCategoryColor, bandColor, pciColor, subsampleForMap, type TaggedMetric } from '../lib/dtBands'
+import { declusterForPlot } from '../lib/declusterPlot'
 import { useDtMetrics } from '../lib/useDtMetrics'
 import { haversineKm } from '../lib/dtTemplateParser'
 import { pointInPolygon, polygonAverageCenter, polygonBoundingRadiusKm, type LatLng } from '../lib/geo'
@@ -378,13 +379,17 @@ function NearSamplesLayer({
       map.closePopup()
       pinned = false
     }
-    function showLink(session: DtSessionDetail, sample: DtSample, openPopup: boolean) {
+    // fromLat/fromLng (2026-10-07) -- the DRAWN position (post-decluster),
+    // same reasoning as DtCoverageMap.tsx's own showLink() fix.
+    function showLink(
+      session: DtSessionDetail, sample: DtSample, openPopup: boolean, fromLat: number, fromLng: number,
+    ) {
       const cell = sample.serving_site_id ? cellBySite.get(sample.serving_site_id) : undefined
       if (!cell || cell.site_lat == null || cell.site_lng == null) return
       linkLayer.clearLayers()
       L.polyline(
         [
-          [sample.lat as number, sample.lng as number],
+          [fromLat, fromLng],
           [cell.site_lat, cell.site_lng],
         ],
         { color: '#1d4ed8', weight: 2, dashArray: '5,4', opacity: 0.9 },
@@ -408,21 +413,41 @@ function NearSamplesLayer({
           cell.azimuth != null ? `Az ${cell.azimuth}°` : null,
         ].filter(Boolean)
         L.popup({ offset: [0, -4] })
-          .setLatLng([sample.lat as number, sample.lng as number])
+          .setLatLng([fromLat, fromLng])
           .setContent(`<b>${cell.site_name}</b><br>${parts.join(' · ')}`)
           .openOn(map)
         pinned = true
       }
     }
 
-    for (const session of sessions) {
-      if (session.tech !== metric.tech) continue
+    // Overlap management (2026-10-07, "manage plot with worst and best
+    // data with no overlapping ... manage this in all telemetry sessions")
+    // -- see lib/declusterPlot.ts's own header and DtCoverageMap.tsx's
+    // CoverageDots for the same treatment on a single session. `sessions`
+    // here can span several sessions at once (Explore's own "near" search
+    // across everything plotted) -- each session's own index prefixes the
+    // site key so two different sessions sharing a coordinate never
+    // collapse into one pair.
+    const higherIsBetter = metric.key !== 'rx_qual'
+    sessions.forEach((session, si) => {
+      if (session.tech !== metric.tech) return
       const withVal = session.samples.filter((sample) => sample.lat != null && sample.lng != null && sample[metric.key] != null)
       const drawn = subsampleForMap(withVal)
-      for (const sample of drawn) {
+      const points = declusterForPlot(drawn, (sample) => {
+        const raw = sample[metric.key] as number | null
+        return {
+          lat: sample.lat as number,
+          lng: sample.lng as number,
+          siteKey: `${si}|${sample.serving_site_id ?? ''}|${sample.serving_sector ?? ''}`,
+          score: raw == null ? null : higherIsBetter ? raw : -raw,
+        }
+      })
+      for (const p of points) {
+        const sample = p.item
         const v = sample[metric.key] as number
         const color = bandColor(metric.bands, v)
-        const dot = L.circleMarker([sample.lat as number, sample.lng as number], {
+        const roleText = p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : ''
+        const dot = L.circleMarker([p.lat, p.lng], {
           radius: 3,
           color,
           fillColor: color,
@@ -430,25 +455,25 @@ function NearSamplesLayer({
           weight: 0,
         })
           .bindTooltip(
-            `<b>${session.name}</b> (${session.tech})<br>${sample.ts || sample.date || ''}<br>${metric.label}: ${v}${metric.unit}` +
+            `<b>${session.name}</b> (${session.tech})<br>${sample.ts || sample.date || ''}<br>${metric.label}: ${v}${metric.unit}${roleText}` +
               (sample.serving_site_name ? `<br>${sample.serving_site_name}` : ''),
             { sticky: true, direction: 'top', offset: [0, -4] },
           )
         if (sample.serving_site_id && cellBySite.has(sample.serving_site_id)) {
           dot.on('mouseover', () => {
-            if (!pinned) showLink(session, sample, false)
+            if (!pinned) showLink(session, sample, false, p.lat, p.lng)
           })
           dot.on('mouseout', () => {
             if (!pinned) linkLayer.clearLayers()
           })
           dot.on('click', (e) => {
             L.DomEvent.stopPropagation(e)
-            showLink(session, sample, true)
+            showLink(session, sample, true, p.lat, p.lng)
           })
         }
         dot.addTo(layer)
       }
-    }
+    })
     layer.addTo(map)
     map.on('click', clearLink)
 
@@ -478,13 +503,28 @@ function PciSamplesLayer({ sessions }: { sessions: DtSessionDetail[] }) {
 
   useEffect(() => {
     const layer = L.layerGroup()
-    for (const session of sessions) {
-      if (session.tech !== '4G') continue
+    sessions.forEach((session, si) => {
+      if (session.tech !== '4G') return
       const withVal = session.samples.filter((sample) => sample.lat != null && sample.lng != null && sample.pci != null)
       const drawn = subsampleForMap(withVal)
-      for (const sample of drawn) {
+      // Overlap management (2026-10-07) -- PCI is a cell IDENTITY, not a
+      // graded reading (see pciColor()'s own docstring), so there is no
+      // "worst/best" here the way there is for a signal metric; the site
+      // key is the PCI value itself (so two different PCIs sharing a
+      // coordinate still get separated) and every member of a group scores
+      // equally, so which two get kept is arbitrary -- only the "stop
+      // stacking duplicates invisibly" half of declusterForPlot applies.
+      const points = declusterForPlot(drawn, (sample) => ({
+        lat: sample.lat as number,
+        lng: sample.lng as number,
+        siteKey: `${si}|${sample.pci}`,
+        score: 0,
+      }))
+      for (const p of points) {
+        const sample = p.item
         const color = pciColor(sample.pci)
-        L.circleMarker([sample.lat as number, sample.lng as number], {
+        const roleText = p.collapsedCount > 1 ? ` (2 of ${p.collapsedCount} overlapping fixes shown)` : ''
+        L.circleMarker([p.lat, p.lng], {
           radius: 3,
           color,
           fillColor: color,
@@ -492,13 +532,13 @@ function PciSamplesLayer({ sessions }: { sessions: DtSessionDetail[] }) {
           weight: 0,
         })
           .bindTooltip(
-            `<b>${session.name}</b> (4G)<br>${sample.ts || sample.date || ''}<br>PCI: ${sample.pci}` +
+            `<b>${session.name}</b> (4G)<br>${sample.ts || sample.date || ''}<br>PCI: ${sample.pci}${roleText}` +
               (sample.serving_site_name ? `<br>${sample.serving_site_name}` : ''),
             { sticky: true, direction: 'top', offset: [0, -4] },
           )
           .addTo(layer)
       }
-    }
+    })
     layer.addTo(map)
     return () => {
       map.removeLayer(layer)
@@ -519,13 +559,25 @@ function BandSamplesLayer({ sessions }: { sessions: DtSessionDetail[] }) {
 
   useEffect(() => {
     const layer = L.layerGroup()
-    for (const session of sessions) {
-      if (session.tech !== '4G') continue
+    sessions.forEach((session, si) => {
+      if (session.tech !== '4G') return
       const withVal = session.samples.filter((sample) => sample.lat != null && sample.lng != null && !!sample.band)
       const drawn = subsampleForMap(withVal)
-      for (const sample of drawn) {
+      // Overlap management (2026-10-07) -- same reasoning as
+      // PciSamplesLayer above: `band` is an identity, not a graded
+      // reading, so the site key is the band value itself and there's no
+      // real worst/best to pick between duplicates.
+      const points = declusterForPlot(drawn, (sample) => ({
+        lat: sample.lat as number,
+        lng: sample.lng as number,
+        siteKey: `${si}|${sample.band ?? ''}`,
+        score: 0,
+      }))
+      for (const p of points) {
+        const sample = p.item
         const color = bandCategoryColor(sample.band)
-        L.circleMarker([sample.lat as number, sample.lng as number], {
+        const roleText = p.collapsedCount > 1 ? ` (2 of ${p.collapsedCount} overlapping fixes shown)` : ''
+        L.circleMarker([p.lat, p.lng], {
           radius: 3,
           color,
           fillColor: color,
@@ -533,13 +585,13 @@ function BandSamplesLayer({ sessions }: { sessions: DtSessionDetail[] }) {
           weight: 0,
         })
           .bindTooltip(
-            `<b>${session.name}</b> (4G)<br>${sample.ts || sample.date || ''}<br>Band: ${sample.band}` +
+            `<b>${session.name}</b> (4G)<br>${sample.ts || sample.date || ''}<br>Band: ${sample.band}${roleText}` +
               (sample.serving_site_name ? `<br>${sample.serving_site_name}` : ''),
             { sticky: true, direction: 'top', offset: [0, -4] },
           )
           .addTo(layer)
       }
-    }
+    })
     layer.addTo(map)
     return () => {
       map.removeLayer(layer)

@@ -115,6 +115,9 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // file, same convention as every other entry.
   '/rescue-lookup': '/r5t8mq',
   '/rescue-policy': '/r2p6ky',
+  // Superadmin-only enrolled-device list (2026-10-07) -- seeded server-side
+  // by migration 0106_seed_rescue_enrolled_menuitem.py, same convention.
+  '/rescue-enrolled': '/r8x4ml',
   // Site/Sector Issue tracker's global list (2026-09-14) -- seeded
   // server-side by migration 0058_seed_issues_menuitem.py -- keep this
   // in sync with that file, same convention as every other entry.

@@ -861,6 +861,13 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 # GPS accuracy of this fix, in metres (see ROUTE_MAX_ACCURACY_M).
                 'gps_accuracy_m': s.gps_accuracy_m,
                 'drive_session_id': s.drive_session_id,
+                # Serving-cell identity (2026-10-07) -- same fields
+                # TelemetryLiveSamplesView already returns above; this view
+                # had never picked them up. Lets the frontend's declusterPlot
+                # tell "the same site measured twice here" apart from "two
+                # different sites happened to be measured from one spot."
+                'serving_site_id': s.serving_site_id,
+                'serving_sector': s.serving_sector,
             }
             for s in qs[:limit]
         ]

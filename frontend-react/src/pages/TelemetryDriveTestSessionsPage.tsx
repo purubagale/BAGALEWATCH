@@ -18,6 +18,7 @@ import {
   CQI_BANDS, ECIO_BANDS, RSRP_BANDS, RSRQ_BANDS, RXLEV_BANDS, RXQUAL_BANDS, SINR_BANDS,
   bandColor, type Band,
 } from '../lib/dtBands'
+import { declusterForPlot } from '../lib/declusterPlot'
 
 // Scoped drive-test sessions over the crowdsourced telemetry pipeline
 // (2026-09-01) -- the promotable, consent-scoped replacement for the
@@ -112,13 +113,17 @@ interface LiveMetric {
   unit: string
   bands: Band[]
   value: (s: TelemetryLiveSample) => number | null | undefined
+  // Whether a higher raw value is the better reading (2026-10-07, for
+  // declusterForPlot's worst/best pick) -- false only for RxQual, where a
+  // LOWER class (0) is the good one, unlike every other metric here.
+  higherIsBetter?: boolean
 }
 
 function metricsForLiveTech(tech: LiveTech): LiveMetric[] {
   if (tech === '2G') {
     return [
       { key: 'primary', label: 'RxLevel', unit: ' dBm', bands: RXLEV_BANDS, value: (s) => s.rssi_dbm },
-      { key: 'rx_qual', label: 'RxQual', unit: '', bands: RXQUAL_BANDS, value: (s) => s.rx_qual },
+      { key: 'rx_qual', label: 'RxQual', unit: '', bands: RXQUAL_BANDS, value: (s) => s.rx_qual, higherIsBetter: false },
     ]
   }
   if (tech === '3G') {
@@ -139,14 +144,30 @@ function MetricPoints({ samples, metric }: { samples: TelemetryLiveSample[]; met
   const map = useMap()
   useEffect(() => {
     const layer = L.layerGroup().addTo(map)
-    for (const s of samples) {
-      if (s.lat == null || s.lng == null) continue
+    // Overlap management (2026-10-07, "manage plot with worst and best
+    // data with no overlapping ... manage this in all telemetry sessions")
+    // -- see lib/declusterPlot.ts's own header for the full reasoning.
+    // Re-grouped on every metric switch, since "worst" only means
+    // something relative to whichever metric is on screen.
+    const higherIsBetter = metric.higherIsBetter !== false
+    const points = declusterForPlot(samples, (s) => {
+      const raw = metric.value(s)
+      return {
+        lat: s.lat ?? NaN,
+        lng: s.lng ?? NaN,
+        siteKey: `${s.serving_site_id ?? ''}|${s.serving_sector ?? ''}`,
+        score: raw == null ? null : higherIsBetter ? raw : -raw,
+      }
+    })
+    for (const p of points) {
+      const s = p.item
       const v = metric.value(s)
       const color = bandColor(metric.bands, v)
-      L.circleMarker([s.lat, s.lng], { radius: 6, color: '#ffffff', weight: 1, fillColor: color, fillOpacity: 0.9 })
+      const roleText = p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : ''
+      L.circleMarker([p.lat, p.lng], { radius: 6, color: '#ffffff', weight: 1, fillColor: color, fillOpacity: 0.9 })
         .bindTooltip(
           `${s.device_id.slice(0, 8)}... - ${new Date(s.received_at).toLocaleTimeString()} - ` +
-            `${metric.label} ${v != null ? `${v}${metric.unit}` : 'no data'}`,
+            `${metric.label} ${v != null ? `${v}${metric.unit}` : 'no data'}${roleText}`,
         )
         .addTo(layer)
     }

@@ -259,6 +259,11 @@ class CollectionSessionSamplesView(APIView):
                     'ts': r.ts, 'lat': r.lat, 'lng': r.lng, 'accuracy_m': r.accuracy_m,
                     'network_type': r.network_type, 'pci': r.pci, 'rsrp_dbm': r.rsrp_dbm,
                     'rsrq_db': r.rsrq_db, 'sinr_db': r.sinr_db,
+                    # TraceLocationSample has no serving-cell resolution of
+                    # its own (see that model's docstring) -- left null so
+                    # the frontend's declusterPlot falls back to `pci` as
+                    # its coarser same-cell signal for this branch only.
+                    'serving_site_id': None, 'serving_sector': None,
                 }
                 for r in rows
             ]
@@ -274,6 +279,7 @@ class CollectionSessionSamplesView(APIView):
                     'ts': r.ts, 'lat': r.lat, 'lng': r.lng, 'accuracy_m': r.gps_accuracy_m,
                     'network_type': r.network_type, 'pci': r.pci, 'rsrp_dbm': r.rsrp_dbm,
                     'rsrq_db': r.rsrq_db, 'sinr_db': r.sinr_db,
+                    'serving_site_id': r.serving_site_id, 'serving_sector': r.serving_sector,
                 }
                 for r in rows
             ]

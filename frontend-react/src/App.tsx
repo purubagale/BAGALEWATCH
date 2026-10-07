@@ -103,6 +103,7 @@ const TelemetryDriveTestSessionsPage = lazy(() => import('./pages/TelemetryDrive
 // until now.
 const RescueLookupPage = lazy(() => import('./pages/RescueLookupPage'))
 const RescuePolicyPage = lazy(() => import('./pages/RescuePolicyPage'))
+const RescueEnrolledPage = lazy(() => import('./pages/RescueEnrolledPage'))
 const IssuesPage = lazy(() => import('./pages/IssuesPage'))
 const RfReportsPage = lazy(() => import('./pages/RfReportsPage'))
 const DtPlotCatalogPage = lazy(() => import('./pages/DtPlotCatalogPage'))
@@ -300,6 +301,7 @@ function App() {
         {withOpaqueSection('/telemetry-dt-sessions', <TelemetryDriveTestSessionsPage />)}
         {withOpaqueSection('/rescue-lookup', <RescueLookupPage />)}
         {withOpaqueSection('/rescue-policy', <RescuePolicyPage />)}
+        {withOpaqueSection('/rescue-enrolled', <RescueEnrolledPage />)}
         {withOpaqueSection('/issues', <IssuesPage />)}
         {withOpaqueSection('/rf-reports', <RfReportsPage />)}
         {withOpaqueSection('/dt-plot-catalog', <DtPlotCatalogPage />)}

@@ -229,6 +229,7 @@ urlpatterns = [
     # Superadmin-only mandatory/optional consent-policy control (2026-09-02)
     # for the rescue lane — see core/rescue.py's RescueConsentPolicyView.
     path('rescue/policy/', rescue.RescueConsentPolicyView.as_view(), name='rescue-consent-policy'),
+    path('rescue/enrolled/', rescue.RescueEnrolledListView.as_view(), name='rescue-enrolled'),
     # Device-bound consent-gated tracing, operator side (2026-10-04) --
     # IsRescueOperator-gated. See core/device_trace.py's docstring.
     path('trace-requests/', device_trace.TraceRequestListCreateView.as_view(), name='trace-requests'),

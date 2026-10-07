@@ -53,6 +53,7 @@ const KNOWN_ROUTES: { path: string; label: string }[] = [
   { path: '/w2k6tr', label: 'VoLTE Quality' },
   { path: '/r5t8mq', label: 'Rescue Lookup' },
   { path: '/r2p6ky', label: 'Rescue Policy' },
+  { path: '/r8x4ml', label: 'Rescue Enrolled Devices' },
   { path: '/i8s4kw', label: 'Issues' },
   { path: '/g3q7nx', label: 'RF Reports' },
   { path: '/k9d4wr', label: 'DT Plot Catalog' },
