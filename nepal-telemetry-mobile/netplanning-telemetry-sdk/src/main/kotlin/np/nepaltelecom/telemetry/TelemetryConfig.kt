@@ -77,6 +77,17 @@ data class TelemetryConfig(
     val driveTestConsentMessageUrl: String? = null,
 
     /**
+     * Endpoint for the public, user-tapped Speed test card's result
+     * (2026-10-07) -- `POST .../speed-samples/`. Optional like
+     * [driveTestConsentMessageUrl]: leaving this null just means
+     * [NetTelemetry.reportSpeedTest] has nothing to send to, and does
+     * nothing, since a host app may not want speed results leaving the
+     * phone at all. Uses the same [apiKey]/device-signed auth as a sample
+     * batch, and is only ever called while the device is opted in.
+     */
+    val speedSamplesUrl: String? = null,
+
+    /**
      * Whether a device with NO prior explicit opt-in choice starts opted
      * IN (true) or opted OUT (false, the historical default and still the
      * default here). Only affects the very first [NetTelemetry.init] call

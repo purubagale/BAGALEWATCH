@@ -107,6 +107,13 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
             R.string.speed_result,
             fmt(r.pingMedianMs), fmt(r.jitterMs), fmt(r.downloadMbps), fmt(r.uploadMbps), radio,
         )
+        // Shared with NTC only while sharing is on (2026-10-07); otherwise this is a no-op.
+        val s = lastSample
+        NetTelemetry.reportSpeedTest(
+            pingMedianMs = r.pingMedianMs, jitterMs = r.jitterMs,
+            downloadMbps = r.downloadMbps, uploadMbps = r.uploadMbps,
+            networkType = s?.networkType, rsrpDbm = s?.rsrpDbm ?: s?.rscpDbm ?: s?.rssiDbm,
+        )
     }
 
     private fun fmt(v: Double?): String = v?.let { "%.1f".format(java.util.Locale.US, it) } ?: "—"

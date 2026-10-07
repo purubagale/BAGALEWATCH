@@ -17,6 +17,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
 import np.nepaltelecom.telemetry.collector.CellSampleCollector
 import np.nepaltelecom.telemetry.collector.DriveHistoryStore
 import np.nepaltelecom.telemetry.collector.DriveTestService
@@ -25,6 +29,10 @@ import np.nepaltelecom.telemetry.model.CellReading
 import np.nepaltelecom.telemetry.model.DriveSession
 import np.nepaltelecom.telemetry.collector.HandoverListener
 import np.nepaltelecom.telemetry.collector.SamplingWorker
+import np.nepaltelecom.telemetry.collector.ShareExpiryReceiver
+import np.nepaltelecom.telemetry.collector.ShareWindow
+import android.app.AlarmManager
+import android.app.PendingIntent
 import np.nepaltelecom.telemetry.storage.DeviceIdentity
 import np.nepaltelecom.telemetry.model.Sample
 import np.nepaltelecom.telemetry.storage.SampleQueue
@@ -81,6 +89,7 @@ object NetTelemetry {
         // below) -- calling init() again with the same config on every app
         // launch, as the integration guide recommends, does not reset or
         // duplicate already-scheduled work.
+        expireShareIfDue()
         if (identity.optedIn) {
             scheduleBackgroundWork()
             startHandoverListener()
@@ -102,6 +111,85 @@ object NetTelemetry {
         handoverListener?.stop()
         handoverListener = null
         if (wipeQueuedData) SampleQueue(appContext).clear()
+    }
+
+    /** Length of one share window when the caller doesn't choose one (2026-10-07). */
+    const val DEFAULT_SHARE_CAP_MINUTES = 60
+
+    /**
+     * Starts sharing for a time-limited window (2026-10-07). The window's samples
+     * are tagged with one session ID, so the server shows them as one session.
+     * The window ends on its own at the cap, and the user can stop it earlier.
+     * Returns when the window ends, in epoch ms.
+     */
+    fun startShare(capMinutes: Int = DEFAULT_SHARE_CAP_MINUTES): Long {
+        check(::appContext.isInitialized) { "NetTelemetry.init() must be called before startShare()" }
+        val expiresAt = System.currentTimeMillis() + capMinutes * 60_000L
+        ShareWindow.start(appContext, java.util.UUID.randomUUID().toString(), expiresAt)
+        optIn()
+        scheduleShareExpiry(expiresAt)
+        scope.launch { markShare("drive_start", ShareWindow.storedSessionId(appContext)) }
+        return expiresAt
+    }
+
+    /**
+     * Ends the share window now (2026-10-07). Sends the end marker, uploads what
+     * is queued while still opted in, then opts out. Queued samples are kept.
+     */
+    fun stopShare() {
+        check(::appContext.isInitialized) { "NetTelemetry.init() must be called before stopShare()" }
+        cancelShareExpiry()
+        scope.launch {
+            if (isOptedIn()) {
+                // The stored ID survives the window's end, so an expiry still closes the session.
+                markShare("drive_stop", ShareWindow.storedSessionId(appContext))
+                uploadNow()
+            }
+            ShareWindow.clear(appContext)
+            optOut(wipeQueuedData = false)
+        }
+    }
+
+    /** Called by the expiry alarm. Ends the window if it is still open. */
+    fun onShareExpiryAlarm() {
+        if (!::appContext.isInitialized) return
+        if (DeviceIdentity(appContext).optedIn) stopShare()
+    }
+
+    /**
+     * Run on startup. An opt-in with no open window is one from before the cap
+     * existed, or one whose time has passed, so it is ended here (2026-10-07).
+     */
+    fun expireShareIfDue() {
+        if (!::appContext.isInitialized) return
+        if (DeviceIdentity(appContext).optedIn && ShareWindow.currentSessionId(appContext) == null) {
+            stopShare()
+        }
+    }
+
+    /** When the current share window ends, or null when not sharing. */
+    fun shareExpiresAtMs(): Long? =
+        if (ShareWindow.currentSessionId(appContext) != null) ShareWindow.expiresAtMs(appContext) else null
+
+    private suspend fun markShare(trigger: String, sessionId: String?) {
+        val sample = CellSampleCollector(appContext, DeviceIdentity(appContext))
+            .collect(triggerReason = trigger, driveSessionId = sessionId)
+        sample?.let { SampleQueue(appContext).append(it) }
+    }
+
+    private fun shareExpiryIntent(): PendingIntent = PendingIntent.getBroadcast(
+        appContext, 0,
+        android.content.Intent(appContext, ShareExpiryReceiver::class.java),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    private fun scheduleShareExpiry(atMs: Long) {
+        appContext.getSystemService(AlarmManager::class.java)
+            .setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, shareExpiryIntent())
+    }
+
+    private fun cancelShareExpiry() {
+        appContext.getSystemService(AlarmManager::class.java).cancel(shareExpiryIntent())
     }
 
     fun isOptedIn(): Boolean {
@@ -241,6 +329,58 @@ object NetTelemetry {
     fun uploadNow() {
         if (!isOptedIn()) return
         WorkManager.getInstance(appContext).enqueue(OneTimeWorkRequestBuilder<UploadWorker>().build())
+    }
+
+    /**
+     * Sends one Speed test card result to [TelemetryConfig.speedSamplesUrl]
+     * (2026-10-07). Does nothing when that URL isn't configured, or while not
+     * opted in -- this is a crowdsourced upload, same consent gate as a
+     * regular sample. Fire-and-forget: a failure is swallowed, same posture
+     * as the rest of this SDK's background uploads.
+     */
+    fun reportSpeedTest(
+        pingMedianMs: Double?,
+        jitterMs: Double?,
+        downloadMbps: Double?,
+        uploadMbps: Double?,
+        networkType: String?,
+        rsrpDbm: Int?,
+    ) {
+        check(::appContext.isInitialized) { "NetTelemetry.init() must be called before reportSpeedTest()" }
+        val config = internalConfig ?: return
+        val url = config.speedSamplesUrl ?: return
+        if (!isOptedIn()) return
+        val deviceId = DeviceIdentity(appContext).deviceId
+        val apiKey = config.apiKey
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try {
+                    val body = JSONObject().apply {
+                        put("device_id", deviceId)
+                        put("ts", System.currentTimeMillis())
+                        pingMedianMs?.let { put("ping_median_ms", it) }
+                        jitterMs?.let { put("jitter_ms", it) }
+                        downloadMbps?.let { put("download_mbps", it) }
+                        uploadMbps?.let { put("upload_mbps", it) }
+                        networkType?.let { put("network_type", it) }
+                        rsrpDbm?.let { put("rsrp_dbm", it) }
+                    }.toString()
+                    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "POST"
+                        setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                        apiKey?.let { setRequestProperty("Authorization", "Bearer $it") }
+                        doOutput = true
+                        connectTimeout = 10_000
+                        readTimeout = 10_000
+                    }
+                    OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body) }
+                    connection.responseCode
+                    connection.disconnect()
+                } catch (_: Exception) {
+                    // Best effort: the on-screen result already shown either way.
+                }
+            }
+        }
     }
 
     /**

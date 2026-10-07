@@ -58,10 +58,14 @@ internal class CellSampleCollector(
             PackageManager.PERMISSION_GRANTED
 
     @SuppressLint("MissingPermission") // guarded by hasLocationPermission() below
-    suspend fun collect(triggerReason: String): Sample? {
+    suspend fun collect(
+        triggerReason: String,
+        // Samples taken during a share window carry its session ID (2026-10-07).
+        driveSessionId: String? = ShareWindow.currentSessionId(context),
+    ): Sample? {
         if (!identity.optedIn) return null // defense in depth -- see NetTelemetry.optIn/optOut
         if (!hasLocationPermission()) return null
-        return sampleFrom(readLocationWithTimeout(), triggerReason)
+        return sampleFrom(readLocationWithTimeout(), triggerReason, driveSessionId = driveSessionId)
     }
 
     /**
