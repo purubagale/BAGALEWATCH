@@ -25,6 +25,13 @@ class LiveParamsActivity : AppCompatActivity() {
 
         paramsText = findViewById(R.id.paramsText)
         findViewById<Button>(R.id.refreshParamsButton).setOnClickListener { read() }
+        // This screen has no toolbar (Theme.NetTelemetryDemo is NoActionBar,
+        // matching the rest of the app) and no bottom tab bar of its own --
+        // it's a single-purpose detail view launched from Signal's own
+        // "Details" button, not a peer destination to the tabs. Without this,
+        // the system back gesture/button was the ONLY way out (2026-10-07
+        // report: "only android back make possible to go to other page").
+        findViewById<Button>(R.id.closeParamsButton).setOnClickListener { finish() }
 
         read()
     }

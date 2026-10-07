@@ -20,6 +20,7 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.infowindow.InfoWindow
 import org.osmdroid.views.overlay.Polyline
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -164,8 +165,15 @@ class MapFragment : Fragment(R.layout.fragment_map) {
     private fun drawRoute() {
         val saved = viewingId
         deleteButton.visibility = if (saved == null) View.GONE else View.VISIBLE
-        val points: List<RouteTrail.Point> =
+        val rawPoints: List<RouteTrail.Point> =
             if (saved != null) NetTelemetry.driveSessionPoints(saved) else NetTelemetry.routeTrail()
+        // Drop fixes whose own reported accuracy is too loose to place
+        // reliably on a road (2026-10-07, "plot is not good and accurate")
+        // -- a single bad fix mid-drive otherwise draws a visible kink/jump
+        // in the line. Same threshold and "keep an unknown (<=0) reading
+        // rather than guess it's bad" reasoning as the backend's own route
+        // endpoint (core/telemetry_admin.py's ROUTE_MAX_ACCURACY_M).
+        val points = rawPoints.filter { it.accuracyM <= 0f || it.accuracyM <= ROUTE_MAX_ACCURACY_M }
 
         map.overlays.clear()
         if (points.isEmpty()) {
@@ -187,6 +195,7 @@ class MapFragment : Fragment(R.layout.fragment_map) {
             position = latest
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             title = if (saved == null) "Latest fix" else "Last fix"
+            infoWindow = LegibleInfoWindow(map)
         }
         map.overlays.add(marker)
 
@@ -217,9 +226,25 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         private const val REDRAW_MS = 2_000L
         private const val KATHMANDU_LAT = 27.7172
         private const val KATHMANDU_LNG = 85.3240
+        // Matches core/telemetry_admin.py's own ROUTE_MAX_ACCURACY_M -- see
+        // that constant's comment for why 50 m is the cutoff.
+        private const val ROUTE_MAX_ACCURACY_M = 50f
         private val dateFormat = SimpleDateFormat("d MMM HH:mm", Locale.getDefault())
 
         /** Kept for the whole app session, so the buttons keep their colours when the tab is re-entered. */
         private var driveRunning = false
     }
+}
+
+/**
+ * A marker info window that is always legible, independent of the app's own
+ * theme (see map_marker_bubble.xml's own comment for the bug this fixes).
+ * Shows just the marker's title -- that's all drawRoute() ever sets.
+ */
+private class LegibleInfoWindow(mapView: MapView) : InfoWindow(R.layout.map_marker_bubble, mapView) {
+    override fun onOpen(item: Any?) {
+        (mView as? TextView)?.text = (item as? Marker)?.title
+    }
+
+    override fun onClose() {}
 }

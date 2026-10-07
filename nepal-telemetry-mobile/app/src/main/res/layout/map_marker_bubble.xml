@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Marker info-window content (2026-10-07). osmdroid's own default bubble
+    layout inflates using the MapView's context, which inherits this app's
+    theme, whose android:textColor/textColorPrimary are white (see
+    themes.xml / colors.xml's text_primary), for the app's own dark screens.
+    That made the default bubble (white background, theme-inherited white
+    text) render completely blank: "pop us shows blank" (2026-10-07 report).
+    This layout hardcodes black-on-white explicitly, independent of the
+    app's theme, so it is always legible regardless of what theme colors
+    apply elsewhere.
+-->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@android:color/white"
+    android:padding="8dp"
+    android:textColor="@android:color/black"
+    android:textSize="13sp" />

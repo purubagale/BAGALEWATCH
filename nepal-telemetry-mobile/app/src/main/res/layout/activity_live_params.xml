@@ -5,11 +5,27 @@
     android:orientation="vertical"
     android:padding="24dp">
 
-    <Button
-        android:id="@+id/refreshParamsButton"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/live_params_refresh" />
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/closeParamsButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:text="@string/live_params_close" />
+
+        <Button
+            android:id="@+id/refreshParamsButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/live_params_refresh" />
+
+    </LinearLayout>
 
     <ScrollView
         android:layout_width="match_parent"
