@@ -121,6 +121,7 @@ class TraceActionReceiver : BroadcastReceiver() {
                 val wanted = if (action == TraceMessagingService.ACTION_ACCEPT) "accept" else "reject"
                 TraceApi.respond(requestId, wanted)
                 if (wanted == "accept") {
+                    BatteryAccess.markPromptPending(context)
                     val item = TraceApi.openRequests().firstOrNull { it.id == requestId }
                     val expiresMs = item?.expiresAt?.let { parseIsoMillis(it) } ?: 0L
                     if (expiresMs > System.currentTimeMillis()) {

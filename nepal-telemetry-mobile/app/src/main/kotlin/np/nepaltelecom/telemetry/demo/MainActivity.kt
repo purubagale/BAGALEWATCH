@@ -48,6 +48,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // A request was accepted from its notification: ask for unrestricted battery now, once.
+        if (BatteryAccess.takePendingPrompt(this)) {
+            runCatching { startActivity(BatteryAccess.requestUnrestrictedIntent(this)) }
+        }
+    }
+
     /** Opens the Signal tab. Called by Quick Setup once location is answered. */
     fun showSignal() {
         bottomNav.selectedItemId = R.id.nav_signal

@@ -1,6 +1,8 @@
 package np.nepaltelecom.telemetry.demo
 
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -95,6 +97,7 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
 
     private fun showRequests(items: List<TraceApi.TraceRequestItem>?) {
         list.removeAllViews()
+        addBatteryControls()
         if (items == null) {
             setStatus(context.getString(R.string.req_offline))
             return
@@ -136,10 +139,45 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
             }
             onMain {
                 setStatus(message)
+                // Accepting is when the phone needs to stay reachable, so ask for unrestricted battery now.
+                if (action == "accept" && !BatteryAccess.isUnrestricted(context)) {
+                    openIntent(BatteryAccess.requestUnrestrictedIntent(context))
+                }
                 refreshRequests()
             }
         }.start()
     }
+
+    /** Battery status for the card, with the two fixes: the system prompt and Huawei's startup screen. */
+    private fun addBatteryControls() {
+        if (BatteryAccess.isUnrestricted(context)) {
+            list.addView(text(context.getString(R.string.battery_ok)))
+            return
+        }
+        list.addView(text(context.getString(R.string.battery_restricted)))
+        list.addView(fullButton(context.getString(R.string.battery_allow)) {
+            openIntent(BatteryAccess.requestUnrestrictedIntent(context))
+        })
+        list.addView(fullButton(context.getString(R.string.battery_huawei)) {
+            if (!openIntent(BatteryAccess.huaweiStartupIntent())) openIntent(BatteryAccess.appDetailsIntent(context))
+        })
+    }
+
+    private fun openIntent(intent: Intent): Boolean = try {
+        fragment.startActivity(intent)
+        true
+    } catch (_: ActivityNotFoundException) {
+        false
+    }
+
+    private fun fullButton(label: String, onClick: () -> Unit): Button =
+        MaterialButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = label
+            setOnClickListener { onClick() }
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(8)
+            }
+        }
 
     private fun parseIso(value: String): Long? =
         runCatching { java.time.OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrNull()

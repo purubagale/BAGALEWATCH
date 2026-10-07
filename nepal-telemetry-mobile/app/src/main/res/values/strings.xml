@@ -67,6 +67,10 @@
     <string name="push_title">Location request from NTC</string>
     <string name="push_text">Open the app to review. Nothing is sent until you accept.</string>
     <string name="push_accept">Accept</string>
+    <string name="battery_ok">Battery: unrestricted. Requests can reach this phone while it is locked or idle.</string>
+    <string name="battery_restricted">Battery is restricted. Requests may not reach this phone while it is locked or idle.</string>
+    <string name="battery_allow">Allow unrestricted battery</string>
+    <string name="battery_huawei">Open Huawei startup settings</string>
     <string name="push_reject">Reject</string>
     <string name="req_caption">Trace requests from NTC appear here. Nothing is sent until you tap Accept.</string>
     <string name="req_hint">Your mobile number, +977...</string>

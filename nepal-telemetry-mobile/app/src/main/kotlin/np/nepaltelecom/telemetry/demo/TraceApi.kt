@@ -4,13 +4,15 @@ import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
 
 /**
  * Calls to the dtwatch device endpoints (2026-10-05): registration, identity,
- * and the trace request inbox. Blocking. Call it from a background thread.
+ * the trace request inbox, trace samples, and the trace speed test. Blocking.
+ * Call it from a background thread.
  */
 object TraceApi {
     private const val HOST = "https://dtwatch.ntc.net.np"
@@ -81,17 +83,58 @@ object TraceApi {
         request("POST", "device/trace-requests/$id/respond/", JSONObject().put("action", action).toString(), signed = true)
     }
 
+    /** One ping round trip to the trace's speed test. Throws if the trace is no longer accepted. */
+    fun speedPing(id: String) {
+        call("GET", "device/trace-requests/$id/speedtest/ping/", null, "application/json", signed = true) { }
+    }
+
+    /** Downloads [bytes] from the trace's speed test. Returns how many bytes were read. */
+    fun speedDownloadBytes(id: String, bytes: Int): Long =
+        call("GET", "device/trace-requests/$id/speedtest/download/?bytes=$bytes", null, "application/json", signed = true) { input ->
+            val buffer = ByteArray(CHUNK)
+            var total = 0L
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                total += n
+            }
+            total
+        }
+
+    /** Uploads [payload] to the trace's speed test. */
+    fun speedUpload(id: String, payload: ByteArray) {
+        call("POST", "device/trace-requests/$id/speedtest/upload/", payload, "application/octet-stream", signed = true) { }
+    }
+
+    /** Stores one speed test run on the trace. */
+    fun postSpeedResult(id: String, result: JSONObject) {
+        request("POST", "device/trace-requests/$id/speedtest/result/", result.toString(), signed = true)
+    }
+
+    private fun request(method: String, path: String, body: String?, signed: Boolean): String =
+        call(method, path, body?.toByteArray(Charsets.UTF_8), "application/json", signed) {
+            it.bufferedReader().use { reader -> reader.readText() }
+        }
+
     /**
-     * Sends one call. Signed calls carry the device headers. The signature covers
-     * the exact path and body bytes the server will see.
+     * Sends one call and reads the response with [read]. Signed calls carry the
+     * device headers. The signature covers the exact path and body bytes the
+     * server will see. A non-2xx reply throws [ApiException] with the server's detail.
      */
-    private fun request(method: String, path: String, body: String?, signed: Boolean): String {
+    private fun <T> call(
+        method: String,
+        path: String,
+        body: ByteArray?,
+        contentType: String,
+        signed: Boolean,
+        read: (InputStream) -> T,
+    ): T {
         val url = URL(HOST + BASE + path)
-        val payload = (body ?: "").toByteArray(Charsets.UTF_8)
+        val payload = body ?: ByteArray(0)
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 10_000
-            readTimeout = 20_000
+            readTimeout = 30_000
             useCaches = false
             setRequestProperty("Accept", "application/json")
         }
@@ -107,18 +150,17 @@ object TraceApi {
             }
             if (body != null) {
                 conn.doOutput = true
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.setFixedLengthStreamingMode(payload.size)
-                conn.outputStream.use { it.write(payload) }
+                conn.setRequestProperty("Content-Type", contentType)
+                conn.setFixedLengthStreamingMode(body.size)
+                conn.outputStream.use { it.write(body) }
             }
             val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code !in 200..299) {
+                val text = conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
                 val detail = runCatching { JSONObject(text).optString("detail") }.getOrNull()
                 throw ApiException(detail?.takeIf { it.isNotEmpty() } ?: "HTTP $code", code)
             }
-            return text
+            return conn.inputStream.use(read)
         } finally {
             conn.disconnect()
         }
@@ -129,4 +171,6 @@ object TraceApi {
         SecureRandom().nextBytes(bytes)
         return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
     }
+
+    private const val CHUNK = 64 * 1024
 }
