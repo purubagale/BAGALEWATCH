@@ -13,6 +13,8 @@ from .volte_quality import VolteSampleIngestView
 urlpatterns = [
     path('samples/', TelemetryIngestView.as_view(), name='telemetry-ingest'),
     path('health/', TelemetryHealthView.as_view(), name='telemetry-health'),
+    # General speed test results, from the public Speed test card (2026-10-07).
+    path('speed-samples/', speed_test.TelemetrySpeedResultIngestView.as_view(), name='speed-samples-ingest'),
     # Device identity (MSISDN, IMEI, model), registered signed devices only (2026-10-05).
     path('device-identity/', device_identity.DeviceIdentityUploadView.as_view(), name='device-identity'),
     # Active speed test (2026-10-05) -- public but size-capped and rate-limited,

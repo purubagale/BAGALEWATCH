@@ -1973,6 +1973,11 @@ export interface TelemetryDriveTestSession {
   // samples endpoint only returns data from devices that separately
   // opted in via the SDK's setDriveTestConsent(). Set at creation only.
   require_consent: boolean
+  // Optional auto-end cap in minutes (2026-10-07) -- mirrors the mobile
+  // SDK's own share-window cap. Null = unlimited (must be ended by hand
+  // or by a drive_stop marker from a single enrolled device -- see
+  // core/collection.py's record_collection_sessions()).
+  max_duration_minutes: number | null
   status: 'active' | 'ended'
   started_at: string
   ended_at: string | null
@@ -1987,6 +1992,7 @@ export interface TelemetryDriveTestSessionCreateInput {
   area_min_lng?: number | null
   area_max_lng?: number | null
   require_consent?: boolean
+  max_duration_minutes?: number | null
 }
 
 export interface TelemetryDriveTestConsentSummary {
@@ -1994,9 +2000,24 @@ export interface TelemetryDriveTestConsentSummary {
   pending: number
 }
 
+export interface TelemetryDriveTestSpeedResult {
+  device_id: string
+  ts: string
+  ping_median_ms: number | null
+  jitter_ms: number | null
+  download_mbps: number | null
+  upload_mbps: number | null
+  network_type: string
+  rsrp_dbm: number | null
+}
+
 export interface TelemetryDriveTestSessionSamplesResponse {
   session: TelemetryDriveTestSession
   samples: TelemetryLiveSample[]
+  // Speed test results from this session's enrolled devices (2026-10-07) --
+  // from the public Speed test card, scoped by the same device + time window
+  // as `samples`.
+  speed_results: TelemetryDriveTestSpeedResult[]
   count: number
   require_consent: boolean
   consent_summary: TelemetryDriveTestConsentSummary | null
@@ -2012,31 +2033,28 @@ export interface TelemetryDriveTestSessionEndResponse extends TelemetryDriveTest
   opt_out_requested_count?: number
 }
 
-// Superadmin-controlled rescue-consent policy (2026-09-02) — mirrors
-// core/rescue.py's RescueConsentPolicyView / core/models.py's
-// RescueConsentPolicy. 'mandatory' (default) requires each subscriber's
-// own opt-in for a rescue lookup to ever match; 'optional' is a
-// time-boxed emergency override a superadmin declares when the normal
-// in-app consent flow doesn't apply (e.g. a real carrier/government app
-// integration with no consent screen at all, during a disaster). See
-// RescueConsentPolicy's docstring for exactly what 'optional' does and
-// does not unlock -- it never creates a new phone-number link, only
-// relaxes enforcement on subscribers who already have one on file.
-export interface RescueConsentPolicy {
-  mode: 'mandatory' | 'optional'
-  reason: string
-  active_until: string | null
-  // The EFFECTIVE state after checking active_until -- an expired
-  // override still shows mode: "optional" until someone changes it, but
-  // is_optional_active: false. Always trust this over `mode` alone.
-  is_optional_active: boolean
-  updated_at?: string
+// Emergency switch (2026-10-05) — mirrors core/emergency.py's
+// EmergencyStatusView/EmergencyDeclareView/EmergencyEndView. Replaced the
+// old RescueConsentPolicy 'optional' mode entirely: rescue search is off
+// by default, and a superadmin declaring an emergency is the only way to
+// turn it on, for a capped number of days. It never creates a new
+// phone-number link — it only lets an existing, already-opted-in
+// subscriber be found while active, and lets a case trace skip the
+// device Accept (core/device_trace.py).
+export interface EmergencyStatus {
+  active: boolean
+  id?: number
+  reason?: string
+  declared_at?: string
+  expires_at?: string
+  declared_by?: string | null
+  default_days: number
+  max_days: number
 }
 
-export interface RescueConsentPolicyWrite {
-  mode: 'mandatory' | 'optional'
-  reason?: string
-  active_until?: string | null
+export interface EmergencyDeclareParams {
+  reason: string
+  days: number
 }
 
 // Rescue-location lookup (2026-09-03) -- mirrors core/rescue.py's
@@ -2279,6 +2297,22 @@ export interface CollectionSessionRow {
   last_sample_at: string | null
   ended_at: string | null
   device_hash?: string | null
+}
+
+// One row's route plot (2026-10-07) -- core/collection.py's
+// CollectionSessionSamplesView. Same field set regardless of whether the
+// row is a trace or a drive (the view normalizes both source tables to
+// this one shape), so the Collections page needs no source-specific map.
+export interface CollectionSessionSample {
+  ts: string
+  lat: number
+  lng: number
+  accuracy_m: number | null
+  network_type: string
+  pci: number | null
+  rsrp_dbm: number | null
+  rsrq_db: number | null
+  sinr_db: number | null
 }
 
 export interface TraceRequestDetail extends TraceRequestEntry {

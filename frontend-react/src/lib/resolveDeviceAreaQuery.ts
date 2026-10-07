@@ -30,6 +30,10 @@ export interface ResolvedAreaPoint {
   lat: number
   lng: number
   label: string
+  // Set only when this point came from a district-name match (2026-10-07)
+  // -- lets a caller build a "{district} — {date}" session name without
+  // having to re-parse `label`'s "{noun} (N sites)" display text.
+  district?: string
 }
 
 const DMS_PAIR_RE =
@@ -105,7 +109,7 @@ function resolveCityDistrictQuery(text: string, sites: SiteListItem[]): Resolved
       const lng = matches.reduce((a, s) => a + (s.lng as number), 0) / matches.length
       const noun = field === 'city' ? matches[0].city : matches[0].district
       const label = `${noun} (${matches.length} site${matches.length > 1 ? 's' : ''})`
-      return { lat, lng, label }
+      return { lat, lng, label, district: field === 'district' ? (matches[0].district || undefined) : undefined }
     }
   }
   return null
