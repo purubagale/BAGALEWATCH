@@ -59,7 +59,7 @@ from .play_integrity import verify_integrity_token
 from .rescue import _clean_msisdn
 from .telemetry import hash_device_id
 from .access import PERM_TRACE_CASE, PERM_TRACE_INVESTIGATE, IsTraceOperator, user_has
-from .collection import ensure_trace_session
+from .collection import close_trace_session, ensure_trace_session
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,7 @@ def _refresh(trace):
         trace.status = TraceRequest.STATUS_EXPIRED
         trace.ended_at = timezone.now()
         trace.save(update_fields=['status', 'ended_at'])
+        close_trace_session(trace)
     return trace
 
 
@@ -282,6 +283,7 @@ class DeviceTraceRespondView(APIView):
                                 status=status.HTTP_409_CONFLICT)
             trace.status = TraceRequest.STATUS_REVOKED
             trace.ended_at = now
+            close_trace_session(trace)
         else:
             return Response({'detail': "action must be 'accept', 'reject' or 'stop'"},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -452,6 +454,31 @@ class TraceRequestListCreateView(APIView):
                         status=status.HTTP_201_CREATED)
 
 
+class TraceSamplesView(APIView):
+    """`GET /api/v2/trace-requests/<id>/samples/?limit=500` -- the fixes a trace
+    has received, oldest first, with their signal values. Operator only."""
+    permission_classes = [IsTraceOperator]
+
+    def get(self, request, trace_id):
+        trace = TraceRequest.objects.filter(pk=trace_id).first()
+        if trace is None:
+            return Response({'detail': 'not found'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            limit = max(1, min(int(request.query_params.get('limit', 500)), 2000))
+        except (TypeError, ValueError):
+            limit = 500
+        rows = TraceLocationSample.objects.filter(trace=trace).order_by('ts')[:limit]
+        return Response({'results': [
+            {
+                'ts': r.ts, 'lat': r.lat, 'lng': r.lng, 'accuracy_m': r.accuracy_m,
+                'network_type': r.network_type, 'cell_id': r.cell_id, 'pci': r.pci,
+                'tac': r.tac, 'mcc': r.mcc, 'mnc': r.mnc, 'rsrp_dbm': r.rsrp_dbm,
+                'rsrq_db': r.rsrq_db, 'sinr_db': r.sinr_db, 'rssi_dbm': r.rssi_dbm, 'cqi': r.cqi,
+            }
+            for r in rows
+        ]})
+
+
 class TraceRequestDetailView(APIView):
     """`GET /api/v2/trace-requests/<id>/`."""
     permission_classes = [IsTraceOperator]
@@ -463,6 +490,12 @@ class TraceRequestDetailView(APIView):
         trace = _refresh(trace)
         payload = _operator_view(trace)
         payload['sample_count'] = trace.samples.count()
+        session = CollectionSession.objects.filter(trace=trace).first()
+        payload['session'] = None if session is None else {
+            'id': str(session.id), 'source': session.source, 'sample_count': session.sample_count,
+            'started_at': session.started_at, 'last_sample_at': session.last_sample_at,
+            'ended_at': session.ended_at,
+        }
         payload['speed_results'] = [
             {
                 'ran_at': r.ran_at, 'ping_median_ms': r.ping_median_ms, 'jitter_ms': r.jitter_ms,
@@ -510,6 +543,29 @@ class TraceRequestPhoneConsentView(APIView):
         return Response({**_operator_view(trace), 'push_sent': push_sent})
 
 
+class TraceRequestCompleteView(APIView):
+    """`POST /api/v2/trace-requests/<id>/complete/` -- the operator ends an
+    accepted trace on purpose, once the data they need is in. Only an ACCEPTED
+    trace can be completed. The phone's next sample post gets a 409 and stops
+    sharing (see TraceSharingService on the phone)."""
+    permission_classes = [IsTraceOperator]
+
+    def post(self, request, trace_id):
+        trace = TraceRequest.objects.filter(pk=trace_id).first()
+        if trace is None:
+            return Response({'detail': 'not found'}, status=status.HTTP_404_NOT_FOUND)
+        trace = _refresh(trace)
+        if trace.status != TraceRequest.STATUS_ACCEPTED:
+            return Response({'detail': f'cannot complete a {trace.status} request'},
+                            status=status.HTTP_409_CONFLICT)
+        trace.status = TraceRequest.STATUS_COMPLETED
+        trace.ended_at = timezone.now()
+        trace.save(update_fields=['status', 'ended_at'])
+        close_trace_session(trace)
+        log_audit_event(request, 'TRACE.COMPLETED', resource='trace_request', resource_id=str(trace.id))
+        return Response(_operator_view(trace))
+
+
 class TraceRequestCancelView(APIView):
     """`POST /api/v2/trace-requests/<id>/cancel/` -- ends an open request.
     The device learns on its next poll; a cancel push is not sent in this version."""
@@ -526,5 +582,6 @@ class TraceRequestCancelView(APIView):
         trace.status = TraceRequest.STATUS_CANCELLED
         trace.ended_at = timezone.now()
         trace.save(update_fields=['status', 'ended_at'])
+        close_trace_session(trace)
         log_audit_event(request, 'TRACE.CANCELLED', resource='trace_request', resource_id=str(trace.id))
         return Response(_operator_view(trace))

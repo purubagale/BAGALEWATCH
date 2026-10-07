@@ -231,6 +231,8 @@ urlpatterns = [
     # IsRescueOperator-gated. See core/device_trace.py's docstring.
     path('trace-requests/', device_trace.TraceRequestListCreateView.as_view(), name='trace-requests'),
     path('trace-requests/<uuid:trace_id>/', device_trace.TraceRequestDetailView.as_view(), name='trace-request-detail'),
+    path('trace-requests/<uuid:trace_id>/samples/', device_trace.TraceSamplesView.as_view(), name='trace-request-samples'),
+    path('trace-requests/<uuid:trace_id>/complete/', device_trace.TraceRequestCompleteView.as_view(), name='trace-request-complete'),
     path('trace-requests/<uuid:trace_id>/phone-consent/', device_trace.TraceRequestPhoneConsentView.as_view(), name='trace-request-phone-consent'),
     path('trace-requests/<uuid:trace_id>/cancel/', device_trace.TraceRequestCancelView.as_view(), name='trace-request-cancel'),
     # Superadmin-editable copy for the drive-test consent prompt

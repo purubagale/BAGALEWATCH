@@ -3140,6 +3140,7 @@ class TraceRequest(models.Model):
     STATUS_EXPIRED = 'EXPIRED'
     STATUS_CANCELLED = 'CANCELLED'
     STATUS_REVOKED = 'REVOKED'
+    STATUS_COMPLETED = 'COMPLETED'  # operator ended an accepted trace (2026-10-06)
     STATUS_CHOICES = [
         (STATUS_PENDING, 'Pending'),
         (STATUS_ACCEPTED, 'Accepted'),
@@ -3147,6 +3148,7 @@ class TraceRequest(models.Model):
         (STATUS_EXPIRED, 'Expired'),
         (STATUS_CANCELLED, 'Cancelled'),
         (STATUS_REVOKED, 'Revoked by user'),
+        (STATUS_COMPLETED, 'Completed by operator'),
     ]
     CONSENT_APP = 'APP'
     CONSENT_PHONE = 'PHONE_CALL'
@@ -3297,6 +3299,7 @@ class CollectionSession(models.Model):
     sample_count = models.PositiveIntegerField(default=0)
     started_at = models.DateTimeField(default=timezone.now)
     last_sample_at = models.DateTimeField(null=True, blank=True)
+    ended_at = models.DateTimeField(null=True, blank=True)  # 2026-10-06: set when the trace ends
 
     class Meta:
         db_table = 'v2_collection_session'
