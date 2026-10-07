@@ -547,9 +547,15 @@ class TelemetryDriveTestSessionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'device_ids',
             'area_min_lat', 'area_max_lat', 'area_min_lng', 'area_max_lng',
-            'require_consent', 'status', 'started_at', 'ended_at', 'created_by_name',
+            'require_consent', 'max_duration_minutes', 'status', 'started_at', 'ended_at',
+            'created_by_name',
         ]
         read_only_fields = ['id', 'status', 'started_at', 'ended_at']
+
+    def validate_max_duration_minutes(self, value):
+        if value is not None and not 1 <= value <= 43200:  # 30 days, a generous outer bound
+            raise serializers.ValidationError('max_duration_minutes must be between 1 and 43200.')
+        return value
 
     def get_created_by_name(self, obj):
         if not obj.created_by_id:
@@ -597,6 +603,24 @@ class TelemetryDriveTestSessionSerializer(serializers.ModelSerializer):
         return device_ids
 
 
+def _auto_end_if_due(session):
+    """Ends `session` if its optional max_duration_minutes cap has elapsed.
+    Called at the top of every read path below, mirroring
+    core/emergency.py's active_emergency() -- lazy, on-read expiry, no
+    separate cron job. `ended_at` is set to the CAP's own deadline, not
+    to whenever this happened to run, so a session checked late (nobody
+    opened this page for an hour) still reports the same ended_at a
+    prompt check would have -- the samples window it bounds shouldn't
+    depend on how soon someone looked."""
+    if session.status == 'active' and session.max_duration_minutes:
+        deadline = session.started_at + timedelta(minutes=session.max_duration_minutes)
+        if timezone.now() >= deadline:
+            session.status = 'ended'
+            session.ended_at = deadline
+            session.save(update_fields=['status', 'ended_at'])
+    return session
+
+
 class TelemetryDriveTestSessionListCreateView(APIView):
     """`GET/POST /api/v2/telemetry/dt-sessions/` — list recent sessions /
     start a new one. Admin+ (same tier as Coverage/Stats), not
@@ -606,8 +630,8 @@ class TelemetryDriveTestSessionListCreateView(APIView):
     permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
 
     def get(self, request):
-        qs = TelemetryDriveTestSession.objects.all()[:200]
-        return Response(TelemetryDriveTestSessionSerializer(qs, many=True).data)
+        sessions = [_auto_end_if_due(s) for s in TelemetryDriveTestSession.objects.all()[:200]]
+        return Response(TelemetryDriveTestSessionSerializer(sessions, many=True).data)
 
     def post(self, request):
         serializer = TelemetryDriveTestSessionSerializer(data=request.data, context={'request': request})
@@ -625,7 +649,7 @@ class TelemetryDriveTestSessionDetailView(APIView):
     permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
 
     def get(self, request, pk):
-        session = get_object_or_404(TelemetryDriveTestSession, pk=pk)
+        session = _auto_end_if_due(get_object_or_404(TelemetryDriveTestSession, pk=pk))
         return Response(TelemetryDriveTestSessionSerializer(session).data)
 
     def delete(self, request, pk):
@@ -735,7 +759,7 @@ class TelemetryDriveTestSessionSamplesView(APIView):
     permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
 
     def get(self, request, pk):
-        session = get_object_or_404(TelemetryDriveTestSession, pk=pk)
+        session = _auto_end_if_due(get_object_or_404(TelemetryDriveTestSession, pk=pk))
         try:
             limit = int(request.query_params.get('limit', _DEFAULT_LIVE_LIMIT))
         except (TypeError, ValueError):

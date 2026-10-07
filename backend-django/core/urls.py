@@ -92,6 +92,8 @@ urlpatterns = [
     # Crowd and staff identity, collection sessions, emergency switch (2026-10-05).
     path('device-identities/', device_identity.DeviceIdentityLookupView.as_view(), name='device-identities'),
     path('collection-sessions/', collection.CollectionSessionListView.as_view(), name='collection-sessions'),
+    path('collection-sessions/<uuid:pk>/samples/', collection.CollectionSessionSamplesView.as_view(),
+         name='collection-session-samples'),
     path('emergency/', emergency.EmergencyStatusView.as_view(), name='emergency-status'),
     path('emergency/declare/', emergency.EmergencyDeclareView.as_view(), name='emergency-declare'),
     path('emergency/end/', emergency.EmergencyEndView.as_view(), name='emergency-end'),

@@ -4,9 +4,7 @@ import {
   useCreateTelemetryKey,
   useDeleteTelemetryKey,
   useDriveTestConsentMessage,
-  useRescueConsentPolicy,
   useSetDriveTestConsentMessage,
-  useSetRescueConsentPolicy,
   useTelemetryKeys,
   useTelemetryStats,
   useUpdateTelemetryKey,
@@ -16,6 +14,7 @@ import type {
   TelemetryIngestKeyCreateResponse,
   TelemetryIngestKeyRow,
 } from '../api/types'
+import { EmergencySwitchPanel } from './RescuePolicyPage'
 
 // Telemetry Admin (2026-08-31) — superadmin-only management of the
 // crowdsourced-telemetry ingest credentials (core/telemetry_admin.py's
@@ -184,101 +183,13 @@ function StatsPanel() {
   )
 }
 
-// Rescue-consent policy (2026-09-02) -- superadmin control over
-// core/models.py's RescueConsentPolicy singleton. 'mandatory' (the
-// default) requires each subscriber's own opt-in before a rescue lookup
-// can ever match them; 'optional' is a time-boxed emergency override for
-// the disaster-response scenario where the real integration (a carrier
-// or government app) has no in-app consent screen at all -- the
-// subscriber controls collection via OS-level app permission, not a tap
-// in this SDK, so during an actual emergency there may be no deliberate
-// "I consent" moment on record. See RescueConsentPolicy's docstring
-// (core/models.py) for exactly what 'optional' does and does not unlock
-// -- it never invents a phone-number link, only relaxes enforcement on
-// subscribers who already have one on file.
-function RescueConsentPolicyPanel() {
-  const { data: policy, isLoading, error } = useRescueConsentPolicy()
-  const setPolicy = useSetRescueConsentPolicy()
-  const [mode, setMode] = useState<'mandatory' | 'optional'>('mandatory')
-  const [reason, setReason] = useState('')
-  const [activeUntil, setActiveUntil] = useState('')
-  const [saveError, setSaveError] = useState<string | null>(null)
-
-  // Seed the form from the fetched policy exactly once it arrives -- an
-  // effect (not a render-phase setState) because useRescueConsentPolicy()
-  // resolves asynchronously, so `policy` is undefined on the first render.
-  useEffect(() => {
-    if (!policy) return
-    setMode(policy.mode)
-    setReason(policy.reason)
-    setActiveUntil(policy.active_until ? policy.active_until.slice(0, 16) : '')
-  }, [policy])
-
-  async function save() {
-    setSaveError(null)
-    try {
-      await setPolicy.mutateAsync({
-        mode,
-        reason,
-        active_until: activeUntil ? new Date(activeUntil).toISOString() : null,
-      })
-    } catch (err) {
-      setSaveError(apiErrorMessage(err, 'Could not save.'))
-    }
-  }
-
-  if (isLoading) return <p className="muted">Loading rescue-consent policy…</p>
-  if (error) return <p className="form-error form-error-inline">Could not load rescue-consent policy.</p>
-
-  return (
-    <section>
-      <h2>Rescue consent policy</h2>
-      <p className="muted">
-        Controls whether a rescue-operator lookup (<code>/api/v2/rescue/lookup/</code>) requires the subscriber's own
-        opt-in ("Mandatory," the normal drive-test / day-to-day posture) or accepts any subscriber with a known
-        number on file regardless of consent ("Optional," a declared disaster/rescue emergency). Every change here is
-        written to an audit log. This never fabricates a new phone-number link for an anonymous device — it only
-        relaxes enforcement on subscribers who already enrolled at least once.
-      </p>
-      {policy && (
-        <p>
-          Effective state:{' '}
-          <strong>{policy.is_optional_active ? 'Optional (emergency override active)' : 'Mandatory'}</strong>
-          {policy.mode === 'optional' && !policy.is_optional_active && (
-            <span className="muted"> — stored mode is "optional" but it has expired</span>
-          )}
-        </p>
-      )}
-      {saveError && <div className="form-error">{saveError}</div>}
-      <div className="edit-grid">
-        <label>
-          Mode
-          <select value={mode} onChange={(e) => setMode(e.target.value as 'mandatory' | 'optional')}>
-            <option value="mandatory">Mandatory (default)</option>
-            <option value="optional">Optional (emergency override)</option>
-          </select>
-        </label>
-        <label>
-          Reason
-          <input
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="e.g. Flood response — Sindhupalchok, Sept 2026"
-          />
-        </label>
-        <label>
-          Active until (optional)
-          <input type="datetime-local" value={activeUntil} onChange={(e) => setActiveUntil(e.target.value)} />
-        </label>
-      </div>
-      <div className="admin-page-actions">
-        <button className="btn-primary" onClick={save} disabled={setPolicy.isPending}>
-          {setPolicy.isPending ? 'Saving…' : 'Save policy'}
-        </button>
-      </div>
-    </section>
-  )
-}
+// Rescue emergency switch -- see RescuePolicyPage.tsx's EmergencySwitchPanel
+// (single source of truth, also used standalone on its own Rescue Policy
+// page). This used to be a separate, near-duplicate "Rescue consent
+// policy" panel wired to the retired core/rescue.py RescueConsentPolicyView
+// (410 Gone since 2026-10-05) -- replaced outright rather than patched in
+// place, so there is exactly one implementation of this control to keep in
+// sync with the backend, not two.
 
 // Drive-test consent MESSAGE (2026-09-02) -- the wording shown before a
 // subscriber answers setDriveTestConsent(), separate from whether they
@@ -396,7 +307,7 @@ export default function TelemetryAdminPage() {
         <StatsPanel />
       </section>
 
-      <RescueConsentPolicyPanel />
+      <EmergencySwitchPanel />
       <DriveTestConsentMessagePanel />
 
       {justCreated && (

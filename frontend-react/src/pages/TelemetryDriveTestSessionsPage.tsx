@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MapContainer, TileLayer, useMap } from 'react-leaflet'
+import { Circle, CircleMarker, MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
@@ -14,6 +14,10 @@ import {
 import type { TelemetryLiveSample } from '../api/types'
 import { resolveAreaQuery, type ResolvedAreaPoint } from '../lib/resolveDeviceAreaQuery'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
+import {
+  CQI_BANDS, ECIO_BANDS, RSRP_BANDS, RSRQ_BANDS, RXLEV_BANDS, RXQUAL_BANDS, SINR_BANDS,
+  bandColor, type Band,
+} from '../lib/dtBands'
 
 // Scoped drive-test sessions over the crowdsourced telemetry pipeline
 // (2026-09-01) -- the promotable, consent-scoped replacement for the
@@ -51,12 +55,6 @@ function FitToSamples({ samples, fitKey }: { samples: TelemetryLiveSample[]; fit
   return null
 }
 
-const TRIGGER_COLORS: Record<string, string> = {
-  manual: '#2563eb',
-  periodic: '#16a34a',
-  handover: '#f59e0b',
-}
-
 // formatSignal (2026-09-03, "for 2g, rx level and rx qual and for 3g rscp
 // and ec/io" + "for 4g/5g, not only RSRP, also RSRQ and SINR") -- each RAT
 // gets its own proper set of RAN-standard metrics rather than one
@@ -91,6 +89,87 @@ function formatSignal(s: TelemetryLiveSample): string {
   return '-'
 }
 
+// Multi-metric coverage plot (2026-10-07, "details should incorporate
+// every collected data with plot as in dt data manager") -- mirrors
+// lib/dtBands.ts's metricsForTech()/ALL_METRICS (the uploaded-.trp DT
+// Explore/Compare system) closely enough to feel the same, but reads
+// straight off TelemetryLiveSample's own field names rather than
+// DtSample's -- these are two different pipelines (live crowdsourced
+// pipeline vs. post-hoc .trp upload) with different stored field names
+// for the same concepts, so metricsForTech() itself can't be reused
+// directly without a DtSample shim.
+type LiveTech = '2G' | '3G' | '4G/5G'
+
+function techOf(s: TelemetryLiveSample): LiveTech {
+  if (s.network_type === 'GSM') return '2G'
+  if (s.network_type === 'UMTS') return '3G'
+  return '4G/5G'
+}
+
+interface LiveMetric {
+  key: string
+  label: string
+  unit: string
+  bands: Band[]
+  value: (s: TelemetryLiveSample) => number | null | undefined
+}
+
+function metricsForLiveTech(tech: LiveTech): LiveMetric[] {
+  if (tech === '2G') {
+    return [
+      { key: 'primary', label: 'RxLevel', unit: ' dBm', bands: RXLEV_BANDS, value: (s) => s.rssi_dbm },
+      { key: 'rx_qual', label: 'RxQual', unit: '', bands: RXQUAL_BANDS, value: (s) => s.rx_qual },
+    ]
+  }
+  if (tech === '3G') {
+    return [
+      { key: 'primary', label: 'RSCP', unit: ' dBm', bands: RSRP_BANDS, value: (s) => s.rscp_dbm ?? s.rssi_dbm },
+      { key: 'ecio', label: 'Ec/Io', unit: ' dB', bands: ECIO_BANDS, value: (s) => s.ecio_db },
+    ]
+  }
+  return [
+    { key: 'primary', label: 'RSRP', unit: ' dBm', bands: RSRP_BANDS, value: (s) => s.rsrp_dbm },
+    { key: 'rsrq', label: 'RSRQ', unit: ' dB', bands: RSRQ_BANDS, value: (s) => s.rsrq_db },
+    { key: 'sinr', label: 'SINR', unit: ' dB', bands: SINR_BANDS, value: (s) => s.sinr_db },
+    { key: 'cqi', label: 'CQI (est.)', unit: '', bands: CQI_BANDS, value: (s) => s.cqi_derived },
+  ]
+}
+
+function MetricPoints({ samples, metric }: { samples: TelemetryLiveSample[]; metric: LiveMetric }) {
+  const map = useMap()
+  useEffect(() => {
+    const layer = L.layerGroup().addTo(map)
+    for (const s of samples) {
+      if (s.lat == null || s.lng == null) continue
+      const v = metric.value(s)
+      const color = bandColor(metric.bands, v)
+      L.circleMarker([s.lat, s.lng], { radius: 6, color: '#ffffff', weight: 1, fillColor: color, fillOpacity: 0.9 })
+        .bindTooltip(
+          `${s.device_id.slice(0, 8)}... - ${new Date(s.received_at).toLocaleTimeString()} - ` +
+            `${metric.label} ${v != null ? `${v}${metric.unit}` : 'no data'}`,
+        )
+        .addTo(layer)
+    }
+    return () => {
+      map.removeLayer(layer)
+    }
+  }, [map, samples, metric])
+  return null
+}
+
+function MetricLegend({ bands }: { bands: Band[] }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, fontSize: 11, margin: '6px 0' }}>
+      {bands.map((b) => (
+        <span key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: b.color, display: 'inline-block' }} />
+          {b.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 // Route line (2026-10-04): one polyline per device through its fixes in time
 // order. Uses the server's smoothed coordinates where present, so the line
 // reads as a route rather than scattered dots. Points still show on top.
@@ -119,25 +198,16 @@ function RouteLines({ samples }: { samples: TelemetryLiveSample[] }) {
   return null
 }
 
-function SamplePoints({ samples }: { samples: TelemetryLiveSample[] }) {
-  const map = useMap()
-  useEffect(() => {
-    const layer = L.layerGroup().addTo(map)
-    for (const s of samples) {
-      if (s.lat == null || s.lng == null) continue
-      const color = TRIGGER_COLORS[s.trigger_reason] ?? '#64748b'
-      const signal = formatSignal(s)
-      L.circleMarker([s.lat, s.lng], { radius: 6, color, fillColor: color, fillOpacity: 0.85, weight: 1 })
-        .bindTooltip(
-          `${s.device_id.slice(0, 8)}... - ${new Date(s.received_at).toLocaleTimeString()} - ${s.network_type}` +
-            (signal !== '-' ? ` - ${signal}` : ''),
-        )
-        .addTo(layer)
-    }
-    return () => {
-      map.removeLayer(layer)
-    }
-  }, [map, samples])
+// Click-to-pick a center point (2026-10-07, "so that i can edit the
+// range or location as per my requirement") -- the enrollment preview
+// map's own interaction: clicking anywhere re-centers the search point
+// without having to type coordinates.
+function ClickToSetPoint({ onPick }: { onPick: (lat: number, lng: number) => void }) {
+  useMapEvents({
+    click(e) {
+      onPick(e.latlng.lat, e.latlng.lng)
+    },
+  })
   return null
 }
 
@@ -160,15 +230,36 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
   const [resolved, setResolved] = useState<ResolvedAreaPoint | null>(null)
   const [searchError, setSearchError] = useState<string | null>(null)
 
+  // Disabled until an area is actually searched (2026-10-07, "when i just
+  // load the telemetry drive test page, active device is shown. it
+  // should not") -- previously this fired with no area filter at all
+  // while `resolved` was null, showing every device active system-wide
+  // before the admin had searched anything.
   const { data: liveData } = useTelemetryLiveSamples(
     resolved
       ? { minutes: 30, lat: resolved.lat, lng: resolved.lng, radius_km: radiusKm }
       : { minutes: 30 },
+    resolved != null,
   )
+  // Each enrollable device's latest known fix, for the preview map's
+  // markers -- `devices` is just a list of ids; positions come from the
+  // same response's own `samples`.
+  const latestByDevice = useMemo(() => {
+    const map = new Map<string, TelemetryLiveSample>()
+    for (const s of liveData?.samples ?? []) {
+      if (s.lat == null || s.lng == null) continue
+      const prev = map.get(s.device_id)
+      if (!prev || new Date(s.ts).getTime() > new Date(prev.ts).getTime()) map.set(s.device_id, s)
+    }
+    return map
+  }, [liveData])
   const createSession = useCreateTelemetryDtSession()
   const [name, setName] = useState('')
   const [selectedDevices, setSelectedDevices] = useState<string[]>([])
   const [requireConsent, setRequireConsent] = useState(false)
+  // Optional auto-end cap in minutes (2026-10-07) -- blank means unlimited,
+  // same meaning as max_duration_minutes: null on the wire.
+  const [maxDurationMinutes, setMaxDurationMinutes] = useState('')
   const recentDevices = liveData?.devices ?? []
 
   const runSearch = () => {
@@ -192,19 +283,50 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
     setSearchError(null)
   }
 
+  // Re-center by clicking the preview map (2026-10-07) -- lets the admin
+  // nudge the search point without retyping coordinates. Clears the text
+  // query since the point no longer matches whatever was typed.
+  const pickPoint = (lat: number, lng: number) => {
+    setQuery('')
+    setSearchError(null)
+    setResolved({ lat, lng, label: `${lat.toFixed(5)}, ${lng.toFixed(5)}` })
+  }
+
   const toggleDevice = (d: string) => {
     setSelectedDevices((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]))
   }
 
+  // Select all / clear all (2026-10-07) -- enrolls every device currently
+  // listed (already active + area-filtered, with or without drive-test
+  // consent: that gate only affects which of them end up counted once
+  // require_consent is on, never which ones can be ENROLLED here).
+  const allSelected = recentDevices.length > 0 && recentDevices.every((d) => selectedDevices.includes(d))
+  const toggleSelectAll = () => {
+    setSelectedDevices(allSelected ? [] : [...recentDevices])
+  }
+
+  // Suggested session name (2026-10-07, "name with text in session name
+  // including date and district") -- a one-click fill, not an
+  // auto-overwrite, so a name the admin already typed is never silently
+  // replaced. Falls back to the resolved point's own label when it
+  // didn't come from a district match (e.g. a coordinate or Site ID).
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const suggestedName = resolved ? `${resolved.district ?? resolved.label} Drive — ${todayStr}` : ''
+
   const submit = () => {
     if (!name.trim() || selectedDevices.length === 0) return
+    const cap = maxDurationMinutes.trim()
     createSession.mutate(
-      { name: name.trim(), device_ids: selectedDevices, require_consent: requireConsent },
+      {
+        name: name.trim(), device_ids: selectedDevices, require_consent: requireConsent,
+        max_duration_minutes: cap ? Number(cap) : null,
+      },
       {
         onSuccess: (session) => {
           setName('')
           setSelectedDevices([])
           setRequireConsent(false)
+          setMaxDurationMinutes('')
           onCreated(session.id)
         },
       },
@@ -217,6 +339,16 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
         Session name
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Kathmandu ring-road pass 1" />
       </label>
+      {suggestedName && suggestedName !== name && (
+        <button
+          type="button"
+          className="btn-link"
+          style={{ width: 'fit-content', fontSize: 11 }}
+          onClick={() => setName(suggestedName)}
+        >
+          Use suggested name: "{suggestedName}"
+        </button>
+      )}
       <div>
         <div className="muted" style={{ marginBottom: 4 }}>
           Search an area to narrow enrollable devices (optional -- leave blank to see every device active in the last
@@ -261,23 +393,52 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
         )}
         {resolved && (
           <p className="muted" style={{ fontSize: 11, margin: '4px 0 0' }}>
-            Showing devices within {radiusKm}km of {resolved.label}
+            Showing devices within {radiusKm}km of {resolved.label}. Click the map below to re-center, or adjust the
+            radius and search again.
           </p>
         )}
       </div>
-      <div>
-        <div className="muted" style={{ marginBottom: 4 }}>
-          {resolved
-            ? `Devices found in this area (active in the last 30 minutes)`
-            : `Enrolled devices (active in the last 30 minutes -- have the test phone(s) send at least one sample first)`}
+      {resolved && (
+        <div style={{ height: 260 }}>
+          <MapContainer center={[resolved.lat, resolved.lng]} zoom={13} style={{ height: '100%', width: '100%' }}>
+            <InvalidateOnResize />
+            <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <ClickToSetPoint onPick={pickPoint} />
+            <Circle center={[resolved.lat, resolved.lng]} radius={radiusKm * 1000} pathOptions={{ color: '#2563eb', fillOpacity: 0.08 }} />
+            <CircleMarker center={[resolved.lat, resolved.lng]} radius={6} pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 1 }} />
+            {[...latestByDevice.entries()].map(([d, s]) => (
+              <CircleMarker
+                key={d}
+                center={[s.lat as number, s.lng as number]}
+                radius={5}
+                pathOptions={{
+                  color: '#ffffff', weight: 1,
+                  fillColor: selectedDevices.includes(d) ? '#16a34a' : '#f97316', fillOpacity: 1,
+                }}
+              >
+              </CircleMarker>
+            ))}
+          </MapContainer>
         </div>
-        {recentDevices.length === 0 ? (
-          <div className="page-status">
+      )}
+      <div>
+        <div className="muted" style={{ marginBottom: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <span>
             {resolved
-              ? 'No active devices found in this area. Try a larger radius, or a different search.'
-              : 'No active devices seen recently. Send a sample from the test phone, then reload.'}
+              ? `Devices found in this area (active in the last 30 minutes)`
+              : `Search an area above to see active devices there (nothing is listed until you search)`}
+          </span>
+          {recentDevices.length > 0 && (
+            <button type="button" className="btn-secondary btn-small" onClick={toggleSelectAll}>
+              {allSelected ? 'Clear all' : `Select all (${recentDevices.length})`}
+            </button>
+          )}
+        </div>
+        {resolved && recentDevices.length === 0 ? (
+          <div className="page-status">
+            No active devices found in this area. Try a larger radius, or a different search.
           </div>
-        ) : (
+        ) : !resolved ? null : (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {recentDevices.map((d) => (
               <label key={d} className="btn-secondary btn-small" style={{ cursor: 'pointer' }}>
@@ -293,14 +454,13 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
           </div>
         )}
       </div>
-      <label style={{ cursor: 'pointer' }}>
+      <label style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
         <input
           type="checkbox"
           checked={requireConsent}
           onChange={(e) => setRequireConsent(e.target.checked)}
-          style={{ marginRight: 6 }}
         />
-        Require rider consent before including their data
+        <span style={{ color: '#b91c1c' }}>Require rider consent before including their data</span>
       </label>
       {requireConsent && (
         <p className="muted" style={{ fontSize: 11, margin: 0 }}>
@@ -311,6 +471,24 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
           same as leaving consent off just without the gate.
         </p>
       )}
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        Auto-end after
+        <input
+          type="number"
+          min={1}
+          max={43200}
+          value={maxDurationMinutes}
+          onChange={(e) => setMaxDurationMinutes(e.target.value)}
+          placeholder="unlimited"
+          style={{ width: 90 }}
+        />
+        minutes (optional)
+      </label>
+      <p className="muted" style={{ fontSize: 11, margin: 0 }}>
+        Leave blank for no cap. Also ends automatically when its one enrolled device stops sharing (a session with
+        several enrolled devices needs this cap or a manual End instead, so one teammate's phone stopping doesn't
+        cut the others off).
+      </p>
       <button
         className="btn-primary"
         disabled={!name.trim() || selectedDevices.length === 0 || createSession.isPending}
@@ -339,6 +517,53 @@ export default function TelemetryDriveTestSessionsPage() {
   // full Leaflet map remount on nearly every 10s poll).
   const mapKey = `${selectedId}`
 
+  // Session list filters (2026-10-07) -- client-side over the <=200 rows
+  // the list endpoint already caps, same as CollectionsPage's own source
+  // filter; no new backend query needed for a list this small.
+  const [statusFilter, setStatusFilter] = useState<'' | 'active' | 'ended'>('')
+  const [nameFilter, setNameFilter] = useState('')
+  const [consentFilter, setConsentFilter] = useState<'' | 'required' | 'not_required'>('')
+  // Started-between filters (2026-10-07) -- plain <input type="date">,
+  // compared against each session's own started_at; a bound is ignored
+  // while its field is blank.
+  const [startFrom, setStartFrom] = useState('')
+  const [startTo, setStartTo] = useState('')
+  const filteredSessions = useMemo(() => {
+    const q = nameFilter.trim().toLowerCase()
+    const from = startFrom ? new Date(startFrom + 'T00:00:00').getTime() : null
+    const to = startTo ? new Date(startTo + 'T23:59:59.999').getTime() : null
+    return (sessions ?? []).filter((s) => {
+      if (statusFilter && s.status !== statusFilter) return false
+      if (consentFilter === 'required' && !s.require_consent) return false
+      if (consentFilter === 'not_required' && s.require_consent) return false
+      if (q && !s.name.toLowerCase().includes(q)) return false
+      const startedAt = new Date(s.started_at).getTime()
+      if (from != null && startedAt < from) return false
+      if (to != null && startedAt > to) return false
+      return true
+    })
+  }, [sessions, statusFilter, consentFilter, nameFilter, startFrom, startTo])
+
+  // Per-tech, per-metric coverage plot (see metricsForLiveTech above).
+  // Defaults to whichever tech the session's own samples actually use,
+  // re-picked whenever the selected session changes.
+  const presentTechs = useMemo(() => {
+    const set = new Set<LiveTech>()
+    for (const s of samples) set.add(techOf(s))
+    return (['4G/5G', '3G', '2G'] as LiveTech[]).filter((t) => set.has(t))
+  }, [samples])
+  const [tech, setTech] = useState<LiveTech>('4G/5G')
+  const [metricKey, setMetricKey] = useState('primary')
+  useEffect(() => {
+    if (presentTechs.length && !presentTechs.includes(tech)) {
+      setTech(presentTechs[0])
+      setMetricKey('primary')
+    }
+  }, [presentTechs, tech])
+  const metrics = metricsForLiveTech(tech)
+  const metric = metrics.find((m) => m.key === metricKey) ?? metrics[0]
+  const techSamples = useMemo(() => samples.filter((s) => techOf(s) === tech), [samples, tech])
+
   return (
     <div className="admin-page" style={{ maxWidth: 1200 }}>
       <h1>Telemetry Drive Test</h1>
@@ -354,6 +579,47 @@ export default function TelemetryDriveTestSessionsPage() {
       {!isLoading && (sessions ?? []).length === 0 && <div className="page-status">No sessions yet -- start one above.</div>}
 
       {(sessions ?? []).length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            Status
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as '' | 'active' | 'ended')}>
+              <option value="">All</option>
+              <option value="active">Active</option>
+              <option value="ended">Ended</option>
+            </select>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            Consent
+            <select
+              value={consentFilter}
+              onChange={(e) => setConsentFilter(e.target.value as '' | 'required' | 'not_required')}
+            >
+              <option value="">All</option>
+              <option value="required">Required</option>
+              <option value="not_required">Not required</option>
+            </select>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            Started from
+            <input type="date" value={startFrom} onChange={(e) => setStartFrom(e.target.value)} />
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            to
+            <input type="date" value={startTo} onChange={(e) => setStartTo(e.target.value)} />
+          </label>
+          <input
+            value={nameFilter}
+            onChange={(e) => setNameFilter(e.target.value)}
+            placeholder="Filter by name..."
+            style={{ flex: '1 1 220px' }}
+          />
+          <span className="muted" style={{ fontSize: 11 }}>
+            {filteredSessions.length} of {(sessions ?? []).length}
+          </span>
+        </div>
+      )}
+
+      {(sessions ?? []).length > 0 && (
         <table className="admin-table" style={{ marginBottom: 16 }}>
           <thead>
             <tr>
@@ -361,6 +627,7 @@ export default function TelemetryDriveTestSessionsPage() {
               <th>Status</th>
               <th>Devices</th>
               <th>Consent</th>
+              <th>Cap</th>
               <th>Started</th>
               <th>Ended</th>
               <th>Started by</th>
@@ -368,7 +635,7 @@ export default function TelemetryDriveTestSessionsPage() {
             </tr>
           </thead>
           <tbody>
-            {(sessions ?? []).map((s) => (
+            {filteredSessions.map((s) => (
               <tr key={s.id} style={selectedId === s.id ? { fontWeight: 600 } : undefined}>
                 <td>
                   <button className="btn-link" onClick={() => setSelectedId(s.id)}>
@@ -378,6 +645,7 @@ export default function TelemetryDriveTestSessionsPage() {
                 <td>{s.status}</td>
                 <td>{s.device_ids.length}</td>
                 <td>{s.require_consent ? 'Required' : '-'}</td>
+                <td>{s.max_duration_minutes ? `${s.max_duration_minutes} min` : '-'}</td>
                 <td>{new Date(s.started_at).toLocaleString()}</td>
                 <td>{s.ended_at ? new Date(s.ended_at).toLocaleString() : '-'}</td>
                 <td>{s.created_by_name ?? '-'}</td>
@@ -422,6 +690,9 @@ export default function TelemetryDriveTestSessionsPage() {
           </tbody>
         </table>
       )}
+      {(sessions ?? []).length > 0 && filteredSessions.length === 0 && (
+        <div className="page-status">No sessions match these filters.</div>
+      )}
 
       {selectedId != null && (
         <>
@@ -435,13 +706,43 @@ export default function TelemetryDriveTestSessionsPage() {
           {samples.length === 0 ? (
             <div className="page-status">No samples for this session yet.</div>
           ) : (
-            <MapContainer key={mapKey} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
-              <InvalidateOnResize />
-              <FitToSamples samples={samples} fitKey={mapKey} />
-              <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-              <RouteLines samples={samples} />
-              <SamplePoints samples={samples} />
-            </MapContainer>
+            <>
+              {presentTechs.length > 1 && (
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  {presentTechs.map((t) => (
+                    <button
+                      key={t}
+                      className={t === tech ? 'btn-primary btn-small' : 'btn-secondary btn-small'}
+                      onClick={() => {
+                        setTech(t)
+                        setMetricKey('primary')
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                {metrics.map((m) => (
+                  <button
+                    key={m.key}
+                    className={m.key === metric.key ? 'btn-primary btn-small' : 'btn-secondary btn-small'}
+                    onClick={() => setMetricKey(m.key)}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <MetricLegend bands={metric.bands} />
+              <MapContainer key={mapKey} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
+                <InvalidateOnResize />
+                <FitToSamples samples={samples} fitKey={mapKey} />
+                <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                <RouteLines samples={samples} />
+                <MetricPoints samples={techSamples} metric={metric} />
+              </MapContainer>
+            </>
           )}
           <table className="admin-table" style={{ marginTop: 16 }}>
             <thead>

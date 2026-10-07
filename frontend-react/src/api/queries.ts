@@ -3,6 +3,7 @@ import { useRef } from 'react'
 import { ApiError, apiFetch, apiJson } from './client'
 import type {
   CollectionSessionRow,
+  CollectionSessionSample,
   TraceFix,
   TraceRequestCreateResponse,
   TraceRequestDetail,
@@ -80,8 +81,8 @@ import type {
   AuditLogParams,
   AuditLogPageResponse,
   BlockedIpEntry,
-  RescueConsentPolicy,
-  RescueConsentPolicyWrite,
+  EmergencyStatus,
+  EmergencyDeclareParams,
   RescueLookupParams,
   RescueLookupResult,
   RescueBulkLookupParams,
@@ -476,6 +477,17 @@ export function useCollectionSessions(source: string) {
     queryKey: ['collection-sessions', source],
     queryFn: () => apiJson<{ results: CollectionSessionRow[] }>(`/api/v2/collection-sessions/?limit=200${query}`),
     refetchInterval: 30_000,
+  })
+}
+
+// One collection session's route plot (2026-10-07) -- see
+// core/collection.py's CollectionSessionSamplesView. Disabled until a row
+// is selected, same `enabled` pattern useTraceFixes below uses.
+export function useCollectionSessionSamples(id: string | null) {
+  return useQuery({
+    queryKey: ['collection-session-samples', id],
+    queryFn: () => apiJson<{ results: CollectionSessionSample[] }>(`/api/v2/collection-sessions/${id}/samples/`),
+    enabled: !!id,
   })
 }
 
@@ -1451,7 +1463,12 @@ export function useVolteQualitySamples(minutes: number) {
   })
 }
 
-export function useTelemetryLiveSamples(params: TelemetryLiveSamplesParams) {
+// `enabled` (2026-10-07, default true so TelemetryLiveSamplesPage's own
+// call site is unaffected) -- NewSessionForm below passes false until an
+// area is actually searched, so the enrollment list starts empty instead
+// of silently showing every device active system-wide with no area
+// filter applied.
+export function useTelemetryLiveSamples(params: TelemetryLiveSamplesParams, enabled: boolean = true) {
   const filterKey = JSON.stringify(params)
   return useDeltaSamples(
     ['telemetry-live-samples', params],
@@ -1468,7 +1485,7 @@ export function useTelemetryLiveSamples(params: TelemetryLiveSamplesParams) {
       if (since) qs.set('since', since)
       return apiJson<TelemetryLiveSamplesResponse>(`/api/v2/telemetry/live-samples/?${qs}`)
     },
-    true,
+    enabled,
   )
 }
 
@@ -1512,21 +1529,33 @@ export function useEndTelemetryDtSession() {
   })
 }
 
-// Superadmin-controlled rescue-consent policy (2026-09-02) -- see
-// core/rescue.py's RescueConsentPolicyView.
-export function useRescueConsentPolicy() {
+// Emergency switch (2026-10-05) -- see core/emergency.py. Replaced the
+// old rescue-consent-policy 'optional' mode; this is the only control
+// over whether rescue search is on. Polled every 15s so an operator
+// watching Rescue Lookup notices a superadmin ending the emergency from
+// elsewhere without needing a manual refresh.
+export function useEmergencyStatus() {
   return useQuery({
-    queryKey: ['rescue-consent-policy'],
-    queryFn: () => apiJson<RescueConsentPolicy>('/api/v2/rescue/policy/'),
+    queryKey: ['emergency-status'],
+    queryFn: () => apiJson<EmergencyStatus>('/api/v2/emergency/'),
+    refetchInterval: 15_000,
   })
 }
 
-export function useSetRescueConsentPolicy() {
+export function useDeclareEmergency() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (policy: RescueConsentPolicyWrite) =>
-      apiJson<RescueConsentPolicy>('/api/v2/rescue/policy/', { method: 'POST', body: JSON.stringify(policy) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['rescue-consent-policy'] }),
+    mutationFn: (params: EmergencyDeclareParams) =>
+      apiJson<EmergencyStatus>('/api/v2/emergency/declare/', { method: 'POST', body: JSON.stringify(params) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['emergency-status'] }),
+  })
+}
+
+export function useEndEmergency() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiJson<{ active: boolean }>('/api/v2/emergency/end/', { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['emergency-status'] }),
   })
 }
 

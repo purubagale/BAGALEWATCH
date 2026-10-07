@@ -15,9 +15,11 @@ into the sample tables. See core/device_identity.py for who can read it.
 import hashlib
 import hmac
 from collections import Counter
+from datetime import timedelta
 
 from django.conf import settings
 from django.db.models import F
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -26,7 +28,7 @@ from rest_framework.views import APIView
 
 from .access import PERM_VIEW_IDENTITY, CanViewDrives, user_has
 from .mfa import decrypt_secret, encrypt_secret
-from .models import CollectionSession, DeviceIdentity
+from .models import CollectionSession, DeviceIdentity, TelemetryDriveTestSession, TelemetrySample, TraceLocationSample
 
 
 def msisdn_lookup_key(msisdn):
@@ -114,6 +116,18 @@ def record_collection_sessions(rows):
         )
     for device_hash, dsid in stops:
         CollectionSession.objects.filter(drive_session_id=dsid, ended_at__isnull=True).update(ended_at=now)
+        # Also end an admin-run Telemetry Drive Test session this device was
+        # enrolled in (2026-10-07) -- the device turning its own sharing off
+        # should be reflected on the admin "Telemetry Drive Test" page too,
+        # not just here on Collections, or a superadmin watching that page
+        # sees "active" forever with no new samples arriving. Scoped to a
+        # SINGLE-device session only: a session enrolling several devices
+        # (a real team drive) should keep running for the others when just
+        # one teammate's phone stops, so that case is left to the session's
+        # own max_duration_minutes cap or a manual End instead.
+        TelemetryDriveTestSession.objects.filter(
+            status='active', device_ids=[device_hash],
+        ).update(status='ended', ended_at=now)
 
 
 def close_trace_session(trace):
@@ -146,6 +160,36 @@ def ensure_trace_session(trace):
     return session
 
 
+#  A session with no explicit end (no drive_stop marker reached this row,
+# or the trace it belongs to hasn't reached a terminal state yet) that
+# also hasn't taken a sample in this long is reported as ended, even
+# though `ended_at` itself is left NULL in the database (2026-10-07,
+# "Status ... all are displayed as open why?" -- most rows had gone
+# quiet for hours to days with no real mechanism that would ever flip
+# them to Ended: a killed app or a lost connection never sends the
+# drive_stop marker, and a still-PENDING/ACCEPTED trace's own
+# close_trace_session() only fires on a real terminal event). Comfortably
+# longer than the mobile SDK's own default 60-minute share cap
+# (NetTelemetry.DEFAULT_SHARE_CAP_MINUTES) so a session that's merely
+# paused mid-window is never flagged. Deliberately NOT written back to
+# the row's own `ended_at` column -- that stays reserved for a REAL
+# terminal event (a stop marker, or close_trace_session() on the trace
+# reaching a terminal state), so a trace that resumes after a quiet
+# stretch and later completes normally still gets its own correct
+# ended_at recorded then, rather than this inference having already
+# claimed that column first.
+STALE_MINUTES = 90
+
+
+def _inferred_ended_at(s):
+    if s.ended_at:
+        return s.ended_at
+    anchor = s.last_sample_at or s.started_at
+    if anchor and timezone.now() - anchor > timedelta(minutes=STALE_MINUTES):
+        return anchor
+    return None
+
+
 class CollectionSessionListView(APIView):
     """`GET /api/v2/collection-sessions/?source=...&limit=50` -- needs
     drive.view. The device hash is included only for users who also hold
@@ -173,9 +217,64 @@ class CollectionSessionListView(APIView):
                 'sample_count': s.sample_count,
                 'started_at': s.started_at,
                 'last_sample_at': s.last_sample_at,
-                'ended_at': s.ended_at,
+                'ended_at': _inferred_ended_at(s),
             }
             if can_see_identity:
                 row['device_hash'] = s.device_hash or None
             rows.append(row)
         return Response({'results': rows}, status=status.HTTP_200_OK)
+
+
+class CollectionSessionSamplesView(APIView):
+    """`GET /api/v2/collection-sessions/<id>/samples/?limit=2000` -- the
+    fixes behind one row on the Collections page, oldest first, for its
+    route to be plotted. Same `drive.view` gate as the list above (not the
+    stricter `IsTraceOperator` a trace's own TraceSamplesView uses) -- this
+    is a read-only route plot, not the operator trace-management console,
+    so it fits the same access tier as every other read here.
+
+    Two branches by source, since a drive-sourced session and a
+    trace-sourced session keep their fixes in different tables (see this
+    module's own header comment on why): a trace session (operator_
+    investigation/operator_case) reads TraceLocationSample via its `trace`
+    FK; everything else (crowd_drive/staff_drive/drive_test) reads
+    TelemetrySample by (device_hash, drive_session_id) -- the exact pair
+    record_collection_sessions() above grouped on to create this row in
+    the first place. Field names are kept identical across both branches
+    so one frontend map/table renders either without a source switch."""
+
+    permission_classes = [IsAuthenticated, CanViewDrives]
+
+    def get(self, request, pk):
+        session = get_object_or_404(CollectionSession, pk=pk)
+        try:
+            limit = max(1, min(int(request.query_params.get('limit', 2000)), 5000))
+        except (TypeError, ValueError):
+            limit = 2000
+
+        if session.trace_id:
+            rows = TraceLocationSample.objects.filter(trace_id=session.trace_id).order_by('ts')[:limit]
+            results = [
+                {
+                    'ts': r.ts, 'lat': r.lat, 'lng': r.lng, 'accuracy_m': r.accuracy_m,
+                    'network_type': r.network_type, 'pci': r.pci, 'rsrp_dbm': r.rsrp_dbm,
+                    'rsrq_db': r.rsrq_db, 'sinr_db': r.sinr_db,
+                }
+                for r in rows
+            ]
+        else:
+            rows = (
+                TelemetrySample.objects
+                .filter(device_id=session.device_hash, drive_session_id=session.drive_session_id or '__none__')
+                .exclude(lat__isnull=True).exclude(lng__isnull=True)
+                .order_by('ts')[:limit]
+            )
+            results = [
+                {
+                    'ts': r.ts, 'lat': r.lat, 'lng': r.lng, 'accuracy_m': r.gps_accuracy_m,
+                    'network_type': r.network_type, 'pci': r.pci, 'rsrp_dbm': r.rsrp_dbm,
+                    'rsrq_db': r.rsrq_db, 'sinr_db': r.sinr_db,
+                }
+                for r in rows
+            ]
+        return Response({'results': results}, status=status.HTTP_200_OK)

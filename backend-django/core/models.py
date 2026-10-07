@@ -2974,6 +2974,18 @@ class TelemetryDriveTestSession(models.Model):
     # always-on telemetry opt-in.
     require_consent = models.BooleanField(default=False)
 
+    # Optional auto-end cap in minutes (2026-10-07), mirroring the mobile
+    # SDK's own share-window cap (NetTelemetry.startShare() /
+    # DEFAULT_SHARE_CAP_MINUTES = 60) -- an engineer-run session doesn't
+    # have to be remembered and manually ended; set this at creation and
+    # it closes itself once started_at + this many minutes has passed.
+    # Checked lazily on read (core/telemetry_admin.py's
+    # _auto_end_if_due()), the same "no cron job needed" pattern
+    # core/emergency.py's EmergencyDeclaration.expires_at already uses.
+    # Null = unlimited (today's only behavior, unchanged for existing
+    # sessions and for any new session that doesn't set this).
+    max_duration_minutes = models.PositiveIntegerField(null=True, blank=True)
+
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active')
     started_at = models.DateTimeField(auto_now_add=True)
     ended_at = models.DateTimeField(null=True, blank=True)
