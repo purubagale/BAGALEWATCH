@@ -80,6 +80,7 @@
     <string name="req_registered">Registered. Requests will appear here.</string>
     <string name="req_failed">Failed: %1$s</string>
     <string name="req_failed_retrying">%1$s Will keep trying in the background.</string>
+    <string name="req_registered_as">Registered as %1$s.</string>
     <string name="req_offline">Could not reach the server. Try again shortly.</string>
     <string name="req_none">No requests right now.</string>
     <string name="req_status">Request status: %1$s</string>

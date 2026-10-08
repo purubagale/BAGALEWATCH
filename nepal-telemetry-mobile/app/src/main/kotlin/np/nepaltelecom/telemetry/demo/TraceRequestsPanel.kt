@@ -38,12 +38,18 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val msisdnInput: EditText = root.findViewById(R.id.devMsisdn)
     private val registerButton: Button = root.findViewById(R.id.registerDeviceButton)
+    private val registrationForm: View = root.findViewById(R.id.registrationForm)
+    private val registeredAsText: TextView = root.findViewById(R.id.registeredAsText)
     private val statusText: TextView = root.findViewById(R.id.deviceStatus)
     private val list: LinearLayout = root.findViewById(R.id.requestList)
 
     private val handler = Handler(Looper.getMainLooper())
     private val poll = object : Runnable {
         override fun run() {
+            // Picks up a registration the WorkManager retry worker finished
+            // in the background since the last tick -- see
+            // refreshRegistrationUi()'s own doc comment.
+            refreshRegistrationUi()
             refreshRequests()
             handler.postDelayed(this, POLL_MS)
         }
@@ -52,12 +58,50 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
     fun bind() {
         msisdnInput.setText(prefs.getString(KEY_MSISDN, ""))
         registerButton.setOnClickListener { register() }
+        refreshRegistrationUi()
     }
 
-    /** Starts polling while the Settings screen is open. */
+    /** Starts polling while the Settings screen is open. Already-registered
+     * installs (2026-10-08, "if already installed... update details only")
+     * get a lightweight details refresh instead of ever showing the form
+     * again -- re-pushes the FCM token and identity, never re-runs the
+     * key/challenge handshake itself, which a device that's already
+     * registered doesn't need to repeat. */
     fun start() {
+        refreshRegistrationUi()
+        if (prefs.getBoolean(KEY_REGISTERED, false)) updateDeviceDetails()
         handler.removeCallbacks(poll)
         handler.post(poll)
+    }
+
+    /** Shows the editable number + Register button only for an install that
+     * has never registered; an already-registered install just shows its
+     * own number instead -- see this class's own KEY_REGISTERED doc comment
+     * for why a BACKGROUND retry success (not just this panel's own button)
+     * also needs to flip this, which is why it's called from the poll loop
+     * too, not only right after register() returns. */
+    private fun refreshRegistrationUi() {
+        val registered = prefs.getBoolean(KEY_REGISTERED, false)
+        registrationForm.visibility = if (registered) View.GONE else View.VISIBLE
+        if (registered) {
+            registeredAsText.text = context.getString(R.string.req_registered_as, prefs.getString(KEY_MSISDN, "") ?: "")
+            registeredAsText.visibility = View.VISIBLE
+        } else {
+            registeredAsText.visibility = View.GONE
+        }
+    }
+
+    /** Re-pushes the FCM token and identity for an install that's already
+     * registered -- not a re-registration, just keeping the server's record
+     * of this device current (a reinstalled/updated app can get a new FCM
+     * token, for one). Silent: no status text, no error surfaced -- this is
+     * routine upkeep, not a user-initiated action. */
+    private fun updateDeviceDetails() {
+        Thread {
+            FcmToken.fetchAndUpload(context)
+            val userType = if (StaffMode.isEmployee(context)) "employee" else "general"
+            runCatching { TraceApi.uploadIdentity(Build.MODEL, Build.MANUFACTURER, userType) }
+        }.start()
     }
 
     fun stop() {
@@ -91,7 +135,10 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
                 enqueueRegisterRetry(msisdn)
                 context.getString(R.string.req_failed_retrying, friendlyErrorMessage(e))
             }
-            onMain { setStatus(message) }
+            onMain {
+                setStatus(message)
+                refreshRegistrationUi()
+            }
             refreshRequests()
         }.start()
     }

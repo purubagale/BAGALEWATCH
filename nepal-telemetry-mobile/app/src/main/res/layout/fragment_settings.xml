@@ -125,23 +125,44 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp" />
 
-            <EditText
-                android:id="@+id/devMsisdn"
+            <!-- registrationForm (2026-10-08): wraps the editable number and
+                 Register button, so both can be hidden together once this
+                 install is already registered. See
+                 TraceRequestsPanel.refreshRegistrationUi(). -->
+            <LinearLayout
+                android:id="@+id/registrationForm"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <EditText
+                    android:id="@+id/devMsisdn"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:hint="@string/req_hint"
+                    android:inputType="phone"
+                    android:textColor="@color/text_primary"
+                    android:textColorHint="@color/text_secondary" />
+
+                <Button
+                    android:id="@+id/registerDeviceButton"
+                    style="@style/Widget.App.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/req_register" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/registeredAsText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:hint="@string/req_hint"
-                android:inputType="phone"
                 android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary" />
-
-            <Button
-                android:id="@+id/registerDeviceButton"
-                style="@style/Widget.App.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="@string/req_register" />
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
 
             <TextView
                 android:id="@+id/deviceStatus"
