@@ -16,7 +16,9 @@ import androidx.work.workDataOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
@@ -65,6 +67,12 @@ object NetTelemetry {
     private var handoverListener: HandoverListener? = null
     private val scope = CoroutineScope(Dispatchers.Default)
     private val lastHandoverSampleAtMs = AtomicLong(0)
+    private val lastOnDemandSampleAtMs = AtomicLong(0)
+
+    private const val PUSH_PREFS = "netplanning_push"
+    private const val KEY_PUSH_TOKEN = "fcm_token"
+    private const val MIN_ON_DEMAND_INTERVAL_MS = 120_000L
+    private const val ON_DEMAND_TIMEOUT_MS = 15_000L
 
     private const val SAMPLING_WORK_NAME = "netplanning_telemetry_sampling"
     private const val UPLOAD_WORK_NAME = "netplanning_telemetry_upload"
@@ -101,6 +109,7 @@ object NetTelemetry {
         DeviceIdentity(appContext).optedIn = true
         scheduleBackgroundWork()
         startHandoverListener()
+        syncPushToken(register = true)
     }
 
     fun optOut(wipeQueuedData: Boolean = true) {
@@ -111,6 +120,7 @@ object NetTelemetry {
         handoverListener?.stop()
         handoverListener = null
         if (wipeQueuedData) SampleQueue(appContext).clear()
+        syncPushToken(register = false)
     }
 
     /** Length of one share window when the caller doesn't choose one (2026-10-07). */
@@ -329,6 +339,85 @@ object NetTelemetry {
     fun uploadNow() {
         if (!isOptedIn()) return
         WorkManager.getInstance(appContext).enqueue(OneTimeWorkRequestBuilder<UploadWorker>().build())
+    }
+
+    /**
+     * Gives the SDK the host app's push token (2026-10-08), so the server can
+     * ask this device for a fresh reading while it is sharing. The SDK has no
+     * push library of its own; the host app gets the token and passes it in.
+     * The token is sent to [TelemetryConfig.pushTokenUrl] only while opted in,
+     * and is removed from the server on opt-out.
+     */
+    fun setPushToken(token: String?) {
+        if (!::appContext.isInitialized) return
+        appContext.getSharedPreferences(PUSH_PREFS, Context.MODE_PRIVATE)
+            .edit().putString(KEY_PUSH_TOKEN, token).apply()
+        if (isOptedIn()) syncPushToken(register = true)
+    }
+
+    /**
+     * Sends the stored token to the server, or removes it there. Best effort:
+     * if a removal fails while offline, the server may still send a request,
+     * and [answerSampleRequest] ignores it because the device is opted out.
+     */
+    private fun syncPushToken(register: Boolean) {
+        val config = internalConfig ?: return
+        val url = config.pushTokenUrl ?: return
+        val token = if (register) {
+            appContext.getSharedPreferences(PUSH_PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_PUSH_TOKEN, null) ?: return
+        } else {
+            ""
+        }
+        val deviceId = DeviceIdentity(appContext).deviceId
+        val apiKey = config.apiKey
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try {
+                    val body = JSONObject().apply {
+                        put("device_id", deviceId)
+                        put("fcm_token", token)
+                    }.toString()
+                    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "POST"
+                        setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                        apiKey?.let { setRequestProperty("Authorization", "Bearer $it") }
+                        doOutput = true
+                        connectTimeout = 10_000
+                        readTimeout = 10_000
+                    }
+                    OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body) }
+                    connection.responseCode
+                    connection.disconnect()
+                } catch (_: Exception) {
+                    // Best effort. The next opt-in or token refresh sends it again.
+                }
+            }
+        }
+    }
+
+    /**
+     * Takes one reading and uploads it, in answer to a server request for
+     * fresh readings from this area (2026-10-08). Does nothing unless the
+     * device is opted in. Blocks for up to [ON_DEMAND_TIMEOUT_MS], so the
+     * host app can call it straight from its push handler. Requests closer
+     * together than [MIN_ON_DEMAND_INTERVAL_MS] are ignored.
+     */
+    fun answerSampleRequest() {
+        if (!::appContext.isInitialized) return
+        if (!isOptedIn()) return
+        val now = System.currentTimeMillis()
+        if (now - lastOnDemandSampleAtMs.get() < MIN_ON_DEMAND_INTERVAL_MS) return
+        lastOnDemandSampleAtMs.set(now)
+        runBlocking {
+            val sample = withTimeoutOrNull(ON_DEMAND_TIMEOUT_MS) {
+                CellSampleCollector(appContext, DeviceIdentity(appContext)).collect(triggerReason = "on_demand")
+            }
+            sample?.let {
+                SampleQueue(appContext).append(it)
+                uploadNow()
+            }
+        }
     }
 
     /**

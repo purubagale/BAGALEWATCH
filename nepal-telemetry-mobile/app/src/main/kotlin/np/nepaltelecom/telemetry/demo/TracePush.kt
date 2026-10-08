@@ -10,6 +10,7 @@ import androidx.core.app.NotificationCompat
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import np.nepaltelecom.telemetry.NetTelemetry
 
 /**
  * Push for trace requests (2026-10-06). The server sends a data-only, high-priority
@@ -36,6 +37,8 @@ object FcmToken {
 
     fun save(context: Context, token: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_TOKEN, token).apply()
+        // The SDK sends it to the server only while the user is sharing (2026-10-08).
+        NetTelemetry.setPushToken(token)
     }
 
     fun uploadIfRegistered(context: Context, token: String) {
@@ -54,6 +57,12 @@ class TraceMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         val data = message.data
+        if (data["type"] == TYPE_SAMPLE_REQUEST) {
+            // A request for one fresh reading from this area. The SDK ignores it
+            // unless the user is sharing, so there is nothing to show or ask.
+            NetTelemetry.answerSampleRequest()
+            return
+        }
         if (data["type"] != TYPE_TRACE_REQUEST) return
         val requestId = data["request_id"] ?: return
         showRequestNotification(requestId)
@@ -97,6 +106,7 @@ class TraceMessagingService : FirebaseMessagingService() {
 
     companion object {
         const val TYPE_TRACE_REQUEST = "trace_request"
+        const val TYPE_SAMPLE_REQUEST = "sample_request"
         const val CHANNEL_ID = "trace_requests"
         const val ACTION_ACCEPT = "np.nepaltelecom.telemetry.demo.TRACE_ACCEPT"
         const val ACTION_REJECT = "np.nepaltelecom.telemetry.demo.TRACE_REJECT"

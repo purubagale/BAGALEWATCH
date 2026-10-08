@@ -88,6 +88,16 @@ data class TelemetryConfig(
     val speedSamplesUrl: String? = null,
 
     /**
+     * Endpoint for this device's push token (2026-10-08) --
+     * `POST .../push-token/`. When set, a sharing device can be asked for a
+     * fresh reading from its area ([NetTelemetry.setPushToken],
+     * [NetTelemetry.answerSampleRequest]). Left null, the token never leaves
+     * the phone and the device is never asked. Same [apiKey] auth as a
+     * sample batch.
+     */
+    val pushTokenUrl: String? = null,
+
+    /**
      * Whether a device with NO prior explicit opt-in choice starts opted
      * IN (true) or opted OUT (false, the historical default and still the
      * default here). Only affects the very first [NetTelemetry.init] call

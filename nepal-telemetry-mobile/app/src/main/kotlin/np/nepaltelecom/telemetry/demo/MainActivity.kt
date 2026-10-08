@@ -21,6 +21,8 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        // Keeps the push token on hand, so a later "Start sharing" can register it.
+        FcmToken.fetchAndUpload(this)
 
         bottomNav = findViewById(R.id.bottomNav)
         bottomNav.setOnItemSelectedListener { item ->
