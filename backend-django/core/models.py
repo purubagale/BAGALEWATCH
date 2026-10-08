@@ -2596,6 +2596,12 @@ class DeviceLocationTraceLog(models.Model):
     query_value = models.CharField(max_length=32)
     found = models.BooleanField(default=False)
     queried_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # Required since 2026-10-08, when the tool became usable only during a
+    # declared emergency. Blank / null on rows from before that.
+    case_reference = models.CharField(max_length=120, blank=True, default='')
+    emergency = models.ForeignKey(
+        'EmergencyDeclaration', null=True, blank=True, on_delete=models.SET_NULL, related_name='device_location_traces'
+    )
 
     class Meta:
         db_table = 'v2_device_location_trace_log'

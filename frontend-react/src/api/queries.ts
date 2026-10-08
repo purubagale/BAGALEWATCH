@@ -1654,8 +1654,9 @@ export function useRegisteredDevices() {
 // above: every call is logged server-side regardless of outcome.
 export function useDeviceLocationTrace() {
   return useMutation({
-    mutationFn: (params: { msisdn?: string; imei?: string }) => {
+    mutationFn: (params: { msisdn?: string; imei?: string; case_reference: string }) => {
       const qs = new URLSearchParams()
+      qs.set('case_reference', params.case_reference)
       if (params.msisdn) qs.set('msisdn', params.msisdn)
       if (params.imei) qs.set('imei', params.imei)
       return apiJson<DeviceLocationTraceResult>(`/api/v2/device-location-trace/?${qs}`)

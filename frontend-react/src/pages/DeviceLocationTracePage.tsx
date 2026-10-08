@@ -3,7 +3,8 @@ import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiErrorMessage } from '../api/client'
-import { useDeviceLocationTrace } from '../api/queries'
+import { useDeviceLocationTrace, useEmergencyStatus } from '../api/queries'
+import { EmergencySwitchPanel } from './RescuePolicyPage'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 
 function InvalidateOnResize() {
@@ -50,8 +51,9 @@ function ResultMarker({
 
 // Device Location Trace (2026-10-08) -- superadmin-only, a DELIBERATE,
 // separate lane from Rescue Lookup (core/device_lookup.py's own module
-// docstring has the full reasoning): no rescue-location consent, no case
-// reference -- resolves whatever MSISDN/IMEI a device uploaded as its own
+// docstring has the full reasoning): no rescue-location consent. Works
+// only during a declared emergency, with a case reference (2026-10-08).
+// Resolves whatever MSISDN/IMEI a device uploaded as its own
 // identity (the crowd/staff identity upload) to that device's latest
 // position in the regular anonymous telemetry pipeline. Reachable only
 // via its own MenuItem (access='superadmin'), so no separate client-side
@@ -59,19 +61,25 @@ function ResultMarker({
 // page in this app documents.
 export default function DeviceLocationTracePage() {
   const trace = useDeviceLocationTrace()
+  const emergency = useEmergencyStatus()
   const [mode, setMode] = useState<'msisdn' | 'imei'>('msisdn')
   const [value, setValue] = useState('')
+  const [caseReference, setCaseReference] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
+  const emergencyActive = emergency.data?.active === true
 
   async function handleSearch() {
     setFormError(null)
     const v = value.trim()
-    if (!v) {
-      setFormError(`Enter a ${mode === 'msisdn' ? 'phone number' : 'IMEI'}.`)
+    const ref = caseReference.trim()
+    if (!v || !ref) {
+      setFormError(`Enter a ${mode === 'msisdn' ? 'phone number' : 'IMEI'} and a case reference.`)
       return
     }
     try {
-      await trace.mutateAsync(mode === 'msisdn' ? { msisdn: v } : { imei: v })
+      await trace.mutateAsync(
+        mode === 'msisdn' ? { msisdn: v, case_reference: ref } : { imei: v, case_reference: ref },
+      )
     } catch (err) {
       setFormError(apiErrorMessage(err, 'Could not run the trace.'))
     }
@@ -85,10 +93,16 @@ export default function DeviceLocationTracePage() {
       <p className="muted">
         Resolves a phone number or IMEI to the device's latest position from the regular telemetry pipeline --
         separate from Rescue Lookup, which only ever searches devices that separately opted in to the Rescue
-        Location beacon. This reads whatever a device has already uploaded as its own identity, so it needs no
-        case reference -- every search is still permanently logged with your account regardless of whether it
-        finds anything.
+        Location beacon. It works only while an emergency is declared, and every search needs a case reference.
+        Every search is permanently logged with your account and the case reference, whether or not it finds
+        anything.
       </p>
+
+      <EmergencySwitchPanel />
+
+      {emergency.data && !emergencyActive && (
+        <p className="page-status">Search is off until an emergency is declared above.</p>
+      )}
 
       <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -111,7 +125,17 @@ export default function DeviceLocationTracePage() {
           placeholder={mode === 'msisdn' ? '+977...' : '15-digit IMEI'}
           style={{ flex: '1 1 280px' }}
         />
-        <button className="btn-primary" onClick={handleSearch} disabled={trace.isPending}>
+        <input
+          value={caseReference}
+          onChange={(e) => setCaseReference(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSearch()
+          }}
+          placeholder="Case reference"
+          maxLength={120}
+          style={{ flex: '1 1 200px' }}
+        />
+        <button className="btn-primary" onClick={handleSearch} disabled={trace.isPending || !emergencyActive}>
           {trace.isPending ? 'Searching…' : 'Search'}
         </button>
       </div>

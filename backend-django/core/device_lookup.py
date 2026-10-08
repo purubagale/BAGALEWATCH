@@ -12,19 +12,26 @@ of its consent/case-reference model -- see DeviceLocationTraceLog's own
 docstring for why this gets its own audit table instead of reusing
 RescueLocationAccessLog, and why it is superadmin-only (a materially
 higher bar than IsRescueOperator, the same tier as declaring an
-emergency or the Rescue Enrolled Devices list) with no case-reference
-field required of the caller, while still auditing every call
-server-side regardless.
+emergency or the Rescue Enrolled Devices list).
+
+Since 2026-10-08 it works only while an emergency is declared
+(core/emergency.py) and every search needs a case reference. It was built
+for search and rescue after the Bhotekoshi flood, and reads positions with
+no consent from the device's owner, so it stays off outside a disaster.
 """
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .audit import log_audit_event
 from .collection import imei_lookup_key, msisdn_lookup_key
+from .emergency import active_emergency
 from .models import DeviceIdentity, DeviceLocationTraceLog, TelemetrySample
 from .rescue import _clean_msisdn
 from .views import IsSuperadminOnly
+
+TRACE_OFF_DETAIL = 'Device Location Trace is off. A superadmin must declare an emergency to turn it on.'
 
 
 class DeviceLocationTraceView(APIView):
@@ -32,15 +39,27 @@ class DeviceLocationTraceView(APIView):
     exactly one of the two. Resolves to a DeviceIdentity row by its keyed
     lookup hash (never by decrypting every row), then returns that
     device's most recent GPS-tagged TelemetrySample. No rescue-location
-    consent and no case reference required -- this reads whatever MSISDN/
-    IMEI the device itself already uploaded as crowd/staff identity info,
-    a separate and broader-reaching lane than Rescue Lookup's own
-    consent-gated SubscriberLastLocation. Every call is logged to
-    DeviceLocationTraceLog regardless of whether it finds a match.
+    consent required -- this reads whatever MSISDN/IMEI the device itself
+    already uploaded as crowd/staff identity info, a separate and
+    broader-reaching lane than Rescue Lookup's own consent-gated
+    SubscriberLastLocation. Since 2026-10-08 it works only while an
+    emergency is declared and needs `case_reference`. Every search is
+    logged to DeviceLocationTraceLog and the audit log, whether or not it
+    finds a match.
     """
     permission_classes = [IsAuthenticated, IsSuperadminOnly]
 
     def get(self, request):
+        # Usable only during a declared emergency, and only against a case
+        # reference (2026-10-08). It reads positions with no consent from the
+        # device's owner, so it is limited to the disaster it was built for.
+        emergency = active_emergency()
+        if emergency is None:
+            return Response({'detail': TRACE_OFF_DETAIL}, status=status.HTTP_403_FORBIDDEN)
+        case_reference = (request.query_params.get('case_reference') or '').strip()[:120]
+        if not case_reference:
+            return Response({'detail': 'A case reference is required'}, status=status.HTTP_400_BAD_REQUEST)
+
         msisdn_raw = (request.query_params.get('msisdn') or '').strip()
         imei_raw = (request.query_params.get('imei') or '').strip()
         if bool(msisdn_raw) == bool(imei_raw):
@@ -69,6 +88,12 @@ class DeviceLocationTraceView(APIView):
         found = sample is not None
         DeviceLocationTraceLog.objects.create(
             looked_up_by=request.user, query_type=query_type, query_value=query_value[:32], found=found,
+            case_reference=case_reference, emergency=emergency,
+        )
+        log_audit_event(
+            request, 'DEVICE_LOCATION_TRACE.SEARCHED', resource='device_location_trace',
+            payload={'case_reference': case_reference, 'query_type': query_type, 'found': found,
+                     'emergency_id': emergency.id},
         )
 
         if not found:
