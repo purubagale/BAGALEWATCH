@@ -2115,6 +2115,23 @@ export interface RescueBulkLookupResponse {
 // core/rescue.py's RescueEnrolledListView, a provisional, explicit
 // exception to this feature's own "never browse/list" rule (see that
 // view's docstring).
+// Superadmin device-location trace (2026-10-08) -- mirrors
+// core/device_lookup.py's DeviceLocationTraceView. A deliberate, separate
+// lane from Rescue Lookup: no case reference, no prior rescue-location
+// consent -- resolves whatever MSISDN/IMEI a device uploaded as its own
+// identity to that device's latest regular telemetry fix.
+export interface DeviceLocationTraceResult {
+  found: boolean
+  device_hash?: string
+  lat?: number
+  lng?: number
+  network_type?: string
+  ts?: string
+  received_at?: string
+  phone_model?: string | null
+  manufacturer?: string | null
+}
+
 export interface RescueEnrolledRow {
   device_hash: string
   msisdn: string | null

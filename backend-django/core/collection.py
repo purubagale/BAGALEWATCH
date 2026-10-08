@@ -32,11 +32,26 @@ from .models import CollectionSession, DeviceIdentity, TelemetryDriveTestSession
 
 
 def msisdn_lookup_key(msisdn):
-    """Keyed hash of a normalised MSISDN, for searching without decrypting.
-    Keyed with the telemetry salt so the value can't be reversed by guessing
-    numbers without the server's secret."""
+    """Keyed hash of a CANONICALIZED MSISDN (2026-10-08: normalized through
+    rescue.py's _clean_msisdn before hashing, not the raw typed string --
+    same "a number stored in one format can never be found by a search in
+    another" bug class _clean_msisdn's own docstring documents, just here
+    for the hashed-lookup path instead of a plain exact-match query).
+    Keyed with the telemetry salt so the value can't be reversed by
+    guessing numbers without the server's secret."""
+    from .rescue import _clean_msisdn  # local import: avoids a circular import at module load time
+    canonical = _clean_msisdn(msisdn) or msisdn
     key = (settings.TELEMETRY_DEVICE_ID_SALT + '::msisdn').encode()
-    return hmac.new(key, msisdn.encode(), hashlib.sha256).hexdigest()
+    return hmac.new(key, canonical.encode(), hashlib.sha256).hexdigest()
+
+
+def imei_lookup_key(imei):
+    """Keyed hash of an IMEI, for searching without decrypting -- same
+    shape as msisdn_lookup_key, distinct salt namespace so the two hash
+    spaces can never collide (2026-10-08, added for the superadmin device
+    location trace tool)."""
+    key = (settings.TELEMETRY_DEVICE_ID_SALT + '::imei').encode()
+    return hmac.new(key, imei.strip().encode(), hashlib.sha256).hexdigest()
 
 
 def upsert_identity(device_hash, *, msisdn=None, imei=None, phone_model=None,
@@ -50,6 +65,7 @@ def upsert_identity(device_hash, *, msisdn=None, imei=None, phone_model=None,
         identity.msisdn_lookup = msisdn_lookup_key(msisdn) if msisdn else ''
     if imei is not None:
         identity.imei_enc = encrypt_secret(imei) if imei else ''
+        identity.imei_lookup = imei_lookup_key(imei) if imei else ''
     if phone_model is not None:
         identity.phone_model = phone_model[:80]
     if manufacturer is not None:

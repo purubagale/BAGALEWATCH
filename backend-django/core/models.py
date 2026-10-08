@@ -2569,6 +2569,39 @@ class RescueLocationAccessLog(models.Model):
         return f'{self.looked_up_by} -> {self.msisdn_queried} ({self.case_reference})'
 
 
+class DeviceLocationTraceLog(models.Model):
+    """Audit trail for the superadmin device-location trace tool
+    (2026-10-08) -- DELIBERATELY a separate table from
+    RescueLocationAccessLog above, not a reuse of it. That table's rows
+    all carry a real case reference, written by a rescue operator against
+    a consent-based lane (SubscriberLastLocation); this one requires
+    neither a case reference nor prior rescue-location consent -- it
+    resolves whatever MSISDN/IMEI a device uploaded as part of its own
+    identity (DeviceIdentity, from the crowd/staff identity upload) to
+    that device's latest position in the regular anonymous telemetry
+    pipeline (TelemetrySample). That is a materially different, broader
+    privacy posture -- see core/device_lookup.py's module docstring for
+    the full reasoning -- and keeping its own log, rather than blending
+    into RescueLocationAccessLog, means an auditor reading that table
+    later never has to wonder whether a blank case_reference means "this
+    row predates case references" or "this was the other tool." """
+
+    looked_up_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='device_location_traces'
+    )
+    query_type = models.CharField(max_length=10)  # 'msisdn' | 'imei'
+    query_value = models.CharField(max_length=32)
+    found = models.BooleanField(default=False)
+    queried_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'v2_device_location_trace_log'
+        ordering = ['-queried_at']
+
+    def __str__(self):
+        return f'{self.looked_up_by} -> {self.query_type}:{self.query_value}'
+
+
 # ── Superadmin-controlled rescue-consent policy (2026-09-02) ────────────
 # The flood-beacon proposal's ordinary posture is strict opt-in with
 # erase-on-withdrawal (RescueEnrollView's default behavior). But the real
@@ -3294,6 +3327,9 @@ class DeviceIdentity(models.Model):
     msisdn_enc = models.TextField(blank=True, default='')
     msisdn_lookup = models.CharField(max_length=64, blank=True, default='', db_index=True)
     imei_enc = models.TextField(blank=True, default='')
+    # imei_lookup (2026-10-08) -- same keyed-hash search pattern as
+    # msisdn_lookup, for the superadmin device location trace tool.
+    imei_lookup = models.CharField(max_length=64, blank=True, default='', db_index=True)
     phone_model = models.CharField(max_length=80, blank=True, default='')
     manufacturer = models.CharField(max_length=80, blank=True, default='')
     # Declared by the app for now; will come from the NTC app login later.

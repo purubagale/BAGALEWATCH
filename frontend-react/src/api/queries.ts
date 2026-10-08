@@ -88,6 +88,7 @@ import type {
   RescueBulkLookupParams,
   RescueBulkLookupResponse,
   RescueEnrolledRow,
+  DeviceLocationTraceResult,
   DriveTestConsentMessage,
 } from './types'
 
@@ -1600,6 +1601,21 @@ export function useRescueBulkLookup() {
 export function useRescueEnrolledList() {
   return useMutation({
     mutationFn: () => apiJson<{ results: RescueEnrolledRow[]; count: number }>('/api/v2/rescue/enrolled/'),
+  })
+}
+
+// Superadmin device-location trace (2026-10-08) -- mirrors
+// core/device_lookup.py's DeviceLocationTraceView. A mutation, same
+// audit-sensitivity reasoning as useRescueLookup/useRescueEnrolledList
+// above: every call is logged server-side regardless of outcome.
+export function useDeviceLocationTrace() {
+  return useMutation({
+    mutationFn: (params: { msisdn?: string; imei?: string }) => {
+      const qs = new URLSearchParams()
+      if (params.msisdn) qs.set('msisdn', params.msisdn)
+      if (params.imei) qs.set('imei', params.imei)
+      return apiJson<DeviceLocationTraceResult>(`/api/v2/device-location-trace/?${qs}`)
+    },
   })
 }
 
