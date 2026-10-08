@@ -1,6 +1,6 @@
 # DT-WATCH BTS v2 — Project Brief
 
-> Generated 2026-10-02. This file is the fast-load orientation doc for this
+> Generated 2026-10-02, last updated 2026-10-08. This file is the fast-load orientation doc for this
 > repo — read this instead of re-deriving architecture/status from scratch.
 > For an always-fresh, DB-introspected reference (every model field, every
 > menu item, every role's permission counts), use the in-app Documentation
@@ -42,9 +42,9 @@ backend-django/core/*.py       One file per feature area (not MVC folders) —
                                 telemetry_admin.py, roles.py, sso.py. models.py
                                 holds every model; serializers.py every
                                 serializer; urls.py wires it all together.
-backend-django/core/migrations/  91 migrations as of 0091. Numbered sequentially,
+backend-django/core/migrations/  113 migrations as of 0113. Numbered sequentially,
                                   no squashing.
-frontend-react/src/pages/*.tsx  45 pages, one per route. Most are React.lazy()
+frontend-react/src/pages/*.tsx  51 pages, one per route. Most are React.lazy()
                                  imported in App.tsx except Login/Sites/Dashboard
                                  (the pages nearly every session hits immediately).
 frontend-react/src/api/
@@ -93,6 +93,47 @@ docs/                            Dated audits, server migration guides, runbook
   unintended line-ending churn.
 - **Only commit when explicitly asked.** This project's established
   pattern: build and verify first, commit as a separate, explicit step.
+- **The local Docker stack is dev only. Production is a separate
+  deployment** at `/data/dtwatch` on the prod server (`dtwatch.ntc.net.np`,
+  private IP, reachable only on the NTC network or VPN). The user pulls,
+  rebuilds and migrates there themselves. "Verified" means verified
+  locally unless the user confirms it on prod. The entrypoint runs
+  `migrate` on container start.
+- **Docker Desktop is often closed.** Start it with PowerShell
+  `Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"` and
+  wait for `docker info` to succeed.
+- **Use the Edit tool for file changes, one file at a time.** A Bash or
+  Python script that edits several files at once is denied in auto mode.
+- **A new page on an opaque route needs four things:** an entry in
+  `constants/opaqueRoutes.ts`, a lazy import + route in `App.tsx`, a
+  `KNOWN_ROUTES` entry in `MenuAdminPage.tsx`, and a seed-`MenuItem`
+  migration.
+
+## Android companion app (separate repo, same machine)
+
+- Source: `D:\Claude Project\BAGALEWATCH BTS RAN O&M MANAGEMENT\nepal-telemetry-project`
+  (`app/` is the host app, `netplanning-telemetry-sdk/` is the SDK).
+- **Never read, print, sync or commit `app/.../demo/DemoApplication.kt`
+  or `app/google-services.json`.** The first holds the real ingest key.
+  To add a config line to it, use a non-printing anchored `sed -i` on a
+  known line and check the result with `grep -c`.
+- Build (from that directory, no daemon, small heap or Gradle runs out of
+  memory): `export JAVA_HOME="C:/Program Files/Eclipse Adoptium/jdk-17.0.20.101-hotspot"`,
+  then `"$JAVA_HOME/bin/java" -classpath gradle/wrapper/gradle-wrapper.jar
+  org.gradle.wrapper.GradleWrapperMain --no-daemon
+  -Dorg.gradle.jvmargs="-Xmx1024m"
+  -Dkotlin.compiler.execution.strategy=in-process :app:assembleDebug`.
+- XML comments in Android resources must not contain `--`.
+- adb: `/d/DevCache/Android/Sdk/platform-tools/adb.exe`. **Install only on
+  the Huawei** (serial `JYNBB18411157971`). Copy each new APK to the
+  Desktop as `dtwatchTelemetry.apk`.
+- Push goes through a staging clone, `C:\mobile-push\nepal-telemetry-mobile`
+  (branch `mobile`). Sync with the PowerShell tool (Bash mangles `/E`):
+  `robocopy "<src>" "C:\mobile-push\nepal-telemetry-mobile" /E /XD build
+  .gradle .idea .git nepal-telemetry-project /XF local.properties
+  DemoApplication.kt google-services.json *.apk hs_err_pid*.log`. Check
+  that `git status` shows neither secret file, then add only the intended
+  files.
 
 ## Conventions
 
@@ -117,7 +158,79 @@ docs/                            Dated audits, server migration guides, runbook
 
 ## Current status
 
-**Done and pushed** (branch `telemetry`, as of commit `e427bf1`):
+Project purpose, as the user states it: a research prototype for NTC's
+RAN/O&M/RF department to present to management. It covers (a) a
+repository of completed drive-test plots and (b) live signal quality from
+subscribers for comparison, for analysing problems and proposing RF
+optimization. The rescue features were added after the Bhotekoshi flood,
+to find a missing person's approximate location instead of only the
+serving site.
+
+**Done and pushed, 2026-10-03 to 2026-10-08** (dtwatch branch `telemetry`
+at `3146e55`; mobile branch `mobile` at `43800bf`). Prod was confirmed
+deployed through `644cfc0`; everything later, including migrations
+0111-0113, still has to be pulled and migrated there by the user.
+
+- **Emergency switch** (`core/emergency.py`, shared `EmergencySwitchPanel`
+  exported from `RescuePolicyPage.tsx`). Rescue search is off unless a
+  superadmin declares an emergency (7 days default, 30 max). It replaced
+  the old optional-consent policy.
+- **Rescue** (`core/rescue.py`). MSISDNs are canonicalized by
+  `_clean_msisdn` (digits only, `977` prefix); migration 0109 backfilled
+  old rows. Superadmin "Rescue Enrolled Devices" list. Enrolling does not
+  carry a position; the position updates only from regular samples while
+  the device is sharing.
+- **Device Location Trace** (`core/device_lookup.py`, superadmin). Looks
+  up a device's latest position by MSISDN or IMEI with no consent from
+  its owner. Works only while an emergency is declared and needs a case
+  reference; each search goes to `DeviceLocationTraceLog` and the audit
+  log.
+- **Registered Devices** list (`core/device_trace.py`
+  `RegisteredDeviceListView`). "Register this phone" (`DeviceCredential`)
+  is separate from the rescue beacon (`SubscriberLastLocation`).
+- **Telemetry Drive Test.** Sessions auto-end on stop and at
+  `max_duration_minutes`. Devices load only after an area search. The
+  preview map recentres on click and shows active devices (30 min, green)
+  and last-known ones (24 h, grey), with a blue ring for selected.
+  Select all, suggested name `{district} Drive — {date}`, session filters.
+- **Collections** (`core/collection.py`). Per-row detail with plot, more
+  filters, and a session with no samples for 90 minutes shows as Ended.
+- **Plot overlap** (`lib/declusterPlot.ts`, `declusterForPlot`). Same
+  coordinate + site + sector keeps only the worst and best reading;
+  different sites at one coordinate are spread on a small ring. Used by
+  every telemetry and DT map.
+- **DT Session History.** "Latest only" groups by district + tech
+  (`lib/dtSessionClustering.ts`, `sameTech` option). The district is read
+  from the auto-generated session name, since it is not stored; a renamed
+  session falls back to nearby-site grouping. Tech and date filters.
+  Metric tabs with no data are hidden in Coverage, Compare and Explore.
+- **Area Sample** (`core/area_sample.py`, `AreaSamplePage.tsx`, admin and
+  superadmin). An admin picks an area and radius; the server pushes a
+  `sample_request` to devices that were sharing there in the last 24 h
+  (`TelemetryPushToken`, held only while a device shares). `on_demand`
+  readings that arrive within 15 minutes are shown with no device ID.
+  Needs `FCM_SERVICE_ACCOUNT_JSON` in `.env` and outbound HTTPS to
+  `oauth2.googleapis.com` and `fcm.googleapis.com`. The backend is tested
+  locally; a real push end to end is NOT yet tested.
+- **Mobile app.** Close button on full parameters, legible map popup,
+  50 m route accuracy filter, single SERVING cell, generic error messages
+  (`ErrorMessages.kt`), registration retry (`TraceRegisterWorker.kt`),
+  registration form hidden once registered, and the SDK's
+  `setPushToken` / `answerSampleRequest` for Area Sample.
+
+**Do not build** "ping to discover" in the form of silent registration,
+registration without a number, or server-triggered location of an
+identified device. It was declined; Area Sample is the agreed
+replacement.
+
+**Open items:**
+- Area Sample end-to-end test on prod with a real push.
+- System Health page shows a blank "Telemetry roll-up" on prod; the local
+  API returns a value. Waiting for the prod Network-tab response.
+- `TelemetryConfig.pushTokenUrl` is set only in the local, uncommitted
+  `DemoApplication.kt`.
+
+**Done and pushed earlier** (as of commit `e427bf1`):
 - Multi-role RBAC, System Health page, in-app current-state Documentation
   (`/api/v2/system-doc/`), unified Audit Log (replacing the old Access Log)
 - Performance audit top-5 fixes: N+1 elimination + 500-row list caps on RF
@@ -176,7 +289,7 @@ docs/                            Dated audits, server migration guides, runbook
   local login only, not SSO — same boundary as MFA, for the same reason
   (Keycloak owns SSO's own brute-force posture).
 
-**In progress — Auth security hardening, Phases D, F, G remain** (plan
+**Deferred by the user — Auth security hardening, Phases D, F, G** (plan
 file: `C:\Users\HP\.claude\plans\majestic-napping-stream.md` on the
 machine this was planned on; summarized here so that file isn't
 load-bearing):
