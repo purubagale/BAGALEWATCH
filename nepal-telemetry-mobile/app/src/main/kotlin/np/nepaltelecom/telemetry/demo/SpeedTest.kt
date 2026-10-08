@@ -41,7 +41,7 @@ object SpeedTest {
             error = null,
         )
     } catch (e: Exception) {
-        Result(null, null, null, null, e.message ?: e.javaClass.simpleName)
+        Result(null, null, null, null, friendlyErrorMessage(e))
     }
 
     /** Round-trip times in ms. The first is a warm-up and is dropped. */

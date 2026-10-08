@@ -306,7 +306,42 @@ internal class CellSampleCollector(
     fun readAllCells(): List<CellReading> {
         if (!hasLocationPermission()) return emptyList()
         val infos = readTelephonyCells().ifEmpty { CellInfoCache.fresh() }
-        return infos.mapNotNull { cellReadingFrom(it) }
+        return dedupeCells(infos.mapNotNull { cellReadingFrom(it) })
+    }
+
+    /**
+     * Collapses duplicate CellInfo entries for the exact same physical cell
+     * (2026-10-08, "app is sometime displaying two serving in cells in
+     * view, only one should be serving") -- some modems report the same
+     * registered cell as two separate CellInfo entries from one
+     * allCellInfo() call (sometimes with slightly different signal
+     * snapshots a few hundred ms apart), both flagged isRegistered=true.
+     * Real dual-connectivity (e.g. NR+LTE EN-DC) is a DIFFERENT physical
+     * cell with its own identity, so it is never collapsed by this --
+     * only entries whose network type + cell id + PCI + TAC all match
+     * exactly, i.e. the same cell reported twice, ever merge. Within a
+     * duplicate group, keeps only the strongest reading; the kept entry
+     * is marked serving if ANY entry in its group was.
+     */
+    private fun dedupeCells(readings: List<CellReading>): List<CellReading> {
+        val groups = LinkedHashMap<String, MutableList<CellReading>>()
+        for (r in readings) {
+            val key = "${r.networkType}|${r.cellId}|${r.pci}|${r.tac}"
+            groups.getOrPut(key) { mutableListOf() }.add(r)
+        }
+        return groups.values.map { group ->
+            if (group.size == 1) return@map group[0]
+            val anyServing = group.any { it.isServing }
+            val strongest = group.maxByOrNull { primaryDbmFor(it) ?: Int.MIN_VALUE } ?: group[0]
+            if (anyServing && !strongest.isServing) strongest.copy(isServing = true) else strongest
+        }
+    }
+
+    /** Same per-tech "which field is the real signal reading" rule CellsFragment.kt's own primaryDbm() uses. */
+    private fun primaryDbmFor(c: CellReading): Int? = when (c.networkType) {
+        "LTE" -> c.rsrpDbm ?: c.rssiDbm
+        "UMTS" -> c.rscpDbm ?: c.rssiDbm
+        else -> c.rssiDbm
     }
 
     /**

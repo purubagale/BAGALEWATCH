@@ -76,7 +76,7 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
                 runCatching { TraceApi.uploadIdentity(Build.MODEL, Build.MANUFACTURER, userType) }
                 context.getString(R.string.req_registered)
             } catch (e: Exception) {
-                context.getString(R.string.req_failed, e.message ?: "unknown error")
+                context.getString(R.string.req_failed, friendlyErrorMessage(e))
             }
             onMain { setStatus(message) }
             refreshRequests()
@@ -135,7 +135,7 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
                 TraceApi.respond(id, action)
                 context.getString(R.string.req_done)
             } catch (e: Exception) {
-                context.getString(R.string.req_failed, e.message ?: "unknown error")
+                context.getString(R.string.req_failed, friendlyErrorMessage(e))
             }
             onMain {
                 setStatus(message)
