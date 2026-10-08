@@ -45,6 +45,11 @@ dependencies {
     // Push for trace requests (2026-10-06). Works only once google-services.json is in place.
     implementation(platform("com.google.firebase:firebase-bom:33.1.2"))
     implementation("com.google.firebase:firebase-messaging")
+    // Retry/backoff for "Register this phone" (2026-10-08) -- same version
+    // netplanning-telemetry-sdk already uses for its own upload/rescue
+    // workers; declared again here because Gradle `implementation` deps
+    // aren't transitively visible to a dependent module.
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 }
 
 // Apply the Google services plugin only once the Firebase config file exists,

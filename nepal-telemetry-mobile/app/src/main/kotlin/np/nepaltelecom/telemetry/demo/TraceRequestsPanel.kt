@@ -15,7 +15,14 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.fragment.app.Fragment
+import androidx.work.BackoffPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkRequest
+import androidx.work.workDataOf
 import com.google.android.material.button.MaterialButton
+import java.util.concurrent.TimeUnit
 
 /**
  * The "Requests from NTC" card in Settings (2026-10-05). It registers this
@@ -76,11 +83,35 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
                 runCatching { TraceApi.uploadIdentity(Build.MODEL, Build.MANUFACTURER, userType) }
                 context.getString(R.string.req_registered)
             } catch (e: Exception) {
-                context.getString(R.string.req_failed, friendlyErrorMessage(e))
+                // Immediate attempt failed -- fall back to a WorkManager
+                // retry (2026-10-08) so a transient network/VPN miss at
+                // this exact moment doesn't need the user to notice and
+                // tap the button again themselves, same reliability as
+                // every other request this app already queues.
+                enqueueRegisterRetry(msisdn)
+                context.getString(R.string.req_failed_retrying, friendlyErrorMessage(e))
             }
             onMain { setStatus(message) }
             refreshRequests()
         }.start()
+    }
+
+    /** Unique, REPLACE-enqueued so retrying again (e.g. the user taps Register
+     * a second time before the first retry has landed) never stacks up more
+     * than one pending attempt -- only the most recently typed number is ever
+     * the one that eventually gets sent. */
+    private fun enqueueRegisterRetry(msisdn: String) {
+        val data = workDataOf(
+            TraceRegisterWorker.KEY_MSISDN to msisdn,
+            TraceRegisterWorker.KEY_APP_VERSION to APP_VERSION,
+        )
+        val request = OneTimeWorkRequestBuilder<TraceRegisterWorker>()
+            .setInputData(data)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            TraceRegisterWorker.WORK_NAME, ExistingWorkPolicy.REPLACE, request,
+        )
     }
 
     private fun refreshRequests() {
@@ -211,9 +242,14 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
     private fun dp(value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
 
     companion object {
-        private const val PREFS = "dtwatch_device"
+        // PREFS/KEY_REGISTERED (2026-10-08): package-visible, not private --
+        // TraceRegisterWorker writes KEY_REGISTERED=true on the SAME
+        // SharedPreferences file once a background retry finally succeeds,
+        // so this panel's own poll loop (gated on that same flag) picks it
+        // up on its next tick without needing a separate observer.
+        internal const val PREFS = "dtwatch_device"
         private const val KEY_MSISDN = "msisdn"
-        private const val KEY_REGISTERED = "registered"
+        internal const val KEY_REGISTERED = "registered"
         private const val STATUS_PENDING = "PENDING"
         private const val STATUS_ACCEPTED = "ACCEPTED"
         private const val POLL_MS = 30_000L
