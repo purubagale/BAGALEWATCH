@@ -4,6 +4,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { DtSessionDetail } from '../api/types'
 import { bandColor, subsampleForMap, type Band, type TaggedMetric } from '../lib/dtBands'
+import { declusterForPlot } from '../lib/declusterPlot'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 import { useDtMetrics } from '../lib/useDtMetrics'
 
@@ -43,26 +44,44 @@ function CompareDots({ sessions, metric }: { sessions: DtSessionDetail[]; metric
 
   useEffect(() => {
     const layer = L.layerGroup()
+    const higherIsBetter = metric.key !== 'rx_qual'
     sessions.forEach((s, si) => {
       if (s.tech !== metric.tech) return
       const withVal = s.samples.filter((sample) => sample.lat != null && sample.lng != null && sample[metric.key] != null)
       const drawn = subsampleForMap(withVal)
-      for (const sample of drawn) {
+      // Overlap management (2026-10-07, "manage plot with worst and best
+      // data with no overlapping ... manage this in all telemetry
+      // sessions") -- see lib/declusterPlot.ts's own header. `si` prefixes
+      // the site key so two DIFFERENT sessions sharing a coordinate are
+      // never collapsed into one pair -- each session's own points only
+      // ever group with that same session's own points.
+      const points = declusterForPlot(drawn, (sample) => {
+        const raw = sample[metric.key] as number | null
+        return {
+          lat: sample.lat as number,
+          lng: sample.lng as number,
+          siteKey: `${si}|${sample.serving_site_id ?? ''}|${sample.serving_sector ?? ''}`,
+          score: raw == null ? null : higherIsBetter ? raw : -raw,
+        }
+      })
+      for (const p of points) {
+        const sample = p.item
         const v = sample[metric.key] as number
         const color = bandColor(metric.bands, v)
+        const roleText = p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : ''
         // Same styling as DtExploreTab's NearSamplesLayer — weight: 0 (no
         // outline stroke at all), fillColor is the only color shown, so
         // the dot always reads as its real band color regardless of
         // which session it came from. Session identity is still in the
         // tooltip on hover.
-        L.circleMarker([sample.lat as number, sample.lng as number], {
+        L.circleMarker([p.lat, p.lng], {
           radius: 3,
           color,
           fillColor: color,
           fillOpacity: 0.85,
           weight: 0,
         })
-          .bindTooltip(`${COMPARE_LABELS[si]} ${s.name} — ${metric.label}: ${v}${metric.unit}`)
+          .bindTooltip(`${COMPARE_LABELS[si]} ${s.name} — ${metric.label}: ${v}${metric.unit}${roleText}`)
           .addTo(layer)
       }
     })
@@ -170,22 +189,45 @@ function ScatterPanelPlot({ sessions, metric }: { sessions: DtSessionDetail[]; m
   const [tooltip, setTooltip] = useState<{ left: number; top: number; text: string } | null>(null)
 
   const points = useMemo(() => {
-    const pts: { lat: number; lng: number; color: string; tooltip: string }[] = []
+    // Overlap management (2026-10-07) -- same reasoning as CompareDots
+    // above, applied here too since "no limit, every real point" (this
+    // panel's own standing policy, see its header comment) was always
+    // about not arbitrarily subsampling a spread-out route, not about
+    // leaving true pixel-identical duplicates stacked invisibly. A normal
+    // route with no coordinate repeats is completely unaffected -- every
+    // point is its own group of one.
+    const higherIsBetter = metric.key !== 'rx_qual'
+    interface Raw {
+      lat: number
+      lng: number
+      siteKey: string
+      score: number | null
+      color: string
+      label: string
+    }
+    const raw: Raw[] = []
     sessions.forEach((s, si) => {
       if (s.tech !== metric.tech) return
       for (const sample of s.samples) {
         if (sample.lat == null || sample.lng == null) continue
         const v = sample[metric.key] as number | null
         if (v == null) continue
-        pts.push({
+        raw.push({
           lat: sample.lat,
           lng: sample.lng,
+          siteKey: `${si}|${sample.serving_site_id ?? ''}|${sample.serving_sector ?? ''}`,
+          score: higherIsBetter ? v : -v,
           color: bandColor(metric.bands, v),
-          tooltip: `${COMPARE_LABELS[si]} ${s.name} — ${metric.label}: ${v}${metric.unit}`,
+          label: `${COMPARE_LABELS[si]} ${s.name} — ${metric.label}: ${v}${metric.unit}`,
         })
       }
     })
-    return pts
+    return declusterForPlot(raw, (r) => r).map((p) => ({
+      lat: p.lat,
+      lng: p.lng,
+      color: p.item.color,
+      tooltip: p.item.label + (p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : ''),
+    }))
   }, [sessions, metric])
 
   useEffect(() => {
@@ -511,6 +553,12 @@ export default function DtCompareMap({ sessions }: { sessions: DtSessionDetail[]
       visibleMetrics.flatMap((m) =>
         sessions
           .filter((s) => s.tech === m.tech)
+          // Skip a (session, metric) panel entirely when that session has
+          // no real reading for this metric at all (2026-10-08, same
+          // reasoning as DtCoverageMap.tsx's own tab filter) -- an empty
+          // grey panel with nothing to explain why used to show up here
+          // for every session missing e.g. DL Throughput.
+          .filter((s) => s.samples.some((sample) => sample[m.key] != null))
           .map((s, si) => ({
             key: `${m.tag}-${s.id}`,
             metric: m,

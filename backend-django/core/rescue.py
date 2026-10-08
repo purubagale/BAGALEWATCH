@@ -58,6 +58,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import (
+    DeviceIdentity,
     RescueConsentPolicy,
     RescueConsentPolicyChangeLog,
     RescueLocationAccessLog,
@@ -97,10 +98,31 @@ from .views import IsSuperadminOnly
 # real-world MSISDN length with room either side.
 _MSISDN_RE = re.compile(r'^[+\d][\d\s-]{6,19}$')
 
+# Nepal mobile numbers only (this app's whole scope) -- a bare 10-digit
+# local number always starts with 9.
+_NEPAL_LOCAL_RE = re.compile(r'^9\d{9}$')
+
 
 def _clean_msisdn(raw):
+    """Validates AND canonicalizes to one consistent stored/compared form
+    (2026-10-07 fix): digits only, country code included, no '+', no
+    spaces or dashes (e.g. both '+977 986-4465619' and '9864465619' become
+    '9779864465619'). Before this, the value was returned exactly as
+    typed, so a number enrolled as a bare 10-digit local number could
+    never be found by an operator's lookup typed in full international
+    form (or vice versa) — same real phone number, two different stored
+    strings, an exact-match query between them always misses. Every
+    caller (RescueEnrollView, RescueLookupView, RescueBulkLookupView,
+    device_identity.py, device_trace.py) shares this one function, so
+    fixing it here fixes all of them at once -- no call site changes
+    needed."""
     v = (raw or '').strip()
-    return v if _MSISDN_RE.match(v) else None
+    if not _MSISDN_RE.match(v):
+        return None
+    digits = re.sub(r'[\s-]', '', v).lstrip('+')
+    if _NEPAL_LOCAL_RE.match(digits):
+        digits = '977' + digits
+    return digits
 
 
 class RescueEnrollView(APIView):
@@ -187,13 +209,16 @@ class RescueLookupView(APIView):
     exactly like no match at all (`{"found": false}`) — this endpoint
     never reveals that a number exists on a different operator's network.
 
-    Also honors RescueConsentPolicy (2026-09-02): under the default
-    'mandatory' mode, only `rescue_consent=True` rows can ever match —
-    under a superadmin-declared 'optional' emergency, any row with a
-    known msisdn matches regardless of its consent flag (see that
-    model's docstring). Every logged lookup records which mode was in
-    effect (`policy_mode` on RescueLocationAccessLog), so an emergency
-    override is never invisible in the audit trail.
+    Consent is always strict (2026-10-05, see core/emergency.py's module
+    docstring): only `rescue_consent=True` rows can ever match, emergency
+    declared or not -- the old 'optional' policy that relaxed this check
+    was retired when the Emergency Switch replaced it. An active
+    emergency only ever gates whether this endpoint is reachable at all
+    (`rescue_search_enabled()` above) and lets a case trace skip the
+    device Accept (core/device_trace.py) -- it never widens who a lookup
+    can find. `policy_mode` on RescueLocationAccessLog is still written
+    every time, for log-shape continuity with rows from before this
+    change.
     """
     permission_classes = [IsAuthenticated, CanRescueSearch]
 
@@ -276,10 +301,10 @@ class RescueBulkLookupView(APIView):
     as their own row with `found: false` and no location fields, so the
     caller can still see which of their input numbers were unusable.
 
-    Also honors RescueConsentPolicy and operator scoping identically to
-    RescueLookupView -- see that view's docstring for what 'optional' mode
-    does and does not unlock, and why an out-of-scope match is reported
-    exactly like no match at all.
+    Consent and operator scoping work identically to RescueLookupView --
+    see that view's docstring for the current (strict-consent-always)
+    behavior, and why an out-of-scope match is reported exactly like no
+    match at all.
     """
     permission_classes = [IsAuthenticated, CanRescueSearch]
     MAX_BULK_MSISDNS = 500
@@ -383,3 +408,62 @@ class RescueConsentPolicyView(APIView):
             {'detail': 'Retired. Use /api/v2/emergency/declare/ or /api/v2/emergency/end/.'},
             status=status.HTTP_410_GONE,
         )
+
+
+class RescueEnrolledListView(APIView):
+    """`GET /api/v2/rescue/enrolled/` -- superadmin-only, PROVISIONAL
+    (2026-10-07, "add superadmin-only count/list view for now, need to
+    test, if further any governance rule matters then will remove it").
+
+    This deliberately crosses the "never open lookup by phone number...
+    never a scan" line RescueLookupView's own docstring states as this
+    module's hard governance rule. It exists as an explicit, acknowledged,
+    reviewable exception -- not a quiet reinterpretation of that rule --
+    which is why it is kept to a materially higher bar than
+    IsRescueOperator (superadmin only, the same tier as declaring the
+    emergency itself), gated behind the same emergency switch as a real
+    lookup, and every call is logged to RescueLocationAccessLog exactly
+    like one, rather than being treated as a free read because it returns
+    many rows instead of one.
+
+    Lists every currently-consented (`rescue_consent=True`) device:
+    msisdn, device hash, last known position, and -- joined from
+    DeviceIdentity by device hash, when that device has also sent crowd/
+    staff identity info -- phone model and manufacturer. A consented
+    device that has never sent identity info simply has null model/
+    manufacturer, not an error.
+    """
+    permission_classes = [IsAuthenticated, IsSuperadminOnly]
+
+    def get(self, request):
+        if not rescue_search_enabled():
+            return Response({'detail': EMERGENCY_OFF_DETAIL}, status=status.HTTP_403_FORBIDDEN)
+
+        rows = list(SubscriberLastLocation.objects.filter(rescue_consent=True).order_by('-last_seen_ts'))
+        identities = {
+            d.device_hash: d
+            for d in DeviceIdentity.objects.filter(device_hash__in=[r.device_id for r in rows])
+        }
+        results = []
+        for r in rows:
+            identity = identities.get(r.device_id)
+            results.append({
+                'device_hash': r.device_id,
+                'msisdn': r.msisdn,
+                'lat': r.last_lat,
+                'lng': r.last_lng,
+                'accuracy_m': r.last_accuracy_m,
+                'source': r.last_source,
+                'last_seen_ts': r.last_seen_ts,
+                'phone_model': identity.phone_model if identity else None,
+                'manufacturer': identity.manufacturer if identity else None,
+            })
+
+        RescueLocationAccessLog.objects.create(
+            looked_up_by=request.user,
+            msisdn_queried='(list view)',
+            case_reference='superadmin enrolled-device list',
+            found=True,
+            policy_mode=EMERGENCY_LOG_MODE,
+        )
+        return Response({'results': results, 'count': len(results)})

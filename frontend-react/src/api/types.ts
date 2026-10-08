@@ -1898,6 +1898,12 @@ export interface TelemetryLiveSample {
   lat_smooth?: number | null
   lng_smooth?: number | null
   trigger_reason: string
+  // Serving-cell identity (already sent by the backend; added to this type
+  // 2026-10-07 for lib/declusterPlot.ts -- tells "the same site measured
+  // twice at one spot" apart from "two different sites happened to be
+  // measured from the same spot." Blank when nothing matched within 5 km.
+  serving_site_id?: string | null
+  serving_sector?: string | null
 }
 
 // VoLTE/VoNR call-quality dev/pilot sample (2026-10-02) -- see
@@ -2103,6 +2109,39 @@ export interface RescueBulkLookupResponse {
   requested_count: number
   invalid_count: number
   found_count: number
+}
+
+// Superadmin-only enrolled-device list (2026-10-07) -- mirrors
+// core/rescue.py's RescueEnrolledListView, a provisional, explicit
+// exception to this feature's own "never browse/list" rule (see that
+// view's docstring).
+// Superadmin device-location trace (2026-10-08) -- mirrors
+// core/device_lookup.py's DeviceLocationTraceView. A deliberate, separate
+// lane from Rescue Lookup: no case reference, no prior rescue-location
+// consent -- resolves whatever MSISDN/IMEI a device uploaded as its own
+// identity to that device's latest regular telemetry fix.
+export interface DeviceLocationTraceResult {
+  found: boolean
+  device_hash?: string
+  lat?: number
+  lng?: number
+  network_type?: string
+  ts?: string
+  received_at?: string
+  phone_model?: string | null
+  manufacturer?: string | null
+}
+
+export interface RescueEnrolledRow {
+  device_hash: string
+  msisdn: string | null
+  lat: number | null
+  lng: number | null
+  accuracy_m: number | null
+  source: string | null
+  last_seen_ts: string | null
+  phone_model: string | null
+  manufacturer: string | null
 }
 
 // Superadmin-editable copy for the drive-test consent prompt (2026-09-02)
@@ -2313,6 +2352,12 @@ export interface CollectionSessionSample {
   rsrp_dbm: number | null
   rsrq_db: number | null
   sinr_db: number | null
+  // Serving-cell identity (2026-10-07) -- null on trace-sourced rows
+  // (TraceLocationSample has no serving-cell resolution of its own); use
+  // `pci` as the coarser same-cell fallback for those, same reasoning
+  // core/collection.py's CollectionSessionSamplesView documents.
+  serving_site_id: string | null
+  serving_sector: string | null
 }
 
 export interface TraceRequestDetail extends TraceRequestEntry {

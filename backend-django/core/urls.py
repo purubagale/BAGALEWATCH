@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import (api_auth, audit, auth_log, backup, collection, consent, dashboard, device_identity,
-               device_trace, drive_test, emergency,
+               device_lookup, device_trace, drive_test, emergency,
                exports, ip_block, issues, kpi_trend, mfa, password_reset, reports, rescue, rf_audit,
                rf_reports, roles, site_import, sso_views, system_doc,
                telemetry_admin, views, volte_quality)
@@ -229,6 +229,8 @@ urlpatterns = [
     # Superadmin-only mandatory/optional consent-policy control (2026-09-02)
     # for the rescue lane — see core/rescue.py's RescueConsentPolicyView.
     path('rescue/policy/', rescue.RescueConsentPolicyView.as_view(), name='rescue-consent-policy'),
+    path('rescue/enrolled/', rescue.RescueEnrolledListView.as_view(), name='rescue-enrolled'),
+    path('device-location-trace/', device_lookup.DeviceLocationTraceView.as_view(), name='device-location-trace'),
     # Device-bound consent-gated tracing, operator side (2026-10-04) --
     # IsRescueOperator-gated. See core/device_trace.py's docstring.
     path('trace-requests/', device_trace.TraceRequestListCreateView.as_view(), name='trace-requests'),

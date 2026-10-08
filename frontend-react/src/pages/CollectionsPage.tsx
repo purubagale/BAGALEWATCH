@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
-import { CircleMarker, MapContainer, Polyline, TileLayer } from 'react-leaflet'
+import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { RSRP_BANDS, bandColor } from '../lib/dtBands'
+import { declusterForPlot } from '../lib/declusterPlot'
 import { useCollectionSessionSamples, useCollectionSessions } from '../api/queries'
 
 // Collections (2026-10-06, detail+plot added 2026-10-07): every drive and
@@ -53,6 +54,21 @@ export default function CollectionsPage() {
   }, [allRows, statusFilter, userTypeFilter, deviceFilter, startFrom, startTo])
   const userTypes = useMemo(() => [...new Set(allRows.map((r) => r.user_type).filter(Boolean))], [allRows])
   const selected = rows.find((r) => r.id === selectedId) ?? null
+
+  // Overlap management (2026-10-07, "manage plot with worst and best data
+  // with no overlapping ... manage this in all telemetry sessions") -- see
+  // lib/declusterPlot.ts's own header. `pci` is the fallback site key for
+  // trace rows, which have no serving_site_id resolution of their own.
+  const plotPoints = useMemo(
+    () =>
+      declusterForPlot(samples.data?.results ?? [], (s) => ({
+        lat: s.lat,
+        lng: s.lng,
+        siteKey: s.serving_site_id ? `${s.serving_site_id}|${s.serving_sector ?? ''}` : `pci:${s.pci ?? ''}`,
+        score: s.rsrp_dbm,
+      })),
+    [samples.data],
+  )
 
   return (
     <div className="admin-page">
@@ -189,16 +205,22 @@ export default function CollectionsPage() {
                     positions={samples.data.results.map((s) => [s.lat, s.lng] as [number, number])}
                     pathOptions={{ color: '#0153A5', weight: 3 }}
                   />
-                  {samples.data.results.map((s, i) => (
+                  {plotPoints.map((p, i) => (
                     <CircleMarker
                       key={i}
-                      center={[s.lat, s.lng]}
+                      center={[p.lat, p.lng]}
                       radius={5}
                       pathOptions={{
                         color: '#ffffff', weight: 1,
-                        fillColor: bandColor(RSRP_BANDS, s.rsrp_dbm), fillOpacity: 1,
+                        fillColor: bandColor(RSRP_BANDS, p.item.rsrp_dbm), fillOpacity: 1,
                       }}
-                    />
+                    >
+                      <Tooltip>
+                        {new Date(p.item.ts).toLocaleTimeString()} ·{' '}
+                        {p.item.rsrp_dbm != null ? `${p.item.rsrp_dbm} dBm` : 'no data'}
+                        {p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : ''}
+                      </Tooltip>
+                    </CircleMarker>
                   ))}
                 </MapContainer>
               </div>
