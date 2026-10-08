@@ -944,11 +944,22 @@ export default function DtExploreTab() {
   // sessions, e.g. Chitwan) means zero tabs — no fallback to "show
   // everything" — per explicit user request: don't show tech tabs for
   // techs with no data in the current search area, full stop.
+  // Further narrowed to metrics with actual DATA (2026-10-08, "if there is
+  // no data then dont display plot for them"), same reasoning as the band-
+  // data gate just below: a tech being present doesn't mean every one of
+  // its metrics was ever measured (an Excel-imported session commonly has
+  // no DL Throughput column at all) -- showing that tab selectable, mapping
+  // to nothing, is worse than not showing it. Narrows only, never empties
+  // the whole bar: if NO metric in a present tech has any data (a truly
+  // degenerate session), byTech's own full list is still returned so the
+  // tab bar isn't blank.
   const visibleMetrics = useMemo(() => {
     const byFilter = allMetrics.filter((m) => techFilter.has(m.tech))
     if (sessionsLoading) return byFilter
-    return byFilter.filter((m) => presentTechs.has(m.tech))
-  }, [allMetrics, techFilter, presentTechs, sessionsLoading])
+    const byTech = byFilter.filter((m) => presentTechs.has(m.tech))
+    const withData = byTech.filter((m) => nearSessions.some((s) => s.tech === m.tech && s.samples.some((sample) => sample[m.key] != null)))
+    return withData.length ? withData : byTech
+  }, [allMetrics, techFilter, presentTechs, sessionsLoading, nearSessions])
   // PCI Plot tab (2026-09-23) — same tech-filter + presence gating as the
   // real metric tabs above, scoped to 4G (see PciSamplesLayer's docstring
   // for why). Kept out of visibleMetrics/TaggedMetric entirely (see
