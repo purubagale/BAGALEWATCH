@@ -2191,6 +2191,9 @@ class TelemetrySample(models.Model):
     TRIGGERS = [
         ('periodic', 'Periodic'), ('handover', 'Handover'), ('manual', 'Manual'),
         ('drive', 'Drive test'), ('drive_start', 'Drive start'), ('drive_stop', 'Drive stop'),
+        # A fresh reading an engineer asked an area's sharing devices for
+        # (2026-10-08, core/area_sample.py).
+        ('on_demand', 'On demand'),
     ]
 
     device_id = models.CharField(max_length=64, db_index=True)
@@ -3071,6 +3074,43 @@ class TelemetrySpeedResult(models.Model):
         db_table = 'v2_telemetry_speed_result'
         ordering = ['-ts']
         indexes = [models.Index(fields=['device_id', 'ts'], name='v2_tel_speed_dev_ts_idx')]
+
+
+class TelemetryPushToken(models.Model):
+    """Push address of a device that is currently sharing (2026-10-08), so an
+    engineer can ask an area's sharing devices for a fresh reading
+    (core/area_sample.py). Keyed by the same hashed device_id as
+    TelemetrySample. It holds no phone number, IMEI or position. The app
+    sends it when sharing starts and removes it when sharing stops, so a row
+    here means the device is opted in right now."""
+    device_id = models.CharField(max_length=64, unique=True)
+    fcm_token = models.CharField(max_length=512)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_telemetry_push_token'
+
+
+class AreaSampleRequest(models.Model):
+    """One request for fresh readings from an area (2026-10-08). Records who
+    asked, for where, and how many devices were asked. The readings
+    themselves are ordinary TelemetrySample rows with trigger_reason
+    'on_demand'; they are found by area and time, not by a link to this row."""
+    requested_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='area_sample_requests'
+    )
+    label = models.CharField(max_length=120, blank=True, default='')
+    lat = models.FloatField()
+    lng = models.FloatField()
+    radius_km = models.FloatField()
+    lookback_hours = models.PositiveSmallIntegerField(default=24)
+    devices_in_area = models.PositiveIntegerField(default=0)
+    pushes_sent = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'v2_area_sample_request'
+        ordering = ['-created_at']
 
 
 class TelemetryDriveTestConsent(models.Model):

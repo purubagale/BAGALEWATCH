@@ -2132,6 +2132,57 @@ export interface DeviceLocationTraceResult {
   manufacturer?: string | null
 }
 
+// On-demand area sample (2026-10-08) -- mirrors core/area_sample.py. The
+// readings carry no device id; `devices` on the results is only a count.
+export interface AreaSampleRequest {
+  id: number
+  label: string
+  lat: number
+  lng: number
+  radius_km: number
+  lookback_hours: number
+  devices_in_area: number
+  pushes_sent: number
+  created_at: string
+  requested_by: string | null
+  // Only on the create response: how many of devices_in_area are sharing now.
+  devices_sharing?: number
+}
+
+export interface AreaSampleCreateInput {
+  lat: number
+  lng: number
+  radius_km: number
+  label?: string
+}
+
+export interface AreaSampleReading {
+  ts: string
+  lat: number
+  lng: number
+  gps_accuracy_m: number | null
+  network_type: string
+  pci: number | null
+  rsrp_dbm: number | null
+  rsrq_db: number | null
+  sinr_db: number | null
+  rssi_dbm: number | null
+  rscp_dbm: number | null
+  ecio_db: number | null
+  rx_qual: number | null
+  cqi_derived: number | null
+  serving_site_id: string | null
+  serving_sector: string | null
+}
+
+export interface AreaSampleResults {
+  request: AreaSampleRequest
+  devices: number
+  samples: AreaSampleReading[]
+  open: boolean
+  open_until: string
+}
+
 // Superadmin registered-device list (2026-10-08) -- mirrors
 // core/device_trace.py's RegisteredDeviceListView: every DeviceCredential
 // (the "has this phone registered for NTC trace requests" record),

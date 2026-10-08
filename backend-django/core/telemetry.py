@@ -180,7 +180,7 @@ def geohash_center(gh):
 #    _coerce_dt_sample path) ─────────────────────────────────────────────
 
 _NET_TYPES = {'LTE', 'NR', 'UMTS', 'GSM', 'UNKNOWN'}
-_TRIGGERS = {'periodic', 'handover', 'manual', 'drive', 'drive_start', 'drive_stop'}
+_TRIGGERS = {'periodic', 'handover', 'manual', 'drive', 'drive_start', 'drive_stop', 'on_demand'}
 
 
 def _f(v):

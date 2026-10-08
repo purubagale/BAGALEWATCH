@@ -124,6 +124,9 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // Superadmin registered-device list (2026-10-08) -- seeded server-side
   // by migration 0110_seed_registered_devices_menuitem.py, same convention.
   '/registered-devices': '/r7t2wm',
+  // On-demand area sample (2026-10-08) -- seeded server-side by migration
+  // 0112_seed_area_sample_menuitem.py, same convention.
+  '/area-sample': '/a4s7pq',
   // Site/Sector Issue tracker's global list (2026-09-14) -- seeded
   // server-side by migration 0058_seed_issues_menuitem.py -- keep this
   // in sync with that file, same convention as every other entry.

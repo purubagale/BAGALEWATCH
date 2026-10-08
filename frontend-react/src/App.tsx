@@ -106,6 +106,7 @@ const RescuePolicyPage = lazy(() => import('./pages/RescuePolicyPage'))
 const RescueEnrolledPage = lazy(() => import('./pages/RescueEnrolledPage'))
 const DeviceLocationTracePage = lazy(() => import('./pages/DeviceLocationTracePage'))
 const RegisteredDevicesPage = lazy(() => import('./pages/RegisteredDevicesPage'))
+const AreaSamplePage = lazy(() => import('./pages/AreaSamplePage'))
 const IssuesPage = lazy(() => import('./pages/IssuesPage'))
 const RfReportsPage = lazy(() => import('./pages/RfReportsPage'))
 const DtPlotCatalogPage = lazy(() => import('./pages/DtPlotCatalogPage'))
@@ -306,6 +307,7 @@ function App() {
         {withOpaqueSection('/rescue-enrolled', <RescueEnrolledPage />)}
         {withOpaqueSection('/device-location-trace', <DeviceLocationTracePage />)}
         {withOpaqueSection('/registered-devices', <RegisteredDevicesPage />)}
+        {withOpaqueSection('/area-sample', <AreaSamplePage />)}
         {withOpaqueSection('/issues', <IssuesPage />)}
         {withOpaqueSection('/rf-reports', <RfReportsPage />)}
         {withOpaqueSection('/dt-plot-catalog', <DtPlotCatalogPage />)}

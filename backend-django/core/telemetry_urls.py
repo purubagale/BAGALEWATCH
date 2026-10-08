@@ -4,7 +4,7 @@
 the isolation decision in models.py's TelemetryIngestKey docstring."""
 from django.urls import path
 
-from . import device_identity, device_trace, speed_test, trace_speed
+from . import area_sample, device_identity, device_trace, speed_test, trace_speed
 from .consent import DriveTestConsentMessageView, DriveTestConsentView
 from .rescue import RescueEnrollView
 from .telemetry import TelemetryHealthView, TelemetryIngestView
@@ -15,6 +15,8 @@ urlpatterns = [
     path('health/', TelemetryHealthView.as_view(), name='telemetry-health'),
     # General speed test results, from the public Speed test card (2026-10-07).
     path('speed-samples/', speed_test.TelemetrySpeedResultIngestView.as_view(), name='speed-samples-ingest'),
+    # Push token of a sharing device, for on-demand area samples (2026-10-08).
+    path('push-token/', area_sample.TelemetryPushTokenView.as_view(), name='telemetry-push-token'),
     # Device identity (MSISDN, IMEI, model), registered signed devices only (2026-10-05).
     path('device-identity/', device_identity.DeviceIdentityUploadView.as_view(), name='device-identity'),
     # Active speed test (2026-10-05) -- public but size-capped and rate-limited,

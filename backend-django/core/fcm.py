@@ -47,6 +47,16 @@ def _access_token(info, scope):
 def send_trace_push(fcm_token, request_id):
     """Sends one trace_request data message. Returns True only on a 200 from
     FCM. Never raises: a failed push must not fail the operator's request."""
+    return _send_data(fcm_token, {'type': 'trace_request', 'request_id': str(request_id)})
+
+
+def send_sample_request_push(fcm_token, request_id):
+    """Asks a sharing device for one fresh reading (core/area_sample.py). The
+    message carries only the request id. Same return contract as above."""
+    return _send_data(fcm_token, {'type': 'sample_request', 'request_id': str(request_id)})
+
+
+def _send_data(fcm_token, data):
     global _credentials
     if not fcm_token:
         return False
@@ -61,13 +71,7 @@ def send_trace_push(fcm_token, request_id):
         if not _credentials.valid:
             _credentials.refresh(GoogleRequest())
         url = f'https://fcm.googleapis.com/v1/projects/{info["project_id"]}/messages:send'
-        body = {
-            'message': {
-                'token': fcm_token,
-                'data': {'type': 'trace_request', 'request_id': str(request_id)},
-                'android': {'priority': 'high'},
-            },
-        }
+        body = {'message': {'token': fcm_token, 'data': data, 'android': {'priority': 'high'}}}
         resp = requests.post(
             url, json=body, timeout=10,
             headers={'Authorization': f'Bearer {_credentials.token}'},

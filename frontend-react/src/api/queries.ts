@@ -89,6 +89,9 @@ import type {
   RescueBulkLookupResponse,
   RescueEnrolledRow,
   RegisteredDeviceRow,
+  AreaSampleRequest,
+  AreaSampleCreateInput,
+  AreaSampleResults,
   DeviceLocationTraceResult,
   DriveTestConsentMessage,
 } from './types'
@@ -1494,6 +1497,33 @@ export function useTelemetryLiveSamples(params: TelemetryLiveSamplesParams, enab
 
 // Scoped drive-test sessions over live telemetry (2026-09-01) — see
 // core/telemetry_admin.py's TelemetryDriveTestSession* views.
+
+// On-demand area sample (2026-10-08) -- see core/area_sample.py.
+export function useAreaSampleRequests() {
+  return useQuery({
+    queryKey: ['area-sample-requests'],
+    queryFn: () => apiJson<{ results: AreaSampleRequest[] }>('/api/v2/telemetry/area-samples/'),
+  })
+}
+
+export function useCreateAreaSampleRequest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: AreaSampleCreateInput) =>
+      apiJson<AreaSampleRequest>('/api/v2/telemetry/area-samples/', { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['area-sample-requests'] }),
+  })
+}
+
+// Polls every 5s while the request's response window is still open, then stops.
+export function useAreaSampleResults(id: number | null) {
+  return useQuery({
+    queryKey: ['area-sample-results', id],
+    queryFn: () => apiJson<AreaSampleResults>(`/api/v2/telemetry/area-samples/${id}/samples/`),
+    enabled: id != null,
+    refetchInterval: (query) => (query.state.data?.open ? 5_000 : false),
+  })
+}
 
 export function useTelemetryDtSessions() {
   return useQuery({

@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import (api_auth, audit, auth_log, backup, collection, consent, dashboard, device_identity,
+from . import (api_auth, area_sample, audit, auth_log, backup, collection, consent, dashboard, device_identity,
                device_lookup, device_trace, drive_test, emergency,
                exports, ip_block, issues, kpi_trend, mfa, password_reset, reports, rescue, rf_audit,
                rf_reports, roles, site_import, sso_views, system_doc,
@@ -213,6 +213,10 @@ urlpatterns = [
     # (2026-09-01) — see core/telemetry_admin.py's TelemetryDriveTestSession*
     # views for why these replace TelemetryLiveSamplesView as the
     # promotable, consent-scoped path.
+    # On-demand area sample (2026-10-08) -- see core/area_sample.py.
+    path('telemetry/area-samples/', area_sample.AreaSampleRequestListCreateView.as_view(), name='telemetry-area-samples'),
+    path('telemetry/area-samples/<int:pk>/samples/', area_sample.AreaSampleRequestSamplesView.as_view(),
+         name='telemetry-area-sample-results'),
     path('telemetry/dt-sessions/', telemetry_admin.TelemetryDriveTestSessionListCreateView.as_view(), name='telemetry-dt-sessions'),
     path('telemetry/dt-sessions/<int:pk>/', telemetry_admin.TelemetryDriveTestSessionDetailView.as_view(), name='telemetry-dt-session-detail'),
     path('telemetry/dt-sessions/<int:pk>/end/', telemetry_admin.TelemetryDriveTestSessionEndView.as_view(), name='telemetry-dt-session-end'),

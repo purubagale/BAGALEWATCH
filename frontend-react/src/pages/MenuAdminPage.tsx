@@ -56,6 +56,7 @@ const KNOWN_ROUTES: { path: string; label: string }[] = [
   { path: '/r8x4ml', label: 'Rescue Enrolled Devices' },
   { path: '/r9y3nk', label: 'Device Location Trace' },
   { path: '/r7t2wm', label: 'Registered Devices' },
+  { path: '/a4s7pq', label: 'Area Sample' },
   { path: '/i8s4kw', label: 'Issues' },
   { path: '/g3q7nx', label: 'RF Reports' },
   { path: '/k9d4wr', label: 'DT Plot Catalog' },
