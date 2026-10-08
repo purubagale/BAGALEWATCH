@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Circle, CircleMarker, MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
+import { Circle, CircleMarker, MapContainer, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
@@ -233,6 +233,13 @@ function ClickToSetPoint({ onPick }: { onPick: (lat: number, lng: number) => voi
 }
 
 const DEFAULT_SEARCH_RADIUS_KM = 2
+// "Active now" vs "has a last known position here" windows (2026-10-08) --
+// see the NewSessionForm doc comment below. LAST_KNOWN_MINUTES is the
+// backend's own hard cap (TelemetryLiveSamplesView's _MAX_LIVE_MINUTES),
+// not an arbitrary choice -- asking for more would just get silently
+// clamped server-side.
+const ACTIVE_MINUTES = 30
+const LAST_KNOWN_MINUTES = 24 * 60
 
 // Search-an-area device enrollment (2026-09-02 request: "like in dt data
 // manager, explore where can search or select certain area displays the
@@ -256,24 +263,46 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
   // should not") -- previously this fired with no area filter at all
   // while `resolved` was null, showing every device active system-wide
   // before the admin had searched anything.
-  const { data: liveData } = useTelemetryLiveSamples(
+  //
+  // Two windows over the same search point (2026-10-08, "display all the
+  // device within that range those whose last lat long along with active
+  // devices found in this area... display for active should be in green
+  // color"): a short 30-minute one for "active now" (ACTIVE_MINUTES), and
+  // the backend's own full 24h cap (LAST_KNOWN_MINUTES -- see
+  // TelemetryLiveSamplesView's _MAX_LIVE_MINUTES) for "has a last known
+  // position in this area even if not active right now." Both get drawn
+  // on the preview map and both are enrollable -- pre-authorizing a
+  // device you know works this area, even if it isn't pinging THIS
+  // second, is a real use case (see toggleSelectAll below), not just a
+  // passive map legend.
+  const { data: activeData } = useTelemetryLiveSamples(
     resolved
-      ? { minutes: 30, lat: resolved.lat, lng: resolved.lng, radius_km: radiusKm }
-      : { minutes: 30 },
+      ? { minutes: ACTIVE_MINUTES, lat: resolved.lat, lng: resolved.lng, radius_km: radiusKm }
+      : { minutes: ACTIVE_MINUTES },
     resolved != null,
   )
+  const { data: lastKnownData } = useTelemetryLiveSamples(
+    resolved
+      ? { minutes: LAST_KNOWN_MINUTES, lat: resolved.lat, lng: resolved.lng, radius_km: radiusKm, limit: 500 }
+      : { minutes: LAST_KNOWN_MINUTES },
+    resolved != null,
+  )
+  const activeDeviceIds = useMemo(() => new Set(activeData?.devices ?? []), [activeData])
   // Each enrollable device's latest known fix, for the preview map's
   // markers -- `devices` is just a list of ids; positions come from the
-  // same response's own `samples`.
+  // same response's own `samples`. Computed over the BROADER 24h window
+  // so a device active right now still shows its most recent fix even if
+  // that happens to be from a moment ago, not the 24h window's own last
+  // entry for it.
   const latestByDevice = useMemo(() => {
     const map = new Map<string, TelemetryLiveSample>()
-    for (const s of liveData?.samples ?? []) {
+    for (const s of lastKnownData?.samples ?? []) {
       if (s.lat == null || s.lng == null) continue
       const prev = map.get(s.device_id)
       if (!prev || new Date(s.ts).getTime() > new Date(prev.ts).getTime()) map.set(s.device_id, s)
     }
     return map
-  }, [liveData])
+  }, [lastKnownData])
   const createSession = useCreateTelemetryDtSession()
   const [name, setName] = useState('')
   const [selectedDevices, setSelectedDevices] = useState<string[]>([])
@@ -281,7 +310,12 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
   // Optional auto-end cap in minutes (2026-10-07) -- blank means unlimited,
   // same meaning as max_duration_minutes: null on the wire.
   const [maxDurationMinutes, setMaxDurationMinutes] = useState('')
-  const recentDevices = liveData?.devices ?? []
+  // The full enrollable list is now every device with a LAST KNOWN
+  // position in range (lastKnownData?.devices), not just the active-now
+  // subset -- activeDeviceIds above just flags which of them are active,
+  // for the green/grey map color and the "(active)"/"last seen" checklist
+  // label below.
+  const recentDevices = lastKnownData?.devices ?? []
 
   const runSearch = () => {
     if (!query.trim()) {
@@ -414,7 +448,8 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
         )}
         {resolved && (
           <p className="muted" style={{ fontSize: 11, margin: '4px 0 0' }}>
-            Showing devices within {radiusKm}km of {resolved.label}. Click the map below to re-center, or adjust the
+            Green = active in the last {ACTIVE_MINUTES} minutes; grey = a last known position here but not active
+            right now. A blue ring marks a device you've selected below. Click the map to re-center, or adjust the
             radius and search again.
           </p>
         )}
@@ -427,18 +462,27 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
             <ClickToSetPoint onPick={pickPoint} />
             <Circle center={[resolved.lat, resolved.lng]} radius={radiusKm * 1000} pathOptions={{ color: '#2563eb', fillOpacity: 0.08 }} />
             <CircleMarker center={[resolved.lat, resolved.lng]} radius={6} pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 1 }} />
-            {[...latestByDevice.entries()].map(([d, s]) => (
-              <CircleMarker
-                key={d}
-                center={[s.lat as number, s.lng as number]}
-                radius={5}
-                pathOptions={{
-                  color: '#ffffff', weight: 1,
-                  fillColor: selectedDevices.includes(d) ? '#16a34a' : '#f97316', fillOpacity: 1,
-                }}
-              >
-              </CircleMarker>
-            ))}
+            {[...latestByDevice.entries()].map(([d, s]) => {
+              const active = activeDeviceIds.has(d)
+              const selected = selectedDevices.includes(d)
+              return (
+                <CircleMarker
+                  key={d}
+                  center={[s.lat as number, s.lng as number]}
+                  radius={selected ? 6 : 5}
+                  pathOptions={{
+                    color: selected ? '#2563eb' : '#ffffff',
+                    weight: selected ? 3 : 1,
+                    fillColor: active ? '#16a34a' : '#94a3b8',
+                    fillOpacity: 1,
+                  }}
+                >
+                  <Tooltip>
+                    {d.slice(0, 12)}... — {active ? 'active now' : `last seen ${new Date(s.ts).toLocaleString()}`}
+                  </Tooltip>
+                </CircleMarker>
+              )
+            })}
           </MapContainer>
         </div>
       )}
@@ -446,8 +490,8 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
         <div className="muted" style={{ marginBottom: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <span>
             {resolved
-              ? `Devices found in this area (active in the last 30 minutes)`
-              : `Search an area above to see active devices there (nothing is listed until you search)`}
+              ? `Devices with a known position in this area, in the last ${LAST_KNOWN_MINUTES / 60}h`
+              : `Search an area above to see devices there (nothing is listed until you search)`}
           </span>
           {recentDevices.length > 0 && (
             <button type="button" className="btn-secondary btn-small" onClick={toggleSelectAll}>
@@ -457,21 +501,28 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
         </div>
         {resolved && recentDevices.length === 0 ? (
           <div className="page-status">
-            No active devices found in this area. Try a larger radius, or a different search.
+            No devices with a known position in this area. Try a larger radius, or a different search.
           </div>
         ) : !resolved ? null : (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {recentDevices.map((d) => (
-              <label key={d} className="btn-secondary btn-small" style={{ cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={selectedDevices.includes(d)}
-                  onChange={() => toggleDevice(d)}
-                  style={{ marginRight: 6 }}
-                />
-                {d.slice(0, 12)}...
-              </label>
-            ))}
+            {recentDevices.map((d) => {
+              const active = activeDeviceIds.has(d)
+              const lastSample = latestByDevice.get(d)
+              return (
+                <label key={d} className="btn-secondary btn-small" style={{ cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedDevices.includes(d)}
+                    onChange={() => toggleDevice(d)}
+                    style={{ marginRight: 6 }}
+                  />
+                  {d.slice(0, 12)}...{' '}
+                  <span style={{ color: active ? '#16a34a' : '#64748b' }}>
+                    {active ? '(active)' : lastSample ? `(last seen ${new Date(lastSample.ts).toLocaleTimeString()})` : ''}
+                  </span>
+                </label>
+              )
+            })}
           </div>
         )}
       </div>
