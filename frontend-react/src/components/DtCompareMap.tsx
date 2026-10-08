@@ -553,6 +553,12 @@ export default function DtCompareMap({ sessions }: { sessions: DtSessionDetail[]
       visibleMetrics.flatMap((m) =>
         sessions
           .filter((s) => s.tech === m.tech)
+          // Skip a (session, metric) panel entirely when that session has
+          // no real reading for this metric at all (2026-10-08, same
+          // reasoning as DtCoverageMap.tsx's own tab filter) -- an empty
+          // grey panel with nothing to explain why used to show up here
+          // for every session missing e.g. DL Throughput.
+          .filter((s) => s.samples.some((sample) => sample[m.key] != null))
           .map((s, si) => ({
             key: `${m.tag}-${s.id}`,
             metric: m,

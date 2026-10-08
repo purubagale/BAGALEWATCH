@@ -252,9 +252,34 @@ export default function DtCoverageMap({
   servingCells?: DtServingCell[]
 }) {
   const { metricsForTech } = useDtMetrics()
-  const metrics = useMemo(() => metricsForTech(tech), [metricsForTech, tech])
+  const allMetrics = useMemo(() => metricsForTech(tech), [metricsForTech, tech])
+  // Hide a metric's own tab entirely when this session has no real reading
+  // for it at all (2026-10-08, "if there is no data then dont display plot
+  // for them... in excel file that i uploaded donot have dl throughput
+  // data, so in view mode donot display dl throughput plot") -- a tab
+  // whose every sample is null just showed an empty map with nothing to
+  // explain why, rather than simply not existing. CQI's existing
+  // "derived, not measured" disclaimer stays a separate concern -- this
+  // only ever hides a tab for missing DATA, never for a metric that's
+  // measured but happens to currently be in a poor band.
+  const metrics = useMemo(() => {
+    const withData = allMetrics.filter((m) => samples.some((s) => s[m.key] != null))
+    // Degenerate case: a session with no real reading for ANY metric --
+    // showing zero tabs would be worse than showing the full set with
+    // (correctly) empty maps, so this only ever narrows, never empties.
+    return withData.length ? withData : allMetrics
+  }, [allMetrics, samples])
   const [metricKey, setMetricKey] = useState(metrics[0].key)
   const activeMetric = metrics.find((m) => m.key === metricKey) ?? metrics[0]
+  // The selected tab can go stale when switching to a session that lacks
+  // whatever metric was active for the PREVIOUS session (tabs are keyed by
+  // session, metricKey state is not) -- snap back to the first available
+  // one instead of silently falling through to activeMetric's own fallback
+  // every render (harmless either way, but this keeps metricKey itself,
+  // and therefore the button's own "active" styling, in sync).
+  useEffect(() => {
+    if (metrics.length && !metrics.some((m) => m.key === metricKey)) setMetricKey(metrics[0].key)
+  }, [metrics, metricKey])
 
   const withGps = useMemo(() => samples.filter((s) => s.lat != null && s.lng != null), [samples])
   // What actually gets drawn — bounds/fitBounds above still uses the FULL

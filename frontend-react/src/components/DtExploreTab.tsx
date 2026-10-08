@@ -897,7 +897,7 @@ export default function DtExploreTab() {
   // list (see the latestOnly state comment above). Grouped by the same
   // meta.nearby_site_ids union-find as History, computed here over just
   // this search's results rather than every saved session.
-  const areaClusters = useMemo(() => clusterDtSessionsByArea(nearSessions), [nearSessions])
+  const areaClusters = useMemo(() => clusterDtSessionsByArea(nearSessions, { sameTech: true }), [nearSessions])
   const areaClusterBySessionId = useMemo(() => {
     const map = new Map<number, DtSessionCluster<DtSessionDetail>>()
     for (const c of areaClusters) for (const s of c.sessions) map.set(s.id, c)

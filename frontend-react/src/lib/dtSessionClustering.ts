@@ -39,7 +39,20 @@ function bestDate(s: DtSessionListItem): string {
   return s.date ?? s.saved_at
 }
 
-export function clusterDtSessionsByArea<T extends DtSessionListItem>(sessions: T[]): DtSessionCluster<T>[] {
+export function clusterDtSessionsByArea<T extends DtSessionListItem>(
+  sessions: T[],
+  options?: {
+    // sameTech (2026-10-08, see the bucketing comment below for the full
+    // reasoning): defaults to false so existing callers that want
+    // cross-tech area grouping (e.g. the upload-time "link this to a
+    // sibling session's activity" suggestion -- a single RF optimization
+    // effort commonly spans 2G/3G/4G measurements at the same site) are
+    // completely unaffected. The "Latest only" toggle on both History and
+    // Explore passes true.
+    sameTech?: boolean
+  },
+): DtSessionCluster<T>[] {
+  const sameTech = options?.sameTech ?? false
   // Union-find over site ids. parent.get(x) === x means x is a root;
   // absent means x hasn't been seen yet (treated as its own root on
   // first touch, via ensure()).
@@ -78,11 +91,22 @@ export function clusterDtSessionsByArea<T extends DtSessionListItem>(sessions: T
     for (const id of ids) union(first, id)
   }
 
-  // Pass 2: bucket sessions by their cluster's root.
+  // Pass 2: bucket sessions by their cluster's root (plus tech, when
+  // `sameTech` is on -- 2026-10-08 fix: "different tech session also hide
+  // under another tech session which is not good, hide only for those
+  // with same district, with same tech and with old dates." The
+  // union-find above only groups by shared AREA (nearby site ids), with
+  // no idea what tech a session is; with `sameTech` off, a 2G and a 4G
+  // session from the same spot fall into one bucket, so "Latest only"
+  // picks whichever is newer and buries the OTHER tech's session
+  // entirely, not just its own earlier same-tech runs. With `sameTech`
+  // on, an area with 2G, 3G and 4G sessions gets three separate clusters
+  // instead, each with its own latest shown and its own "+N earlier
+  // here" expander).
   const buckets = new Map<string, T[]>()
   for (const s of sessions) {
     const ids = s.meta?.nearby_site_ids
-    const key = ids && ids.length > 0 ? `site:${find(ids[0])}` : `session:${s.id}`
+    const key = ids && ids.length > 0 ? `site:${find(ids[0])}${sameTech ? `|tech:${s.tech}` : ''}` : `session:${s.id}`
     const bucket = buckets.get(key)
     if (bucket) bucket.push(s)
     else buckets.set(key, [s])

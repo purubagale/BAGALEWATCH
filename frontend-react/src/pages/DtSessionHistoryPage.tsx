@@ -15,7 +15,7 @@ import {
   useUpdateDtSessionRemarks,
   useUploadDtSessionAttachments,
 } from '../api/queries'
-import type { DtSessionDetail, DtSessionListItem } from '../api/types'
+import type { DtSessionDetail, DtSessionListItem, DtTech } from '../api/types'
 import { isAllowed } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import AttachActivityModal, { ACTIVITY_ROLE_LABELS } from '../components/AttachActivityModal'
@@ -60,6 +60,15 @@ export default function DtSessionHistoryPage() {
   // above (session lists are small, no backend query param needed). ''
   // means "all modes."
   const [modeFilter, setModeFilter] = useState('')
+  // Tech + started-date-range filters (2026-10-08), same client-side
+  // approach as modeFilter/historySearch above. techFilter is DtTech |
+  // '' (all); dateFrom/dateTo are plain <input type="date"> values
+  // compared against each session's own best-available date (real
+  // drive-test `date` when present, else `saved_at` -- same fallback
+  // dtSessionClustering.ts's bestDate() uses).
+  const [techFilter, setTechFilter] = useState<'' | DtTech>('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   // "Latest per area" clustering (2026-09-12 request: RF engineers
   // re-drive the same area repeatedly over weeks/months and the list
   // gets buried under old re-tests of the same spot). Defaults ON since
@@ -125,14 +134,22 @@ export default function DtSessionHistoryPage() {
   const searchFilteredSessions = useMemo(() => {
     if (!sessions) return sessions
     const q = historySearch.trim().toLowerCase()
+    // Same best-available-date fallback as dtSessionClustering.ts's own
+    // bestDate() (real drive-test `date` when present, else `saved_at`).
+    const from = dateFrom ? `${dateFrom}T00:00:00` : null
+    const to = dateTo ? `${dateTo}T23:59:59` : null
     return sessions.filter((s) => {
       if (modeFilter && s.mode !== modeFilter) return false
+      if (techFilter && s.tech !== techFilter) return false
+      const bestDate = s.date ?? s.saved_at
+      if (from != null && bestDate < from) return false
+      if (to != null && bestDate > to) return false
       if (!q) return true
       if (s.name.toLowerCase().includes(q)) return true
       const ids = s.meta?.nearby_site_ids ?? []
       return ids.some((id) => id.toLowerCase().includes(q) || (siteNameById.get(id) ?? '').toLowerCase().includes(q))
     })
-  }, [sessions, historySearch, modeFilter, siteNameById])
+  }, [sessions, historySearch, modeFilter, techFilter, dateFrom, dateTo, siteNameById])
 
   // Distinct modes actually present across every saved session (not just
   // DRIVE_MODE_OPTIONS' curated list) -- so the filter dropdown also
@@ -153,7 +170,10 @@ export default function DtSessionHistoryPage() {
   // be surprising. The tradeoff is that "latest" here means latest AMONG
   // MATCHES, not latest overall for that area — acceptable since a
   // search is already the user narrowing to a specific thing they want.
-  const clusters = useMemo(() => clusterDtSessionsByArea(searchFilteredSessions ?? []), [searchFilteredSessions])
+  const clusters = useMemo(
+    () => clusterDtSessionsByArea(searchFilteredSessions ?? [], { sameTech: true }),
+    [searchFilteredSessions],
+  )
   const clusterBySessionId = useMemo(() => {
     const map = new Map<number, DtSessionCluster>()
     for (const c of clusters) for (const s of c.sessions) map.set(s.id, c)
@@ -440,6 +460,36 @@ export default function DtSessionHistoryPage() {
                 <option key={m} value={m}>{m}</option>
               ))}
             </select>
+          )}
+          {!!sessions?.length && (
+            <select
+              value={techFilter}
+              onChange={(e) => setTechFilter(e.target.value as '' | DtTech)}
+              style={{ marginBottom: 8, marginLeft: 8 }}
+              title="Filter the session list to one technology"
+            >
+              <option value="">All tech</option>
+              <option value="4G">4G</option>
+              <option value="3G">3G</option>
+              <option value="2G">2G</option>
+            </select>
+          )}
+          {!!sessions?.length && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 8, marginLeft: 8 }}>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                title="Started from"
+              />
+              <span className="muted">to</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                title="Started to"
+              />
+            </span>
           )}
           {!!sessions?.length && (
             // "Latest only" toggle (2026-09-12) — reuses .sites-active-toggle,
