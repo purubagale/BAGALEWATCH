@@ -2132,6 +2132,23 @@ export interface DeviceLocationTraceResult {
   manufacturer?: string | null
 }
 
+// Superadmin registered-device list (2026-10-08) -- mirrors
+// core/device_trace.py's RegisteredDeviceListView: every DeviceCredential
+// (the "has this phone registered for NTC trace requests" record),
+// joined to DeviceIdentity for phone model/manufacturer where available.
+// Separate from RescueEnrolledRow below (a different table/consent lane).
+export interface RegisteredDeviceRow {
+  device_hash: string
+  msisdn: string | null
+  app_version: string | null
+  has_fcm_token: boolean
+  created_at: string
+  last_seen_at: string | null
+  revoked_at: string | null
+  phone_model: string | null
+  manufacturer: string | null
+}
+
 export interface RescueEnrolledRow {
   device_hash: string
   msisdn: string | null

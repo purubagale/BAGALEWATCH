@@ -88,6 +88,7 @@ import type {
   RescueBulkLookupParams,
   RescueBulkLookupResponse,
   RescueEnrolledRow,
+  RegisteredDeviceRow,
   DeviceLocationTraceResult,
   DriveTestConsentMessage,
 } from './types'
@@ -1601,6 +1602,19 @@ export function useRescueBulkLookup() {
 export function useRescueEnrolledList() {
   return useMutation({
     mutationFn: () => apiJson<{ results: RescueEnrolledRow[]; count: number }>('/api/v2/rescue/enrolled/'),
+  })
+}
+
+// Superadmin registered-device list (2026-10-08) -- mirrors
+// core/device_trace.py's RegisteredDeviceListView. A plain useQuery, not
+// a mutation like the rescue lists above -- this doesn't cross identity
+// with location data, so it's a lower-sensitivity read than those (it's
+// still audited server-side on every call, just not at the same bar that
+// demanded an on-demand-only fetch for the others).
+export function useRegisteredDevices() {
+  return useQuery({
+    queryKey: ['registered-devices'],
+    queryFn: () => apiJson<{ results: RegisteredDeviceRow[]; count: number }>('/api/v2/registered-devices/'),
   })
 }
 
