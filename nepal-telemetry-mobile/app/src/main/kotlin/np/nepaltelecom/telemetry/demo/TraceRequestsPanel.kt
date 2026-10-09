@@ -21,6 +21,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkRequest
 import androidx.work.workDataOf
+import np.nepaltelecom.telemetry.storage.HardwareInfo
 import com.google.android.material.button.MaterialButton
 import java.util.concurrent.TimeUnit
 
@@ -100,7 +101,7 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
         Thread {
             FcmToken.fetchAndUpload(context)
             val userType = if (StaffMode.isEmployee(context)) "employee" else "general"
-            runCatching { TraceApi.uploadIdentity(Build.MODEL, Build.MANUFACTURER, userType) }
+            runCatching { TraceApi.uploadIdentity(Build.MODEL, Build.MANUFACTURER, userType, HardwareInfo.hardwareId(context)) }
         }.start()
     }
 
@@ -119,12 +120,12 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
         Thread {
             val message = try {
                 DeviceKeys.ensureKey()
-                TraceApi.register(msisdn, TraceApi.challenge(), APP_VERSION)
+                TraceApi.register(msisdn, TraceApi.challenge(), APP_VERSION, HardwareInfo.hardwareId(context))
                 prefs.edit().putBoolean(KEY_REGISTERED, true).apply()
                 FcmToken.fetchAndUpload(context)
                 // Best effort: identity is recorded when the device is registered.
                 val userType = if (StaffMode.isEmployee(context)) "employee" else "general"
-                runCatching { TraceApi.uploadIdentity(Build.MODEL, Build.MANUFACTURER, userType) }
+                runCatching { TraceApi.uploadIdentity(Build.MODEL, Build.MANUFACTURER, userType, HardwareInfo.hardwareId(context)) }
                 context.getString(R.string.req_registered)
             } catch (e: Exception) {
                 // Immediate attempt failed -- fall back to a WorkManager

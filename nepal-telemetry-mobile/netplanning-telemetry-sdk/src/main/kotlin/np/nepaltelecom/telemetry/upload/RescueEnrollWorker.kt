@@ -5,6 +5,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import np.nepaltelecom.telemetry.internalConfig
 import np.nepaltelecom.telemetry.storage.DeviceIdentity
+import np.nepaltelecom.telemetry.storage.HardwareInfo
 
 /**
  * Syncs one rescue-consent change (opt in with an MSISDN, or opt out) to the
@@ -31,7 +32,18 @@ internal class RescueEnrollWorker(context: Context, params: WorkerParameters) : 
         // this module will ever send, rescue lane included.
         val deviceId = DeviceIdentity(applicationContext).deviceId
 
-        val ok = RescueApi(rescueEnrollUrl, config.apiKey).enroll(deviceId, consent, msisdn)
+        // Device details go only with an enrolment, never with a withdrawal.
+        val device = if (consent) {
+            mapOf(
+                "manufacturer" to HardwareInfo.manufacturer(),
+                "phone_model" to HardwareInfo.model(),
+                "app_version" to HardwareInfo.appVersion(applicationContext),
+                "hardware_id" to HardwareInfo.hardwareId(applicationContext),
+            )
+        } else {
+            emptyMap()
+        }
+        val ok = RescueApi(rescueEnrollUrl, config.apiKey).enroll(deviceId, consent, msisdn, device)
         return if (ok) Result.success() else Result.retry()
     }
 

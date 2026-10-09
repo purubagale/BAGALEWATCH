@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import np.nepaltelecom.telemetry.storage.HardwareInfo
 
 /**
  * Registers this phone's device key + MSISDN with the server, with
@@ -35,7 +36,7 @@ internal class TraceRegisterWorker(context: Context, params: WorkerParameters) :
         val appVersion = inputData.getString(KEY_APP_VERSION) ?: "unknown"
         return try {
             DeviceKeys.ensureKey()
-            TraceApi.register(msisdn, TraceApi.challenge(), appVersion)
+            TraceApi.register(msisdn, TraceApi.challenge(), appVersion, HardwareInfo.hardwareId(applicationContext))
             applicationContext
                 .getSharedPreferences(TraceRequestsPanel.PREFS, Context.MODE_PRIVATE)
                 .edit().putBoolean(TraceRequestsPanel.KEY_REGISTERED, true).apply()
@@ -43,7 +44,7 @@ internal class TraceRegisterWorker(context: Context, params: WorkerParameters) :
             // Best effort, same as the inline attempt -- identity upload
             // failing never fails registration itself.
             val userType = if (StaffMode.isEmployee(applicationContext)) "employee" else "general"
-            runCatching { TraceApi.uploadIdentity(Build.MODEL, Build.MANUFACTURER, userType) }
+            runCatching { TraceApi.uploadIdentity(Build.MODEL, Build.MANUFACTURER, userType, HardwareInfo.hardwareId(applicationContext)) }
             Result.success()
         } catch (e: Exception) {
             Result.retry()

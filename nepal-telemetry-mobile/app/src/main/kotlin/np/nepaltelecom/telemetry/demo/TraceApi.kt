@@ -1,5 +1,6 @@
 package np.nepaltelecom.telemetry.demo
 
+import android.os.Build
 import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
@@ -34,23 +35,31 @@ object TraceApi {
     /**
      * Registers this phone's key with its number. No integrity token in this
      * build, so the server must have PLAY_INTEGRITY_REQUIRED=false.
+     *
+     * The make, model and [hardwareId] (2026-10-09) let the server show which
+     * phone a number is on and recognise this phone after a reinstall.
      */
-    fun register(msisdn: String, challenge: String, appVersion: String) {
+    fun register(msisdn: String, challenge: String, appVersion: String, hardwareId: String) {
         val body = JSONObject()
             .put("public_key", DeviceKeys.publicKeyPem())
             .put("challenge", challenge)
             .put("play_integrity_token", "")
             .put("msisdn", msisdn)
             .put("app_version", appVersion)
+            .put("manufacturer", Build.MANUFACTURER.orEmpty())
+            .put("phone_model", Build.MODEL.orEmpty())
+            .put("hardware_id", hardwareId)
         request("POST", "device/register/", body.toString(), signed = false)
     }
 
     /** Sends this phone's model and declared user type. Needs a registered device. */
-    fun uploadIdentity(phoneModel: String, manufacturer: String, userType: String) {
+    fun uploadIdentity(phoneModel: String, manufacturer: String, userType: String, hardwareId: String = "") {
         val body = JSONObject()
             .put("phone_model", phoneModel)
             .put("manufacturer", manufacturer)
             .put("user_type", userType)
+        // Lets a phone registered before 2026-10-09 be recognised without registering again.
+        if (hardwareId.isNotEmpty()) body.put("hardware_id", hardwareId)
         request("POST", "device-identity/", body.toString(), signed = true)
     }
 

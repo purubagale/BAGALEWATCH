@@ -20,12 +20,16 @@ internal class RescueApi(
     private val apiKey: String?,
 ) {
     /** @return true if the server accepted the request (2xx). Throws nothing -- network/parse failures return false. */
-    fun enroll(deviceId: String, consent: Boolean, msisdn: String?): Boolean {
+    fun enroll(deviceId: String, consent: Boolean, msisdn: String?, device: Map<String, String> = emptyMap()): Boolean {
         return try {
             val body = JSONObject().apply {
                 put("device_id", deviceId)
                 put("consent", consent)
                 putOpt("msisdn", msisdn)
+                // Make, model, app version and hardware id (2026-10-09): sent only
+                // when enrolling, so the server can show which phone this number
+                // is on. Blank values are left out.
+                device.forEach { (key, value) -> if (value.isNotBlank()) put(key, value) }
             }.toString()
             val connection = (URL(endpointUrl).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
