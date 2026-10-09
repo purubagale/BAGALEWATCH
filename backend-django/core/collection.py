@@ -28,6 +28,7 @@ from rest_framework.views import APIView
 
 from .access import PERM_VIEW_IDENTITY, CanViewDrives, user_has
 from .mfa import decrypt_secret, encrypt_secret
+from .cqi import cqi_from_sinr, sample_cqi_fields
 from .models import CollectionSession, DeviceIdentity, TelemetryDriveTestSession, TelemetrySample, TraceLocationSample
 
 
@@ -269,7 +270,6 @@ class CollectionSessionSamplesView(APIView):
             limit = 2000
 
         if session.trace_id:
-            from .telemetry import cqi_from_sinr  # telemetry imports this module
             rows = TraceLocationSample.objects.filter(trace_id=session.trace_id).order_by('ts')[:limit]
             results = [
                 {
@@ -281,6 +281,7 @@ class CollectionSessionSamplesView(APIView):
                     # from the sample's own SINR (LTE only).
                     'cqi': r.cqi,
                     'cqi_derived': cqi_from_sinr(r.sinr_db) if r.network_type == 'LTE' else None,
+                    **sample_cqi_fields(r.cqi, r.sinr_db, r.rsrq_db, r.network_type),
                     # TraceLocationSample has no serving-cell resolution of
                     # its own (see that model's docstring) -- left null so
                     # the frontend's declusterPlot falls back to `pci` as
@@ -302,6 +303,10 @@ class CollectionSessionSamplesView(APIView):
                     'network_type': r.network_type, 'pci': r.pci, 'rsrp_dbm': r.rsrp_dbm,
                     'rsrq_db': r.rsrq_db, 'sinr_db': r.sinr_db,
                     'cqi': r.cqi, 'cqi_derived': r.cqi_derived,
+                    # Shown value, where it came from (reported / sinr /
+                    # rsrq) and its 3GPP modulation and efficiency
+                    # (2026-10-09, core/cqi.py).
+                    **sample_cqi_fields(r.cqi, r.sinr_db, r.rsrq_db, r.network_type),
                     'serving_site_id': r.serving_site_id, 'serving_sector': r.serving_sector,
                 }
                 for r in rows

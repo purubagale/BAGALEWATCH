@@ -2156,7 +2156,7 @@ export interface AreaSampleCreateInput {
   label?: string
 }
 
-export interface AreaSampleReading {
+export interface AreaSampleReading extends SampleCqiFields {
   ts: string
   lat: number
   lng: number
@@ -2411,7 +2411,21 @@ export interface CollectionSessionRow {
 // CollectionSessionSamplesView. Same field set regardless of whether the
 // row is a trace or a drive (the view normalizes both source tables to
 // this one shape), so the Collections page needs no source-specific map.
-export interface CollectionSessionSample {
+// CQI display fields the server works out per sample (2026-10-09, backend
+// core/cqi.py sample_cqi_fields). `cqi_value` is the number to show;
+// `cqi_source` says where it came from: the phone's own report, an
+// estimate from SINR, or the rougher estimate from RSRQ used when the
+// sample has no SINR. Modulation, code rate and efficiency are the 3GPP
+// TS 36.213 Table 7.2.3-1 row for that value (LTE only).
+export interface SampleCqiFields {
+  cqi_value: number | null
+  cqi_source: 'reported' | 'sinr' | 'rsrq' | null
+  modulation: string | null
+  code_rate_x1024: number | null
+  spectral_efficiency: number | null
+}
+
+export interface CollectionSessionSample extends SampleCqiFields {
   ts: string
   lat: number
   lng: number

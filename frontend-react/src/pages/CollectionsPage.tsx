@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css'
 import { RSRP_BANDS, bandColor } from '../lib/dtBands'
 import { declusterForPlot } from '../lib/declusterPlot'
 import { useCollectionSessionSamples, useCollectionSessions } from '../api/queries'
+import { CQI_COLUMN_HINT, CQI_MODULATION_HINT, cqiLabel, cqiModulationLabel } from '../lib/cqiDisplay'
 
 // Collections (2026-10-06, detail+plot added 2026-10-07): every drive and
 // trace the phones have sent, by source. Device identity appears only for
@@ -235,7 +236,8 @@ export default function CollectionsPage() {
                     <th>RSRP</th>
                     <th>RSRQ</th>
                     <th>SINR</th>
-                    <th title="Reported by the phone when available. A value marked (est.) is estimated from SINR.">CQI</th>
+                    <th title={CQI_COLUMN_HINT}>CQI</th>
+                    <th title={CQI_MODULATION_HINT}>Modulation</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -249,7 +251,8 @@ export default function CollectionsPage() {
                       <td>{s.rsrp_dbm ?? '—'}</td>
                       <td>{s.rsrq_db ?? '—'}</td>
                       <td>{s.sinr_db ?? '—'}</td>
-                      <td>{s.cqi ?? (s.cqi_derived != null ? `${s.cqi_derived} (est.)` : '—')}</td>
+                      <td>{cqiLabel(s)}</td>
+                      <td>{cqiModulationLabel(s)}</td>
                     </tr>
                   ))}
                 </tbody>

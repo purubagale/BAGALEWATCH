@@ -28,6 +28,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .audit import log_audit_event
+from .cqi import sample_cqi_fields
 from .fcm import send_sample_request_push
 from .models import AreaSampleRequest, TelemetryPushToken, TelemetrySample
 from .telemetry import _scope_by_operator, hash_device_id, resolve_ingest_caller
@@ -203,6 +204,7 @@ class AreaSampleRequestSamplesView(APIView):
                 'rx_qual': s.rx_qual,
                 'cqi': s.cqi,
                 'cqi_derived': s.cqi_derived,
+                **sample_cqi_fields(s.cqi, s.sinr_db, s.rsrq_db, s.network_type),
                 'serving_site_id': s.serving_site_id,
                 'serving_sector': s.serving_sector,
             }

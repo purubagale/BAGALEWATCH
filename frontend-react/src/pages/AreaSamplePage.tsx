@@ -7,6 +7,7 @@ import type { AreaSampleReading } from '../api/types'
 import { RSRP_BANDS, RSRQ_BANDS, SINR_BANDS, bandColor, type Band } from '../lib/dtBands'
 import { declusterForPlot } from '../lib/declusterPlot'
 import { resolveAreaQuery, type ResolvedAreaPoint } from '../lib/resolveDeviceAreaQuery'
+import { CQI_COLUMN_HINT, CQI_MODULATION_HINT, cqiLabel, cqiModulationLabel } from '../lib/cqiDisplay'
 
 // On-demand area sample (2026-10-08) -- see core/area_sample.py. An engineer
 // picks an area and asks the devices sharing there for one fresh reading
@@ -275,7 +276,8 @@ export default function AreaSamplePage() {
                   <th>RSRP</th>
                   <th>RSRQ</th>
                   <th>SINR</th>
-                  <th title="Reported by the phone when available. A value marked (est.) is estimated from SINR.">CQI</th>
+                  <th title={CQI_COLUMN_HINT}>CQI</th>
+                  <th title={CQI_MODULATION_HINT}>Modulation</th>
                   <th>Lat</th>
                   <th>Lng</th>
                   <th>Accuracy (m)</th>
@@ -291,7 +293,8 @@ export default function AreaSamplePage() {
                     <td>{s.rsrp_dbm ?? '—'}</td>
                     <td>{s.rsrq_db ?? '—'}</td>
                     <td>{s.sinr_db ?? '—'}</td>
-                    <td>{s.cqi ?? (s.cqi_derived != null ? `${s.cqi_derived} (est.)` : '—')}</td>
+                    <td>{cqiLabel(s)}</td>
+                    <td>{cqiModulationLabel(s)}</td>
                     <td>{s.lat.toFixed(5)}</td>
                     <td>{s.lng.toFixed(5)}</td>
                     <td>{s.gps_accuracy_m != null ? Math.round(s.gps_accuracy_m) : '—'}</td>
