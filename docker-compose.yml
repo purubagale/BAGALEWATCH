@@ -261,7 +261,12 @@ services:
     # audit-log-maintenance), since all four have the same lightweight
     # resource profile; see the `db` service's own comment for why every
     # service here now has a limit.
-    mem_limit: ${MAINTENANCE_MEM_LIMIT:-256m}
+    #
+    # Own, larger memory limit since 2026-10-09: this loop holds the whole
+    # live site directory in memory during a sync and was measured at
+    # 216 MB of the shared 256 MB limit, one larger sync away from being
+    # killed. The other three loops idle at about 78 MB and keep 256 MB.
+    mem_limit: ${SITE_SYNC_MEM_LIMIT:-512m}
     cpus: "${MAINTENANCE_CPU_LIMIT:-0.5}"
     command: ["python", "manage.py", "sync_live_sites", "--loop"]
     env_file:

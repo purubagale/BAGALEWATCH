@@ -1080,12 +1080,12 @@ class DriveTestSessionAttachmentSerializer(serializers.ModelSerializer):
         fields = ['id', 'original_filename', 'url', 'size_bytes', 'uploaded_by_name', 'uploaded_at']
 
     def get_url(self, obj):
-        request = self.context.get('request')
-        try:
-            url = obj.file.url
-        except ValueError:
+        # The authenticated download endpoint, not the raw /media/ path
+        # (2026-10-09): /media/ no longer serves attachments at all. The
+        # frontend fetches this with its JWT and saves the blob.
+        if not obj.file:
             return None
-        return request.build_absolute_uri(url) if request is not None else url
+        return f'/api/v2/dt-sessions/{obj.session_id}/attachments/{obj.pk}/'
 
     def get_uploaded_by_name(self, obj):
         if not obj.uploaded_by_id:

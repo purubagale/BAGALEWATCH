@@ -157,6 +157,9 @@ INSTALLED_APPS = [
     # GEOS/GDAL/PROJ shared libs the Dockerfile now installs.
     'django.contrib.gis',
     'rest_framework',
+    # Refresh-token revocation (2026-10-09 security audit): see SIMPLE_JWT
+    # below. Brings its own two tables and migrations.
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'drf_spectacular',
     'core',
@@ -393,6 +396,12 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
     'REFRESH_TOKEN_LIFETIME': timedelta(hours=12),
     'ROTATE_REFRESH_TOKENS': True,
+    # A refresh token is single-use (2026-10-09): once it has been
+    # exchanged it is blacklisted, and LogoutView blacklists the current
+    # one. Before this, every rotated-away token and every logged-out
+    # session's token stayed valid for the full 12 hours. Expired rows are
+    # cleared by the prune_audit_log loop.
+    'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
@@ -412,6 +421,11 @@ SPECTACULAR_SETTINGS = {
     'TITLE': 'DT-WATCH BTS v2 API',
     'DESCRIPTION': 'REST API for the DT-WATCH BTS v2 backend (Django service).',
     'VERSION': '2.0.0-phase1',
+    # Login required for /api/v2/schema/ and /api/v2/docs/ (2026-10-09
+    # security audit). Both were public and listed every endpoint to
+    # anyone who could reach the server. A browser needs a Django admin
+    # session to open the docs page; scripts can send a Bearer token.
+    'SERVE_PERMISSIONS': ['rest_framework.permissions.IsAuthenticated'],
 }
 
 # ── Keycloak SSO (2026-08-23) ───────────────────────────────────────────
@@ -664,6 +678,24 @@ PASSWORD_RESET_TIMEOUT = 3600
 
 # Path to a Firebase service-account JSON file, or the JSON itself.
 FCM_SERVICE_ACCOUNT_JSON = os.environ.get('FCM_SERVICE_ACCOUNT_JSON', '')
+
+# CQI estimation overrides (2026-10-09, core/cqi.py). A JSON object laid
+# over that module's DEFAULT_CONFIG, e.g.
+#   CQI_CONFIG_JSON={"sinr_thresholds_db": "2DB_LADDER", "rsrq_intercept": 16}
+# Unset, empty or not valid JSON means the built-in defaults.
+def _cqi_config():
+    import json
+    raw = os.environ.get('CQI_CONFIG_JSON', '').strip()
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+CQI_CONFIG = _cqi_config()
 
 # Android package name the Play Integrity verdict must be issued for.
 PLAY_INTEGRITY_PACKAGE_NAME = os.environ.get('PLAY_INTEGRITY_PACKAGE_NAME', '')

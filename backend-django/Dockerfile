@@ -9,8 +9,15 @@ WORKDIR /app
 # adoption) — Django's GEOS/GDAL/PROJ ctypes bindings need the actual shared
 # libraries at runtime, not a Python package (there's no geodjango pip dep).
 # This is Django's own documented Debian/Ubuntu GeoDjango package list.
+#
+# Trimmed 2026-10-09 (size audit): gcc, libpq-dev and libproj-dev were
+# build-time packages, and nothing here is built from source. Every pinned
+# package installs from a wheel, psycopg2-binary carries its own libpq,
+# and gdal-bin already pulls in the GDAL, GEOS and PROJ runtime libraries.
+# If a future dependency has no wheel, pip will fail here with a compiler
+# error: add a build stage then rather than putting gcc back in this image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc binutils libproj-dev gdal-bin \
+    binutils gdal-bin \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
