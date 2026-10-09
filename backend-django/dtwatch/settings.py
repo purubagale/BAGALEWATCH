@@ -558,6 +558,9 @@ LIVE_SITE_SYNC_INTERVAL_SECONDS = int(os.environ.get('LIVE_SITE_SYNC_INTERVAL_SE
 # `telemetry-maintenance` compose service runs the prune + partition-roll
 # on a daily loop so nothing here depends on someone remembering to.
 TELEMETRY_RETENTION_DAYS = int(os.environ.get('TELEMETRY_RETENTION_DAYS', 90))
+# A number <-> device link whose device has not uploaded for this long is
+# shown as stale on the lookup pages (2026-10-09, core/subscriber_device.py).
+SUBSCRIBER_DEVICE_STALE_DAYS = int(os.environ.get('SUBSCRIBER_DEVICE_STALE_DAYS', 30))
 TELEMETRY_MAINTENANCE_INTERVAL_HOURS = int(os.environ.get('TELEMETRY_MAINTENANCE_INTERVAL_HOURS', 24))
 
 # Audit Log retention (2026-10-01, "should store upto 1 month log cap.

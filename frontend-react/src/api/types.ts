@@ -2087,6 +2087,13 @@ export interface RescueLookupResult {
   accuracy_m?: number | null
   source?: string
   last_seen_ts?: string
+  // Which phone the position belongs to (2026-10-09): the first 10
+  // characters of its device id (the same value the Collections table
+  // shows), its make and model when known, and how many phones this number
+  // is enrolled on. The position is always one phone's own.
+  device?: string
+  device_model?: string | null
+  device_count?: number
 }
 
 // Bulk rescue lookup (2026-09-04) -- mirrors core/rescue.py's
@@ -2125,12 +2132,43 @@ export interface DeviceLocationTraceResult {
   device_hash?: string
   lat?: number
   lng?: number
-  network_type?: string
+  network_type?: string | null
   ts?: string
-  received_at?: string
+  accuracy_m?: number | null
+  // Which store the returned position came from (2026-10-09): a regular
+  // shared sample, the rescue enrolment's last position, or an accepted
+  // trace. `sources` gives the newest position time each store held
+  // (null = nothing there), whether or not a position was found.
+  source?: DeviceLocationTraceSource
+  sources?: { source: DeviceLocationTraceSource; ts: string | null }[]
+  // Every device the number or IMEI is tied to, newest position first.
+  // The top-level lat/lng/ts above are always devices[0]'s own; positions
+  // from different devices are never combined. More than one entry means
+  // the number has been used on more than one phone.
+  devices?: {
+    device_hash: string
+    // Every device id this one phone has been seen under (install id,
+    // registration key id, older installs). Grouped by the hardware id
+    // newer app builds send; a single entry on older builds.
+    device_hashes?: string[]
+    linked_by: ('identity_upload' | 'registered_phone' | 'rescue_enrolment')[]
+    phone_model: string | null
+    manufacturer: string | null
+    // When this device last uploaded anything, and whether that is older
+    // than the stale period (30 days by default) or never.
+    last_seen_at: string | null
+    stale: boolean
+    number_verified_by: string | null
+    lat: number | null
+    lng: number | null
+    ts: string | null
+    source: DeviceLocationTraceSource | null
+  }[]
   phone_model?: string | null
   manufacturer?: string | null
 }
+
+export type DeviceLocationTraceSource = 'telemetry' | 'rescue_enrolment' | 'trace'
 
 // On-demand area sample (2026-10-08) -- mirrors core/area_sample.py. The
 // readings carry no device id; `devices` on the results is only a count.

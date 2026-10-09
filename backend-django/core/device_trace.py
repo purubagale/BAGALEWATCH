@@ -54,9 +54,13 @@ from .device_auth import (
 )
 from .fcm import send_trace_push
 from .emergency import active_emergency
-from .models import CollectionSession, DeviceCredential, DeviceIdentity, TraceLocationSample, TraceRequest, TraceSpeedResult
+from .models import (
+    CollectionSession, DeviceCredential, DeviceIdentity, SubscriberDevice, TraceLocationSample, TraceRequest,
+    TraceSpeedResult,
+)
 from .play_integrity import verify_integrity_token
 from .rescue import _clean_msisdn
+from .subscriber_device import link_device, touch_seen
 from .telemetry import hash_device_id
 from .access import PERM_TRACE_CASE, PERM_TRACE_INVESTIGATE, IsTraceOperator, user_has
 from .collection import close_trace_session, ensure_trace_session
@@ -216,6 +220,13 @@ class DeviceRegisterView(APIView):
                 fcm_token=fcm_token, app_version=app_version,
             )
             created = True
+        link_device(
+            msisdn, device_hash, SubscriberDevice.VIA_REGISTRATION,
+            manufacturer=str(request.data.get('manufacturer') or ''),
+            phone_model=str(request.data.get('phone_model') or request.data.get('model') or ''),
+            app_version=app_version,
+            hardware_id=request.data.get('hardware_id'),
+        )
         return Response({'device_id': device_id, 'registered': True, 'created': created})
 
 
@@ -374,6 +385,7 @@ class DeviceTraceSamplesView(APIView):
 
         if rows:
             TraceLocationSample.objects.bulk_create(rows)
+            touch_seen([trace.device.device_hash])
             ensure_trace_session(trace)
             CollectionSession.objects.filter(trace=trace).update(
                 sample_count=F('sample_count') + len(rows), last_sample_at=timezone.now(),

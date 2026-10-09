@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiErrorMessage } from '../api/client'
+import type { DeviceLocationTraceSource } from '../api/types'
 import { useDeviceLocationTrace, useEmergencyStatus } from '../api/queries'
 import { EmergencySwitchPanel } from './RescuePolicyPage'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
@@ -10,6 +11,19 @@ import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 function InvalidateOnResize() {
   useMapInvalidateOnResize()
   return null
+}
+
+const SOURCE_LABELS: Record<DeviceLocationTraceSource, string> = {
+  telemetry: 'Shared signal samples',
+  rescue_enrolment: 'Rescue enrolment',
+  trace: 'Trace request',
+}
+
+const LINK_LABELS: Record<string, string> = {
+  identity_upload: 'identity upload',
+  registered_phone: 'registered phone',
+  rescue_enrolment: 'rescue enrolment',
+  trace_request: 'trace request',
 }
 
 // Same single-pin, auto-opened-popup pattern as RescueLookupPage.tsx's own
@@ -21,7 +35,7 @@ function ResultMarker({
 }: {
   lat: number
   lng: number
-  networkType: string | undefined
+  networkType: string | null | undefined
   ts: string | undefined
 }) {
   const map = useMap()
@@ -144,8 +158,9 @@ export default function DeviceLocationTracePage() {
 
       {result && !result.found && (
         <p className="page-status">
-          No position found -- either this device has never uploaded a GPS-tagged sample, or no device has
-          uploaded this {mode === 'msisdn' ? 'phone number' : 'IMEI'} as its own identity.
+          No position found. This {mode === 'msisdn' ? 'phone number' : 'IMEI'} is not tied to any device in
+          shared signal samples, rescue enrolment or trace requests, or that device has never sent a GPS
+          position.
         </p>
       )}
 
@@ -157,7 +172,49 @@ export default function DeviceLocationTracePage() {
             {result.network_type ?? '—'}
             {' · '}
             {result.ts ? new Date(result.ts).toLocaleString() : '—'}
+            {result.accuracy_m != null && ` · ±${Math.round(result.accuracy_m)} m`}
           </p>
+          {/* Every store the app writes to is searched; this says which one
+              held the newest position and what the others had. */}
+          <p className="muted">
+            Device <code>{(result.device_hash ?? '').slice(0, 10) || '—'}</code>
+            {result.devices?.[0]?.stale ? ' (no upload in the last 30 days)' : ''}. The number is as typed by the
+            user in the app, not verified against the SIM.
+            Newest position is from <strong>{result.source ? SOURCE_LABELS[result.source] : '—'}</strong>.
+            {(result.sources ?? []).map((s) => (
+              <span key={s.source}>
+                {' '}{SOURCE_LABELS[s.source]}: {s.ts ? new Date(s.ts).toLocaleString() : 'none'}.
+              </span>
+            ))}
+          </p>
+          {(result.devices?.length ?? 0) > 1 && (
+            <div className="page-status page-status-error" style={{ marginBottom: 12 }}>
+              <strong>This {mode === 'msisdn' ? 'number' : 'IMEI'} is tied to {result.devices!.length} devices.</strong>{' '}
+              The map shows only the first one, the device with the newest position. Positions from different
+              devices are not combined.
+              <table className="admin-table" style={{ marginTop: 8 }}>
+                <thead>
+                  <tr><th>Device</th><th>Model</th><th>Linked by</th><th>Last upload</th><th>Newest position</th><th>Time</th><th>From</th></tr>
+                </thead>
+                <tbody>
+                  {result.devices!.map((d) => (
+                    <tr key={d.device_hash}>
+                      <td>
+                        <code>{d.device_hash.slice(0, 10)}</code>
+                        {(d.device_hashes?.length ?? 1) > 1 && ` (+${d.device_hashes!.length - 1} other id of this phone)`}
+                      </td>
+                      <td>{[d.manufacturer, d.phone_model].filter(Boolean).join(' ') || 'Unknown'}</td>
+                      <td>{d.linked_by.map((l) => LINK_LABELS[l]).join(', ')}</td>
+                      <td>{d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : 'never'}{d.stale ? ' (stale)' : ''}</td>
+                      <td>{d.lat != null && d.lng != null ? `${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}` : 'none'}</td>
+                      <td>{d.ts ? new Date(d.ts).toLocaleString() : '—'}</td>
+                      <td>{d.source ? SOURCE_LABELS[d.source] : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <div style={{ height: 420, marginBottom: 12 }}>
             <MapContainer center={[result.lat, result.lng]} zoom={16} style={{ height: '100%', width: '100%' }}>
               <InvalidateOnResize />

@@ -3462,3 +3462,77 @@ class TraceSpeedResult(models.Model):
     class Meta:
         db_table = 'v2_trace_speed_result'
         ordering = ['ran_at']
+
+
+class SubscriberDevice(models.Model):
+    """One row per (phone number, device) pair (2026-10-09): the single
+    place that says which devices a number is used on.
+
+    Before this the link was implicit and spread over four tables
+    (SubscriberLastLocation, DeviceCredential, DeviceIdentity,
+    TraceRequest), each with its own rules and none built for one number on
+    several phones. Rescue Lookup and Device Location Trace read different
+    ones and disagreed. Every path that learns a number for a device now
+    also writes here through core/subscriber_device.py's link_device(), and
+    both lookup tools read from here.
+
+    A number can have many rows (a subscriber with two handsets) and so can
+    a device (a dual-SIM phone). Rows are never deleted: a link that stops
+    being true gets `ended_at`, so the history stays.
+
+    `device_hash` is the same salted hash TelemetrySample.device_id uses.
+    Note that one PHONE can still appear under two hashes today: the SDK's
+    per-install id (shared-key uploads, rescue enrolment) and the
+    registration key's fingerprint (signed uploads). `hardware_hash`, a
+    salted hash of the Android ID, is what ties those together and what
+    survives a reinstall; it is empty until the mobile app sends it.
+
+    `number_verified_by` records how far the number can be trusted. Today
+    it is always typed by the user, so every row is 'self_declared'.
+
+    Rescue consent is NOT stored here: it stays on SubscriberLastLocation.
+    """
+    VIA_RESCUE = 'rescue_enrolment'
+    VIA_REGISTRATION = 'registered_phone'
+    VIA_IDENTITY = 'identity_upload'
+    VIA_CHOICES = [
+        (VIA_RESCUE, 'Rescue enrolment'),
+        (VIA_REGISTRATION, 'Registered phone'),
+        (VIA_IDENTITY, 'Identity upload'),
+    ]
+    VERIFIED_SELF = 'self_declared'
+    VERIFIED_SIM = 'sim_read'
+    VERIFIED_SMS = 'sms_code'
+    VERIFIED_CHOICES = [
+        (VERIFIED_SELF, 'Typed by the user'),
+        (VERIFIED_SIM, 'Read from the SIM'),
+        (VERIFIED_SMS, 'Confirmed by SMS code'),
+    ]
+    ENDED_NUMBER_CHANGED = 'number_changed'
+
+    msisdn = models.CharField(max_length=20, db_index=True)  # canonical, see rescue._clean_msisdn
+    device_hash = models.CharField(max_length=64, db_index=True)
+    hardware_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    manufacturer = models.CharField(max_length=80, blank=True, default='')
+    phone_model = models.CharField(max_length=80, blank=True, default='')
+    app_version = models.CharField(max_length=40, blank=True, default='')
+    # Every path that has confirmed this pair, e.g. ['rescue_enrolment',
+    # 'identity_upload'].
+    linked_via = models.JSONField(default=list, blank=True)
+    number_verified_by = models.CharField(max_length=20, choices=VERIFIED_CHOICES, default=VERIFIED_SELF)
+    first_linked_at = models.DateTimeField(auto_now_add=True)
+    last_linked_at = models.DateTimeField(auto_now_add=True)
+    # When this device last uploaded a sample. Tells the operator which of
+    # a subscriber's phones is in use now.
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    ended_reason = models.CharField(max_length=20, blank=True, default='')
+
+    class Meta:
+        db_table = 'v2_subscriber_device'
+        constraints = [
+            models.UniqueConstraint(fields=['msisdn', 'device_hash'], name='uniq_subscriber_device'),
+        ]
+
+    def __str__(self):
+        return f'{self.msisdn} on {self.device_hash[:10]}'

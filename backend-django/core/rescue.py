@@ -59,11 +59,13 @@ from rest_framework.views import APIView
 
 from .models import (
     DeviceIdentity,
+    SubscriberDevice,
     RescueConsentPolicy,
     RescueConsentPolicyChangeLog,
     RescueLocationAccessLog,
     SubscriberLastLocation,
 )
+from .subscriber_device import link_device, unlink_via
 from .subscriber_network_resolver import resolve_subscriber_network_info
 from .telemetry import _key_from_request, _resolve_key, _scope_by_operator, hash_device_id
 from .access import CanRescueSearch
@@ -73,7 +75,8 @@ from .emergency import EMERGENCY_OFF_DETAIL, active_emergency, rescue_search_ena
 EMERGENCY_LOG_MODE = 'emergency'
 
 # Columns for a bulk-lookup CSV export (2026-10-05). Same fields as the JSON result.
-CSV_COLUMNS = ['msisdn', 'found', 'lat', 'lng', 'accuracy_m', 'source', 'last_seen_ts', 'imsi']
+CSV_COLUMNS = ['msisdn', 'found', 'lat', 'lng', 'accuracy_m', 'source', 'last_seen_ts', 'device', 'device_model',
+               'device_count', 'imsi']
 
 
 def _csv_response(rows, filename):
@@ -125,6 +128,54 @@ def _clean_msisdn(raw):
     return digits
 
 
+def _freshest_position(rows):
+    """The newest known position for a subscriber's consented rescue
+    enrolments (2026-10-09), as the fields the lookup responses carry, or
+    None when no store has one.
+
+    `rows` are the rescue_consent=True SubscriberLastLocation rows for ONE
+    number that the caller is allowed to see -- one per phone the number is
+    enrolled on. Each phone's newest position is worked out separately
+    from its own shared samples, rescue record and accepted traces
+    (device_lookup._latest_position, the same search Device Location Trace
+    uses), and the phone with the newest one is returned. A phone that
+    never enrolled for rescue is never considered, so this changes WHICH
+    position is shown, not who can be found.
+
+    `device`, `device_model` and `device_count` tell the operator which
+    phone the position belongs to and whether the number is on others.
+    """
+    # Local import: device_lookup imports _clean_msisdn from this module.
+    from .device_lookup import SOURCE_RESCUE, SOURCE_TELEMETRY, _latest_position
+
+    rows = [r for r in rows if r.msisdn]
+    if not rows:
+        return None
+    by_device = {r.device_id: r for r in rows}
+    # A row enrolled before the link table existed and missed by the
+    # backfill would otherwise be invisible.
+    for r in rows:
+        if not SubscriberDevice.objects.filter(msisdn=r.msisdn, device_hash=r.device_id).exists():
+            link_device(r.msisdn, r.device_id, SubscriberDevice.VIA_RESCUE)
+    best, _sources, devices = _latest_position(rows[0].msisdn, None, only_devices=set(by_device))
+    if best is None:
+        return None
+    if best['source'] == SOURCE_RESCUE:
+        source = by_device[best['device_hash']].last_source
+    elif best['source'] == SOURCE_TELEMETRY:
+        source = 'shared sample'
+    else:
+        source = 'trace'
+    chosen = devices[0]
+    return {
+        'lat': best['lat'], 'lng': best['lng'], 'accuracy_m': best['accuracy_m'],
+        'source': source, 'last_seen_ts': best['ts'],
+        'device': best['device_hash'][:10],
+        'device_model': ' '.join(filter(None, [chosen['manufacturer'], chosen['phone_model']])) or None,
+        'device_count': len(devices),
+    }
+
+
 class RescueEnrollView(APIView):
     """`POST /api/telemetry/v1/rescue-enroll/` — body:
     `{"device_id": "<raw sdk device id>", "consent": true, "msisdn": "+977..."}`
@@ -162,6 +213,7 @@ class RescueEnrollView(APIView):
 
         if not consent:
             deleted, _ = SubscriberLastLocation.objects.filter(device_id=device_id).delete()
+            unlink_via(device_id, SubscriberDevice.VIA_RESCUE)
             return Response({'enrolled': False, 'removed': deleted > 0})
 
         msisdn = _clean_msisdn(request.data.get('msisdn'))
@@ -182,6 +234,15 @@ class RescueEnrollView(APIView):
         obj.rescue_consent = True
         obj.rescue_consent_at = timezone.now()
         obj.save(update_fields=['msisdn', 'imsi', 'rescue_consent', 'rescue_consent_at', 'updated_at'])
+        # Number <-> device link (2026-10-09). The make, model and
+        # hardware_id fields are optional: older app builds send none.
+        link_device(
+            msisdn, device_id, SubscriberDevice.VIA_RESCUE,
+            manufacturer=str(request.data.get('manufacturer') or ''),
+            phone_model=str(request.data.get('phone_model') or request.data.get('model') or ''),
+            app_version=str(request.data.get('app_version') or ''),
+            hardware_id=request.data.get('hardware_id'),
+        )
         return Response({'enrolled': True})
 
 
@@ -244,12 +305,10 @@ class RescueLookupView(APIView):
 
         base_qs = SubscriberLastLocation.objects.filter(msisdn=msisdn, rescue_consent=True)
 
-        match = (
-            _scope_by_operator(base_qs, request.user, field='last_mnc')
-            .order_by('-last_seen_ts')
-            .first()
-        )
-        found = bool(match and match.last_seen_ts is not None)
+        matches = list(_scope_by_operator(base_qs, request.user, field='last_mnc').order_by('-last_seen_ts'))
+        match = matches[0] if matches else None
+        position = _freshest_position(matches)
+        found = position is not None
         self._log(request, msisdn, case_reference, found, EMERGENCY_LOG_MODE)
 
         if not found:
@@ -257,11 +316,7 @@ class RescueLookupView(APIView):
 
         return Response({
             'found': True,
-            'lat': match.last_lat,
-            'lng': match.last_lng,
-            'accuracy_m': match.last_accuracy_m,
-            'source': match.last_source,
-            'last_seen_ts': match.last_seen_ts,
+            **position,
             # None on every row today (see SubscriberLastLocation.imsi's
             # comment) -- included now so the frontend/operator tooling
             # has nothing left to change the day a resolver actually
@@ -343,23 +398,25 @@ class RescueBulkLookupView(APIView):
         # device_id) -- keep whichever has the most recent fix, same
         # "most recent wins" rule RescueLookupView's own `.order_by(
         # '-last_seen_ts').first()` applies to a single number.
-        by_msisdn = {}
+        rows_by_msisdn = {}
         for row in scoped:
-            if row.last_seen_ts is None:
-                continue
-            prev = by_msisdn.get(row.msisdn)
-            if prev is None or row.last_seen_ts > prev.last_seen_ts:
-                by_msisdn[row.msisdn] = row
+            rows_by_msisdn.setdefault(row.msisdn, []).append(row)
+        # Same combined search as the single lookup (2026-10-09): the
+        # newest position from any store, not only the rescue record.
+        by_msisdn = {}
+        for msisdn, rows in rows_by_msisdn.items():
+            position = _freshest_position(rows)
+            if position:
+                by_msisdn[msisdn] = (rows[0], position)
 
         results = []
         for msisdn in cleaned:
-            match = by_msisdn.get(msisdn)
-            if match:
+            hit = by_msisdn.get(msisdn)
+            if hit:
+                match, position = hit
                 results.append({
                     'msisdn': msisdn, 'found': True,
-                    'lat': match.last_lat, 'lng': match.last_lng,
-                    'accuracy_m': match.last_accuracy_m, 'source': match.last_source,
-                    'last_seen_ts': match.last_seen_ts,
+                    **position,
                     'imsi': match.imsi,  # see RescueLookupView's response -- same field, same stub state
                 })
             else:

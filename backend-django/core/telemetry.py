@@ -37,6 +37,7 @@ from rest_framework.views import APIView
 
 from .models import TelemetryBatch, TelemetryIngestKey, _point_or_none
 
+from .subscriber_device import touch_seen
 from .cqi import cqi_from_sinr  # noqa: F401 -- re-exported, see note further down
 from .collection import record_collection_sessions
 
@@ -569,6 +570,11 @@ class TelemetryIngestView(APIView):
         except Exception:  # session bookkeeping must never fail an upload
             logger.exception('collection session bookkeeping failed')
         _upsert_rescue_locations(rows)
+        try:
+            # Number <-> device links learn when their device last uploaded.
+            touch_seen({r['device_id'] for r in rows}, now)
+        except Exception:  # bookkeeping must never fail an upload
+            logger.exception('subscriber device last-seen update failed')
 
         if key:
             TelemetryIngestKey.objects.filter(pk=key.pk).update(last_used_at=now)
