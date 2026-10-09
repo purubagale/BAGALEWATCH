@@ -235,6 +235,7 @@ export default function CollectionsPage() {
                     <th>RSRP</th>
                     <th>RSRQ</th>
                     <th>SINR</th>
+                    <th title="Reported by the phone when available. A value marked (est.) is estimated from SINR.">CQI</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -243,11 +244,12 @@ export default function CollectionsPage() {
                       <td>{new Date(s.ts).toLocaleString()}</td>
                       <td>{s.lat.toFixed(5)}</td>
                       <td>{s.lng.toFixed(5)}</td>
-                      <td>{s.accuracy_m ?? '—'}</td>
+                      <td>{s.accuracy_m != null ? Math.round(s.accuracy_m) : '—'}</td>
                       <td>{s.network_type || '—'}</td>
                       <td>{s.rsrp_dbm ?? '—'}</td>
                       <td>{s.rsrq_db ?? '—'}</td>
                       <td>{s.sinr_db ?? '—'}</td>
+                      <td>{s.cqi ?? (s.cqi_derived != null ? `${s.cqi_derived} (est.)` : '—')}</td>
                     </tr>
                   ))}
                 </tbody>

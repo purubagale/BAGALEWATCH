@@ -201,6 +201,7 @@ class AreaSampleRequestSamplesView(APIView):
                 'rscp_dbm': s.rscp_dbm,
                 'ecio_db': s.ecio_db,
                 'rx_qual': s.rx_qual,
+                'cqi': s.cqi,
                 'cqi_derived': s.cqi_derived,
                 'serving_site_id': s.serving_site_id,
                 'serving_sector': s.serving_sector,

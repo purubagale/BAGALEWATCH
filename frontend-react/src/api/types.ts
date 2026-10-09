@@ -2170,6 +2170,7 @@ export interface AreaSampleReading {
   rscp_dbm: number | null
   ecio_db: number | null
   rx_qual: number | null
+  cqi: number | null
   cqi_derived: number | null
   serving_site_id: string | null
   serving_sector: string | null
@@ -2420,6 +2421,10 @@ export interface CollectionSessionSample {
   rsrp_dbm: number | null
   rsrq_db: number | null
   sinr_db: number | null
+  // `cqi` is what the phone reported (often null). `cqi_derived` is the
+  // server's estimate from SINR, LTE only. Show `cqi` when present.
+  cqi: number | null
+  cqi_derived: number | null
   // Serving-cell identity (2026-10-07) -- null on trace-sourced rows
   // (TraceLocationSample has no serving-cell resolution of its own); use
   // `pci` as the coarser same-cell fallback for those, same reasoning

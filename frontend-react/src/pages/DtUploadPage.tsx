@@ -13,6 +13,7 @@ import { DT_SESSION_HISTORY_PATH } from '../constants/opaqueRoutes'
 import { MAX_MAP_DOTS, subsampleForMap } from '../lib/dtBands'
 import { DriveModeSelect } from '../lib/dtDriveMode'
 import { computeSessionMeta, csvTextToRows, haversineKm, parseTemplateRows } from '../lib/dtTemplateParser'
+import { genAnalyzeFile } from '../lib/genAnalysis'
 import { trpaAnalyzeFile, trpaSummarizeCallEvents, trpaSummarizeDownloadEvents, type TrpaEventRow, type TrpaRow } from '../lib/trpAnalysis'
 import { readXlsxRowsForTech } from '../lib/xlsxReader'
 
@@ -512,7 +513,10 @@ function buildTrpSessions(
     const dtDates = grp.samples.map((s) => (s.ts ? s.ts.slice(0, 10) : null)).filter((d): d is string => !!d)
     const driveTestDate = dtDates.length ? dtDates.sort().pop()! : new Date().toISOString().slice(0, 10)
     const district = resolveDistrict(grp.samples, sites) ?? 'Unknown'
-    const sessionName = `DT_trp_${driveTestDate.replace(/-/g, '')}_${district.replace(/\s+/g, '')}_${tech}${testType ? `_${testType}` : ''}`
+    // "gen" when every source file is a GENEX Probe log, so the name says
+    // which tool the drive came from. A mixed batch keeps "trp".
+    const sourceKind = grp.files.every((f) => /\.gen$/i.test(f)) ? 'gen' : 'trp'
+    const sessionName = `DT_${sourceKind}_${driveTestDate.replace(/-/g, '')}_${district.replace(/\s+/g, '')}_${tech}${testType ? `_${testType}` : ''}`
     sessions.push({ tech, samples, meta, sessionName, mode: '', driveTestDate, sourceFiles: grp.files, rawDecodedCount: grp.rawDecodedCount, wasCapped })
   }
   return sessions
@@ -848,9 +852,11 @@ export default function DtUploadPage() {
 
   // ── .trp upload flow ──────────────────────────────────────────────────
   async function analyzeTrpFiles(fileList: FileList) {
-    const files = Array.from(fileList).filter((f) => /\.(trp|nmf)$/i.test(f.name))
+    // A GENEX Probe log comes as a .gen/.des pair. Only the .gen is read, so
+    // a .des picked along with it is left out without an error.
+    const files = Array.from(fileList).filter((f) => /\.(trp|nmf|gen)$/i.test(f.name))
     if (!files.length) {
-      setTrpStatusMsg('No .trp/.nmf files selected.')
+      setTrpStatusMsg('No .trp/.nmf/.gen files selected.')
       return
     }
     const entries: TrpQueueEntry[] = files.map((f) => ({ fileName: f.name, status: 'pending', tech: null, error: null }))
@@ -872,9 +878,17 @@ export default function DtUploadPage() {
       setTrpQueue([...working])
       try {
         const buf = await files[i].arrayBuffer()
-        const result = await trpaAnalyzeFile(buf, files[i].name)
-        working[i] = { ...working[i], status: 'ok', tech: result.tech }
-        okResults.push({ fileName: files[i].name, tech: result.tech, servingRows: result.servingRows, events: result.events })
+        if (/\.gen$/i.test(files[i].name)) {
+          // Huawei GENEX Probe log (2026-10-09). 2G serving cell + GPS only,
+          // no events. See lib/genAnalysis.ts for what is and isn't decoded.
+          const result = genAnalyzeFile(buf, files[i].name)
+          working[i] = { ...working[i], status: 'ok', tech: result.tech }
+          okResults.push({ fileName: files[i].name, tech: result.tech, servingRows: result.servingRows, events: [] })
+        } else {
+          const result = await trpaAnalyzeFile(buf, files[i].name)
+          working[i] = { ...working[i], status: 'ok', tech: result.tech }
+          okResults.push({ fileName: files[i].name, tech: result.tech, servingRows: result.servingRows, events: result.events })
+        }
       } catch (e) {
         working[i] = { ...working[i], status: 'error', error: e instanceof Error ? e.message : String(e) }
       }
@@ -1005,7 +1019,7 @@ export default function DtUploadPage() {
       <p className="muted">
         {mode === 'template'
           ? 'Upload a CSV/TXT/XLSX drive-test template (Lat/Long/Time/Date or a combined Date-Time column, plus signal columns — column names matched flexibly).'
-          : 'Upload one or more TEMS Investigation .trp/.nmf drive-test files — each is decoded and its radio technology (4G/3G/2G) auto-detected, then grouped into one session per technology found. Mixing 4G/3G/2G files in one selection is fine.'}
+          : 'Upload one or more TEMS Investigation .trp/.nmf drive-test files — each is decoded and its radio technology (4G/3G/2G) auto-detected, then grouped into one session per technology found. Mixing 4G/3G/2G files in one selection is fine. Huawei GENEX Probe .gen logs are also accepted, for 2G only (serving cell RxLev, BCCH and BSIC along the GPS route); the .des file that comes with a .gen is not needed.'}
         {' '}Existing saved sessions are never modified or removed by an upload — a session is only ever deleted if
         you explicitly choose "Replace Old" for a detected duplicate.
       </p>
@@ -1018,7 +1032,7 @@ export default function DtUploadPage() {
               Template (CSV/XLSX)
             </div>
             <div className={mode === 'trp' ? 'feat-tab active' : 'feat-tab'} onClick={() => setMode('trp')}>
-              .trp Files (4G/3G/2G)
+              .trp / .gen Files (4G/3G/2G)
             </div>
           </div>
 
@@ -1130,9 +1144,9 @@ export default function DtUploadPage() {
                 onDrop={onTrpDrop}
                 onClick={() => trpFileInputRef.current?.click()}
               >
-                <span>Drop one or more .trp/.nmf files here, or click to browse</span>
+                <span>Drop one or more .trp/.nmf/.gen files here, or click to browse</span>
                 <div className="dt-drop-zone-hint">Technology (4G/3G/2G) is auto-detected per file — no need to sort files first.</div>
-                <input ref={trpFileInputRef} type="file" accept=".trp,.nmf" multiple onChange={onTrpFileInput} style={{ display: 'none' }} />
+                <input ref={trpFileInputRef} type="file" accept=".trp,.nmf,.gen,.des" multiple onChange={onTrpFileInput} style={{ display: 'none' }} />
               </div>
 
               {trpStatusMsg && <div className="page-status">{trpStatusMsg}</div>}

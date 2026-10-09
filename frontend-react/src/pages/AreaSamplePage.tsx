@@ -275,6 +275,7 @@ export default function AreaSamplePage() {
                   <th>RSRP</th>
                   <th>RSRQ</th>
                   <th>SINR</th>
+                  <th title="Reported by the phone when available. A value marked (est.) is estimated from SINR.">CQI</th>
                   <th>Lat</th>
                   <th>Lng</th>
                   <th>Accuracy (m)</th>
@@ -290,6 +291,7 @@ export default function AreaSamplePage() {
                     <td>{s.rsrp_dbm ?? '—'}</td>
                     <td>{s.rsrq_db ?? '—'}</td>
                     <td>{s.sinr_db ?? '—'}</td>
+                    <td>{s.cqi ?? (s.cqi_derived != null ? `${s.cqi_derived} (est.)` : '—')}</td>
                     <td>{s.lat.toFixed(5)}</td>
                     <td>{s.lng.toFixed(5)}</td>
                     <td>{s.gps_accuracy_m != null ? Math.round(s.gps_accuracy_m) : '—'}</td>

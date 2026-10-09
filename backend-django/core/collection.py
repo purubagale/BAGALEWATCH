@@ -269,12 +269,18 @@ class CollectionSessionSamplesView(APIView):
             limit = 2000
 
         if session.trace_id:
+            from .telemetry import cqi_from_sinr  # telemetry imports this module
             rows = TraceLocationSample.objects.filter(trace_id=session.trace_id).order_by('ts')[:limit]
             results = [
                 {
                     'ts': r.ts, 'lat': r.lat, 'lng': r.lng, 'accuracy_m': r.accuracy_m,
                     'network_type': r.network_type, 'pci': r.pci, 'rsrp_dbm': r.rsrp_dbm,
                     'rsrq_db': r.rsrq_db, 'sinr_db': r.sinr_db,
+                    # `cqi` is what the phone reported, often null. A trace
+                    # sample stores no estimate, so it is worked out here
+                    # from the sample's own SINR (LTE only).
+                    'cqi': r.cqi,
+                    'cqi_derived': cqi_from_sinr(r.sinr_db) if r.network_type == 'LTE' else None,
                     # TraceLocationSample has no serving-cell resolution of
                     # its own (see that model's docstring) -- left null so
                     # the frontend's declusterPlot falls back to `pci` as
@@ -295,6 +301,7 @@ class CollectionSessionSamplesView(APIView):
                     'ts': r.ts, 'lat': r.lat, 'lng': r.lng, 'accuracy_m': r.gps_accuracy_m,
                     'network_type': r.network_type, 'pci': r.pci, 'rsrp_dbm': r.rsrp_dbm,
                     'rsrq_db': r.rsrq_db, 'sinr_db': r.sinr_db,
+                    'cqi': r.cqi, 'cqi_derived': r.cqi_derived,
                     'serving_site_id': r.serving_site_id, 'serving_sector': r.serving_sector,
                 }
                 for r in rows
