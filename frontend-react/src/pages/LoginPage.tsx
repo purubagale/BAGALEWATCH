@@ -115,9 +115,9 @@ export default function LoginPage() {
         // ApiError. Conflating the two (2026-07-27) turned a real Django
         // 500 into a misleading "is the server running?" message while
         // the server was, in fact, running and responding.
-        setError(`Server error (${err.status}). Check the Django logs.`)
+        setError(`Server error (${err.status}). Please try again, or contact the administrator.`)
       } else {
-        setError('Could not reach the server. Is the Django API running?')
+        setError('Could not reach the server. Check your network connection and try again.')
       }
     }
   }

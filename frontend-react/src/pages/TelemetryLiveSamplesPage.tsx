@@ -135,9 +135,8 @@ export default function TelemetryLiveSamplesPage() {
     <div className="admin-page" style={{ maxWidth: 1200 }}>
       <h1>Telemetry Live Samples</h1>
       <p className="muted">
-        Raw, ungrouped telemetry points from the last window -- a dev tool for verifying that a test device's
-        uploads are actually landing with a real GPS fix. Not the production Coverage map (that only shows
-        aggregated cells); this shows individual points and refreshes automatically every 10s.
+        Individual signal samples from the selected window, for checking that a test device's uploads are arriving
+        with a GPS fix. The Coverage map shows averaged cells; this shows each point and refreshes every 10 seconds.
       </p>
       <div className="edit-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginBottom: 12 }}>
         <label>

@@ -228,10 +228,7 @@ function DriveTestConsentMessagePanel() {
     <section>
       <h2>Drive-test consent message</h2>
       <p className="muted">
-        The copy a host app can fetch and show a subscriber before they accept or decline drive-test participation
-        (<code>GET /api/telemetry/v1/drive-test-consent-message/</code>). Purely a convenience — the SDK shows no
-        consent screen of its own, so a deployment is equally free to hardcode its own wording and ignore this
-        entirely.
+        The message the mobile app shows a subscriber before they accept or decline drive-test participation.
       </p>
       {saveError && <div className="form-error">{saveError}</div>}
       <label>
@@ -297,9 +294,8 @@ export default function TelemetryAdminPage() {
     <div className="admin-page">
       <h1>Telemetry Admin</h1>
       <p className="muted">
-        Ingest credentials and volume overview for the crowdsourced network-telemetry pilot. Keys created here
-        authenticate the public ingest endpoint at <code>{origin}/api/telemetry/v1/samples/</code> — a separate
-        surface from this app's own login and from the API Access keys.
+        Keys and volume overview for the signal data sent by the mobile app. The keys created here are used only by
+        the mobile app. They are separate from user logins and from the API Access keys.
       </p>
 
       <section>

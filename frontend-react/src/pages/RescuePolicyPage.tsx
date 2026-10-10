@@ -81,15 +81,14 @@ export function EmergencySwitchPanel() {
     <section>
       <h2>Rescue emergency</h2>
       <p className="muted">
-        Rescue search (<code>/api/v2/rescue/lookup/</code>) is off by default. Declaring an emergency turns it on
+        Rescue search is off by default. Declaring an emergency turns it on
         for a capped number of days, for every rescue operator. It also lets a case trace start without the
         device accepting first. Every declare, change, and end is permanently logged with your account.
       </p>
       <p className="muted">
         <strong>What this does NOT do:</strong> it never lets a lookup find a phone number that was never
-        registered for rescue location through this app. It only relaxes the consent flag on numbers that already
-        enrolled -- so someone who withdrew consent (or never explicitly withdrew, under a real carrier/government
-        integration with no in-app consent screen at all) can still be found while this is active.
+        registered for rescue location through this app, and it never overrides consent. A subscriber who turned
+        rescue sharing off is not shown by Rescue Lookup, even while an emergency is active.
       </p>
 
       <div className="page-status" style={{ marginBottom: 16 }}>

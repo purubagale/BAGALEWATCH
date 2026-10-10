@@ -451,10 +451,9 @@ export default function MenuAdminPage() {
     <div className="admin-page">
       <h1>Menu Admin</h1>
       <p className="muted">
-        Manages the sidebar (Layout.tsx renders it live from this table). Submenus can nest as deep as you like —
-        pick any existing item as the parent. A new item with access "Governed by Permissions matrix" needs a
-        superadmin to grant it per-role on the Permissions page before admin/viewer can see it — same default-deny
-        behavior every other menu already has.
+        Manages the sidebar menu. Submenus can nest as deep as you like — pick any existing item as the parent. A
+        new item with access "Governed by Permissions matrix" needs a superadmin to grant it per-role on the
+        Permissions page before admin/viewer can see it.
       </p>
       <datalist id="menu-known-routes">
         {KNOWN_ROUTES.map((r) => <option key={r.path} value={r.path} label={r.label} />)}

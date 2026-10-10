@@ -165,7 +165,7 @@ export default function TelemetryCoveragePage() {
     <div className="admin-page" style={{ maxWidth: 1200 }}>
       <h1>Telemetry Coverage</h1>
       <p className="muted">
-        Crowdsourced-telemetry signal, aggregated into ~150&nbsp;m geohash cells. Each dot is one cell, colored by
+        Signal reported by subscribers' phones, averaged into cells of about 150&nbsp;m. Each dot is one cell, colored by
         {metric.key === 'confidence'
           ? ' how fresh and dense its underlying data is'
           : ` its mean ${metric.label} for the selected network`}

@@ -105,9 +105,9 @@ export default function DeviceLocationTracePage() {
     <div className="admin-page">
       <h1>Device Location Trace</h1>
       <p className="muted">
-        Resolves a phone number or IMEI to the device's latest position from the regular telemetry pipeline --
-        separate from Rescue Lookup, which only ever searches devices that separately opted in to the Rescue
-        Location beacon. It works only while an emergency is declared, and every search needs a case reference.
+        Finds the latest position of the device linked to a phone number or IMEI, from the signal data it has
+        shared. This is separate from Rescue Lookup, which only searches devices that opted in to rescue location
+        sharing. It works only while an emergency is declared, and every search needs a case reference.
         Every search is permanently logged with your account and the case reference, whether or not it finds
         anything.
       </p>

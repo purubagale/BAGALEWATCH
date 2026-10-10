@@ -30,12 +30,9 @@ export default function RescueEnrolledPage() {
     <div className="admin-page">
       <h1>Rescue Enrolled Devices</h1>
       <p className="muted">
-        Every device currently opted in to the Rescue Location beacon (<code>core/rescue.py</code>'s
-        RescueEnrolledListView) -- msisdn, device hash, last known position, and phone model/manufacturer where that
-        device has also sent identity info. Requires an active emergency, same as Rescue Lookup. Loading this list is
-        permanently logged with your account, exactly like a single lookup -- this exists as an explicit, reviewable
-        exception to Rescue Lookup's own "never browse, one number at a time" rule, not a quiet reinterpretation of
-        it, and may be withdrawn later if that's judged to matter more than the convenience.
+        Every device currently opted in to rescue location sharing: phone number, device, last known position, and
+        phone model where the device has sent it. Requires an active emergency, same as Rescue Lookup. Loading this
+        list is permanently logged with your account, exactly like a single lookup.
       </p>
 
       <div className="admin-page-actions" style={{ marginBottom: 12 }}>

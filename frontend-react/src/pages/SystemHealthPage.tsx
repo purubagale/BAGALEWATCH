@@ -51,8 +51,7 @@ export default function SystemHealthPage() {
     <div className="admin-page">
       <h1>System Health</h1>
       <p className="muted">
-        Live diagnostic snapshot, refreshed every 15 seconds. This app is a single Django service, not a cluster of
-        microservices, so this reports on what Django itself can observe — not a per-container uptime grid.
+        Live diagnostic snapshot of the application server, refreshed every 15 seconds.
       </p>
 
       <div className={overallOk ? 'form-success' : 'form-error'} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -151,8 +150,7 @@ export default function SystemHealthPage() {
       </div>
 
       <p className="muted" style={{ fontSize: 11, marginTop: 20 }}>
-        The telemetry-maintenance background loop (monthly partition rollover/retention) has no status model yet and
-        isn't represented above.
+        The telemetry data-retention job is not shown above.
       </p>
       <p className="muted" style={{ fontSize: 10 }}>Last fetched: {new Date(dataUpdatedAt).toLocaleTimeString()}</p>
     </div>

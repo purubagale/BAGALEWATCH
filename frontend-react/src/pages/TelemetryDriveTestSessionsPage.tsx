@@ -640,9 +640,8 @@ export default function TelemetryDriveTestSessionsPage() {
     <div className="admin-page" style={{ maxWidth: 1200 }}>
       <h1>Telemetry Drive Test</h1>
       <p className="muted">
-        Live, scoped drive-test sessions over the crowdsourced telemetry pipeline. Enroll specific test devices, start
-        a session, and watch their points land in real time -- unlike the raw Live Samples dev tool, this only ever
-        shows devices you explicitly enrolled for this run.
+        Live drive-test sessions using phones that are sharing signal data. Pick the devices, start a session, and
+        watch their points arrive in real time. Only the devices you picked for this session are shown.
       </p>
 
       <NewSessionForm onCreated={setSelectedId} />
