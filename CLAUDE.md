@@ -1,6 +1,6 @@
 # DT-WATCH BTS v2 — Project Brief
 
-> Generated 2026-10-02, last updated 2026-10-08. This file is the fast-load orientation doc for this
+> Generated 2026-10-02, last updated 2026-10-11. This file is the fast-load orientation doc for this
 > repo — read this instead of re-deriving architecture/status from scratch.
 > For an always-fresh, DB-introspected reference (every model field, every
 > menu item, every role's permission counts), use the in-app Documentation
@@ -42,7 +42,7 @@ backend-django/core/*.py       One file per feature area (not MVC folders) —
                                 telemetry_admin.py, roles.py, sso.py. models.py
                                 holds every model; serializers.py every
                                 serializer; urls.py wires it all together.
-backend-django/core/migrations/  113 migrations as of 0113. Numbered sequentially,
+backend-django/core/migrations/  117 migrations as of 0117. Numbered sequentially,
                                   no squashing.
 frontend-react/src/pages/*.tsx  51 pages, one per route. Most are React.lazy()
                                  imported in App.tsx except Login/Sites/Dashboard
@@ -104,6 +104,30 @@ docs/                            Dated audits, server migration guides, runbook
   wait for `docker info` to succeed.
 - **Use the Edit tool for file changes, one file at a time.** A Bash or
   Python script that edits several files at once is denied in auto mode.
+- **After recreating `django`, the local frontend can answer 502** because
+  nginx still holds the old container address. `docker compose restart
+  frontend` fixes it.
+- **On-screen text is plain user language.** No file, class, model,
+  API-path or job names in page intros, hints, errors or menu
+  descriptions. Functional details on superadmin-only screens (the
+  "Using a key" examples on API Access and Telemetry Admin) may stay.
+  Menu descriptions live in the database (`MenuItem.description`, shown
+  on Dashboard cards), so changing one needs a data migration that only
+  updates rows still holding the seeded text (see 0116, 0117).
+- **`index.html` is served with `Cache-Control: no-cache`**
+  (`frontend-react/nginx.conf`). Without it browsers kept an old build
+  after a deploy. Hashed assets stay immutable.
+- **Signed-in screenshots: the user signs in, never mint a token.** Open
+  a headed Edge with `--remote-debugging-port` and a scratchpad profile
+  on `/login`, wait for the user to sign in, then drive the same tab
+  over CDP. Force light theme (`localStorage['dtwatch_theme']='light'`)
+  and disable the cache. Skip pages that list real phone numbers,
+  usernames or IPs. Creating a JWT from the Django shell for this is
+  denied in auto mode and must not be worked around.
+- **Local test fixtures to keep:** users `p5_sup_4110d6`,
+  `p5_viewer_4110d6`, `p5_rescue_4110d6`, `p5_custom_4110d6` and role
+  `p5id4110d6` exist only in the local database. The user wants them kept
+  for future tests. They must not exist on prod.
 - **A new page on an opaque route needs four things:** an entry in
   `constants/opaqueRoutes.ts`, a lazy import + route in `App.tsx`, a
   `KNOWN_ROUTES` entry in `MenuAdminPage.tsx`, and a seed-`MenuItem`
@@ -126,7 +150,9 @@ docs/                            Dated audits, server migration guides, runbook
 - XML comments in Android resources must not contain `--`.
 - adb: `/d/DevCache/Android/Sdk/platform-tools/adb.exe`. **Install only on
   the Huawei** (serial `JYNBB18411157971`). Copy each new APK to the
-  Desktop as `dtwatchTelemetry.apk`.
+  Desktop as `dtwatchTelemetry.apk`. On 2026-10-10 the user asked once
+  for an install on an Oppo; it has the newest build, the Huawei and a
+  Redmi still have the older one.
 - Push goes through a staging clone, `C:\mobile-push\nepal-telemetry-mobile`
   (branch `mobile`). Sync with the PowerShell tool (Bash mangles `/E`):
   `robocopy "<src>" "C:\mobile-push\nepal-telemetry-mobile" /E /XD build
@@ -168,8 +194,8 @@ serving site.
 
 **Done and pushed, 2026-10-03 to 2026-10-08** (dtwatch branch `telemetry`
 at `3146e55`; mobile branch `mobile` at `43800bf`). Prod was confirmed
-deployed through `644cfc0`; everything later, including migrations
-0111-0113, still has to be pulled and migrated there by the user.
+deployed through `644cfc0`; everything later still has to be pulled and
+migrated there by the user.
 
 - **Emergency switch** (`core/emergency.py`, shared `EmergencySwitchPanel`
   exported from `RescuePolicyPage.tsx`). Rescue search is off unless a
@@ -218,12 +244,61 @@ deployed through `644cfc0`; everything later, including migrations
   registration form hidden once registered, and the SDK's
   `setPushToken` / `answerSampleRequest` for Area Sample.
 
+**Done 2026-10-09 to 2026-10-11** (pushed through `11a65ea`; `ee36507`
+and later are local only until the user asks for a push). Prod still
+needs migrations 0111-0117.
+
+- **Performance and security audit fixes** (`80ded60`): subquery sample
+  counts, `/media/` limited to `branding/` and `menu_icons/`, per-path
+  nginx body limits, login-only API schema, security headers, single-use
+  refresh tokens (simplejwt blacklist), smaller Django image.
+- **CQI estimation module** (`3905ed9`) and **number-to-device links in
+  one table** that both lookup tools read (`11a65ea`).
+- **Strict consent in rescue lookup.** A subscriber who turned rescue
+  sharing off is not shown by any lookup tool, even during an emergency.
+  The on-screen text and two menu descriptions that said otherwise were
+  corrected (`ee36507`, migrations 0116 and 0117).
+- **Gunicorn size from `.env`**: `GUNICORN_WORKERS`, `GUNICORN_THREADS`
+  (`gunicorn.conf.py`). Unset keeps the computed count.
+- **Manuals** (Claude Docs artifacts, private to the user): Technical
+  `claude.ai/code/artifact/5b69c28d-3db4-4cb1-beca-7214284b94f6`, Admin
+  `.../918037c5-779b-4c67-a7f6-dd4eaf4d357d`, Viewer
+  `.../39adc7fe-f96f-4865-a753-514e4a52d1bf`, and the earlier combined
+  one `.../c17ebaa6-c362-4424-83b3-48b63e41d5c4`. Light-theme web
+  screenshots from a superadmin session; no mobile screenshots yet.
+
+**Prod host facts** (read-only check on `ssw-prod`, reported 2026-10-11):
+
+- 8 cores, 19 GiB RAM, shared with about 50 other containers.
+- Postgres is on a separate machine (`POSTGRES_HOST=172.16.62.126`); the
+  prod compose file has no `db` service. Postgres tuning needs that
+  machine's numbers and whether other apps share it.
+- The prod compose file runs only django, frontend, redis, go-worker and
+  node-gateway. The four maintenance services (site-sync,
+  telemetry-maintenance, telemetry-bin-roller, audit-log-maintenance)
+  are NOT running there, so pruning, coverage roll-up and site sync do
+  not happen on prod unless something else runs them.
+- `dtwatch-django-1` runs as root, and `/data/dtwatch/data/media` is
+  `root:root 755`. Moving the containers to a non-root user needs a
+  one-time `chown` of that folder first, or uploads break.
+- Gunicorn there resolved to 12 workers x 4 threads, about 1 GB. Set
+  `GUNICORN_WORKERS=4` (or 5) in prod `.env` once the change is deployed.
+
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an
 identified device. It was declined; Area Sample is the agreed
 replacement.
 
 **Open items:**
+- Push the local commits and deploy to prod (pull, `docker compose build
+  django frontend`, `docker compose up -d`).
+- Non-root containers: not done. Needs a chosen UID (suggested 10001)
+  and the prod `chown` above.
+- Restricting `/admin/` by source address: not done. Waiting for the
+  admin IP range(s) from the user.
+- Decide how the four maintenance jobs run on prod.
+- Mobile app screenshots for the manuals; newest APK on the Huawei and
+  Redmi.
 - Area Sample end-to-end test on prod with a real push.
 - System Health page shows a blank "Telemetry roll-up" on prod; the local
   API returns a value. Waiting for the prod Network-tab response.
