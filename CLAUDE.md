@@ -42,7 +42,7 @@ backend-django/core/*.py       One file per feature area (not MVC folders) —
                                 telemetry_admin.py, roles.py, sso.py. models.py
                                 holds every model; serializers.py every
                                 serializer; urls.py wires it all together.
-backend-django/core/migrations/  117 migrations as of 0117. Numbered sequentially,
+backend-django/core/migrations/  119 migrations as of 0119. Numbered sequentially,
                                   no squashing.
 frontend-react/src/pages/*.tsx  51 pages, one per route. Most are React.lazy()
                                  imported in App.tsx except Login/Sites/Dashboard
@@ -246,9 +246,9 @@ migrated there by the user.
   registration form hidden once registered, and the SDK's
   `setPushToken` / `answerSampleRequest` for Area Sample.
 
-**Done 2026-10-09 to 2026-10-11** (pushed through `11a65ea`; `ee36507`
-and later are local only until the user asks for a push). Prod still
-needs migrations 0111-0117.
+**Done 2026-10-09 to 2026-10-11** (all pushed on 2026-10-11: dtwatch
+`telemetry` at `a9955fe`, mobile `mobile` at `490a24f`). None of it is on
+prod yet; prod still needs migrations 0111-0119.
 
 - **Performance and security audit fixes** (`80ded60`): subquery sample
   counts, `/media/` limited to `branding/` and `menu_icons/`, per-path
@@ -302,7 +302,7 @@ the live server's own configuration):
   deleted by the user (`189ac10`); folder deletion is denied in auto
   mode, so hand such steps to the user with PowerShell syntax.
 
-**Site photos** (2026-10-11, built, NOT committed in either repo, not on
+**Site photos** (2026-10-11, committed and pushed in both repos, not on
 prod). `core/site_photo.py`, model `SitePhoto` (migrations 0118, 0119),
 `SitePhotoCard.tsx`, `SitePhotosPage.tsx` (opaque route `/p6h2sv`, admin),
 a "Site Photos" section on the site page, and `SitePhotoActivity.kt` in
@@ -334,8 +334,14 @@ identified device. It was declined; Area Sample is the agreed
 replacement.
 
 **Open items:**
-- Push the local commits and deploy to prod (pull, `docker compose build
-  django frontend`, `docker compose up -d --remove-orphans`).
+- Deploy to prod (back up the database, pull, `docker compose build
+  django frontend`, `docker compose up -d --remove-orphans`). The first
+  maintenance run there prunes old audit rows and telemetry partitions.
+- After that deploy: look at the two site photo web pages, and test the
+  capture screen on the Huawei (compass direction against a known
+  bearing first). Check free disk in prod's media folder.
+- The four manuals were updated on 2026-10-11 for the admin closure, the
+  in-container jobs and site photos; they have no site photo screenshots.
 - Non-root containers: skipped by the user's decision.
 - Before the prod deploy, check no cron job there already runs the
   maintenance commands.
