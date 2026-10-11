@@ -14,10 +14,13 @@ matching how v1's own server side (`bagalewatch_api.py`'s `dt-sessions`
 resource) has zero parsing logic either; all of v1's parsing happens in
 the browser before the already-decoded session ever reaches the server.
 """
+import mimetypes
+
 from django.contrib.gis.geos import Point
 from django.contrib.gis.measure import D
 from django.db.models import Avg, Count, F, IntegerField, OuterRef, Subquery
 from django.db.models.functions import Cast, Coalesce, Floor
+from django.http import FileResponse
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -184,6 +187,25 @@ def _attachment_count_expr():
     return Coalesce(Subquery(counts), 0)
 
 
+def sample_count_expr():
+    """Annotation for how many DriveTestSample rows a session has, as a
+    correlated Subquery rather than `Count('samples')` (2026-10-09 perf
+    audit).
+
+    `Count('samples')` joins every sample onto its session row and then
+    groups by every session column, `meta` included. Measured on 4
+    sessions / 47,014 samples: 4.4 s, with a 19 MB on-disk sort and the
+    attachment subquery run once per SAMPLE instead of once per session.
+    The cost grew with the total number of samples ever uploaded. As a
+    subquery this is one index-only count per session.
+    """
+    counts = (
+        DriveTestSample.objects.filter(session=OuterRef('pk'))
+        .order_by().values('session').annotate(c=Count('id')).values('c')
+    )
+    return Coalesce(Subquery(counts, output_field=IntegerField()), 0)
+
+
 # Hard cap on the unpaginated `dt-sessions/` list (2026-10-02 perf audit
 # follow-up) -- same reasoning as RF_REPORT_LIST_CAP in rf_reports.py:
 # this table is append-only for as long as the O&M team keeps doing drive
@@ -222,7 +244,7 @@ class DriveTestSessionViewSet(
     was issuing one extra query per session on every list call.
     """
     queryset = DriveTestSession.objects.all().select_related('uploaded_by').annotate(
-        sample_count=Count('samples'), attachment_count=_attachment_count_expr()
+        sample_count=sample_count_expr(), attachment_count=_attachment_count_expr()
     ).prefetch_related('activity_links__activity')
 
     def get_queryset(self):
@@ -505,7 +527,7 @@ class DriveTestSessionViewSet(
 
         sessions = list(
             DriveTestSession.objects.filter(id__in=by_session.keys())
-            .annotate(sample_count=Count('samples'), attachment_count=_attachment_count_expr())
+            .annotate(sample_count=sample_count_expr(), attachment_count=_attachment_count_expr())
             .prefetch_related('activity_links__activity')
         )
         for session in sessions:
@@ -656,7 +678,12 @@ class DriveTestSessionViewSet(
 
 
 class DriveTestSessionAttachmentDetailView(APIView):
-    """`DELETE /api/v2/dt-sessions/<session_id>/attachments/<attachment_id>/`
+    """`GET /api/v2/dt-sessions/<session_id>/attachments/<attachment_id>/`
+    — streams one attachment to a logged-in user (2026-10-09 security
+    audit). Before this, attachments were only reachable as raw
+    `/media/...` URLs, which were served with no login at all.
+
+    `DELETE` on the same URL
     — removes one attachment (and its stored file). A flat URL rather
     than a second nested @action on the viewset (DRF's router doesn't
     cleanly support a detail action with its OWN extra path segment
@@ -667,7 +694,28 @@ class DriveTestSessionAttachmentDetailView(APIView):
     Admin/superadmin only, matching every other action that changes a
     session (create/destroy/samples/remarks/attachments-upload above).
     """
-    permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
+    def get_permissions(self):
+        # Reading an attachment is the same tier as reading the session.
+        if self.request.method == 'GET':
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), IsAdminOrSuperadmin()]
+
+    def get(self, request, session_id, attachment_id):
+        try:
+            attachment = DriveTestSessionAttachment.objects.get(pk=attachment_id, session_id=session_id)
+        except DriveTestSessionAttachment.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=404)
+        try:
+            file_obj = attachment.file.open('rb')
+        except (FileNotFoundError, ValueError):
+            return Response({'detail': 'The stored file is missing.'}, status=404)
+        content_type, _ = mimetypes.guess_type(attachment.original_filename or '')
+        # Always an attachment, never inline: an uploaded .html or .svg
+        # must not be rendered on this origin.
+        return FileResponse(
+            file_obj, content_type=content_type or 'application/octet-stream',
+            as_attachment=True, filename=attachment.original_filename or f'attachment_{attachment.pk}',
+        )
 
     def delete(self, request, session_id, attachment_id):
         try:

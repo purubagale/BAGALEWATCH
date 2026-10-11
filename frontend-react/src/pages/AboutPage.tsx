@@ -75,9 +75,7 @@ export default function AboutPage() {
 
       {APP_VERSION === 'dev' && (
         <p className="muted about-dev-note">
-          This bundle reports <code>dev</code>, meaning it was built with a plain{' '}
-          <code>docker compose build</code> rather than through <code>build-push.sh</code>,
-          so it carries no release version.
+          This is a development build, so it carries no release version.
         </p>
       )}
     </div>

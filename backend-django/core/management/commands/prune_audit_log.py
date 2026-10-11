@@ -50,6 +50,11 @@ class Command(BaseCommand):
         if not dry:
             old_access.delete()
             old_audit.delete()
+            # Expired refresh-token records (2026-10-09): the simplejwt
+            # blacklist app keeps one row per issued refresh token and
+            # never removes them on its own.
+            from django.core.management import call_command
+            call_command('flushexpiredtokens')
         verb = 'Would remove' if dry else 'Removed'
         self.stdout.write(self.style.SUCCESS(
             f'{verb} {access_count} access-log row(s) and {audit_count} audit-event row(s). '

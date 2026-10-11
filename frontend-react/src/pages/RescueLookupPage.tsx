@@ -503,6 +503,14 @@ export default function RescueLookupPage() {
                   </div>
                   <div className="report-card-label">Last seen</div>
                 </div>
+                <div className="report-card">
+                  <div className="report-card-val" style={{ fontSize: 15 }}>
+                    {result?.device_model || 'Unknown model'} <code>{result?.device ?? ''}</code>
+                  </div>
+                  <div className="report-card-label">
+                    Device{(result?.device_count ?? 1) > 1 ? ` (newest of ${result?.device_count} enrolled phones)` : ''}
+                  </div>
+                </div>
               </div>
             </>
           )}
@@ -651,6 +659,7 @@ export default function RescueLookupPage() {
                     <th>Accuracy</th>
                     <th>Source</th>
                     <th>Last seen</th>
+                    <th>Device</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -663,6 +672,7 @@ export default function RescueLookupPage() {
                       <td>{r.accuracy_m != null ? `±${r.accuracy_m} m` : '-'}</td>
                       <td>{r.source ?? '-'}</td>
                       <td>{r.last_seen_ts ? new Date(r.last_seen_ts).toLocaleString() : '-'}</td>
+                      <td>{r.found ? `${r.device_model || 'Unknown model'} ${r.device ?? ''}${(r.device_count ?? 1) > 1 ? ` (1 of ${r.device_count})` : ''}` : '-'}</td>
                     </tr>
                   ))}
                 </tbody>

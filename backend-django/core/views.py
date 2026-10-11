@@ -5,7 +5,8 @@ from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.core.cache import cache
 from django.db import connection, transaction
-from django.db.models import Count, Exists, OuterRef, Q
+from django.db.models import Count, Exists, IntegerField, OuterRef, Q, Subquery
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from django.core.files.base import ContentFile
@@ -14,6 +15,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import sso
@@ -389,6 +391,19 @@ class LogoutView(APIView):
         from .auth_log import log_auth_event
         log_auth_event(request, 'logout', user=request.user)
 
+        # Revoke this session's refresh token (2026-10-09), so a copy of it
+        # cannot mint new access tokens after sign-out. Optional in the
+        # body: an older client that sends none still logs out as before.
+        # Only the caller's own token is accepted.
+        raw_refresh = request.data.get('refresh') if hasattr(request.data, 'get') else None
+        if raw_refresh:
+            try:
+                token = RefreshToken(raw_refresh)
+                if str(token.get('user_id')) == str(request.user.pk):
+                    token.blacklist()
+            except TokenError:
+                pass  # already expired or revoked: nothing left to do
+
         logout_url = sso.end_session_url_for(request.user)
         if logout_url:
             return Response({'keycloak_logout_url': logout_url})
@@ -555,7 +570,13 @@ class SiteViewSet(viewsets.ModelViewSet):
         return result
 
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
+        # Load only the columns SiteListSerializer returns (2026-10-09 perf
+        # audit). Full rows carry live_raw and the per-tech KPI JSON, which
+        # this list never sends: loading them for ~5,300 sites took 423 ms
+        # against 164 ms without. Chosen over a response cache so an edit
+        # shows up on the very next request.
+        list_fields = [f for f in SiteListSerializer.Meta.fields if f != 'techs']
+        queryset = self.filter_queryset(self.get_queryset()).only(*list_fields, 'operational_technologies')
         page = self.paginate_queryset(queryset)
         target = page if page is not None else queryset
         context = self.get_serializer_context()
@@ -650,10 +671,14 @@ class SiteViewSet(viewsets.ModelViewSet):
         update/destroy above) -- viewing this panel needs no more
         privilege than viewing the site itself.
         """
+        # Local import: drive_test.py imports IsAdminOrSuperadmin from this
+        # module, so a top-level import here would be circular.
+        from .drive_test import sample_count_expr
+
         site = self.get_object()
         qs = (
             DriveTestSession.objects.filter(meta__nearby_site_ids__contains=[site.pk])
-            .annotate(sample_count=Count('samples'))
+            .annotate(sample_count=sample_count_expr())
             .order_by('-date', '-saved_at')[: self.DT_SESSIONS_LIMIT]
         )
         return Response(SiteDtSessionSerializer(qs, many=True).data)
@@ -905,7 +930,19 @@ class SiteSearchView(APIView):
         if sector_expansion and sector_expansion not in ('all', 'same_latlong', 'different_latlong'):
             return Response({'detail': 'sector_expansion must be "all", "same_latlong", or "different_latlong".'}, status=400)
 
-        qs = qs.annotate(sector_count=Count('sectors', distinct=True)).order_by('id')
+        # Sector count as a correlated subquery, and the big JSON columns
+        # left out (2026-10-09 perf audit). `Count('sectors')` joined every
+        # sector onto its site and grouped by every site column, live_raw
+        # included; nothing below reads the deferred columns.
+        sector_counts = (
+            Sector.objects.filter(site_id=OuterRef('pk'))
+            .order_by().values('site_id').annotate(c=Count('id')).values('c')
+        )
+        qs = (
+            qs.annotate(sector_count=Coalesce(Subquery(sector_counts, output_field=IntegerField()), 0))
+            .defer('live_raw', 'kpi_2g_json', 'kpi_3g_json')
+            .order_by('id')
+        )
         # Sectors only need to be prefetched (avoiding an N+1 query in
         # site_matches_sector_expansion's per-site loop below) when a
         # sector-expansion search is actually active — every other filter

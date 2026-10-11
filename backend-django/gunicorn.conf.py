@@ -39,11 +39,34 @@
 # comfortably enough for 100 people whose actual requests are short and
 # bursty, not 100 simultaneous multi-second queries.
 import multiprocessing
+import os
 
 bind = '0.0.0.0:8000'
 worker_class = 'gthread'
-workers = min((multiprocessing.cpu_count() * 2) + 1, 12)
-threads = 4
+
+
+# Worker count (2026-10-11) -- 2 x cores + 1, at most MAX_COMPUTED_WORKERS.
+# The cap was 12, which assumed this app has the machine to itself. The
+# prod host has 8 cores but is shared with about 50 other containers, so
+# it took all 12 (about 1 GB). Workers are sized to the CPU share the app
+# may use, not to the number of users: 4 workers x 4 threads is 16
+# requests in flight at once, and most of a request is spent waiting on
+# Postgres, which threads handle. GUNICORN_WORKERS / GUNICORN_THREADS in
+# .env override this on a host that can give more. Unset, empty or not a
+# positive number: the computed value.
+MAX_COMPUTED_WORKERS = 4
+
+
+def _positive_int(name, default):
+    try:
+        value = int(os.environ.get(name, ''))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+workers = _positive_int('GUNICORN_WORKERS', min((multiprocessing.cpu_count() * 2) + 1, MAX_COMPUTED_WORKERS))
+threads = _positive_int('GUNICORN_THREADS', 4)
 
 # Same 120s kept from the original Dockerfile CMD — a real large
 # Site/Sector Excel import can legitimately take a while even with the

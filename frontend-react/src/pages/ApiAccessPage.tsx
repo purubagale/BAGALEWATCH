@@ -245,7 +245,7 @@ export default function ApiAccessPage() {
         <p className="muted">
           Send it as a header on every request: <code>X-API-Key: bw_&lt;your key&gt;</code>. Full endpoint list and
           request/response shapes are in the API schema at <code>{origin}/api/v2/docs/</code> (the external endpoints
-          are grouped under <code>/api/external/v1/</code> there too).
+          are grouped under <code>/api/external/v1/</code> there too). That page needs a signed-in admin session.
         </p>
         <pre className="code-block">
 {`curl -H "X-API-Key: bw_..." ${origin}/api/external/v1/sites/?region=Bagmati%20Province

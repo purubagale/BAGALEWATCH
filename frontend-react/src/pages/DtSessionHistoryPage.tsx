@@ -2,7 +2,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
-import { apiErrorMessage, apiJson } from '../api/client'
+import { ApiError, apiErrorMessage, apiFetch, apiJson } from '../api/client'
 import {
   DT_SESSION_GC_TIME,
   useDeleteDtSession,
@@ -254,6 +254,22 @@ export default function DtSessionHistoryPage() {
   const [editingRemarks, setEditingRemarks] = useState(false)
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const attachmentInputRef = useRef<HTMLInputElement | null>(null)
+  // Attachments are behind login (2026-10-09), so a plain <a href> cannot
+  // open them: fetch with the JWT and save the blob.
+  const downloadAttachment = async (url: string, filename: string) => {
+    setAttachmentError(null)
+    try {
+      const res = await apiFetch(url)
+      if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null))
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(await res.blob())
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } catch (err) {
+      setAttachmentError(apiErrorMessage(err, 'Could not download this file.'))
+    }
+  }
   const updateRemarks = useUpdateDtSessionRemarks(selectedSessionId ?? undefined)
   const uploadAttachments = useUploadDtSessionAttachments(selectedSessionId ?? undefined)
   const deleteAttachment = useDeleteDtSessionAttachment(selectedSessionId ?? undefined)
@@ -924,7 +940,13 @@ export default function DtSessionHistoryPage() {
                               {sessionDetail.attachments.map((a) => (
                                 <li key={a.id}>
                                   {a.url ? (
-                                    <a href={a.url} target="_blank" rel="noreferrer">{a.original_filename || `Attachment ${a.id}`}</a>
+                                    <button
+                                      type="button"
+                                      className="btn-link"
+                                      onClick={() => downloadAttachment(a.url as string, a.original_filename || `attachment_${a.id}`)}
+                                    >
+                                      {a.original_filename || `Attachment ${a.id}`}
+                                    </button>
                                   ) : (
                                     <span>{a.original_filename || `Attachment ${a.id}`}</span>
                                   )}

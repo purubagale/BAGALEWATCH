@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build-push.sh — Build, tag, and push the four DT-WATCH v2
+# build-push.sh — Build, tag, and push the two DT-WATCH v2
 # images to Nexus.
 #
 # Deliberately the same shape as dutychart/build-push.sh and
@@ -31,22 +31,20 @@
 #   - any other branch  -> `-dev` is enforced (e.g. v1.2.0-dev), never `latest`
 #   Enforced regardless of whether VERSION came from the prompt or from $1.
 #
-# Builds and pushes FOUR components. Directory -> image name:
+# Builds and pushes TWO components. Directory -> image name:
 #   backend-django/  -> $REGISTRY/$PROJECT_NAME/django
-#   backend-node/    -> $REGISTRY/$PROJECT_NAME/node-gateway
-#   backend-go/      -> $REGISTRY/$PROJECT_NAME/go-worker
 #   frontend-react/  -> $REGISTRY/$PROJECT_NAME/frontend
 #
 # Tags pushed to Nexus:
 #   - Versioned:  <image>:$VERSION
 #   - Immutable:  <image>:$VERSION-BUILDNO-NPTTIME-GITSHA  (identical across
-#                 all four — one build, one correlatable tag)
+#                 both — one build, one correlatable tag)
 #   - Latest:     <image>:latest (skipped for prerelease versions, and when
 #                 NO_LATEST=1)
 #
 # Environment:
 #   PLATFORMS      target platform(s), default linux/amd64
-#   ONLY           build one component (django|node-gateway|go-worker|frontend)
+#   ONLY           build one component (django|frontend)
 #   NO_LATEST=1    never tag `latest`
 #   NEXUS_USER / NEXUS_PASSWORD   non-interactive docker login
 #   SKIP_LOGIN=1 / SKIP_GIT_TAG=1 / FORCE_GIT_TAG=1 / PUSH_GIT_TAG=y|n
@@ -100,8 +98,6 @@ PLATFORMS="${PLATFORMS:-$DEFAULT_PLATFORMS}"
 # than deriving one from the other with string surgery.
 COMPONENTS=(
   "backend-django:django"
-  "backend-node:node-gateway"
-  "backend-go:go-worker"
   "frontend-react:frontend"
 )
 
@@ -111,7 +107,7 @@ if [[ -n "${ONLY:-}" ]]; then
     [[ "${entry#*:}" == "$ONLY" ]] && filtered+=("$entry")
   done
   if [[ ${#filtered[@]} -eq 0 ]]; then
-    echo "Error: ONLY='$ONLY' matches no component. Valid: django node-gateway go-worker frontend" >&2
+    echo "Error: ONLY='$ONLY' matches no component. Valid: django frontend" >&2
     exit 1
   fi
   COMPONENTS=("${filtered[@]}")
@@ -208,7 +204,7 @@ if [[ "${SKIP_LOGIN:-}" != "1" ]]; then
   fi
 fi
 
-# Build metadata computed ONCE, before any build, so all four images share an
+# Build metadata computed ONCE, before any build, so both images share an
 # identical immutable tag and can be correlated as a single release. Computed
 # per component instead, a second boundary mid-build yields tags that no
 # longer look like one build.

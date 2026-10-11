@@ -8,13 +8,15 @@ though in practice they're on entirely different ports/hosts anyway (see
 docs/RUNBOOK.md).
 """
 from django.conf import settings
-from django.contrib import admin
 from django.urls import path, include, re_path
 from django.views.static import serve as serve_media
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    # Django admin is not mounted (removed 2026-10-11). It was a second
+    # password login outside the app's own lockout, MFA and IP blocking.
+    # django.contrib.admin stays in INSTALLED_APPS only so its existing
+    # table and migrations are left alone.
     path('api/v2/', include('core.urls')),
     path('api/v2/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/v2/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
@@ -52,7 +54,16 @@ urlpatterns = [
 # so they won't survive a container rebuild. Worth a volume in a later
 # pass if that matters; out of scope for this fix.
 urlpatterns += [
-    re_path(r'^media/(?P<path>.*)$', serve_media, {'document_root': settings.MEDIA_ROOT}),
+    # Only the two folders the browser loads as plain <img> before or
+    # without a JWT (the branding logo on the login page, menu icons) are
+    # public (2026-10-09 security audit). This route has no login check,
+    # and it used to cover all of MEDIA_ROOT: site_diff/*.csv had fixed,
+    # guessable names, and DT / RF report attachments were protected only
+    # by a random filename prefix. Those now go through authenticated API
+    # views (DriveTestSessionAttachmentDetailView,
+    # RfReportAttachmentDetailView); site_diff is read from the host's
+    # ./data/media bind mount.
+    re_path(r'^media/(?P<path>(?:branding|menu_icons)/.*)$', serve_media, {'document_root': settings.MEDIA_ROOT}),
     # Same DEBUG=False workaround as MEDIA_URL above, applied to STATIC_URL
     # (2026-09-01 fix) -- Django admin's own CSS/JS come from
     # django.contrib.staticfiles, which needs STATIC_ROOT populated via

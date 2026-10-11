@@ -2191,6 +2191,9 @@ class TelemetrySample(models.Model):
     TRIGGERS = [
         ('periodic', 'Periodic'), ('handover', 'Handover'), ('manual', 'Manual'),
         ('drive', 'Drive test'), ('drive_start', 'Drive start'), ('drive_stop', 'Drive stop'),
+        # A fresh reading an engineer asked an area's sharing devices for
+        # (2026-10-08, core/area_sample.py).
+        ('on_demand', 'On demand'),
     ]
 
     device_id = models.CharField(max_length=64, db_index=True)
@@ -2593,6 +2596,12 @@ class DeviceLocationTraceLog(models.Model):
     query_value = models.CharField(max_length=32)
     found = models.BooleanField(default=False)
     queried_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # Required since 2026-10-08, when the tool became usable only during a
+    # declared emergency. Blank / null on rows from before that.
+    case_reference = models.CharField(max_length=120, blank=True, default='')
+    emergency = models.ForeignKey(
+        'EmergencyDeclaration', null=True, blank=True, on_delete=models.SET_NULL, related_name='device_location_traces'
+    )
 
     class Meta:
         db_table = 'v2_device_location_trace_log'
@@ -3073,6 +3082,43 @@ class TelemetrySpeedResult(models.Model):
         indexes = [models.Index(fields=['device_id', 'ts'], name='v2_tel_speed_dev_ts_idx')]
 
 
+class TelemetryPushToken(models.Model):
+    """Push address of a device that is currently sharing (2026-10-08), so an
+    engineer can ask an area's sharing devices for a fresh reading
+    (core/area_sample.py). Keyed by the same hashed device_id as
+    TelemetrySample. It holds no phone number, IMEI or position. The app
+    sends it when sharing starts and removes it when sharing stops, so a row
+    here means the device is opted in right now."""
+    device_id = models.CharField(max_length=64, unique=True)
+    fcm_token = models.CharField(max_length=512)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_telemetry_push_token'
+
+
+class AreaSampleRequest(models.Model):
+    """One request for fresh readings from an area (2026-10-08). Records who
+    asked, for where, and how many devices were asked. The readings
+    themselves are ordinary TelemetrySample rows with trigger_reason
+    'on_demand'; they are found by area and time, not by a link to this row."""
+    requested_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='area_sample_requests'
+    )
+    label = models.CharField(max_length=120, blank=True, default='')
+    lat = models.FloatField()
+    lng = models.FloatField()
+    radius_km = models.FloatField()
+    lookback_hours = models.PositiveSmallIntegerField(default=24)
+    devices_in_area = models.PositiveIntegerField(default=0)
+    pushes_sent = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'v2_area_sample_request'
+        ordering = ['-created_at']
+
+
 class TelemetryDriveTestConsent(models.Model):
     """Set via the SDK's `setDriveTestConsent()` call
     (core/consent.py's DriveTestConsentView) — the same ingest-key-
@@ -3416,3 +3462,154 @@ class TraceSpeedResult(models.Model):
     class Meta:
         db_table = 'v2_trace_speed_result'
         ordering = ['ran_at']
+
+
+class SubscriberDevice(models.Model):
+    """One row per (phone number, device) pair (2026-10-09): the single
+    place that says which devices a number is used on.
+
+    Before this the link was implicit and spread over four tables
+    (SubscriberLastLocation, DeviceCredential, DeviceIdentity,
+    TraceRequest), each with its own rules and none built for one number on
+    several phones. Rescue Lookup and Device Location Trace read different
+    ones and disagreed. Every path that learns a number for a device now
+    also writes here through core/subscriber_device.py's link_device(), and
+    both lookup tools read from here.
+
+    A number can have many rows (a subscriber with two handsets) and so can
+    a device (a dual-SIM phone). Rows are never deleted: a link that stops
+    being true gets `ended_at`, so the history stays.
+
+    `device_hash` is the same salted hash TelemetrySample.device_id uses.
+    Note that one PHONE can still appear under two hashes today: the SDK's
+    per-install id (shared-key uploads, rescue enrolment) and the
+    registration key's fingerprint (signed uploads). `hardware_hash`, a
+    salted hash of the Android ID, is what ties those together and what
+    survives a reinstall; it is empty until the mobile app sends it.
+
+    `number_verified_by` records how far the number can be trusted. Today
+    it is always typed by the user, so every row is 'self_declared'.
+
+    Rescue consent is NOT stored here: it stays on SubscriberLastLocation.
+    """
+    VIA_RESCUE = 'rescue_enrolment'
+    VIA_REGISTRATION = 'registered_phone'
+    VIA_IDENTITY = 'identity_upload'
+    VIA_CHOICES = [
+        (VIA_RESCUE, 'Rescue enrolment'),
+        (VIA_REGISTRATION, 'Registered phone'),
+        (VIA_IDENTITY, 'Identity upload'),
+    ]
+    VERIFIED_SELF = 'self_declared'
+    VERIFIED_SIM = 'sim_read'
+    VERIFIED_SMS = 'sms_code'
+    VERIFIED_CHOICES = [
+        (VERIFIED_SELF, 'Typed by the user'),
+        (VERIFIED_SIM, 'Read from the SIM'),
+        (VERIFIED_SMS, 'Confirmed by SMS code'),
+    ]
+    ENDED_NUMBER_CHANGED = 'number_changed'
+
+    msisdn = models.CharField(max_length=20, db_index=True)  # canonical, see rescue._clean_msisdn
+    device_hash = models.CharField(max_length=64, db_index=True)
+    hardware_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    manufacturer = models.CharField(max_length=80, blank=True, default='')
+    phone_model = models.CharField(max_length=80, blank=True, default='')
+    app_version = models.CharField(max_length=40, blank=True, default='')
+    # Every path that has confirmed this pair, e.g. ['rescue_enrolment',
+    # 'identity_upload'].
+    linked_via = models.JSONField(default=list, blank=True)
+    number_verified_by = models.CharField(max_length=20, choices=VERIFIED_CHOICES, default=VERIFIED_SELF)
+    first_linked_at = models.DateTimeField(auto_now_add=True)
+    last_linked_at = models.DateTimeField(auto_now_add=True)
+    # When this device last uploaded a sample. Tells the operator which of
+    # a subscriber's phones is in use now.
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    ended_reason = models.CharField(max_length=20, blank=True, default='')
+
+    class Meta:
+        db_table = 'v2_subscriber_device'
+        constraints = [
+            models.UniqueConstraint(fields=['msisdn', 'device_hash'], name='uniq_subscriber_device'),
+        ]
+
+    def __str__(self):
+        return f'{self.msisdn} on {self.device_hash[:10]}'
+
+
+def site_photo_upload_path(instance, filename):
+    # Random name, never the uploader's: the file is only ever read back
+    # through SitePhotoImageView, which needs a login.
+    return f'site_photos/{instance.site_id}/{uuid.uuid4().hex}.jpg'
+
+
+class SitePhoto(models.Model):
+    """A photo taken at a site with the mobile app (2026-10-11), stamped
+    with where the phone was and which way it pointed. Used to check a
+    sector's real direction against its planned azimuth and to record what
+    stands in front of it.
+
+    The app has no staff login, so an upload is trusted only as far as
+    "a registered phone standing near this site sent it". It stays PENDING
+    and is not shown on the site page until an admin approves it
+    (core/site_photo.py)."""
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+
+    site = models.ForeignKey(Site, on_delete=models.CASCADE, related_name='photos')
+    file = models.FileField(upload_to=site_photo_upload_path, max_length=300)
+    # Small copy for the lists, so a page of photos does not download every
+    # full picture.
+    thumb = models.FileField(upload_to=site_photo_upload_path, max_length=300, blank=True, default='')
+    size_bytes = models.IntegerField(default=0)
+    width = models.IntegerField(default=0)
+    height = models.IntegerField(default=0)
+
+    # Where the phone was and which way its camera pointed. bearing_deg is
+    # degrees clockwise from true north as the phone's compass reported it,
+    # which is typically 5 to 15 degrees off and worse beside steel.
+    bearing_deg = models.FloatField()
+    lat = models.FloatField()
+    lng = models.FloatField()
+    accuracy_m = models.FloatField(null=True, blank=True)
+    altitude_m = models.FloatField(null=True, blank=True)
+    distance_to_site_m = models.FloatField(null=True, blank=True)
+    taken_at = models.DateTimeField()
+
+    # The planned direction the engineer said this photo is of, copied at
+    # upload time so a later change to the sector table does not rewrite
+    # what was compared on the day.
+    planned_azimuth = models.FloatField(null=True, blank=True)
+    sector_label = models.CharField(max_length=200, blank=True, default='')
+    # Serving-cell reading at the moment of the photo (network_type, rsrp,
+    # rsrq, sinr, pci, cell_id). Whatever the phone could read; may be {}.
+    signal = models.JSONField(default=dict, blank=True)
+    note = models.CharField(max_length=300, blank=True, default='')
+
+    device = models.ForeignKey(
+        DeviceCredential, null=True, blank=True, on_delete=models.SET_NULL, related_name='site_photos'
+    )
+    # Kept on the row so the uploader is still known after a device is removed.
+    uploader_msisdn = models.CharField(max_length=24, blank=True, default='')
+
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+    reviewed_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_site_photo'
+        ordering = ['-taken_at']
+        indexes = [
+            models.Index(fields=['site', 'status']),
+        ]
+
+    def __str__(self):
+        return f'{self.site_id} @ {self.bearing_deg:.0f}° ({self.status})'

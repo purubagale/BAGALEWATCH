@@ -2087,6 +2087,13 @@ export interface RescueLookupResult {
   accuracy_m?: number | null
   source?: string
   last_seen_ts?: string
+  // Which phone the position belongs to (2026-10-09): the first 10
+  // characters of its device id (the same value the Collections table
+  // shows), its make and model when known, and how many phones this number
+  // is enrolled on. The position is always one phone's own.
+  device?: string
+  device_model?: string | null
+  device_count?: number
 }
 
 // Bulk rescue lookup (2026-09-04) -- mirrors core/rescue.py's
@@ -2125,11 +2132,111 @@ export interface DeviceLocationTraceResult {
   device_hash?: string
   lat?: number
   lng?: number
-  network_type?: string
+  network_type?: string | null
   ts?: string
-  received_at?: string
+  accuracy_m?: number | null
+  // Which store the returned position came from (2026-10-09): a regular
+  // shared sample, the rescue enrolment's last position, or an accepted
+  // trace. `sources` gives the newest position time each store held
+  // (null = nothing there), whether or not a position was found.
+  source?: DeviceLocationTraceSource
+  sources?: { source: DeviceLocationTraceSource; ts: string | null }[]
+  // Every device the number or IMEI is tied to, newest position first.
+  // The top-level lat/lng/ts above are always devices[0]'s own; positions
+  // from different devices are never combined. More than one entry means
+  // the number has been used on more than one phone.
+  devices?: {
+    device_hash: string
+    // Every device id this one phone has been seen under (install id,
+    // registration key id, older installs). Grouped by the hardware id
+    // newer app builds send; a single entry on older builds.
+    device_hashes?: string[]
+    linked_by: ('identity_upload' | 'registered_phone' | 'rescue_enrolment')[]
+    phone_model: string | null
+    manufacturer: string | null
+    // When this device last uploaded anything, and whether that is older
+    // than the stale period (30 days by default) or never.
+    last_seen_at: string | null
+    stale: boolean
+    number_verified_by: string | null
+    lat: number | null
+    lng: number | null
+    ts: string | null
+    source: DeviceLocationTraceSource | null
+  }[]
   phone_model?: string | null
   manufacturer?: string | null
+}
+
+export type DeviceLocationTraceSource = 'telemetry' | 'rescue_enrolment' | 'trace'
+
+// On-demand area sample (2026-10-08) -- mirrors core/area_sample.py. The
+// readings carry no device id; `devices` on the results is only a count.
+export interface AreaSampleRequest {
+  id: number
+  label: string
+  lat: number
+  lng: number
+  radius_km: number
+  lookback_hours: number
+  devices_in_area: number
+  pushes_sent: number
+  created_at: string
+  requested_by: string | null
+  // Only on the create response: how many of devices_in_area are sharing now.
+  devices_sharing?: number
+}
+
+export interface AreaSampleCreateInput {
+  lat: number
+  lng: number
+  radius_km: number
+  label?: string
+}
+
+export interface AreaSampleReading extends SampleCqiFields {
+  ts: string
+  lat: number
+  lng: number
+  gps_accuracy_m: number | null
+  network_type: string
+  pci: number | null
+  rsrp_dbm: number | null
+  rsrq_db: number | null
+  sinr_db: number | null
+  rssi_dbm: number | null
+  rscp_dbm: number | null
+  ecio_db: number | null
+  rx_qual: number | null
+  cqi: number | null
+  cqi_derived: number | null
+  serving_site_id: string | null
+  serving_sector: string | null
+}
+
+export interface AreaSampleResults {
+  request: AreaSampleRequest
+  devices: number
+  samples: AreaSampleReading[]
+  open: boolean
+  open_until: string
+}
+
+// Superadmin registered-device list (2026-10-08) -- mirrors
+// core/device_trace.py's RegisteredDeviceListView: every DeviceCredential
+// (the "has this phone registered for NTC trace requests" record),
+// joined to DeviceIdentity for phone model/manufacturer where available.
+// Separate from RescueEnrolledRow below (a different table/consent lane).
+export interface RegisteredDeviceRow {
+  device_hash: string
+  msisdn: string | null
+  app_version: string | null
+  has_fcm_token: boolean
+  created_at: string
+  last_seen_at: string | null
+  revoked_at: string | null
+  phone_model: string | null
+  manufacturer: string | null
 }
 
 export interface RescueEnrolledRow {
@@ -2342,7 +2449,21 @@ export interface CollectionSessionRow {
 // CollectionSessionSamplesView. Same field set regardless of whether the
 // row is a trace or a drive (the view normalizes both source tables to
 // this one shape), so the Collections page needs no source-specific map.
-export interface CollectionSessionSample {
+// CQI display fields the server works out per sample (2026-10-09, backend
+// core/cqi.py sample_cqi_fields). `cqi_value` is the number to show;
+// `cqi_source` says where it came from: the phone's own report, an
+// estimate from SINR, or the rougher estimate from RSRQ used when the
+// sample has no SINR. Modulation, code rate and efficiency are the 3GPP
+// TS 36.213 Table 7.2.3-1 row for that value (LTE only).
+export interface SampleCqiFields {
+  cqi_value: number | null
+  cqi_source: 'reported' | 'sinr' | 'rsrq' | null
+  modulation: string | null
+  code_rate_x1024: number | null
+  spectral_efficiency: number | null
+}
+
+export interface CollectionSessionSample extends SampleCqiFields {
   ts: string
   lat: number
   lng: number
@@ -2352,6 +2473,10 @@ export interface CollectionSessionSample {
   rsrp_dbm: number | null
   rsrq_db: number | null
   sinr_db: number | null
+  // `cqi` is what the phone reported (often null). `cqi_derived` is the
+  // server's estimate from SINR, LTE only. Show `cqi` when present.
+  cqi: number | null
+  cqi_derived: number | null
   // Serving-cell identity (2026-10-07) -- null on trace-sourced rows
   // (TraceLocationSample has no serving-cell resolution of its own); use
   // `pci` as the coarser same-cell fallback for those, same reasoning
@@ -2364,4 +2489,46 @@ export interface TraceRequestDetail extends TraceRequestEntry {
   sample_count: number
   speed_results: TraceSpeedResult[]
   session: TraceSession | null
+}
+
+// Site photos from the mobile app (2026-10-11).
+export interface SitePhotoDirection {
+  azimuth: number
+  sectors: string
+}
+
+export interface SitePhoto {
+  id: number
+  site_id: string
+  site_name: string
+  bearing_deg: number
+  planned_azimuth: number | null
+  azimuth_difference: number | null
+  azimuth_flag_deg: number
+  sector_label: string
+  lat: number
+  lng: number
+  accuracy_m: number | null
+  altitude_m: number | null
+  distance_to_site_m: number | null
+  taken_at: string
+  signal: Record<string, number | string>
+  note: string
+  status: 'pending' | 'approved' | 'rejected'
+  width: number
+  height: number
+  // Present for admins only.
+  uploader?: string
+  created_at?: string
+  reviewed_by?: string
+  reviewed_at?: string | null
+}
+
+export interface SitePhotoList {
+  photos: SitePhoto[]
+  can_review: boolean
+  total: number
+  page_size: number
+  pending_count?: number
+  directions?: SitePhotoDirection[]
 }

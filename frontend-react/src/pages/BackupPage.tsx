@@ -890,10 +890,9 @@ export default function BackupPage() {
 
       {/* ── Note: GPS Coordinate Update / Fix Region Names not ported ── */}
       <div className="backup-note-card">
-        ℹ v1's <strong>GPS Coordinate Update</strong> / <strong>Fix Region Names</strong> bulk-reseed tools aren't
-        included here — those re-populate lat/lng/district from a 4,703-row dataset embedded in v1's HTML file, meant
-        to fix known-incomplete site data. v2's Site table already comes from the live production database, not a
-        stale dataset. See "Fix Missing District/Region" below for the actual gap this real deployment did hit.
+        ℹ The older <strong>GPS Coordinate Update</strong> and <strong>Fix Region Names</strong> tools are not
+        included here, because site data now comes from the live site database. Use "Fix Missing District/Region"
+        below for sites that have no district or region.
       </div>
 
       {/* ── Fix Missing District/Region (2026-08-10) ── */}

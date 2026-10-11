@@ -37,6 +37,8 @@ from rest_framework.views import APIView
 
 from .models import TelemetryBatch, TelemetryIngestKey, _point_or_none
 
+from .subscriber_device import touch_seen
+from .cqi import cqi_from_sinr  # noqa: F401 -- re-exported, see note further down
 from .collection import record_collection_sessions
 
 logger = logging.getLogger(__name__)
@@ -180,7 +182,7 @@ def geohash_center(gh):
 #    _coerce_dt_sample path) ─────────────────────────────────────────────
 
 _NET_TYPES = {'LTE', 'NR', 'UMTS', 'GSM', 'UNKNOWN'}
-_TRIGGERS = {'periodic', 'handover', 'manual', 'drive', 'drive_start', 'drive_stop'}
+_TRIGGERS = {'periodic', 'handover', 'manual', 'drive', 'drive_start', 'drive_stop', 'on_demand'}
 
 
 def _f(v):
@@ -313,30 +315,9 @@ def coerce_sample(raw, received_at):
 # same-id sector far away.
 TELEMETRY_MATCH_MAX_KM = 5.0
 
-# LTE CQI from SINR (dB): the lowest SINR at which each CQI index is usable.
-# Brueninghaus et al., PIMRC 2005, the table ns-3's LTE module uses. Same
-# values as frontend-react/src/lib/cqiFromSinr.ts -- keep the two in step.
-# An approximation of what a UE reports, not a direct measurement.
-_CQI_SINR_THRESHOLDS_DB = [
-    (1, -6.7), (2, -4.7), (3, -2.3), (4, 0.2), (5, 2.4), (6, 4.3),
-    (7, 5.9), (8, 8.1), (9, 10.3), (10, 11.7), (11, 14.1), (12, 16.3),
-    (13, 18.7), (14, 21.0), (15, 22.7),
-]
-
-
-def cqi_from_sinr(sinr_db):
-    """CQI index (0-15) for a SINR in dB, or None when SINR is unknown.
-    Below the lowest threshold the result is 0, matching 3GPP's own
-    out-of-range convention."""
-    if sinr_db is None:
-        return None
-    cqi = 0
-    for index, min_sinr in _CQI_SINR_THRESHOLDS_DB:
-        if sinr_db >= min_sinr:
-            cqi = index
-        else:
-            break
-    return cqi
+# LTE CQI from SINR moved to core/cqi.py (2026-10-09), which holds the
+# threshold table and the other estimation methods. Re-exported here
+# because callers have always imported it from this module.
 
 
 # Network type -> the physical-layer id family dt_serving_cell.py matches on.
@@ -589,6 +570,11 @@ class TelemetryIngestView(APIView):
         except Exception:  # session bookkeeping must never fail an upload
             logger.exception('collection session bookkeeping failed')
         _upsert_rescue_locations(rows)
+        try:
+            # Number <-> device links learn when their device last uploaded.
+            touch_seen({r['device_id'] for r in rows}, now)
+        except Exception:  # bookkeeping must never fail an upload
+            logger.exception('subscriber device last-seen update failed')
 
         if key:
             TelemetryIngestKey.objects.filter(pk=key.pk).update(last_used_at=now)

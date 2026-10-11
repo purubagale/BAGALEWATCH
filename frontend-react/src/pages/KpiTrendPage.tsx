@@ -132,8 +132,7 @@ export default function KpiTrendPage() {
     <div className="admin-page">
       <h1>KPI Trend</h1>
       <p className="muted">
-        Historical KPI charts built from real daily snapshots (see the <code>take_kpi_snapshot</code> scheduled job) —
-        never simulated data.
+        Historical KPI charts built from real daily snapshots, never simulated data.
       </p>
 
       <div className="report-toolbar">
@@ -167,8 +166,8 @@ export default function KpiTrendPage() {
       {data && !data.has_enough_data && (
         <div className="page-status">
           Not enough historical data yet for {data.site.name} ({data.snapshot_count}/{data.min_required} daily
-          snapshots collected). Run the <code>take_kpi_snapshot</code> job for a few more days to build up trend
-          history — this page will never show a simulated/fabricated trend in the meantime.
+          snapshots collected). The trend appears once a few more days of snapshots have been collected. This page
+          never shows a simulated trend in the meantime.
         </div>
       )}
 

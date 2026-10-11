@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { DJANGO_API_URL, apiJson, clearTokens, getAccessToken, setOnAuthExpired, setTokens } from '../api/client'
+import { DJANGO_API_URL, apiJson, clearTokens, getAccessToken, getRefreshToken, setOnAuthExpired, setTokens } from '../api/client'
 import type { Me } from '../api/types'
 // Public, unauthenticated payload — already fetched by the login page, so
 // reusing it here costs no extra request in the common case. queries.ts does
@@ -91,7 +91,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // i.e. exactly the bug this whole change set out to fix.
         const res = await fetch(`${DJANGO_API_URL}/api/v2/auth/logout/`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          // The refresh token goes along so the server can revoke it.
+          body: JSON.stringify({ refresh: getRefreshToken() }),
           signal: ctl.signal,
         })
         // 204 = nothing to end. A 200 body carries the Keycloak URL.

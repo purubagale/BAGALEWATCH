@@ -18,8 +18,9 @@ from rest_framework.views import APIView
 from .access import CanViewIdentity
 from .audit import log_audit_event
 from .collection import decrypted_identity, msisdn_lookup_key, upsert_identity
-from .models import DeviceIdentity
+from .models import DeviceIdentity, SubscriberDevice
 from .rescue import _clean_msisdn
+from .subscriber_device import link_device, unlink_via, update_device_details
 from .telemetry import resolve_ingest_caller
 
 _IMEI_RE = re.compile(r'^\d{14,16}$')
@@ -71,6 +72,18 @@ class DeviceIdentityUploadView(APIView):
             fields['user_type'] = user_type
 
         upsert_identity(device.device_hash, **fields)
+        # Keep the number <-> device link table in step (2026-10-09).
+        if fields.get('msisdn'):
+            link_device(
+                fields['msisdn'], device.device_hash, SubscriberDevice.VIA_IDENTITY,
+                manufacturer=fields.get('manufacturer') or '', phone_model=fields.get('phone_model') or '',
+                hardware_id=data.get('hardware_id'),
+            )
+        elif 'msisdn' in fields:
+            unlink_via(device.device_hash, SubscriberDevice.VIA_IDENTITY)
+        update_device_details(
+            device.device_hash, fields.get('manufacturer'), fields.get('phone_model'), data.get('hardware_id'),
+        )
         return Response({'stored': sorted(fields.keys())}, status=status.HTTP_200_OK)
 
 

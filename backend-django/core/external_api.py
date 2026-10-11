@@ -39,7 +39,7 @@ an external partner uploads directly.
   an external API response, where an unbounded payload is just as real a
   failure mode for whatever's consuming it.
 """
-from django.db.models import Count
+from .drive_test import sample_count_expr
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import pagination
@@ -227,7 +227,7 @@ class ExternalDtSessionListCreateView(ExternalApiView):
         return [require_scope(scope)()]
 
     def get(self, request):
-        qs = DriveTestSession.objects.all().annotate(sample_count=Count('samples'))
+        qs = DriveTestSession.objects.all().annotate(sample_count=sample_count_expr())
         tech = request.query_params.get('tech')
         date_after = request.query_params.get('date_after')
         date_before = request.query_params.get('date_before')
@@ -285,7 +285,7 @@ class ExternalDtSessionDetailView(ExternalApiView):
         return [require_scope('dt:read')()]
 
     def get(self, request, session_id):
-        session = DriveTestSession.objects.filter(pk=session_id).annotate(sample_count=Count('samples')).first()
+        session = DriveTestSession.objects.filter(pk=session_id).annotate(sample_count=sample_count_expr()).first()
         if session is None:
             return Response({'detail': 'Session not found.'}, status=404)
         return Response(ExternalDtSessionListSerializer(session).data)

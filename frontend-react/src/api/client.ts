@@ -89,7 +89,22 @@ export function setOnAuthExpired(cb: (() => void) | null) {
   onAuthExpired = cb
 }
 
-async function refreshAccessToken(): Promise<boolean> {
+// One refresh at a time (2026-10-09). A refresh token is now single-use on
+// the server, so when several requests get a 401 together they must share
+// one refresh call: a second call with the same token would be rejected
+// and sign the user out.
+let refreshInFlight: Promise<boolean> | null = null
+
+function refreshAccessToken(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = doRefreshAccessToken().finally(() => {
+      refreshInFlight = null
+    })
+  }
+  return refreshInFlight
+}
+
+async function doRefreshAccessToken(): Promise<boolean> {
   if (!refreshToken) return false
   try {
     const res = await fetch(`${DJANGO_API_URL}/api/v2/auth/refresh/`, {

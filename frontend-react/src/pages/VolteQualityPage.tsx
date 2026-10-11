@@ -46,13 +46,11 @@ export default function VolteQualityPage() {
     <div className="admin-page" style={{ maxWidth: 1200 }}>
       <h1>VoLTE Quality</h1>
       <p className="muted">
-        Raw, ungrouped VoLTE/VoNR call-quality samples -- a dev/pilot tool for verifying real call-quality uploads
-        once the app has carrier-privileged status. "Estimated MOS" is a server-computed ITU-T G.107 E-model
-        approximation from network metrics, never a true perceptually-measured score. A plain number is a verified
-        estimate (AMR-WB/G.711/G.729); a "~"-prefixed amber number is provisional (EVS/AMR-NB -- real constants run
-        through an approximated formula or a proxy codec, pending verification); "unavailable" means no codec entry
-        exists yet, or packet loss was reported with no published robustness factor to account for it. See
-        core/volte_quality.py for the full picture.
+        Individual VoLTE/VoNR call-quality samples, for checking call-quality uploads once the mobile app has
+        carrier-privileged status. "Estimated MOS" is calculated from network metrics with the ITU-T G.107 E-model;
+        it is not a measured listening score. A plain number is a verified estimate (AMR-WB, G.711, G.729). An amber
+        number with "~" is provisional (EVS, AMR-NB). "Unavailable" means the codec is not supported yet, or packet
+        loss was reported for a codec with no published loss figures.
       </p>
       <div className="edit-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginBottom: 12 }}>
         <label>

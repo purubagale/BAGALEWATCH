@@ -1,6 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef } from 'react'
 import { ApiError, apiFetch, apiJson } from './client'
+import type { SitePhotoList } from './types'
 import type {
   CollectionSessionRow,
   CollectionSessionSample,
@@ -88,6 +89,10 @@ import type {
   RescueBulkLookupParams,
   RescueBulkLookupResponse,
   RescueEnrolledRow,
+  RegisteredDeviceRow,
+  AreaSampleRequest,
+  AreaSampleCreateInput,
+  AreaSampleResults,
   DeviceLocationTraceResult,
   DriveTestConsentMessage,
 } from './types'
@@ -1494,6 +1499,33 @@ export function useTelemetryLiveSamples(params: TelemetryLiveSamplesParams, enab
 // Scoped drive-test sessions over live telemetry (2026-09-01) — see
 // core/telemetry_admin.py's TelemetryDriveTestSession* views.
 
+// On-demand area sample (2026-10-08) -- see core/area_sample.py.
+export function useAreaSampleRequests() {
+  return useQuery({
+    queryKey: ['area-sample-requests'],
+    queryFn: () => apiJson<{ results: AreaSampleRequest[] }>('/api/v2/telemetry/area-samples/'),
+  })
+}
+
+export function useCreateAreaSampleRequest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: AreaSampleCreateInput) =>
+      apiJson<AreaSampleRequest>('/api/v2/telemetry/area-samples/', { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['area-sample-requests'] }),
+  })
+}
+
+// Polls every 5s while the request's response window is still open, then stops.
+export function useAreaSampleResults(id: number | null) {
+  return useQuery({
+    queryKey: ['area-sample-results', id],
+    queryFn: () => apiJson<AreaSampleResults>(`/api/v2/telemetry/area-samples/${id}/samples/`),
+    enabled: id != null,
+    refetchInterval: (query) => (query.state.data?.open ? 5_000 : false),
+  })
+}
+
 export function useTelemetryDtSessions() {
   return useQuery({
     queryKey: ['telemetry-dt-sessions'],
@@ -1604,14 +1636,28 @@ export function useRescueEnrolledList() {
   })
 }
 
+// Superadmin registered-device list (2026-10-08) -- mirrors
+// core/device_trace.py's RegisteredDeviceListView. A plain useQuery, not
+// a mutation like the rescue lists above -- this doesn't cross identity
+// with location data, so it's a lower-sensitivity read than those (it's
+// still audited server-side on every call, just not at the same bar that
+// demanded an on-demand-only fetch for the others).
+export function useRegisteredDevices() {
+  return useQuery({
+    queryKey: ['registered-devices'],
+    queryFn: () => apiJson<{ results: RegisteredDeviceRow[]; count: number }>('/api/v2/registered-devices/'),
+  })
+}
+
 // Superadmin device-location trace (2026-10-08) -- mirrors
 // core/device_lookup.py's DeviceLocationTraceView. A mutation, same
 // audit-sensitivity reasoning as useRescueLookup/useRescueEnrolledList
 // above: every call is logged server-side regardless of outcome.
 export function useDeviceLocationTrace() {
   return useMutation({
-    mutationFn: (params: { msisdn?: string; imei?: string }) => {
+    mutationFn: (params: { msisdn?: string; imei?: string; case_reference: string }) => {
       const qs = new URLSearchParams()
+      qs.set('case_reference', params.case_reference)
       if (params.msisdn) qs.set('msisdn', params.msisdn)
       if (params.imei) qs.set('imei', params.imei)
       return apiJson<DeviceLocationTraceResult>(`/api/v2/device-location-trace/?${qs}`)
@@ -1757,5 +1803,40 @@ export function useUploadRfReportAttachments(defaultReportId?: number) {
       qc.invalidateQueries({ queryKey: ['rf-report', reportId] })
       qc.invalidateQueries({ queryKey: ['rf-reports'] })
     },
+  })
+}
+
+// Site photos from the mobile app (2026-10-11).
+export function useSitePhotos(params: { site?: string; status?: string; offset?: number }) {
+  const qs = new URLSearchParams()
+  if (params.site) qs.set('site', params.site)
+  if (params.status) qs.set('status', params.status)
+  if (params.offset) qs.set('offset', String(params.offset))
+  return useQuery({
+    queryKey: ['site-photos', params.site ?? '', params.status ?? '', params.offset ?? 0],
+    queryFn: () => apiJson<SitePhotoList>(`/api/v2/site-photos/?${qs.toString()}`),
+  })
+}
+
+export function useReviewSitePhoto() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, action }: { id: number; action: 'approve' | 'reject' }) =>
+      apiJson<{ id: number; status: string }>(`/api/v2/site-photos/${id}/review/`, {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['site-photos'] }),
+  })
+}
+
+export function useDeleteSitePhoto() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiFetch(`/api/v2/site-photos/${id}/`, { method: 'DELETE' })
+      if (!res.ok) throw new ApiError(res.status, { detail: 'Could not delete the photo.' })
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['site-photos'] }),
   })
 }

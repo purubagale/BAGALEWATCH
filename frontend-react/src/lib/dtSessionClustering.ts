@@ -39,6 +39,17 @@ function bestDate(s: DtSessionListItem): string {
   return s.date ?? s.saved_at
 }
 
+// The district is not stored on a session; it is only in the auto-generated
+// name (`DT_Excel_<date>_<District>_<tech>` / `DT_trp_<date>_<District>_<tech>[_<type>]`,
+// see DtUploadPage.tsx). Returns null for a renamed session or an
+// "Unknown" district, and the caller falls back to nearby-site grouping.
+function sessionDistrict(s: DtSessionListItem): string | null {
+  const m = /^DT_[A-Za-z]+_\d{8}_([^_]+)_/.exec(s.name ?? '')
+  if (!m) return null
+  const district = m[1].toLowerCase()
+  return district === 'unknown' ? null : district
+}
+
 export function clusterDtSessionsByArea<T extends DtSessionListItem>(
   sessions: T[],
   options?: {
@@ -106,7 +117,15 @@ export function clusterDtSessionsByArea<T extends DtSessionListItem>(
   const buckets = new Map<string, T[]>()
   for (const s of sessions) {
     const ids = s.meta?.nearby_site_ids
-    const key = ids && ids.length > 0 ? `site:${find(ids[0])}${sameTech ? `|tech:${s.tech}` : ''}` : `session:${s.id}`
+    // With `sameTech` on, a session whose district is known is bucketed by
+    // district + tech alone (2026-10-08: Gulmi 4G was hidden under Palpa 4G
+    // because the two routes share sites near the district border).
+    const district = sameTech ? sessionDistrict(s) : null
+    const key = district
+      ? `district:${district}|tech:${s.tech}`
+      : ids && ids.length > 0
+        ? `site:${find(ids[0])}${sameTech ? `|tech:${s.tech}` : ''}`
+        : `session:${s.id}`
     const bucket = buckets.get(key)
     if (bucket) bucket.push(s)
     else buckets.set(key, [s])

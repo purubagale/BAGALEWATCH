@@ -43,7 +43,7 @@ from django.core.cache import cache
 from django.db.models import F
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -54,12 +54,17 @@ from .device_auth import (
 )
 from .fcm import send_trace_push
 from .emergency import active_emergency
-from .models import CollectionSession, DeviceCredential, TraceLocationSample, TraceRequest, TraceSpeedResult
+from .models import (
+    CollectionSession, DeviceCredential, DeviceIdentity, SubscriberDevice, TraceLocationSample, TraceRequest,
+    TraceSpeedResult,
+)
 from .play_integrity import verify_integrity_token
 from .rescue import _clean_msisdn
+from .subscriber_device import link_device, touch_seen
 from .telemetry import hash_device_id
 from .access import PERM_TRACE_CASE, PERM_TRACE_INVESTIGATE, IsTraceOperator, user_has
 from .collection import close_trace_session, ensure_trace_session
+from .views import IsSuperadminOnly
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +220,13 @@ class DeviceRegisterView(APIView):
                 fcm_token=fcm_token, app_version=app_version,
             )
             created = True
+        link_device(
+            msisdn, device_hash, SubscriberDevice.VIA_REGISTRATION,
+            manufacturer=str(request.data.get('manufacturer') or ''),
+            phone_model=str(request.data.get('phone_model') or request.data.get('model') or ''),
+            app_version=app_version,
+            hardware_id=request.data.get('hardware_id'),
+        )
         return Response({'device_id': device_id, 'registered': True, 'created': created})
 
 
@@ -373,6 +385,7 @@ class DeviceTraceSamplesView(APIView):
 
         if rows:
             TraceLocationSample.objects.bulk_create(rows)
+            touch_seen([trace.device.device_hash])
             ensure_trace_session(trace)
             CollectionSession.objects.filter(trace=trace).update(
                 sample_count=F('sample_count') + len(rows), last_sample_at=timezone.now(),
@@ -585,3 +598,50 @@ class TraceRequestCancelView(APIView):
         close_trace_session(trace)
         log_audit_event(request, 'TRACE.CANCELLED', resource='trace_request', resource_id=str(trace.id))
         return Response(_operator_view(trace))
+
+
+class RegisteredDeviceListView(APIView):
+    """`GET /api/v2/registered-devices/` -- superadmin-only. Lists every
+    DeviceCredential: the actual "has this phone registered for NTC trace
+    requests" record (POST device/register/ above), separate from both
+    Rescue Enrolled Devices (SubscriberLastLocation, a different opt-in
+    lane keyed by rescue_consent) and DeviceIdentity (crowd/staff model
+    info, no registration semantics of its own). This was the missing
+    "where can I see the list of devices registered in my dtwatch
+    application" answer (2026-10-08) -- no such list existed anywhere
+    before this, only single-lookup views for the OTHER two tables.
+
+    msisdn here is self-declared by the device (see DeviceCredential's own
+    docstring on what that is and isn't trusted as far as) -- shown as-is,
+    not re-verified against anything. Joined to DeviceIdentity by device
+    hash for phone model/manufacturer when that device has also sent
+    identity info, same join RescueEnrolledListView already does.
+    """
+    permission_classes = [IsAuthenticated, IsSuperadminOnly]
+
+    def get(self, request):
+        rows = list(DeviceCredential.objects.all().order_by('-last_seen_at'))
+        identities = {
+            d.device_hash: d
+            for d in DeviceIdentity.objects.filter(device_hash__in=[r.device_hash for r in rows])
+        }
+        results = []
+        for r in rows:
+            identity = identities.get(r.device_hash)
+            results.append({
+                'device_hash': r.device_hash,
+                'msisdn': r.msisdn or None,
+                'app_version': r.app_version or None,
+                'has_fcm_token': bool(r.fcm_token),
+                'created_at': r.created_at,
+                'last_seen_at': r.last_seen_at,
+                'revoked_at': r.revoked_at,
+                'phone_model': identity.phone_model if identity else None,
+                'manufacturer': identity.manufacturer if identity else None,
+            })
+        # Audited the same way DeviceIdentityLookupView audits a single
+        # lookup -- this reveals the same category of identity-adjacent
+        # data (msisdn + device hash), just for everyone registered at
+        # once rather than one at a time.
+        log_audit_event(request, 'DEVICE.REGISTRY_VIEW', resource='device_credential', detail=f'count={len(results)}')
+        return Response({'results': results, 'count': len(results)})
