@@ -32,7 +32,7 @@ earlier project, not this one. Ignore it when working in this repo.
 | API docs | drf-spectacular — `/api/v2/schema/`, `/api/v2/docs/` |
 | Frontend | React 19 + TypeScript + Vite, React Query for server state |
 | Maps | Leaflet + MarkerCluster |
-| Deployment | Docker Compose, 10 services (see below) |
+| Deployment | Docker Compose, 4 services (see below) |
 
 ## Repo layout
 
@@ -52,11 +52,13 @@ frontend-react/src/api/
                                  ApiError, apiErrorMessage()
   queries.ts                    Every React Query hook, grouped by feature
   types.ts                      Every TS interface for API payloads
-docker-compose.yml               10 services: db, redis, django, frontend,
-                                  site-sync, telemetry-maintenance,
-                                  telemetry-bin-roller, audit-log-maintenance,
-                                  node-gateway (profile: future, unused),
-                                  go-worker (profile: future, unused)
+docker-compose.yml               4 services: db, redis, django, frontend.
+                                  The four background jobs (site sync,
+                                  telemetry retention, coverage roll-up,
+                                  audit-log pruning) run inside django:
+                                  entrypoint.sh starts `manage.py
+                                  run_maintenance` next to gunicorn.
+                                  RUN_MAINTENANCE=0 turns them off.
 docs/                            Dated audits, server migration guides, runbook
 ```
 
@@ -281,8 +283,24 @@ needs migrations 0111-0117.
 - `dtwatch-django-1` runs as root, and `/data/dtwatch/data/media` is
   `root:root 755`. Moving the containers to a non-root user needs a
   one-time `chown` of that folder first, or uploads break.
-- Gunicorn there resolved to 12 workers x 4 threads, about 1 GB. Set
-  `GUNICORN_WORKERS=4` (or 5) in prod `.env` once the change is deployed.
+- Gunicorn there resolved to 12 workers x 4 threads, about 1 GB. The
+  computed cap is now 4, so no prod `.env` entry is needed.
+
+**Application-side changes of 2026-10-11** (the user chose not to change
+the live server's own configuration):
+
+- Django admin is closed: `/admin/` is not mounted and nginx answers 404.
+  The app's password login and SSO are unchanged.
+- The maintenance jobs moved into the django container (see Repo
+  layout). `run_maintenance` holds a Postgres advisory lock so only one
+  runner works per database. On prod the first run will prune old audit
+  rows and expired telemetry partitions; back up first or deploy with
+  `RUN_MAINTENANCE=0`.
+- node-gateway and go-worker are gone from every compose file and both
+  build scripts. Prod must deploy with `docker compose up -d
+  --remove-orphans`. The `backend-node/` and `backend-go/` folders are
+  still on disk: deleting them was denied in auto mode, the user removes
+  them (`git rm -r backend-node backend-go`).
 
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an
@@ -291,12 +309,10 @@ replacement.
 
 **Open items:**
 - Push the local commits and deploy to prod (pull, `docker compose build
-  django frontend`, `docker compose up -d`).
-- Non-root containers: not done. Needs a chosen UID (suggested 10001)
-  and the prod `chown` above.
-- Restricting `/admin/` by source address: not done. Waiting for the
-  admin IP range(s) from the user.
-- Decide how the four maintenance jobs run on prod.
+  django frontend`, `docker compose up -d --remove-orphans`).
+- Non-root containers: skipped by the user's decision.
+- Before the prod deploy, check no cron job there already runs the
+  maintenance commands.
 - Mobile app screenshots for the manuals; newest APK on the Huawei and
   Redmi.
 - Area Sample end-to-end test on prod with a real push.

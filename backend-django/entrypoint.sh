@@ -24,5 +24,20 @@ python manage.py migrate --noinput
 # skips the "overwrite?" prompt, --clear is deliberately omitted since a
 # stale extra file left over from a removed app is harmless here.
 python manage.py collectstatic --noinput
+# Background jobs (2026-10-11) -- site sync, telemetry retention, coverage
+# roll-up and audit-log pruning run inside this container, next to
+# gunicorn, so they run wherever the app runs. Only when the container's
+# command is gunicorn, so a one-off `docker compose run django ...` does
+# not start a second set. RUN_MAINTENANCE=0 turns them off, for a second
+# django replica or when something else already runs the commands. The
+# loop restarts the runner if the whole process dies.
+if [ "$1" = "gunicorn" ] && [ "${RUN_MAINTENANCE:-1}" != "0" ]; then
+    (
+        while true; do
+            python manage.py run_maintenance || true
+            sleep 30
+        done
+    ) &
+fi
 exec "$@"
 

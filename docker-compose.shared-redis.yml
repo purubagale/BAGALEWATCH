@@ -69,35 +69,6 @@ services:
       - default
       - shared-redis
 
-  node-gateway:
-    # Base depends_on was redis-only, so it can go entirely. ioredis is
-    # configured with lazyConnect + a 2s retryStrategy (backend-node/src/
-    # server.js), so it reconnects on its own if Redis is slow or briefly
-    # restarts — no startup gate needed.
-    depends_on: !reset null
-    environment:
-      # DB 0, matching the bundled Redis (the base file's plain
-      # `redis://redis:6379` = DB 0). Kept on the SAME index as go-worker
-      # below, exactly as before, because the planned Phase 6 real-time
-      # path has Django enqueue and the Go worker consume — separating
-      # them onto different DBs would break pub/sub between them, since
-      # Redis pub/sub and queues don't cross DB indices.
-      REDIS_URL: redis://default:${SHARED_REDIS_PASSWORD:?set SHARED_REDIS_PASSWORD in .env — copy it from shared-redis/.env}@shared-redis:6379/0
-    networks:
-      - default
-      - shared-redis
-
-  go-worker:
-    depends_on: !override
-      db:
-        condition: service_healthy
-    environment:
-      # DB 0 — see node-gateway's note above.
-      REDIS_URL: redis://default:${SHARED_REDIS_PASSWORD:?set SHARED_REDIS_PASSWORD in .env — copy it from shared-redis/.env}@shared-redis:6379/0
-    networks:
-      - default
-      - shared-redis
-
 networks:
   shared-redis:
     # Created and owned by d:\Projects\shared-redis — never by this stack.

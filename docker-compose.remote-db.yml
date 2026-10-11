@@ -9,8 +9,8 @@
 #
 # WHY AN OVERRIDE IS NEEDED AT ALL — the trap this file exists to fix
 # Setting POSTGRES_HOST in .env alone does NOT work, and fails silently.
-# The base file hardcodes `POSTGRES_HOST: db` under django's and
-# go-worker's `environment:`, and in Compose `environment:` WINS over
+# The base file hardcodes `POSTGRES_HOST: db` under django's
+# `environment:`, and in Compose `environment:` WINS over
 # `env_file:`. So .env's value is read for ${...} interpolation but never
 # reaches the app, both services connect to the bundled container, and
 # everything looks healthy while pointing at the wrong database. That is
@@ -68,12 +68,5 @@ services:
       # The whole point of this file. `:?` rather than a default, so a
       # .env missing the value fails immediately and visibly instead of
       # quietly falling back to a `db` host that no longer resolves.
-      POSTGRES_HOST: ${POSTGRES_HOST:?set POSTGRES_HOST in .env — this override exists to use it}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-
-  go-worker:
-    depends_on:
-      db: !reset null
-    environment:
       POSTGRES_HOST: ${POSTGRES_HOST:?set POSTGRES_HOST in .env — this override exists to use it}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}

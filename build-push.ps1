@@ -1,7 +1,7 @@
 ﻿<#
 .SYNOPSIS
   build-push.ps1 - Windows-native port of build-push.sh. Builds, tags, and
-  pushes the four DT-WATCH v2 images to Nexus.
+  pushes the two DT-WATCH v2 images to Nexus.
 
 .DESCRIPTION
   Line-for-line behavioral port of build-push.sh (same positional args, same
@@ -20,8 +20,8 @@
     - Nepal-time formatting uses .NET's "Nepal Standard Time" Windows time
       zone ID via [System.TimeZoneInfo], not `TZ=Asia/Kathmandu date`.
     - Parallel builds use one docker.exe process per component
-      (Start-Process, waited on after all four are launched) instead of
-      bash job control (`&` + `wait`) - same "start all four, wait, then
+      (Start-Process, waited on after both are launched) instead of
+      bash job control (`&` + `wait`) - same "start both, wait, then
       report" shape, different mechanism.
 
 .EXAMPLE
@@ -53,16 +53,14 @@
     - any other branch -> `-dev` is enforced (e.g. v1.2.0-dev), never `latest`
     Enforced regardless of whether Version came from the prompt or an arg.
 
-  Builds and pushes FOUR components. Directory -> image name:
+  Builds and pushes TWO components. Directory -> image name:
     backend-django/  -> $Registry/$ProjectName/django
-    backend-node/    -> $Registry/$ProjectName/node-gateway
-    backend-go/      -> $Registry/$ProjectName/go-worker
     frontend-react/  -> $Registry/$ProjectName/frontend
 
   Tags pushed to Nexus:
     - Versioned:  <image>:$Version
     - Immutable:  <image>:$Version-$BuildNo-$NptTime-$GitSha (identical
-                  across all four - one build, one correlatable tag)
+                  across both - one build, one correlatable tag)
     - Latest:     <image>:latest (skipped for prerelease versions, and when
                   $env:NO_LATEST = "1")
 
@@ -71,7 +69,7 @@
   push.ps1 v1.0.0`-style one-liners working the same way as the bash
   version's env-var switches):
     PLATFORMS      target platform(s), default linux/amd64
-    ONLY           build one component (django|node-gateway|go-worker|frontend)
+    ONLY           build one component (django|frontend)
     NO_LATEST=1    never tag `latest`
     NEXUS_USER / NEXUS_PASSWORD   non-interactive docker login
     SKIP_LOGIN=1 / SKIP_GIT_TAG=1 / FORCE_GIT_TAG=1 / PUSH_GIT_TAG=y|n
@@ -133,15 +131,13 @@ if ([string]::IsNullOrEmpty($Platforms)) { $Platforms = $DefaultPlatforms }
 # -> django, frontend-react -> frontend), kept explicit rather than derived.
 $Components = @(
     [PSCustomObject]@{ Dir = 'backend-django'; Name = 'django' }
-    [PSCustomObject]@{ Dir = 'backend-node';   Name = 'node-gateway' }
-    [PSCustomObject]@{ Dir = 'backend-go';     Name = 'go-worker' }
     [PSCustomObject]@{ Dir = 'frontend-react'; Name = 'frontend' }
 )
 
 if (-not [string]::IsNullOrEmpty($env:ONLY)) {
     $filtered = $Components | Where-Object { $_.Name -eq $env:ONLY }
     if (-not $filtered) {
-        Exit-WithError "ONLY='$($env:ONLY)' matches no component. Valid: django node-gateway go-worker frontend"
+        Exit-WithError "ONLY='$($env:ONLY)' matches no component. Valid: django frontend"
     }
     $Components = @($filtered)
 }
@@ -235,7 +231,7 @@ if ($env:SKIP_LOGIN -ne '1') {
     }
 }
 
-# Build metadata computed ONCE, before any build, so all four images share
+# Build metadata computed ONCE, before any build, so both images share
 # an identical immutable tag and can be correlated as a single release.
 $BuildNo = $env:BUILD_NO
 if ([string]::IsNullOrEmpty($BuildNo)) {
