@@ -8,13 +8,15 @@ though in practice they're on entirely different ports/hosts anyway (see
 docs/RUNBOOK.md).
 """
 from django.conf import settings
-from django.contrib import admin
 from django.urls import path, include, re_path
 from django.views.static import serve as serve_media
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    # Django admin is not mounted (removed 2026-10-11). It was a second
+    # password login outside the app's own lockout, MFA and IP blocking.
+    # django.contrib.admin stays in INSTALLED_APPS only so its existing
+    # table and migrations are left alone.
     path('api/v2/', include('core.urls')),
     path('api/v2/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/v2/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
