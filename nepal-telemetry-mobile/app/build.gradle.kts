@@ -50,6 +50,10 @@ dependencies {
     // workers; declared again here because Gradle `implementation` deps
     // aren't transitively visible to a dependent module.
     implementation("androidx.work:work-runtime-ktx:2.9.1")
+    // Site photo screen (2026-10-11): in-app camera preview and capture.
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
 }
 
 // Apply the Google services plugin only once the Firebase config file exists,

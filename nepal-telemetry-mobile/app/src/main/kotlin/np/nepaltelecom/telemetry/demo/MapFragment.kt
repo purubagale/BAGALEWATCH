@@ -1,6 +1,7 @@
 package np.nepaltelecom.telemetry.demo
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
@@ -84,6 +85,9 @@ class MapFragment : Fragment(R.layout.fragment_map) {
             drawRoute()
         }
         view.findViewById<Button>(R.id.mapPastDrives).setOnClickListener { showPastDrives() }
+        view.findViewById<Button>(R.id.mapSitePhoto).setOnClickListener {
+            startActivity(Intent(requireContext(), SitePhotoActivity::class.java))
+        }
         view.findViewById<Button>(R.id.mapLive).setOnClickListener { showLive() }
         deleteButton.setOnClickListener { confirmDeleteViewed() }
     }

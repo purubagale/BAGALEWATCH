@@ -14,6 +14,9 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Site photo (2026-10-11). Asked for only when that screen is opened. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
@@ -48,6 +51,11 @@
             android:name=".TraceSharingService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <activity
+            android:name=".SitePhotoActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
 
         <activity
             android:name=".LiveParamsActivity"

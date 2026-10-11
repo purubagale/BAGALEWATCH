@@ -120,6 +120,35 @@ object TraceApi {
         request("POST", "device/trace-requests/$id/speedtest/result/", result.toString(), signed = true)
     }
 
+    /** One planned antenna direction of a site, with the sectors that point that way. */
+    data class SiteDirection(val azimuth: Double, val sectors: String)
+
+    data class NearbySite(val id: String, val name: String, val distanceM: Int, val directions: List<SiteDirection>)
+
+    /** The sites close to this position, nearest first. Empty when none is near. Needs a registered device. */
+    fun nearbySites(lat: Double, lon: Double): List<NearbySite> {
+        val text = request("GET", "device/nearby-sites/?lat=$lat&lon=$lon", null, signed = true)
+        val sites = JSONObject(text).optJSONArray("sites") ?: JSONArray()
+        return (0 until sites.length()).map { i ->
+            val site = sites.getJSONObject(i)
+            val dirs = site.optJSONArray("directions") ?: JSONArray()
+            NearbySite(
+                id = site.getString("id"),
+                name = site.optString("name"),
+                distanceM = site.optInt("distance_m"),
+                directions = (0 until dirs.length()).map { d ->
+                    val dir = dirs.getJSONObject(d)
+                    SiteDirection(dir.getDouble("azimuth"), dir.optString("sectors"))
+                },
+            )
+        }
+    }
+
+    /** Sends one site photo. [body] is the JSON the server's site-photo endpoint expects. */
+    fun uploadSitePhoto(body: String) {
+        request("POST", "device/site-photos/", body, signed = true)
+    }
+
     private fun request(method: String, path: String, body: String?, signed: Boolean): String =
         call(method, path, body?.toByteArray(Charsets.UTF_8), "application/json", signed) {
             it.bufferedReader().use { reader -> reader.readText() }

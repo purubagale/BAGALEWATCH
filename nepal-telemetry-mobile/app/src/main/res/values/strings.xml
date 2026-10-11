@@ -113,4 +113,24 @@
     <string name="live_params_close">Close</string>
     <string name="rescue_enroll">Rescue Location Beacon</string>
     <string name="rescue_enroll_prompt">Registering shares this device\'s last known location with verified rescue operators only, searchable by this phone number during a disaster. You can withdraw at any time.</string>
+    <string name="map_site_photo">Site photo</string>
+    <string name="site_photo_no_compass">Compass…</string>
+    <string name="site_photo_waiting_location">Waiting for location…</string>
+    <string name="site_photo_site_label">Site</string>
+    <string name="site_photo_direction_label">Planned direction this photo shows</string>
+    <string name="site_photo_direction_auto">Nearest to where the phone points</string>
+    <string name="site_photo_note_hint">Note (optional)</string>
+    <string name="site_photo_close">Close</string>
+    <string name="site_photo_take">Take photo</string>
+    <string name="site_photo_no_sites">No site within 1 km of this phone.</string>
+    <string name="site_photo_finding_sites">Looking for sites near you…</string>
+    <string name="site_photo_need_camera">Camera permission is needed to take a site photo.</string>
+    <string name="site_photo_need_location">Location permission is needed. Grant it from the Signal tab first.</string>
+    <string name="site_photo_need_registration">Register this phone in Settings before sending site photos.</string>
+    <string name="site_photo_sending">Sending the photo…</string>
+    <string name="site_photo_sent">Photo sent. It appears on the site page after an admin approves it.</string>
+    <string name="site_photo_saved_for_later">No connection. The photo is saved on this phone and will be sent next time you open this screen.</string>
+    <string name="site_photo_queue_sent">%1$d saved photo(s) sent.</string>
+    <string name="site_photo_hold_upright">Hold the phone upright and point it along the sector.</string>
+    <string name="site_photo_failed">The photo could not be taken. Try again.</string>
 </resources>
