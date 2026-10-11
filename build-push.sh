@@ -273,7 +273,13 @@ build_component() {
       --build-arg "VITE_GIT_SHA=$GITSHA"
     )
   fi
-  docker buildx build "${args[@]}" "./$dir"
+  # The frontend image is built from the repo root, like docker-compose.yml
+  # does: its Dockerfile copies frontend-react/ and docs/ (2026-10-01), and
+  # the root .dockerignore keeps everything else out of the context. With
+  # ./frontend-react as the context every COPY fails. Fixed 2026-10-11.
+  local context="./$dir"
+  [[ $name == frontend ]] && context="."
+  docker buildx build "${args[@]}" "$context"
 }
 
 PIDS=()

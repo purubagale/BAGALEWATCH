@@ -310,7 +310,9 @@ function Get-BuildArgs {
             '--build-arg', "VITE_GIT_SHA=$GitSha"
         )
     }
-    $buildArgs += "./$($Component.Dir)"
+    # The frontend image is built from the repo root, like docker-compose.yml
+    # does: its Dockerfile copies frontend-react/ and docs/. See build-push.sh.
+    if ($Component.Name -eq 'frontend') { $buildArgs += '.' } else { $buildArgs += "./$($Component.Dir)" }
     return $buildArgs
 }
 
