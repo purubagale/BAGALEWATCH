@@ -8,12 +8,14 @@ import {
   useIssues,
   useSite,
   useSiteDtSessions,
+  useSitePhotos,
   useUpdateIssue,
   useUpdateSite,
 } from '../api/queries'
 import { isAllowed } from '../api/types'
 import type { Issue, IssueSeverity, IssueStatus, Sector, SectorWrite, SiteDetail, SiteDtSession, SiteWrite } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
+import SitePhotoCard from '../components/SitePhotoCard'
 import { DT_EXPLORE_PATH, DT_SESSION_HISTORY_PATH, RF_REPORTS_PATH, SITES_PATH } from '../constants/opaqueRoutes'
 import { useSearchModal } from '../contexts/SearchModalContext'
 import SiteLocationMiniMap from '../components/SiteLocationMiniMap'
@@ -256,6 +258,7 @@ export default function SiteDetailPage() {
   const fromDtExplore = searchParams.get('from') === 'dt-explore'
   const { data: site, isLoading, error } = useSite(id)
   const { data: nearbyDtSessions } = useSiteDtSessions(id)
+  const { data: sitePhotos } = useSitePhotos({ site: id ?? '-' })
   const updateSite = useUpdateSite(id || '')
   const deleteSite = useDeleteSite()
   // Site Issues (2026-09-14) -- see Issue's docstring in the backend's
@@ -997,6 +1000,32 @@ export default function SiteDetailPage() {
           </div>
         ) : (
           <div className="kpi-pane-empty">No vendor-imported antenna changes recorded for this site's sectors yet.</div>
+        )}
+      </section>
+
+      {/* -- Site Photos -----------------------------------------------
+          2026-10-11: photos taken at this site with the mobile app, each
+          with the direction the phone pointed. Everyone sees approved
+          ones; an admin also sees pending and rejected ones here and can
+          review them without going to the Site Photos page. */}
+      <section>
+        <div className="site-form-section">Site Photos</div>
+        {sitePhotos && sitePhotos.photos.length > 0 ? (
+          <div className="site-photo-grid">
+            {sitePhotos.photos.map((photo) => (
+              <SitePhotoCard key={photo.id} photo={photo} canReview={sitePhotos.can_review} />
+            ))}
+            {sitePhotos.total > sitePhotos.photos.length && (
+              <p className="muted">
+                Showing the newest {sitePhotos.photos.length} of {sitePhotos.total} photos.
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="muted">
+            No photos of this site yet. Staff can take them at the site with the mobile app; each one appears here
+            after an admin approves it.
+          </p>
         )}
       </section>
 

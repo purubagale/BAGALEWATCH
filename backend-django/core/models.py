@@ -3536,3 +3536,80 @@ class SubscriberDevice(models.Model):
 
     def __str__(self):
         return f'{self.msisdn} on {self.device_hash[:10]}'
+
+
+def site_photo_upload_path(instance, filename):
+    # Random name, never the uploader's: the file is only ever read back
+    # through SitePhotoImageView, which needs a login.
+    return f'site_photos/{instance.site_id}/{uuid.uuid4().hex}.jpg'
+
+
+class SitePhoto(models.Model):
+    """A photo taken at a site with the mobile app (2026-10-11), stamped
+    with where the phone was and which way it pointed. Used to check a
+    sector's real direction against its planned azimuth and to record what
+    stands in front of it.
+
+    The app has no staff login, so an upload is trusted only as far as
+    "a registered phone standing near this site sent it". It stays PENDING
+    and is not shown on the site page until an admin approves it
+    (core/site_photo.py)."""
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+
+    site = models.ForeignKey(Site, on_delete=models.CASCADE, related_name='photos')
+    file = models.FileField(upload_to=site_photo_upload_path, max_length=300)
+    # Small copy for the lists, so a page of photos does not download every
+    # full picture.
+    thumb = models.FileField(upload_to=site_photo_upload_path, max_length=300, blank=True, default='')
+    size_bytes = models.IntegerField(default=0)
+    width = models.IntegerField(default=0)
+    height = models.IntegerField(default=0)
+
+    # Where the phone was and which way its camera pointed. bearing_deg is
+    # degrees clockwise from true north as the phone's compass reported it,
+    # which is typically 5 to 15 degrees off and worse beside steel.
+    bearing_deg = models.FloatField()
+    lat = models.FloatField()
+    lng = models.FloatField()
+    accuracy_m = models.FloatField(null=True, blank=True)
+    altitude_m = models.FloatField(null=True, blank=True)
+    distance_to_site_m = models.FloatField(null=True, blank=True)
+    taken_at = models.DateTimeField()
+
+    # The planned direction the engineer said this photo is of, copied at
+    # upload time so a later change to the sector table does not rewrite
+    # what was compared on the day.
+    planned_azimuth = models.FloatField(null=True, blank=True)
+    sector_label = models.CharField(max_length=200, blank=True, default='')
+    # Serving-cell reading at the moment of the photo (network_type, rsrp,
+    # rsrq, sinr, pci, cell_id). Whatever the phone could read; may be {}.
+    signal = models.JSONField(default=dict, blank=True)
+    note = models.CharField(max_length=300, blank=True, default='')
+
+    device = models.ForeignKey(
+        DeviceCredential, null=True, blank=True, on_delete=models.SET_NULL, related_name='site_photos'
+    )
+    # Kept on the row so the uploader is still known after a device is removed.
+    uploader_msisdn = models.CharField(max_length=24, blank=True, default='')
+
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+    reviewed_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_site_photo'
+        ordering = ['-taken_at']
+        indexes = [
+            models.Index(fields=['site', 'status']),
+        ]
+
+    def __str__(self):
+        return f'{self.site_id} @ {self.bearing_deg:.0f}° ({self.status})'

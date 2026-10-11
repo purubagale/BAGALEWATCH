@@ -1,12 +1,13 @@
 """
 python manage.py run_maintenance
 
-Runs the four background jobs in one process, one thread each:
+Runs the background jobs in one process, one thread each:
 
     sync_live_sites        scheduled Live Site Directory sync
     telemetry_maintenance  partitions and retention of telemetry samples
     roll_telemetry_bins    coverage-bin roll-up
     prune_audit_log        audit-log and expired-token retention
+    prune_site_photos      old rejected and unreviewed site photos
 
 Each job is the existing command run with --loop, so its interval,
 settings and behaviour are unchanged. entrypoint.sh starts this next to
@@ -15,7 +16,7 @@ and a deployment whose compose file left those services out (prod did)
 ran none of them. One process instead of four also saves about 200 MB.
 
 A job that raises is logged and started again after RESTART_DELAY_SECONDS;
-the other three keep running. Only one runner works per database (a
+the others keep running. Only one runner works per database (a
 Postgres advisory lock); a second one waits.
 """
 import threading
@@ -25,7 +26,7 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.db import close_old_connections, connection
 
-JOBS = ('sync_live_sites', 'telemetry_maintenance', 'roll_telemetry_bins', 'prune_audit_log')
+JOBS = ('sync_live_sites', 'telemetry_maintenance', 'roll_telemetry_bins', 'prune_audit_log', 'prune_site_photos')
 RESTART_DELAY_SECONDS = 60
 # Arbitrary fixed number, only has to be the same in every runner.
 LOCK_KEY = 20261011
@@ -34,7 +35,7 @@ LOCK_CHECK_SECONDS = 60
 
 
 class Command(BaseCommand):
-    help = 'Run the four maintenance loops in one process (started by entrypoint.sh).'
+    help = 'Run the maintenance loops in one process (started by entrypoint.sh).'
 
     def _run_job(self, name):
         while True:

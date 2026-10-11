@@ -5,7 +5,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from . import (api_auth, area_sample, audit, auth_log, backup, collection, consent, dashboard, device_identity,
                device_lookup, device_trace, drive_test, emergency,
                exports, ip_block, issues, kpi_trend, mfa, password_reset, reports, rescue, rf_audit,
-               rf_reports, roles, site_import, sso_views, system_doc,
+               rf_reports, roles, site_import, site_photo, sso_views, system_doc,
                telemetry_admin, views, volte_quality)
 
 router = DefaultRouter()
@@ -213,6 +213,11 @@ urlpatterns = [
     # (2026-09-01) — see core/telemetry_admin.py's TelemetryDriveTestSession*
     # views for why these replace TelemetryLiveSamplesView as the
     # promotable, consent-scoped path.
+    # Site photos from the mobile app (2026-10-11) -- see core/site_photo.py.
+    path('site-photos/', site_photo.SitePhotoListView.as_view(), name='site-photos'),
+    path('site-photos/<int:pk>/', site_photo.SitePhotoDetailView.as_view(), name='site-photo-detail'),
+    path('site-photos/<int:pk>/image/', site_photo.SitePhotoImageView.as_view(), name='site-photo-image'),
+    path('site-photos/<int:pk>/review/', site_photo.SitePhotoReviewView.as_view(), name='site-photo-review'),
     # On-demand area sample (2026-10-08) -- see core/area_sample.py.
     path('telemetry/area-samples/', area_sample.AreaSampleRequestListCreateView.as_view(), name='telemetry-area-samples'),
     path('telemetry/area-samples/<int:pk>/samples/', area_sample.AreaSampleRequestSamplesView.as_view(),

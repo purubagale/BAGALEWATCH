@@ -4,7 +4,7 @@
 the isolation decision in models.py's TelemetryIngestKey docstring."""
 from django.urls import path
 
-from . import area_sample, device_identity, device_trace, speed_test, trace_speed
+from . import area_sample, device_identity, device_trace, site_photo, speed_test, trace_speed
 from .consent import DriveTestConsentMessageView, DriveTestConsentView
 from .rescue import RescueEnrollView
 from .telemetry import TelemetryHealthView, TelemetryIngestView
@@ -43,6 +43,9 @@ urlpatterns = [
     path('device/challenge/', device_trace.DeviceChallengeView.as_view(), name='device-challenge'),
     path('device/register/', device_trace.DeviceRegisterView.as_view(), name='device-register'),
     path('device/fcm-token/', device_trace.DeviceFcmTokenView.as_view(), name='device-fcm-token'),
+    # Site photos from the app (2026-10-11) -- see core/site_photo.py.
+    path('device/nearby-sites/', site_photo.DeviceNearbySitesView.as_view(), name='device-nearby-sites'),
+    path('device/site-photos/', site_photo.DeviceSitePhotoUploadView.as_view(), name='device-site-photos'),
     path('device/trace-requests/', device_trace.DeviceTraceListView.as_view(), name='device-trace-list'),
     path('device/trace-requests/<uuid:trace_id>/respond/', device_trace.DeviceTraceRespondView.as_view(), name='device-trace-respond'),
     path('device/trace-requests/<uuid:trace_id>/samples/', device_trace.DeviceTraceSamplesView.as_view(), name='device-trace-samples'),

@@ -1,6 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef } from 'react'
 import { ApiError, apiFetch, apiJson } from './client'
+import type { SitePhotoList } from './types'
 import type {
   CollectionSessionRow,
   CollectionSessionSample,
@@ -1802,5 +1803,40 @@ export function useUploadRfReportAttachments(defaultReportId?: number) {
       qc.invalidateQueries({ queryKey: ['rf-report', reportId] })
       qc.invalidateQueries({ queryKey: ['rf-reports'] })
     },
+  })
+}
+
+// Site photos from the mobile app (2026-10-11).
+export function useSitePhotos(params: { site?: string; status?: string; offset?: number }) {
+  const qs = new URLSearchParams()
+  if (params.site) qs.set('site', params.site)
+  if (params.status) qs.set('status', params.status)
+  if (params.offset) qs.set('offset', String(params.offset))
+  return useQuery({
+    queryKey: ['site-photos', params.site ?? '', params.status ?? '', params.offset ?? 0],
+    queryFn: () => apiJson<SitePhotoList>(`/api/v2/site-photos/?${qs.toString()}`),
+  })
+}
+
+export function useReviewSitePhoto() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, action }: { id: number; action: 'approve' | 'reject' }) =>
+      apiJson<{ id: number; status: string }>(`/api/v2/site-photos/${id}/review/`, {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['site-photos'] }),
+  })
+}
+
+export function useDeleteSitePhoto() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiFetch(`/api/v2/site-photos/${id}/`, { method: 'DELETE' })
+      if (!res.ok) throw new ApiError(res.status, { detail: 'Could not delete the photo.' })
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['site-photos'] }),
   })
 }

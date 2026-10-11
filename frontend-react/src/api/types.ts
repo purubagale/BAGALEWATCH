@@ -2490,3 +2490,45 @@ export interface TraceRequestDetail extends TraceRequestEntry {
   speed_results: TraceSpeedResult[]
   session: TraceSession | null
 }
+
+// Site photos from the mobile app (2026-10-11).
+export interface SitePhotoDirection {
+  azimuth: number
+  sectors: string
+}
+
+export interface SitePhoto {
+  id: number
+  site_id: string
+  site_name: string
+  bearing_deg: number
+  planned_azimuth: number | null
+  azimuth_difference: number | null
+  azimuth_flag_deg: number
+  sector_label: string
+  lat: number
+  lng: number
+  accuracy_m: number | null
+  altitude_m: number | null
+  distance_to_site_m: number | null
+  taken_at: string
+  signal: Record<string, number | string>
+  note: string
+  status: 'pending' | 'approved' | 'rejected'
+  width: number
+  height: number
+  // Present for admins only.
+  uploader?: string
+  created_at?: string
+  reviewed_by?: string
+  reviewed_at?: string | null
+}
+
+export interface SitePhotoList {
+  photos: SitePhoto[]
+  can_review: boolean
+  total: number
+  page_size: number
+  pending_count?: number
+  directions?: SitePhotoDirection[]
+}

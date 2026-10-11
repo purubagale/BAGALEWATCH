@@ -3803,3 +3803,50 @@ textarea:focus {
     display: none !important;
   }
 }
+
+/* Site photos from the mobile app (2026-10-11) -- SitePhotoCard, used on
+   the site page and the Site Photos review page. */
+.site-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  margin: 10px 0 18px;
+}
+.site-photo-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+.site-photo-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+.site-photo-image-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  background: var(--bg-hover);
+}
+.site-photo-body { padding: 10px 12px 12px; display: grid; gap: 4px; }
+.site-photo-title { font-weight: 600; }
+.site-photo-bearing { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.site-photo-diff { font-size: 13px; }
+.site-photo-diff-flag { color: var(--status-warning); font-weight: 600; }
+.site-photo-note { font-size: 13px; font-style: italic; }
+.site-photo-status {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.site-photo-status-pending { color: var(--status-warning); }
+.site-photo-status-rejected { color: var(--text-dim); }
+.site-photo-actions { display: flex; gap: 6px; margin-top: 6px; }
+.site-photo-open { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }

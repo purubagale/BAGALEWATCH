@@ -298,9 +298,35 @@ the live server's own configuration):
   `RUN_MAINTENANCE=0`.
 - node-gateway and go-worker are gone from every compose file and both
   build scripts. Prod must deploy with `docker compose up -d
-  --remove-orphans`. The `backend-node/` and `backend-go/` folders are
-  still on disk: deleting them was denied in auto mode, the user removes
-  them (`git rm -r backend-node backend-go`).
+  --remove-orphans`. The `backend-node/` and `backend-go/` folders were
+  deleted by the user (`189ac10`); folder deletion is denied in auto
+  mode, so hand such steps to the user with PowerShell syntax.
+
+**Site photos** (2026-10-11, built, NOT committed in either repo, not on
+prod). `core/site_photo.py`, model `SitePhoto` (migrations 0118, 0119),
+`SitePhotoCard.tsx`, `SitePhotosPage.tsx` (opaque route `/p6h2sv`, admin),
+a "Site Photos" section on the site page, and `SitePhotoActivity.kt` in
+the app (Map tab, "Site photo" button, CameraX).
+
+- The app has no staff login, so trust rests on: registered phone only
+  (signed request), phone within 1 km of the site, and every upload
+  PENDING until an admin approves it. Viewers see approved photos only.
+- The engineer picks a planned direction (distinct azimuth with its
+  sectors), not a cell; left on automatic, the nearest one is used. The
+  site page flags a difference above 20 degrees.
+- The picture travels as base64 JPEG inside the signed JSON body and is
+  re-encoded on arrival (max 1600 px, metadata dropped).
+- Load limits (constants at the top of `core/site_photo.py`): 2 MB and
+  8 megapixels per picture (pixels checked before decoding), 100 a day
+  per phone, 5000 a day in total, uploads refused while 2000 are
+  pending, nginx 4 MB on the upload path. Lists use a 480 px thumbnail
+  and 60 per page. `prune_site_photos` (in `run_maintenance`) deletes
+  rejected photos after 30 days and unreviewed ones after 90.
+- Server and API tested locally with a throwaway device key; one test
+  photo of CDR001 is left in the local database. The web pages were
+  built but not looked at in a browser, and the capture screen has not
+  run on a phone. The app talks to prod, so a phone test needs the prod
+  deploy first.
 
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an
