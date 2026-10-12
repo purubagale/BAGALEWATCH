@@ -362,6 +362,24 @@ repo, not on prod):
   RSRQ -9/-10 readings prod also has). `manage.py cqi_rsrq_calibration`
   (read-only) compares the two on stored samples and prints a fitted
   `CQI_CONFIG_JSON`. Waiting for its output from prod.
+- **RSRQ estimate never below CQI 1** (2026-10-12, `rsrq_min_cqi` in
+  `core/cqi.py`, Python and SQL). Prod showed "0 (est. RSRQ)" for
+  connected LTE readings at RSRQ -17/-18. A 0 the phone reports, or one
+  from a measured SINR, still shows. Migration 0123 recomputes the bins
+  whose samples are all still stored. This removes the zeros only; the
+  line itself is still uncalibrated.
+- **Planned local AI assistant (documents only, no code).** On
+  2026-10-12 the user asked for a future-plan item: an open-source model
+  hosted by NTC that identifies problems, likely causes and suggested
+  actions from stored data. Agreed wording: "NTC-hosted", no model
+  named, all three uses, admin and superadmin plus any role given the
+  permission, engineer accepts or rejects every draft, numbers computed
+  by the server, no personal data to the model. It is in the Technical
+  Manual (overview diagram, "Future plan" section with its own flow),
+  the combined manual's overview diagram, the Admin Manual ("Planned: AI
+  assistant"), management deck slide 14 and technical deck slide 21,
+  always marked planned with a dashed border. Do not build it until
+  asked.
 - **Telemetry sessions in DT Explore** (2026-10-12). `core/telemetry_near.py`
   (`/api/v2/telemetry/sessions-near/`), `TelemetryNearLayer.tsx`, and an
   "Include telemetry sessions" tick box in Explore, off by default and
