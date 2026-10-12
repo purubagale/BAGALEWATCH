@@ -112,29 +112,60 @@ class EesmTests(SimpleTestCase):
 
 
 class RsrqTests(SimpleTestCase):
-    def test_spec_example(self):
+    LINE = {'rsrq_table': None}   # the straight line used before the table
+
+    def rsrq(self, value, config=None):
+        return compute_cqi(rsrq_db=value, method=RSRP_RSRQ, config=config)['cqi_index']
+
+    def test_table_is_the_default(self):
         r = compute_cqi(rsrq_db=-10, method=RSRP_RSRQ)
-        self.assertEqual(r['cqi_index'], 7)
-        self.assertEqual(r['modulation'], '16QAM')
+        self.assertEqual(r['cqi_index'], 11)
+        self.assertEqual(r['modulation'], '64QAM')
         self.assertEqual(r['method_used'], RSRP_RSRQ)
         self.assertIsNone(r['effective_sinr_db'])
 
-    def test_clamped_to_1_15(self):
+    def test_table_steps(self):
+        expected = {-3: 12, -9: 12, -10: 11, -11: 11, -12: 10, -13: 8, -14: 6, -15: 5,
+                    -16: 4, -17: 3, -18: 2, -19: 2, -20: 1, -25: 1}
+        self.assertEqual({q: self.rsrq(q) for q in expected}, expected)
+
+    def test_table_never_rises_as_rsrq_falls(self):
+        values = [self.rsrq(q / 2.0) for q in range(-6, -50, -1)]
+        self.assertEqual(values, sorted(values, reverse=True))
+
+    def test_a_half_db_reading_rounds_to_its_whole_db(self):
+        self.assertEqual(self.rsrq(-11.4), 11)
+        self.assertEqual(self.rsrq(-11.6), 10)
+
+    def test_custom_table(self):
+        self.assertEqual(self.rsrq(-12, {'rsrq_table': [[-10, 9], [-15, 4]]}), 4)
+        self.assertEqual(self.rsrq(-20, {'rsrq_table': [[-10, 9], [-15, 4]]}), 1)
+
+    def test_bad_table_is_refused(self):
+        for bad in ([], [[-15, 4], [-10, 9]], [[-10, 4], [-15, 9]], [[-10, 16]], 'x'):
+            with self.assertRaises(CqiError):
+                self.rsrq(-10, {'rsrq_table': bad})
+
+    def test_line_example(self):
+        self.assertEqual(self.rsrq(-10, self.LINE), 7)
+
+    def test_line_clamped_to_1_15(self):
         # A connected phone is never shown as "out of range" from RSRQ alone.
-        self.assertEqual(compute_cqi(rsrq_db=-25, method=RSRP_RSRQ)['cqi_index'], 1)
-        self.assertEqual(compute_cqi(rsrq_db=-17, method=RSRP_RSRQ)['cqi_index'], 1)
-        self.assertEqual(compute_cqi(rsrq_db=-15, method=RSRP_RSRQ)['cqi_index'], 2)
-        self.assertEqual(compute_cqi(rsrq_db=5, method=RSRP_RSRQ)['cqi_index'], 15)
+        self.assertEqual(self.rsrq(-25, self.LINE), 1)
+        self.assertEqual(self.rsrq(-17, self.LINE), 1)
+        self.assertEqual(self.rsrq(-15, self.LINE), 2)
+        self.assertEqual(self.rsrq(5, self.LINE), 15)
 
     def test_floor_is_configurable(self):
-        r = compute_cqi(rsrq_db=-25, method=RSRP_RSRQ, config={'rsrq_min_cqi': 0})
-        self.assertEqual(r['cqi_index'], 0)
+        self.assertEqual(self.rsrq(-25, {'rsrq_min_cqi': 0}), 0)
+        self.assertEqual(self.rsrq(-25, {'rsrq_min_cqi': 0, 'rsrq_table': None}), 0)
 
     def test_floor_does_not_touch_sinr_or_reported(self):
         self.assertEqual(compute_cqi(sinr_db=-12, method=SINR_MAPPING)['cqi_index'], 0)
 
     def test_custom_coefficients(self):
-        r = compute_cqi(rsrq_db=-10, method=RSRP_RSRQ, config={'rsrq_slope': 0.5, 'rsrq_intercept': 10})
+        r = compute_cqi(rsrq_db=-10, method=RSRP_RSRQ,
+                        config={'rsrq_table': None, 'rsrq_slope': 0.5, 'rsrq_intercept': 10})
         self.assertEqual(r['cqi_index'], 5)
 
     def test_rsrq_required(self):
@@ -201,7 +232,7 @@ class SampleFieldsTests(SimpleTestCase):
         f = sample_cqi_fields(None, 17, -12, 'LTE')
         self.assertEqual((f['cqi_value'], f['cqi_source'], f['spectral_efficiency']), (12, 'sinr', 3.9023))
         f = sample_cqi_fields(None, None, -10, 'LTE')
-        self.assertEqual((f['cqi_value'], f['cqi_source'], f['modulation']), (7, 'rsrq', '16QAM'))
+        self.assertEqual((f['cqi_value'], f['cqi_source'], f['modulation']), (11, 'rsrq', '64QAM'))
 
     def test_out_of_range_report_is_ignored(self):
         # Android's "unavailable" is Integer.MAX_VALUE.
