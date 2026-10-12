@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import CurrentLocationMarker from '../components/CurrentLocationMarker'
+import SitePhotoLayer from '../components/SitePhotoLayer'
 import { useTelemetryCoverage } from '../api/queries'
 import type { TelemetryCoverageBin } from '../api/types'
 import { RSRP_BANDS, RSRQ_BANDS, SINR_BANDS, CQI_BANDS, bandColor, type Band } from '../lib/dtBands'
+import { telemetryLevel } from '../lib/telemetryLevel'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 
 // Telemetry Coverage (2026-08-31) — geohash-binned crowdsourced-telemetry
@@ -30,6 +33,9 @@ interface Metric {
   unit: string
   bands: Band[]
   value: (b: TelemetryCoverageBin) => number | null
+  /** Colour scale for one cell, when it depends on the cell's technology.
+   * Defaults to `bands`. */
+  bandsFor?: (b: TelemetryCoverageBin) => Band[]
   /** Tooltip text override — defaults to `${value}${unit}` when absent.
    * Confidence's "value" is an internal 0/1/2 score (see
    * confidenceScore below), not something meaningful to show a user
@@ -81,7 +87,21 @@ const CONFIDENCE_BANDS: Band[] = [
 ]
 
 const METRICS: Metric[] = [
-  { key: 'rsrp', label: 'RSRP', unit: ' dBm', bands: RSRP_BANDS, value: (b) => b.rsrp_mean },
+  // Level (2026-10-12): RSRP on a 4G/5G cell, RSCP on 3G, RxLev on 2G, each
+  // on its own scale. As a plain RSRP tab, every 3G and 2G cell was grey:
+  // those technologies report no RSRP. Key kept as 'rsrp' for saved state.
+  {
+    key: 'rsrp',
+    label: 'Level',
+    unit: ' dBm',
+    bands: RSRP_BANDS,
+    value: (b) => b.level_mean ?? b.rsrp_mean,
+    bandsFor: (b) => cellLevel(b).bands,
+    describe: (b) => {
+      const level = cellLevel(b)
+      return level.value != null ? `${level.name} ${level.value} dBm` : 'No data'
+    },
+  },
   { key: 'rsrq', label: 'RSRQ', unit: ' dB', bands: RSRQ_BANDS, value: (b) => b.rsrq_mean },
   { key: 'sinr', label: 'SINR', unit: ' dB', bands: SINR_BANDS, value: (b) => b.sinr_mean },
   // cqi (2026-09-15) -- LTE/NR-only Channel Quality Indicator, 0-15,
@@ -97,6 +117,12 @@ const METRICS: Metric[] = [
     describe: (b) => CONFIDENCE_BANDS[confidenceScore(b)].label,
   },
 ]
+
+// A cell holds one technology, so its mean level is read as that technology's.
+function cellLevel(b: TelemetryCoverageBin) {
+  const v = b.level_mean ?? b.rsrp_mean
+  return telemetryLevel({ network_type: b.network_type, rsrp: v, rscp: v, rssi: v })
+}
 
 function InvalidateOnResize() {
   useMapInvalidateOnResize()
@@ -121,7 +147,7 @@ function CoverageBins({ bins, metric }: { bins: TelemetryCoverageBin[]; metric: 
     for (const b of bins) {
       if (b.lat == null || b.lng == null) continue
       const v = metric.value(b)
-      const color = bandColor(metric.bands, v)
+      const color = bandColor(metric.bandsFor ? metric.bandsFor(b) : metric.bands, v)
       const valueText = metric.describe ? metric.describe(b) : v != null ? `${v}${metric.unit}` : 'No data'
       L.circleMarker([b.lat, b.lng], {
         radius: 5,
@@ -168,7 +194,9 @@ export default function TelemetryCoveragePage() {
         Signal reported by subscribers' phones, averaged into cells of about 150&nbsp;m. Each dot is one cell, colored by
         {metric.key === 'confidence'
           ? ' how fresh and dense its underlying data is'
-          : ` its mean ${metric.label} for the selected network`}
+          : metric.key === 'rsrp'
+            ? ' its mean signal level: RSRP on 4G, RSCP on 3G, RxLev on 2G'
+            : ` its mean ${metric.label} for the selected network`}
         .
       </p>
 
@@ -232,6 +260,8 @@ export default function TelemetryCoveragePage() {
           ) : (
             <MapContainer key={mapKey} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
               <InvalidateOnResize />
+              <CurrentLocationMarker />
+              <SitePhotoLayer />
               <FitToBins bins={bins} />
               <TileLayer
                 attribution="&copy; OpenStreetMap contributors"
@@ -255,6 +285,11 @@ export default function TelemetryCoveragePage() {
             </span>
           </div>
 
+          {metric.key === 'rsrp' && (
+            <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+              The scale shown is for 4G and 3G. 2G cells use the RxLev scale: above −72, −82, −92 and −105 dBm.
+            </p>
+          )}
           {metric.key === 'confidence' && (
             <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>
               Fresh &amp; dense: last update within {CONFIDENCE_FRESH_DAYS} days, with at least{' '}

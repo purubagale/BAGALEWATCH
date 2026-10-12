@@ -276,6 +276,8 @@ class CollectionSessionSamplesView(APIView):
                     'ts': r.ts, 'lat': r.lat, 'lng': r.lng, 'accuracy_m': r.accuracy_m,
                     'network_type': r.network_type, 'pci': r.pci, 'rsrp_dbm': r.rsrp_dbm,
                     'rsrq_db': r.rsrq_db, 'sinr_db': r.sinr_db,
+                    # A trace sample stores RSSI but no RSCP, Ec/Io or Rx quality.
+                    'rscp_dbm': None, 'ecio_db': None, 'rssi_dbm': r.rssi_dbm, 'rx_qual': None,
                     # `cqi` is what the phone reported, often null. A trace
                     # sample stores no estimate, so it is worked out here
                     # from the sample's own SINR (LTE only).
@@ -302,6 +304,9 @@ class CollectionSessionSamplesView(APIView):
                     'ts': r.ts, 'lat': r.lat, 'lng': r.lng, 'accuracy_m': r.gps_accuracy_m,
                     'network_type': r.network_type, 'pci': r.pci, 'rsrp_dbm': r.rsrp_dbm,
                     'rsrq_db': r.rsrq_db, 'sinr_db': r.sinr_db,
+                    # Levels for the stretches of a drive spent on 3G or 2G
+                    # (2026-10-12): without them those points had no level.
+                    'rscp_dbm': r.rscp_dbm, 'ecio_db': r.ecio_db, 'rssi_dbm': r.rssi_dbm, 'rx_qual': r.rx_qual,
                     'cqi': r.cqi, 'cqi_derived': r.cqi_derived,
                     # Shown value, where it came from (reported / sinr /
                     # rsrq) and its 3GPP modulation and efficiency

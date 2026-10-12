@@ -46,6 +46,9 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
+
+from core.cqi import sample_cqi_sql
+from core.telemetry_level import LEVEL_SQL
 from django.db import connection, transaction
 from django.utils import timezone
 
@@ -60,7 +63,7 @@ _ROLL_SQL = """
 INSERT INTO v2_telemetry_coverage_bins AS b
   (geohash, network_type, mnc, region, center_lat, center_lng,
    sample_count, device_count, rsrp_mean, rsrp_p10, rsrp_min,
-   rsrq_mean, sinr_mean, cqi_mean, first_ts, last_ts, updated_at)
+   rsrq_mean, sinr_mean, cqi_mean, level_mean, first_ts, last_ts, updated_at)
 SELECT
   gh,
   network_type,
@@ -76,12 +79,13 @@ SELECT
   avg(rsrq_db),
   avg(sinr_db),
   avg(cqi),
+  avg(level),
   min(ts),
   max(ts),
   now()
 FROM (
   SELECT ST_GeoHash(location::geometry, 7) AS gh,
-         network_type, mnc, device_id, region, rsrp_dbm, rsrq_db, sinr_db, cqi, ts
+         network_type, mnc, device_id, region, rsrp_dbm, rsrq_db, sinr_db, __CQI__ AS cqi, __LEVEL__ AS level, ts
   FROM v2_telemetry_samples
   WHERE location IS NOT NULL
     AND received_at > COALESCE(%(since)s, '-infinity'::timestamptz)
@@ -119,11 +123,20 @@ ON CONFLICT (geohash, network_type, mnc) DO UPDATE SET
       WHEN EXCLUDED.cqi_mean IS NULL THEN b.cqi_mean
       ELSE (b.cqi_mean * b.sample_count + EXCLUDED.cqi_mean * EXCLUDED.sample_count)
            / NULLIF(b.sample_count + EXCLUDED.sample_count, 0) END,
+  level_mean = CASE
+      WHEN b.level_mean IS NULL THEN EXCLUDED.level_mean
+      WHEN EXCLUDED.level_mean IS NULL THEN b.level_mean
+      ELSE (b.level_mean * b.sample_count + EXCLUDED.level_mean * EXCLUDED.sample_count)
+           / NULLIF(b.sample_count + EXCLUDED.sample_count, 0) END,
   first_ts = LEAST(b.first_ts, EXCLUDED.first_ts),
   last_ts  = GREATEST(b.last_ts, EXCLUDED.last_ts),
   region   = COALESCE(NULLIF(b.region, ''), EXCLUDED.region),
   updated_at = now();
 """
+
+# The CQI averaged per bin is the reported value where a phone gives one,
+# else the estimate (2026-10-12) -- see cqi.sample_cqi_sql().
+_ROLL_SQL = _ROLL_SQL.replace('__CQI__', sample_cqi_sql()).replace('__LEVEL__', LEVEL_SQL)
 
 _COUNT_SQL = """
 SELECT count(*) FROM v2_telemetry_samples

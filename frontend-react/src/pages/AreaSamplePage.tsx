@@ -5,6 +5,7 @@ import { apiErrorMessage } from '../api/client'
 import { useAreaSampleRequests, useAreaSampleResults, useCreateAreaSampleRequest, useSites } from '../api/queries'
 import type { AreaSampleReading } from '../api/types'
 import { RSRP_BANDS, RSRQ_BANDS, SINR_BANDS, bandColor, type Band } from '../lib/dtBands'
+import { telemetryLevel } from '../lib/telemetryLevel'
 import { declusterForPlot } from '../lib/declusterPlot'
 import { resolveAreaQuery, type ResolvedAreaPoint } from '../lib/resolveDeviceAreaQuery'
 import { CQI_COLUMN_HINT, CQI_MODULATION_HINT, cqiLabel, cqiModulationLabel } from '../lib/cqiDisplay'
@@ -23,12 +24,27 @@ interface Metric {
 }
 
 const METRICS: Metric[] = [
-  { key: 'rsrp_dbm', label: 'RSRP', unit: ' dBm', bands: RSRP_BANDS },
+  // Level: RSRP on 4G, RSCP on 3G, RxLev on 2G (2026-10-12). The key stays
+  // 'rsrp_dbm'; the value and its scale are worked out per reading below.
+  { key: 'rsrp_dbm', label: 'Level', unit: ' dBm', bands: RSRP_BANDS },
   { key: 'rsrq_db', label: 'RSRQ', unit: ' dB', bands: RSRQ_BANDS },
   { key: 'sinr_db', label: 'SINR', unit: ' dB', bands: SINR_BANDS },
 ]
 
 const DEFAULT_RADIUS_KM = 2
+
+// The level of whatever technology the phone was on for this reading.
+function readingLevel(s: AreaSampleReading) {
+  return telemetryLevel({ network_type: s.network_type, rsrp: s.rsrp_dbm, rscp: s.rscp_dbm, rssi: s.rssi_dbm })
+}
+
+// One level column for readings on different technologies: the number, with
+// its name when it is not RSRP, so "-85 RSCP" is not read as RSRP.
+function levelCell(s: AreaSampleReading) {
+  const level = readingLevel(s)
+  if (level.value == null) return '\u2014'
+  return level.name === 'RSRP' ? String(level.value) : `${level.value} ${level.name}`
+}
 
 function ClickToSetPoint({ onPick }: { onPick: (lat: number, lng: number) => void }) {
   useMapEvents({
@@ -67,7 +83,7 @@ export default function AreaSamplePage() {
         lat: s.lat,
         lng: s.lng,
         siteKey: `${s.serving_site_id ?? ''}|${s.serving_sector ?? ''}`,
-        score: s[metric.key],
+        score: metric.key === 'rsrp_dbm' ? readingLevel(s).value : s[metric.key],
       })),
     [results, metric],
   )
@@ -212,7 +228,7 @@ export default function AreaSamplePage() {
             {results.open
               ? `Still collecting until ${new Date(results.open_until).toLocaleTimeString()}.`
               : 'Collection window closed.'}{' '}
-            Average RSRP {average(results.samples.map((s) => s.rsrp_dbm))} dBm, RSRQ{' '}
+            Average on 4G: RSRP {average(results.samples.map((s) => s.rsrp_dbm))} dBm, RSRQ{' '}
             {average(results.samples.map((s) => s.rsrq_db))} dB, SINR {average(results.samples.map((s) => s.sinr_db))} dB.
           </p>
 
@@ -241,16 +257,18 @@ export default function AreaSamplePage() {
               <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
               <Circle center={[shown.lat, shown.lng]} radius={shown.radius_km * 1000} pathOptions={{ color: '#2563eb', fillOpacity: 0.04 }} />
               {points.map((p, i) => {
-                const v = p.item[metric.key]
+                const level = metric.key === 'rsrp_dbm' ? readingLevel(p.item) : null
+                const v = level ? level.value : p.item[metric.key]
+                const fill = level ? level.color : bandColor(metric.bands, v)
                 return (
                   <CircleMarker
                     key={i}
                     center={[p.lat, p.lng]}
                     radius={7}
-                    pathOptions={{ color: '#ffffff', weight: 1, fillColor: bandColor(metric.bands, v), fillOpacity: 0.95 }}
+                    pathOptions={{ color: '#ffffff', weight: 1, fillColor: fill, fillOpacity: 0.95 }}
                   >
                     <Tooltip>
-                      {metric.label} {v != null ? `${v}${metric.unit}` : 'no data'} · {p.item.network_type}
+                      {level ? level.name : metric.label} {v != null ? `${v}${metric.unit}` : 'no data'} · {p.item.network_type}
                       {p.item.serving_site_id ? ` · ${p.item.serving_site_id}` : ''}
                       {p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : ''}
                     </Tooltip>
@@ -273,7 +291,7 @@ export default function AreaSamplePage() {
                   <th>Network</th>
                   <th>Serving site</th>
                   <th>PCI</th>
-                  <th>RSRP</th>
+                  <th title="Signal level: RSRP on 4G, RSCP on 3G, RxLev on 2G">Level (dBm)</th>
                   <th>RSRQ</th>
                   <th>SINR</th>
                   <th title={CQI_COLUMN_HINT}>CQI</th>
@@ -290,7 +308,7 @@ export default function AreaSamplePage() {
                     <td>{s.network_type}</td>
                     <td>{s.serving_site_id ? `${s.serving_site_id}${s.serving_sector ? ` / ${s.serving_sector}` : ''}` : '—'}</td>
                     <td>{s.pci ?? '—'}</td>
-                    <td>{s.rsrp_dbm ?? '—'}</td>
+                    <td>{levelCell(s)}</td>
                     <td>{s.rsrq_db ?? '—'}</td>
                     <td>{s.sinr_db ?? '—'}</td>
                     <td>{cqiLabel(s)}</td>

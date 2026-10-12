@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
-import { RSRP_BANDS, bandColor } from '../lib/dtBands'
+import CurrentLocationMarker from '../components/CurrentLocationMarker'
+import SitePhotoLayer from '../components/SitePhotoLayer'
+import { telemetryLevel } from '../lib/telemetryLevel'
 import { declusterForPlot } from '../lib/declusterPlot'
 import { useCollectionSessionSamples, useCollectionSessions } from '../api/queries'
 import { CQI_COLUMN_HINT, CQI_MODULATION_HINT, cqiLabel, cqiModulationLabel } from '../lib/cqiDisplay'
@@ -21,6 +23,14 @@ const SOURCE_LABEL: Record<string, string> = {
   operator_investigation: 'Operator investigation',
   operator_case: 'Operator case',
   drive_test: 'Drive test (team)',
+}
+
+// One level column for a drive that moves between technologies: the number
+// with its name when it is not RSRP, so "-85 RSCP" is not read as RSRP.
+function levelText(s: { network_type: string; rsrp_dbm: number | null; rscp_dbm?: number | null; rssi_dbm?: number | null }) {
+  const level = telemetryLevel({ network_type: s.network_type, rsrp: s.rsrp_dbm, rscp: s.rscp_dbm, rssi: s.rssi_dbm })
+  if (level.value == null) return '—'
+  return level.name === 'RSRP' ? String(level.value) : `${level.value} ${level.name}`
 }
 
 export default function CollectionsPage() {
@@ -66,7 +76,8 @@ export default function CollectionsPage() {
         lat: s.lat,
         lng: s.lng,
         siteKey: s.serving_site_id ? `${s.serving_site_id}|${s.serving_sector ?? ''}` : `pci:${s.pci ?? ''}`,
-        score: s.rsrp_dbm,
+        // The level of whatever technology the phone was on at this fix.
+        score: telemetryLevel({ network_type: s.network_type, rsrp: s.rsrp_dbm, rscp: s.rscp_dbm, rssi: s.rssi_dbm }).value,
       })),
     [samples.data],
   )
@@ -198,6 +209,10 @@ export default function CollectionsPage() {
                   zoom={14}
                   style={{ height: '100%', width: '100%' }}
                 >
+                  <CurrentLocationMarker />
+                  {/* A phone drive shows the photos taken during it; any other
+                      session shows the photos in the area on screen. */}
+                  <SitePhotoLayer driveSessionId={selected.drive_session_id} />
                   <TileLayer
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     attribution="&copy; OpenStreetMap contributors"
@@ -206,23 +221,25 @@ export default function CollectionsPage() {
                     positions={samples.data.results.map((s) => [s.lat, s.lng] as [number, number])}
                     pathOptions={{ color: '#0153A5', weight: 3 }}
                   />
-                  {plotPoints.map((p, i) => (
-                    <CircleMarker
-                      key={i}
-                      center={[p.lat, p.lng]}
-                      radius={5}
-                      pathOptions={{
-                        color: '#ffffff', weight: 1,
-                        fillColor: bandColor(RSRP_BANDS, p.item.rsrp_dbm), fillOpacity: 1,
-                      }}
-                    >
-                      <Tooltip>
-                        {new Date(p.item.ts).toLocaleTimeString()} ·{' '}
-                        {p.item.rsrp_dbm != null ? `${p.item.rsrp_dbm} dBm` : 'no data'}
-                        {p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : ''}
-                      </Tooltip>
-                    </CircleMarker>
-                  ))}
+                  {plotPoints.map((p, i) => {
+                    const level = telemetryLevel({
+                      network_type: p.item.network_type, rsrp: p.item.rsrp_dbm, rscp: p.item.rscp_dbm, rssi: p.item.rssi_dbm,
+                    })
+                    return (
+                      <CircleMarker
+                        key={i}
+                        center={[p.lat, p.lng]}
+                        radius={5}
+                        pathOptions={{ color: '#ffffff', weight: 1, fillColor: level.color, fillOpacity: 1 }}
+                      >
+                        <Tooltip>
+                          {new Date(p.item.ts).toLocaleTimeString()} · {level.tech ?? p.item.network_type} ·{' '}
+                          {level.value != null ? `${level.name} ${level.value} dBm` : 'no data'}
+                          {p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : ''}
+                        </Tooltip>
+                      </CircleMarker>
+                    )
+                  })}
                 </MapContainer>
               </div>
               <table className="admin-table">
@@ -233,7 +250,7 @@ export default function CollectionsPage() {
                     <th>Lng</th>
                     <th>Accuracy (m)</th>
                     <th>Network</th>
-                    <th>RSRP</th>
+                    <th title="Signal level: RSRP on 4G, RSCP on 3G, RxLev on 2G">Level (dBm)</th>
                     <th>RSRQ</th>
                     <th>SINR</th>
                     <th title={CQI_COLUMN_HINT}>CQI</th>
@@ -248,7 +265,7 @@ export default function CollectionsPage() {
                       <td>{s.lng.toFixed(5)}</td>
                       <td>{s.accuracy_m != null ? Math.round(s.accuracy_m) : '—'}</td>
                       <td>{s.network_type || '—'}</td>
-                      <td>{s.rsrp_dbm ?? '—'}</td>
+                      <td>{levelText(s)}</td>
                       <td>{s.rsrq_db ?? '—'}</td>
                       <td>{s.sinr_db ?? '—'}</td>
                       <td>{cqiLabel(s)}</td>

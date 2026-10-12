@@ -6,7 +6,7 @@ from . import (api_auth, area_sample, audit, auth_log, backup, collection, conse
                device_lookup, device_trace, drive_test, emergency,
                exports, ip_block, issues, kpi_trend, mfa, password_reset, reports, rescue, rf_audit,
                rf_reports, roles, site_import, site_photo, sso_views, system_doc,
-               telemetry_admin, views, volte_quality)
+               telemetry_admin, telemetry_near, views, volte_quality)
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
@@ -222,6 +222,8 @@ urlpatterns = [
     path('telemetry/area-samples/', area_sample.AreaSampleRequestListCreateView.as_view(), name='telemetry-area-samples'),
     path('telemetry/area-samples/<int:pk>/samples/', area_sample.AreaSampleRequestSamplesView.as_view(),
          name='telemetry-area-sample-results'),
+    # Telemetry sessions around a point, for DT Explore (2026-10-12) -- see core/telemetry_near.py.
+    path('telemetry/sessions-near/', telemetry_near.TelemetrySessionsNearView.as_view(), name='telemetry-sessions-near'),
     path('telemetry/dt-sessions/', telemetry_admin.TelemetryDriveTestSessionListCreateView.as_view(), name='telemetry-dt-sessions'),
     path('telemetry/dt-sessions/<int:pk>/', telemetry_admin.TelemetryDriveTestSessionDetailView.as_view(), name='telemetry-dt-session-detail'),
     path('telemetry/dt-sessions/<int:pk>/end/', telemetry_admin.TelemetryDriveTestSessionEndView.as_view(), name='telemetry-dt-session-end'),

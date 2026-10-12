@@ -2,6 +2,8 @@ import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import { useEffect } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import CurrentLocationMarker from './CurrentLocationMarker'
+import SitePhotoLayer from './SitePhotoLayer'
 import 'leaflet.markercluster'
 import 'leaflet.markercluster/dist/MarkerCluster.css'
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css'
@@ -454,6 +456,8 @@ export default function MapView({
     // cached tiles on this project's react-leaflet version, so this
     // sidesteps that entirely rather than risk a mixed-tile render.
     <MapContainer key={mapLayer} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="site-map" preferCanvas>
+      <CurrentLocationMarker />
+      <SitePhotoLayer />
       <TileLayer
         attribution={mapLayer === 'street' ? '&copy; OpenStreetMap contributors' : '&copy; Google'}
         url={mapLayer === 'street' ? STREET_URL : SATELLITE_URL}

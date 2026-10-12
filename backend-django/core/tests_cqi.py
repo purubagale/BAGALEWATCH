@@ -119,9 +119,19 @@ class RsrqTests(SimpleTestCase):
         self.assertEqual(r['method_used'], RSRP_RSRQ)
         self.assertIsNone(r['effective_sinr_db'])
 
-    def test_clamped_to_0_15(self):
-        self.assertEqual(compute_cqi(rsrq_db=-25, method=RSRP_RSRQ)['cqi_index'], 0)
+    def test_clamped_to_1_15(self):
+        # A connected phone is never shown as "out of range" from RSRQ alone.
+        self.assertEqual(compute_cqi(rsrq_db=-25, method=RSRP_RSRQ)['cqi_index'], 1)
+        self.assertEqual(compute_cqi(rsrq_db=-17, method=RSRP_RSRQ)['cqi_index'], 1)
+        self.assertEqual(compute_cqi(rsrq_db=-15, method=RSRP_RSRQ)['cqi_index'], 2)
         self.assertEqual(compute_cqi(rsrq_db=5, method=RSRP_RSRQ)['cqi_index'], 15)
+
+    def test_floor_is_configurable(self):
+        r = compute_cqi(rsrq_db=-25, method=RSRP_RSRQ, config={'rsrq_min_cqi': 0})
+        self.assertEqual(r['cqi_index'], 0)
+
+    def test_floor_does_not_touch_sinr_or_reported(self):
+        self.assertEqual(compute_cqi(sinr_db=-12, method=SINR_MAPPING)['cqi_index'], 0)
 
     def test_custom_coefficients(self):
         r = compute_cqi(rsrq_db=-10, method=RSRP_RSRQ, config={'rsrq_slope': 0.5, 'rsrq_intercept': 10})

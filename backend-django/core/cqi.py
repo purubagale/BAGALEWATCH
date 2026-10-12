@@ -13,8 +13,9 @@ Five methods, one entry point (`compute_cqi`):
   EESM           several subband SINRs folded into one effective SINR, then
                  SINR_MAPPING. Needs per-subband input, which a phone does
                  not give; available for drive-test logs that do.
-  RSRP_RSRQ      linear model on RSRQ. Rougher: RSRQ moves with cell load.
-                 Used as the fallback when a sample has no SINR.
+  RSRP_RSRQ      linear model on RSRQ, never below CQI 1. Rougher: RSRQ
+                 moves with cell load. Used as the fallback when a sample
+                 has no SINR.
   CAPACITY       Shannon capacity per subband, averaged, then quantized.
                  With one SINR value it returns the same index as
                  SINR_MAPPING by construction.
@@ -90,9 +91,17 @@ DEFAULT_CONFIG = {
     # (plain average of the dB values).
     'subband_combine': 'eesm',
     # CQI = a * RSRQ + b, clamped to 0..15. Defaults give RSRQ -10 dB ->
-    # CQI 7, -3 dB -> 14, -17 dB or worse -> 0.
+    # CQI 7, -3 dB -> 14, -16 dB or worse -> rsrq_min_cqi.
     'rsrq_slope': 1.0,
     'rsrq_intercept': 17.0,
+    # Lowest CQI the RSRQ estimate may give (2026-10-12). CQI 0 means "out of
+    # range": the phone cannot decode even the most robust format. A sample
+    # exists only because the phone was camped on the cell and reading it, so
+    # an RSRQ-based 0 contradicted the sample itself. Live readings at RSRQ
+    # -17 and -18 dB with RSRP around -92 dBm were being shown as CQI 0. The
+    # floor applies to this estimate only: a CQI 0 the phone reports itself,
+    # or one read from a measured SINR, is still shown as 0.
+    'rsrq_min_cqi': 1,
     # 15 ascending capacity thresholds (bps/Hz) for CQI 1..15. None derives
     # them from sinr_thresholds_db as log2(1 + SINR).
     'capacity_thresholds': None,
@@ -237,7 +246,7 @@ def compute_cqi(sinr_db=None, rsrp_dbm=None, rsrq_db=None, method=SINR_MAPPING, 
     elif method == RSRP_RSRQ:
         if rsrq_db is None:
             raise CqiError('rsrq_dB is required for RSRP_RSRQ')
-        cqi = _clamp(cfg['rsrq_slope'] * float(rsrq_db) + cfg['rsrq_intercept'])
+        cqi = max(int(cfg['rsrq_min_cqi']), _clamp(cfg['rsrq_slope'] * float(rsrq_db) + cfg['rsrq_intercept']))
     elif method == CAPACITY:
         capacities = [capacity_bps_hz(v) for v in _as_list(sinr_db)]
         capacity = sum(capacities) if cfg['capacity_combine'] == 'sum' else sum(capacities) / len(capacities)
@@ -271,6 +280,36 @@ def cqi_from_sinr(sinr_db):
 SOURCE_REPORTED = 'reported'   # the device's own CQI
 SOURCE_SINR = 'sinr'           # estimated from SINR
 SOURCE_RSRQ = 'rsrq'           # estimated from RSRQ, the rougher fallback
+
+
+def sample_cqi_sql():
+    """The same choice as sample_cqi_fields(), as one SQL expression over a
+    telemetry sample row: the device's own report, else the SINR estimate,
+    else the RSRQ model. Estimates are LTE only.
+
+    The SINR step is worked out here from sinr_db, not read from the stored
+    cqi_derived column: rows older than that column, or written without it,
+    have a SINR but no stored estimate, and would otherwise fall through to
+    the rougher RSRQ model.
+
+    The coverage roll-ups average this (2026-10-12). Before, they averaged
+    the `cqi` column alone, which phones almost never fill, so the CQI map
+    was grey while the sample tables showed estimated values.
+    """
+    cfg = resolve_config()
+    slope, intercept = float(cfg['rsrq_slope']), float(cfg['rsrq_intercept'])
+    floor = int(cfg['rsrq_min_cqi'])
+    thresholds = cfg['sinr_thresholds_db']
+    # Highest CQI whose threshold is met, the same rule as _quantize().
+    ladder = ' '.join(
+        f'WHEN sinr_db >= {float(thresholds[i - 1])!r} THEN {i}' for i in range(15, 0, -1)
+    )
+    return (
+        "CASE WHEN cqi BETWEEN 0 AND 15 THEN cqi "
+        f"WHEN network_type = 'LTE' AND sinr_db IS NOT NULL THEN (CASE {ladder} ELSE 0 END) "
+        "WHEN network_type = 'LTE' AND rsrq_db IS NOT NULL "
+        f"THEN GREATEST({floor}, LEAST(15, round({slope!r} * rsrq_db + {intercept!r}))) END"
+    )
 
 
 def sample_cqi_fields(reported_cqi, sinr_db, rsrq_db, network_type):

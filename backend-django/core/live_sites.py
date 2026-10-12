@@ -510,6 +510,10 @@ def build_live_site_map(records=None):
     return mapped, warnings
 
 
+# How many newly created sites a sync lists by name in its result.
+MAX_CREATED_LISTED = 20
+
+
 def _do_sync(records, dry_run=False):
     mapped, warnings = build_live_site_map(records)
 
@@ -521,14 +525,36 @@ def _do_sync(records, dry_run=False):
     to_create = []
     to_update = []
     unchanged = 0
+    # Which fields differed, counted over every updated site. Shown with the
+    # result (2026-10-11) because a sync that reports every site as updated
+    # on every run gave no way to see which field keeps differing.
+    changed_fields = {}
     for site_id, row in mapped.items():
         site = existing.get(site_id)
         if site is None:
             to_create.append(row)
-        elif _site_row_changed(site, row):
+            continue
+        differing = [f for f in LIVE_SITE_COMPARE_FIELDS if getattr(site, f) != row.get(f)]
+        if differing:
             to_update.append((site, row))
+            for field in differing:
+                changed_fields[field] = changed_fields.get(field, 0) + 1
         else:
             unchanged += 1
+
+    # Not warnings, but the result's warning list is the only per-run detail
+    # the Live Site Sync page shows, so the answer to "which site was
+    # created?" and "what keeps changing?" goes there.
+    for row in to_create[:MAX_CREATED_LISTED]:
+        warnings.append(f"New site added: {row['id']} ({row.get('name') or 'no name'})")
+    if len(to_create) > MAX_CREATED_LISTED:
+        warnings.append(f'... and {len(to_create) - MAX_CREATED_LISTED} more new sites.')
+    if changed_fields:
+        top = sorted(changed_fields.items(), key=lambda kv: -kv[1])
+        warnings.append(
+            f'{len(to_update)} site(s) updated, {unchanged} unchanged. Fields that differed: '
+            + ', '.join(f'{name} ({count})' for name, count in top)
+        )
 
     # dry_run (2026-09-07, added alongside the NetBox integration) --
     # reports the same created/updated/unchanged split a real sync would

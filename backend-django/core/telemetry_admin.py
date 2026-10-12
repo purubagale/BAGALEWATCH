@@ -42,6 +42,8 @@ from .models import (
     TelemetrySpeedResult,
 )
 from .audit import log_audit_event
+from .cqi import sample_cqi_fields
+from .telemetry_level import sample_level
 from .telemetry import _scope_by_operator, generate_ingest_key, geohash_center, geohash_encode
 from .views import IsAdminOrSuperadmin, IsSuperadminOnly
 
@@ -186,6 +188,7 @@ def _bin_row(b):
         'rsrq_mean': b.rsrq_mean,
         'sinr_mean': b.sinr_mean,
         'cqi_mean': b.cqi_mean,
+        'level_mean': b.level_mean,
         'last_ts': b.last_ts,
     }
 
@@ -197,8 +200,9 @@ def _aggregate_raw(qs, limit):
     prune_telemetry.py does it, so the map looks identical either way."""
     acc = {}
     scanned = 0
-    for lat, lng, nt, region, rsrp, rsrq, sinr, cqi, ts in qs.values_list(
+    for lat, lng, nt, region, rsrp, rsrq, sinr, cqi, ts, rscp, rssi in qs.values_list(
         'lat', 'lng', 'network_type', 'region', 'rsrp_dbm', 'rsrq_db', 'sinr_db', 'cqi', 'ts',
+        'rscp_dbm', 'rssi_dbm',
     ).iterator(chunk_size=5000):
         scanned += 1
         if scanned > _MAX_RAW_SCAN:
@@ -215,7 +219,7 @@ def _aggregate_raw(qs, limit):
                 'center_lat': clat, 'center_lng': clng, 'n': 0,
                 'rsrp_sum': 0.0, 'rsrp_n': 0, 'rsrp_min': None,
                 'rsrq_sum': 0.0, 'rsrq_n': 0, 'sinr_sum': 0.0, 'sinr_n': 0,
-                'cqi_sum': 0.0, 'cqi_n': 0,
+                'cqi_sum': 0.0, 'cqi_n': 0, 'level_sum': 0.0, 'level_n': 0,
                 'last_ts': ts,
             }
         a['n'] += 1
@@ -231,9 +235,17 @@ def _aggregate_raw(qs, limit):
         if sinr is not None:
             a['sinr_sum'] += sinr
             a['sinr_n'] += 1
+        # Reported CQI where the phone gives one, else the estimate, the
+        # same choice the stored bins make (2026-10-12).
+        cqi = sample_cqi_fields(cqi, sinr, rsrq, nt)['cqi_value']
         if cqi is not None:
             a['cqi_sum'] += cqi
             a['cqi_n'] += 1
+        # The level of this sample's own technology (RSRP, RSCP or RSSI).
+        level = sample_level(nt, rsrp, rscp, rssi)
+        if level is not None:
+            a['level_sum'] += level
+            a['level_n'] += 1
 
     rows = []
     for a in acc.values():
@@ -251,6 +263,7 @@ def _aggregate_raw(qs, limit):
             'rsrq_mean': round(a['rsrq_sum'] / a['rsrq_n'], 1) if a['rsrq_n'] else None,
             'sinr_mean': round(a['sinr_sum'] / a['sinr_n'], 1) if a['sinr_n'] else None,
             'cqi_mean': round(a['cqi_sum'] / a['cqi_n'], 1) if a['cqi_n'] else None,
+            'level_mean': round(a['level_sum'] / a['level_n'], 1) if a['level_n'] else None,
             'last_ts': a['last_ts'],
         })
     rows.sort(key=lambda r: r['sample_count'], reverse=True)
