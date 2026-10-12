@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import np.nepaltelecom.telemetry.NetTelemetry
+import np.nepaltelecom.telemetry.collector.DriveShare
 import np.nepaltelecom.telemetry.internalConfig
 import np.nepaltelecom.telemetry.storage.DeviceIdentity
 import np.nepaltelecom.telemetry.storage.SampleQueue
@@ -22,7 +23,10 @@ internal class UploadWorker(context: Context, params: WorkerParameters) : Corout
 
     override suspend fun doWork(): Result {
         val config = internalConfig ?: return Result.success() // SDK not initialized (shouldn't happen if scheduled correctly)
-        if (!DeviceIdentity(applicationContext).optedIn) return Result.success() // opted out since this was scheduled
+        // Sharing off normally means nothing is sent. The exception (2026-10-12):
+        // readings recorded while the user had agreed, still waiting in the queue.
+        val draining = DriveShare.drainPending(applicationContext)
+        if (!DeviceIdentity(applicationContext).optedIn && !draining) return Result.success()
 
         val queue = SampleQueue(applicationContext)
         val api = TelemetryApi(config.endpointUrl, config.apiKey)
@@ -36,7 +40,9 @@ internal class UploadWorker(context: Context, params: WorkerParameters) : Corout
                 // Leave the batch queued and let WorkManager's own retry/backoff
                 // policy (configured where this worker is enqueued) try again
                 // later, rather than looping on a dead network right now.
-                return if (uploadedAny) Result.success() else Result.retry()
+                // While draining there is no periodic run to pick the rest up
+                // later, so always ask to be run again.
+                return if (uploadedAny && !draining) Result.success() else Result.retry()
             }
             queue.remove(batch)
             uploadedAny = true
@@ -56,6 +62,8 @@ internal class UploadWorker(context: Context, params: WorkerParameters) : Corout
             }
             if (batch.size < BATCH_SIZE) break // that was the last partial batch
         }
+        // Everything agreed to has been sent: the exception above ends here.
+        if (draining && queue.peek(1).isEmpty()) DriveShare.setDrainPending(applicationContext, false)
         return Result.success()
     }
 }

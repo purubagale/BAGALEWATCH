@@ -51,12 +51,16 @@ class DriveTestService : Service() {
     private val unsaved = ArrayList<RouteTrail.Point>()
     private val scope = CoroutineScope(Dispatchers.Default)
 
+    /** False for a drive the user chose to keep on the phone: nothing is queued for upload. */
+    private var share = true
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             stopTracking()
         } else {
+            share = intent?.getBooleanExtra(EXTRA_SHARE, true) ?: true
             startTracking()
         }
         return START_NOT_STICKY
@@ -81,6 +85,7 @@ class DriveTestService : Service() {
 
         val id = UUID.randomUUID().toString()
         sessionId = id
+        activeSessionId = id
         history = DriveHistoryStore(this)
         RouteTrail.clear()
         unsaved.clear()
@@ -108,15 +113,20 @@ class DriveTestService : Service() {
         if (!location.hasAccuracy() || location.accuracy > MAX_TRACK_ACCURACY_M) return
         val id = sessionId ?: return
         val point = RouteTrail.Point(location.latitude, location.longitude, location.accuracy, location.time)
+        // Save the earlier fixes before adding this one: this fix's signal is
+        // read just below and is not known yet, the earlier ones' is.
+        if (unsaved.size >= SAVE_EVERY) flushPoints(id)
         RouteTrail.add(point)
         unsaved.add(point)
-        if (unsaved.size >= SAVE_EVERY) flushPoints(id)
 
         scope.launch {
             // Cell state is read on a background thread, off the location callback.
             val sample = CellSampleCollector(this@DriveTestService, DeviceIdentity(this@DriveTestService))
                 .sampleFrom(location, triggerReason = TRIGGER_REASON, driveSessionId = id)
-            sample?.let { SampleQueue(this@DriveTestService).append(it) }
+            sample?.let {
+                point.signal = RouteTrail.Signal.from(it)
+                if (share) SampleQueue(this@DriveTestService).append(it)
+            }
         }
     }
 
@@ -129,11 +139,14 @@ class DriveTestService : Service() {
     }
 
     /** A start or stop marker: a location-less sample that tells the server a drive began or ended. */
-    private fun sendMarker(trigger: String, id: String) {
+    private fun sendMarker(trigger: String, id: String, then: () -> Unit = {}) {
         scope.launch {
-            val sample = CellSampleCollector(this@DriveTestService, DeviceIdentity(this@DriveTestService))
-                .sampleFrom(null, triggerReason = trigger, driveSessionId = id)
-            sample?.let { SampleQueue(this@DriveTestService).append(it) }
+            if (share) {
+                val sample = CellSampleCollector(this@DriveTestService, DeviceIdentity(this@DriveTestService))
+                    .sampleFrom(null, triggerReason = trigger, driveSessionId = id)
+                sample?.let { SampleQueue(this@DriveTestService).append(it) }
+            }
+            then()
         }
     }
 
@@ -148,9 +161,12 @@ class DriveTestService : Service() {
         val id = sessionId
         if (id != null) {
             sessionId = null
+            activeSessionId = null
             flushPoints(id)
             scope.launch { history.end(id, System.currentTimeMillis()) }
-            sendMarker("drive_stop", id)
+            // Upload, and switch sharing back off if this drive switched it on,
+            // only once the "ended" marker is in the queue.
+            sendMarker("drive_stop", id) { np.nepaltelecom.telemetry.NetTelemetry.onDriveStopped() }
         }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -182,8 +198,20 @@ class DriveTestService : Service() {
     }
 
     companion object {
+        /**
+         * Id of the drive being recorded, or null when none is. The same id the
+         * drive's samples carry, so a photo taken during the drive can be tied
+         * to it (2026-10-12).
+         */
+        @Volatile
+        var activeSessionId: String? = null
+            private set
+
         /** Intent action that ends tracking. Sent by the notification's Stop button. */
         const val ACTION_STOP = "np.nepaltelecom.telemetry.DRIVE_TEST_STOP"
+
+        /** Boolean extra on the start intent: whether this drive's readings go to NTC. */
+        const val EXTRA_SHARE = "np.nepaltelecom.telemetry.DRIVE_TEST_SHARE"
 
         private const val CHANNEL_ID = "netplanning_drive_test"
         private const val NOTIFICATION_ID = 4201

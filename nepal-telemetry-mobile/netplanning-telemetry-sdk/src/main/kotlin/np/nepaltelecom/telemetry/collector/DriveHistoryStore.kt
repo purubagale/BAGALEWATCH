@@ -122,6 +122,7 @@ internal class DriveHistoryStore(context: Context) {
                 lng = o.getDouble("lng"),
                 accuracyM = o.getDouble("acc").toFloat(),
                 timeMs = o.getLong("t"),
+                signal = o.optJSONObject("sig")?.let { readSignal(it) },
             )
         }
     }.getOrDefault(emptyList())
@@ -130,16 +131,37 @@ internal class DriveHistoryStore(context: Context) {
         dir.mkdirs()
         val arr = JSONArray()
         for (p in points) {
-            arr.put(
-                JSONObject()
-                    .put("lat", p.lat)
-                    .put("lng", p.lng)
-                    .put("acc", p.accuracyM.toDouble())
-                    .put("t", p.timeMs),
-            )
+            val o = JSONObject()
+                .put("lat", p.lat)
+                .put("lng", p.lng)
+                .put("acc", p.accuracyM.toDouble())
+                .put("t", p.timeMs)
+            p.signal?.let { o.put("sig", writeSignal(it)) }
+            arr.put(o)
         }
         fileFor(id).writeText(JSONObject().put("points", arr).toString())
     }
+
+    // A value the phone did not report is left out of the file, and read back as null.
+    private fun writeSignal(s: RouteTrail.Signal): JSONObject = JSONObject().apply {
+        put("nt", s.networkType)
+        putOpt("rsrp", s.rsrpDbm); putOpt("rsrq", s.rsrqDb); putOpt("sinr", s.sinrDb)
+        putOpt("rssi", s.rssiDbm); putOpt("rscp", s.rscpDbm); putOpt("ecio", s.ecioDb)
+        putOpt("rxq", s.rxQual); putOpt("cqi", s.cqi); putOpt("pci", s.pci)
+        putOpt("psc", s.scramblingCode); putOpt("bcch", s.bcch); putOpt("bsic", s.bsic)
+        putOpt("cid", s.cellId)
+    }
+
+    private fun JSONObject.intOrNull(key: String): Int? = if (has(key) && !isNull(key)) getInt(key) else null
+
+    private fun readSignal(o: JSONObject) = RouteTrail.Signal(
+        networkType = o.optString("nt", "UNKNOWN"),
+        rsrpDbm = o.intOrNull("rsrp"), rsrqDb = o.intOrNull("rsrq"), sinrDb = o.intOrNull("sinr"),
+        rssiDbm = o.intOrNull("rssi"), rscpDbm = o.intOrNull("rscp"), ecioDb = o.intOrNull("ecio"),
+        rxQual = o.intOrNull("rxq"), cqi = o.intOrNull("cqi"), pci = o.intOrNull("pci"),
+        scramblingCode = o.intOrNull("psc"), bcch = o.intOrNull("bcch"), bsic = o.intOrNull("bsic"),
+        cellId = if (o.has("cid") && !o.isNull("cid")) o.getLong("cid") else null,
+    )
 
     private fun distanceM(a: RouteTrail.Point, b: RouteTrail.Point): Double {
         val r = 6_371_000.0

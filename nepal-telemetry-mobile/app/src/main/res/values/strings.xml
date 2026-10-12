@@ -133,4 +133,22 @@
     <string name="site_photo_queue_sent">%1$d saved photo(s) sent.</string>
     <string name="site_photo_hold_upright">Hold the phone upright and point it along the sector.</string>
     <string name="site_photo_failed">The photo could not be taken. Try again.</string>
+    <string name="site_photo_drive_only">No site within 1 km. The photo will be saved with your drive test.</string>
+    <string name="map_location_off_title">Location is off</string>
+    <string name="map_location_off_message">Turn location on to see where you are on the map. The map still works without it.</string>
+    <string name="map_location_off_open">Open settings</string>
+    <string name="map_location_off_skip">Not now</string>
+    <string name="map_share_title">Share this drive with NTC?</string>
+    <string name="map_share_message">Share: the signal readings and route of this drive are sent to Nepal Telecom when you stop, and sharing is switched off again afterwards. Keep on phone: the drive is saved on this phone only and nothing is sent.</string>
+    <string name="map_share_yes">Share</string>
+    <string name="map_share_no">Keep on phone</string>
+    <string name="map_share_cancel">Cancel</string>
+    <string name="map_share_remember">Remember my answer</string>
+    <string name="map_share_forgotten">You will be asked again before the next drive.</string>
+    <string name="map_drive_started_shared">Drive test started. It will be sent to NTC when you stop.</string>
+    <string name="map_drive_started_local">Drive test started. It stays on this phone.</string>
+    <string name="map_drive_stopped">Drive test stopped</string>
+    <string name="map_drive_stopped_shared">Drive test stopped. Sending it now, or as soon as the server can be reached.</string>
+    <string name="map_drive_stopped_local">Drive test stopped. Saved on this phone only.</string>
+    <string name="map_drive_needs_location">Location permission is needed to record a drive test.</string>
 </resources>

@@ -65,6 +65,8 @@ import kotlin.math.sin
  *
  * The server accepts a photo only from a registered phone that is within
  * 1 km of the site, and shows it only after an admin approves it. A photo
+ * taken while a drive test is running is also tied to that drive, and then
+ * needs no site: it marks a spot on the route (2026-10-12). A photo
  * that can't be sent is kept in this app's private storage and sent the next
  * time the screen opens.
  */
@@ -92,6 +94,7 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
     private var bearingCos = 0.0
     private var hasBearing = false
     private var busy = false
+    private var retryAfterMs = 0L
 
     private val cameraPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -234,7 +237,11 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
         showReadings()
         refreshTakeButton()
         val fetched = sitesFetchedAt
-        if (fetched == null || fetched.distanceTo(fix) > REFETCH_DISTANCE_M) fetchSites(fix)
+        // After a failed lookup, wait before trying again. Without the wait a new
+        // fix arrives every second, the lookup repeats, and its "looking" text
+        // hides the error from the user.
+        val waiting = System.currentTimeMillis() < retryAfterMs
+        if (!waiting && (fetched == null || fetched.distanceTo(fix) > REFETCH_DISTANCE_M)) fetchSites(fix)
     }
 
     @Deprecated("Deprecated in Java")
@@ -258,11 +265,16 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
                     found.indexOfFirst { it.id == keep }.takeIf { it >= 0 }?.let { siteSpinner.setSelection(it) }
                     fillDirections()
                     statusText.text = getString(
-                        if (found.isEmpty()) R.string.site_photo_no_sites else R.string.site_photo_hold_upright
+                        when {
+                            found.isNotEmpty() -> R.string.site_photo_hold_upright
+                            NetTelemetry.currentDriveSessionId() != null -> R.string.site_photo_drive_only
+                            else -> R.string.site_photo_no_sites
+                        }
                     )
                     refreshTakeButton()
                 }.onFailure {
                     sitesFetchedAt = null
+                    retryAfterMs = System.currentTimeMillis() + RETRY_WAIT_MS
                     statusText.text = messageFor(it)
                 }
             }
@@ -323,8 +335,9 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
     }
 
     private fun refreshTakeButton() {
-        takeButton.isEnabled =
-            !busy && imageCapture != null && hasBearing && location != null && selectedSite() != null
+        // A site is needed unless a drive test is running, which the photo can belong to instead.
+        val hasTarget = selectedSite() != null || NetTelemetry.currentDriveSessionId() != null
+        takeButton.isEnabled = !busy && imageCapture != null && hasBearing && location != null && hasTarget
     }
 
     // ---- Taking and sending --------------------------------------------
@@ -333,7 +346,9 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
         val capture = imageCapture ?: return
         val heading = bearing() ?: return
         val fix = location ?: return
-        val site = selectedSite() ?: return
+        val site = selectedSite()
+        val driveSessionId = NetTelemetry.currentDriveSessionId()
+        if (site == null && driveSessionId == null) return
         val direction = chosenDirection(heading)
         val note = noteInput.text.toString().trim()
         val takenAt = Date()
@@ -353,7 +368,7 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
                         return
                     }
                     NetTelemetry.readLiveSample { sample ->
-                        send(buildBody(site, direction, heading, fix, takenAt, note, jpeg, sample))
+                        send(buildBody(site, driveSessionId, direction, heading, fix, takenAt, note, jpeg, sample))
                     }
                 }
 
@@ -365,7 +380,8 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
     }
 
     private fun buildBody(
-        site: TraceApi.NearbySite,
+        site: TraceApi.NearbySite?,
+        driveSessionId: String?,
         direction: TraceApi.SiteDirection?,
         heading: Double,
         fix: Location,
@@ -385,7 +401,6 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
             it.cellId?.let { v -> signal.put("cell_id", v.toString()) }
         }
         val body = JSONObject()
-            .put("site_id", site.id)
             .put("bearing_deg", (heading * 10).roundToInt() / 10.0)
             .put("lat", fix.latitude)
             .put("lon", fix.longitude)
@@ -394,6 +409,8 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
             .put("signal", signal)
             .put("note", note)
             .put("image_b64", Base64.encodeToString(jpeg, Base64.NO_WRAP))
+        site?.let { body.put("site_id", it.id) }
+        driveSessionId?.let { body.put("drive_session_id", it) }
         if (fix.hasAltitude()) body.put("altitude_m", fix.altitude)
         direction?.let {
             body.put("planned_azimuth", it.azimuth)
@@ -502,6 +519,7 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
     companion object {
         private const val SMOOTHING = 0.15
         private const val REFETCH_DISTANCE_M = 100f
+        private const val RETRY_WAIT_MS = 30_000L
         private const val MAX_SIDE_PX = 1600
         private const val JPEG_QUALITY = 85
         private val POINTS = arrayOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")

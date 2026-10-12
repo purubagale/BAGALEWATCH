@@ -13,6 +13,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkRequest
 import androidx.work.workDataOf
+import np.nepaltelecom.telemetry.collector.DriveShare
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -98,6 +99,10 @@ object NetTelemetry {
         // launch, as the integration guide recommends, does not reset or
         // duplicate already-scheduled work.
         expireShareIfDue()
+        // A drive that switched sharing on for itself, with no drive running any
+        // more: the process died mid-drive. Close it the way Stop would have.
+        if (DriveShare.autoOptIn(appContext) && DriveTestService.activeSessionId == null) onDriveStopped()
+        if (DriveShare.drainPending(appContext)) enqueueDrain()
         if (identity.optedIn) {
             scheduleBackgroundWork()
             startHandoverListener()
@@ -119,12 +124,49 @@ object NetTelemetry {
         WorkManager.getInstance(appContext).cancelUniqueWork(UPLOAD_WORK_NAME)
         handoverListener?.stop()
         handoverListener = null
-        if (wipeQueuedData) SampleQueue(appContext).clear()
+        if (wipeQueuedData) {
+            SampleQueue(appContext).clear()
+            DriveShare.setDrainPending(appContext, false)
+        }
         syncPushToken(register = false)
+    }
+
+    /**
+     * Sends what is already queued even though sharing is now off (2026-10-12).
+     * Before this, switching sharing off at the end of a window or a drive left
+     * its last readings, and its "ended" marker, on the phone: the uploader does
+     * nothing while sharing is off. Retries on its own until the server answers.
+     */
+    private fun enqueueDrain() {
+        DriveShare.setDrainPending(appContext, true)
+        val work = OneTimeWorkRequestBuilder<UploadWorker>()
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        WorkManager.getInstance(appContext).enqueueUniqueWork(DRAIN_WORK_NAME, ExistingWorkPolicy.REPLACE, work)
+    }
+
+    /**
+     * Called when a drive test ends. A drive that switched sharing on for itself
+     * switches it off again, and what it recorded is sent, now or when the server
+     * can next be reached. A drive started while the user was already sharing just
+     * uploads; sharing stays as the user set it.
+     */
+    internal fun onDriveStopped() {
+        if (!::appContext.isInitialized) return
+        if (DriveShare.autoOptIn(appContext)) {
+            DriveShare.setAutoOptIn(appContext, false)
+            enqueueDrain()
+            optOut(wipeQueuedData = false)
+        } else {
+            uploadNow()
+        }
     }
 
     /** Length of one share window when the caller doesn't choose one (2026-10-07). */
     const val DEFAULT_SHARE_CAP_MINUTES = 60
+
+    private const val DRAIN_WORK_NAME = "netplanning_drain_upload"
 
     /**
      * Starts sharing for a time-limited window (2026-10-07). The window's samples
@@ -153,7 +195,9 @@ object NetTelemetry {
             if (isOptedIn()) {
                 // The stored ID survives the window's end, so an expiry still closes the session.
                 markShare("drive_stop", ShareWindow.storedSessionId(appContext))
-                uploadNow()
+                // Not uploadNow(): sharing is switched off two lines below, and the
+                // uploader would then leave this window's last readings behind.
+                enqueueDrain()
             }
             ShareWindow.clear(appContext)
             optOut(wipeQueuedData = false)
@@ -305,14 +349,28 @@ object NetTelemetry {
     /**
      * Starts continuous drive-test tracking (see DriveTestService): a fix
      * every 2 seconds while running, shown with a persistent notification.
-     * Does nothing unless the device has opted in. The host app must already
-     * hold location permission, or the service stops itself.
+     * The host app must already hold location permission, or the service stops
+     * itself.
+     *
+     * [share] is the user's answer for this drive (2026-10-12). True: its
+     * readings are queued for NTC; if the user was not sharing, sharing is
+     * switched on for this drive and off again when it stops. False: the route
+     * is kept on the phone only and nothing is queued.
      */
-    fun startDriveTest(context: Context) {
+    fun startDriveTest(context: Context, share: Boolean) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before startDriveTest()" }
-        if (!isOptedIn()) return
-        ContextCompat.startForegroundService(context, Intent(context, DriveTestService::class.java))
+        if (share && !isOptedIn()) {
+            DriveShare.setAutoOptIn(appContext, true)
+            optIn()
+        }
+        ContextCompat.startForegroundService(
+            context,
+            Intent(context, DriveTestService::class.java).putExtra(DriveTestService.EXTRA_SHARE, share),
+        )
     }
+
+    /** Id of the drive test being recorded right now, or null when none is running. */
+    fun currentDriveSessionId(): String? = DriveTestService.activeSessionId
 
     /** Ends drive-test tracking started by [startDriveTest]. Safe to call when it isn't running. */
     fun stopDriveTest(context: Context) {
@@ -337,7 +395,7 @@ object NetTelemetry {
      * automatic background schedule is unaffected either way.
      */
     fun uploadNow() {
-        if (!isOptedIn()) return
+        if (!isOptedIn() && !DriveShare.drainPending(appContext)) return
         WorkManager.getInstance(appContext).enqueue(OneTimeWorkRequestBuilder<UploadWorker>().build())
     }
 
