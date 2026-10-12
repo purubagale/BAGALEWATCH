@@ -1837,6 +1837,9 @@ export interface TelemetryCoverageBin {
   // cqi_mean (2026-09-15) -- LTE/NR-only Channel Quality Indicator mean,
   // 0-15 scale, higher is better (see backend TelemetryCoverageBin.cqi_mean).
   cqi_mean: number | null
+  // level_mean (2026-10-12) -- mean of the level this cell's technology
+  // reports: RSRP on 4G/5G, RSCP on 3G, RSSI (RxLev) on 2G.
+  level_mean: number | null
   last_ts: string | null
 }
 
@@ -2473,6 +2476,11 @@ export interface CollectionSessionSample extends SampleCqiFields {
   rsrp_dbm: number | null
   rsrq_db: number | null
   sinr_db: number | null
+  // Levels for the parts of a drive spent on 3G or 2G (2026-10-12).
+  rscp_dbm: number | null
+  ecio_db: number | null
+  rssi_dbm: number | null
+  rx_qual: number | null
   // `cqi` is what the phone reported (often null). `cqi_derived` is the
   // server's estimate from SINR, LTE only. Show `cqi` when present.
   cqi: number | null
@@ -2499,8 +2507,10 @@ export interface SitePhotoDirection {
 
 export interface SitePhoto {
   id: number
+  // Empty for a photo taken along a drive test with no site nearby.
   site_id: string
   site_name: string
+  drive_session_id: string
   bearing_deg: number
   planned_azimuth: number | null
   azimuth_difference: number | null
@@ -2531,4 +2541,42 @@ export interface SitePhotoList {
   page_size: number
   pending_count?: number
   directions?: SitePhotoDirection[]
+}
+
+// Telemetry sessions around a point, for DT Explore (2026-10-12).
+export interface TelemetryNearSession {
+  key: string
+  kind: 'collection' | 'telemetry_dt'
+  id: string
+  name: string
+  source: string
+  started_at: string
+  ended_at: string | null
+  samples_in_area: number
+  first_ts: string | null
+  last_ts: string | null
+}
+
+export interface TelemetryNearPoint {
+  session: string
+  lat: number
+  lng: number
+  ts: string
+  network_type: string
+  rsrp: number | null
+  rsrq: number | null
+  sinr: number | null
+  pci: number | null
+  cqi: number | null
+  // 3G and 2G readings: a phone drive changes technology as it goes.
+  rscp: number | null
+  ecio: number | null
+  rssi: number | null
+  rxqual: number | null
+}
+
+export interface TelemetryNearResponse {
+  sessions: TelemetryNearSession[]
+  points: TelemetryNearPoint[]
+  truncated: boolean
 }

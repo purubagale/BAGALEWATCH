@@ -273,6 +273,35 @@ SOURCE_SINR = 'sinr'           # estimated from SINR
 SOURCE_RSRQ = 'rsrq'           # estimated from RSRQ, the rougher fallback
 
 
+def sample_cqi_sql():
+    """The same choice as sample_cqi_fields(), as one SQL expression over a
+    telemetry sample row: the device's own report, else the SINR estimate,
+    else the RSRQ model. Estimates are LTE only.
+
+    The SINR step is worked out here from sinr_db, not read from the stored
+    cqi_derived column: rows older than that column, or written without it,
+    have a SINR but no stored estimate, and would otherwise fall through to
+    the rougher RSRQ model.
+
+    The coverage roll-ups average this (2026-10-12). Before, they averaged
+    the `cqi` column alone, which phones almost never fill, so the CQI map
+    was grey while the sample tables showed estimated values.
+    """
+    cfg = resolve_config()
+    slope, intercept = float(cfg['rsrq_slope']), float(cfg['rsrq_intercept'])
+    thresholds = cfg['sinr_thresholds_db']
+    # Highest CQI whose threshold is met, the same rule as _quantize().
+    ladder = ' '.join(
+        f'WHEN sinr_db >= {float(thresholds[i - 1])!r} THEN {i}' for i in range(15, 0, -1)
+    )
+    return (
+        "CASE WHEN cqi BETWEEN 0 AND 15 THEN cqi "
+        f"WHEN network_type = 'LTE' AND sinr_db IS NOT NULL THEN (CASE {ladder} ELSE 0 END) "
+        "WHEN network_type = 'LTE' AND rsrq_db IS NOT NULL "
+        f"THEN GREATEST(0, LEAST(15, round({slope!r} * rsrq_db + {intercept!r}))) END"
+    )
+
+
 def sample_cqi_fields(reported_cqi, sinr_db, rsrq_db, network_type):
     """CQI display fields for one telemetry sample, worked out at read time.
 

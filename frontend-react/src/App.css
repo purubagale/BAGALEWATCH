@@ -3850,3 +3850,25 @@ textarea:focus {
 .site-photo-status-rejected { color: var(--text-dim); }
 .site-photo-actions { display: flex; gap: 6px; margin-top: 6px; }
 .site-photo-open { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
+
+/* Site photo markers on maps (2026-10-12) -- SitePhotoLayer. */
+.site-photo-marker { background: none; border: 0; }
+.site-photo-marker-arrow { position: absolute; inset: 0; }
+.site-photo-marker-arrow path { fill: #b7860b; stroke: #ffffff; stroke-width: 1; }
+.site-photo-marker-dot {
+  position: absolute;
+  left: 7px;
+  top: 9px;
+  width: 20px;
+  height: 20px;
+  line-height: 20px;
+  text-align: center;
+  font-size: 12px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid #b7860b;
+}
+.site-photo-popup { display: grid; gap: 4px; font-size: 12px; }
+.site-photo-popup .site-photo-image { border-radius: 6px; }
+.site-photo-view-toggle { display: flex; gap: 6px; margin: 0 0 12px; }
+.site-photo-map { height: 520px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }

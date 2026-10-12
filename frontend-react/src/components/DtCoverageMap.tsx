@@ -2,6 +2,8 @@ import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import { useEffect, useMemo, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import CurrentLocationMarker from './CurrentLocationMarker'
+import SitePhotoLayer from './SitePhotoLayer'
 import type { DtSample, DtServingCell, DtTech } from '../api/types'
 import { bandColor, subsampleForMap, type DtMetric } from '../lib/dtBands'
 import { declusterForPlot } from '../lib/declusterPlot'
@@ -329,6 +331,8 @@ export default function DtCoverageMap({
       {activeMetric.note && <div className="muted" style={{ fontSize: 10, marginBottom: 6 }}>{activeMetric.note}</div>}
       <MapContainer key={mapKey} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
         <InvalidateOnResize />
+        <CurrentLocationMarker />
+        <SitePhotoLayer />
         {bounds && !viewReady && <FitToBounds bounds={bounds} onDone={() => setViewReady(true)} />}
         {viewReady && (
           <>

@@ -18,7 +18,7 @@ export function compassPoint(deg: number): string {
 // The card shows the small copy, fetched once and held as an object URL
 // that is released on unmount. The full picture is fetched only when the
 // card is clicked, so a page of photos stays light.
-function PhotoImage({ id, alt }: { id: number; alt: string }) {
+export function PhotoImage({ id, alt }: { id: number; alt: string }) {
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [opening, setOpening] = useState(false)
@@ -111,7 +111,7 @@ export default function SitePhotoCard({
       <div className="site-photo-body">
         {showSite && (
           <div className="site-photo-title">
-            {photo.site_id}
+            {photo.site_id || 'Drive-test photo'}
             {photo.site_name ? ` · ${photo.site_name}` : ''}
           </div>
         )}
@@ -128,7 +128,9 @@ export default function SitePhotoCard({
             {flagged ? ' — check this sector' : ''}
           </div>
         ) : (
-          <div className="site-photo-diff">No planned direction chosen</div>
+          <div className="site-photo-diff">
+            {photo.drive_session_id ? 'Taken during a drive test' : 'No planned direction chosen'}
+          </div>
         )}
         <div className="muted">
           {new Date(photo.taken_at).toLocaleString()}

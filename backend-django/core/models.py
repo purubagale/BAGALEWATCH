@@ -2407,6 +2407,11 @@ class TelemetryCoverageBin(models.Model):
     sinr_mean = SignalFloatField(null=True, blank=True)
     # cqi_mean (2026-09-15) -- LTE/NR-only, 3GPP 0-15 scale, higher better.
     cqi_mean = SignalFloatField(null=True, blank=True)
+    # level_mean (2026-10-12) -- mean of the level this bin's technology
+    # reports: RSRP on 4G/5G (then equal to rsrp_mean), RSCP on 3G, RSSI on
+    # 2G. See core/telemetry_level.py. Without it a 3G or 2G bin had no
+    # level at all, since rsrp_mean is empty for them.
+    level_mean = SignalFloatField(null=True, blank=True)
 
     first_ts = models.DateTimeField(null=True, blank=True)
     last_ts = models.DateTimeField(null=True, blank=True)
@@ -3541,7 +3546,7 @@ class SubscriberDevice(models.Model):
 def site_photo_upload_path(instance, filename):
     # Random name, never the uploader's: the file is only ever read back
     # through SitePhotoImageView, which needs a login.
-    return f'site_photos/{instance.site_id}/{uuid.uuid4().hex}.jpg'
+    return f'site_photos/{instance.site_id or "drive"}/{uuid.uuid4().hex}.jpg'
 
 
 class SitePhoto(models.Model):
@@ -3563,7 +3568,14 @@ class SitePhoto(models.Model):
         (STATUS_REJECTED, 'Rejected'),
     ]
 
-    site = models.ForeignKey(Site, on_delete=models.CASCADE, related_name='photos')
+    # Null for a photo taken along a drive test with no site within reach
+    # (2026-10-12); such a photo always has a drive_session_id.
+    site = models.ForeignKey(Site, null=True, blank=True, on_delete=models.CASCADE, related_name='photos')
+    # The phone drive test this photo was taken during, the same id the
+    # drive's samples carry (CollectionSession.drive_session_id). Kept as
+    # text, not a foreign key: the photo usually arrives before the drive's
+    # samples, so the session row may not exist yet.
+    drive_session_id = models.CharField(max_length=36, blank=True, default='', db_index=True)
     file = models.FileField(upload_to=site_photo_upload_path, max_length=300)
     # Small copy for the lists, so a page of photos does not download every
     # full picture.
@@ -3612,4 +3624,4 @@ class SitePhoto(models.Model):
         ]
 
     def __str__(self):
-        return f'{self.site_id} @ {self.bearing_deg:.0f}° ({self.status})'
+        return f'{self.site_id or "drive photo"} @ {self.bearing_deg:.0f}° ({self.status})'

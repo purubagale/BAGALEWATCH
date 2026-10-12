@@ -1,7 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef } from 'react'
 import { ApiError, apiFetch, apiJson } from './client'
-import type { SitePhotoList } from './types'
+import type { SitePhoto, SitePhotoList, TelemetryNearResponse } from './types'
 import type {
   CollectionSessionRow,
   CollectionSessionSample,
@@ -1807,7 +1807,27 @@ export function useUploadRfReportAttachments(defaultReportId?: number) {
 }
 
 // Site photos from the mobile app (2026-10-11).
-export function useSitePhotos(params: { site?: string; status?: string; offset?: number }) {
+// Approved photos as map points: one drive test's, or those inside a box.
+export function useSitePhotoPoints(
+  params: { drive_session_id?: string; min_lat?: number; max_lat?: number; min_lng?: number; max_lng?: number },
+  enabled: boolean,
+) {
+  const qs = new URLSearchParams({ points: '1' })
+  for (const [key, value] of Object.entries(params)) {
+    if (value != null && value !== '') qs.set(key, String(value))
+  }
+  return useQuery({
+    queryKey: ['site-photos', 'points', qs.toString()],
+    queryFn: () => apiJson<{ photos: SitePhoto[]; truncated: boolean }>(`/api/v2/site-photos/?${qs.toString()}`),
+    enabled,
+    staleTime: 60_000,
+  })
+}
+
+export function useSitePhotos(
+  params: { site?: string; status?: string; offset?: number },
+  enabled = true,
+) {
   const qs = new URLSearchParams()
   if (params.site) qs.set('site', params.site)
   if (params.status) qs.set('status', params.status)
@@ -1815,6 +1835,7 @@ export function useSitePhotos(params: { site?: string; status?: string; offset?:
   return useQuery({
     queryKey: ['site-photos', params.site ?? '', params.status ?? '', params.offset ?? 0],
     queryFn: () => apiJson<SitePhotoList>(`/api/v2/site-photos/?${qs.toString()}`),
+    enabled,
   })
 }
 
@@ -1838,5 +1859,26 @@ export function useDeleteSitePhoto() {
       if (!res.ok) throw new ApiError(res.status, { detail: 'Could not delete the photo.' })
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['site-photos'] }),
+  })
+}
+
+// Telemetry sessions around a point, for DT Explore's "Include telemetry
+// sessions" tick box (2026-10-12). Asked for only while the box is ticked.
+export function useTelemetrySessionsNear(
+  point: { lat: number; lng: number } | null,
+  radiusKm: number,
+  enabled: boolean,
+  // Explore's 4G / 3G / 2G buttons: only readings on these technologies.
+  techs: string[] = [],
+) {
+  const tech = techs.join(',')
+  return useQuery({
+    queryKey: ['telemetry-sessions-near', point?.lat ?? null, point?.lng ?? null, radiusKm, tech],
+    queryFn: () =>
+      apiJson<TelemetryNearResponse>(
+        `/api/v2/telemetry/sessions-near/?lat=${point!.lat}&lng=${point!.lng}&radius_km=${radiusKm}&tech=${tech}`,
+      ),
+    enabled: enabled && point != null,
+    staleTime: 60_000,
   })
 }

@@ -258,7 +258,9 @@ export default function SiteDetailPage() {
   const fromDtExplore = searchParams.get('from') === 'dt-explore'
   const { data: site, isLoading, error } = useSite(id)
   const { data: nearbyDtSessions } = useSiteDtSessions(id)
-  const { data: sitePhotos } = useSitePhotos({ site: id ?? '-' })
+  // Site photos are for admins and superadmins; nobody else asks for them.
+  const canSeePhotos = !!user && (user.role === 'admin' || user.role === 'superadmin')
+  const { data: sitePhotos } = useSitePhotos({ site: id ?? '-' }, canSeePhotos)
   const updateSite = useUpdateSite(id || '')
   const deleteSite = useDeleteSite()
   // Site Issues (2026-09-14) -- see Issue's docstring in the backend's
@@ -1005,9 +1007,9 @@ export default function SiteDetailPage() {
 
       {/* -- Site Photos -----------------------------------------------
           2026-10-11: photos taken at this site with the mobile app, each
-          with the direction the phone pointed. Everyone sees approved
-          ones; an admin also sees pending and rejected ones here and can
-          review them without going to the Site Photos page. */}
+          with the direction the phone pointed. Shown to admins and
+          superadmins only (2026-10-12), who can also review them here. */}
+      {canSeePhotos && (
       <section>
         <div className="site-form-section">Site Photos</div>
         {sitePhotos && sitePhotos.photos.length > 0 ? (
@@ -1028,6 +1030,7 @@ export default function SiteDetailPage() {
           </p>
         )}
       </section>
+      )}
 
       {/* -- Site Issues -----------------------------------------------
           2026-09-14 request: a lightweight problem tracker for this

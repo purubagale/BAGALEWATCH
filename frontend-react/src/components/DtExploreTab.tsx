@@ -3,7 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { useDtServingCellsForSessions, useDtSessionsNear, useSites } from '../api/queries'
+import CurrentLocationMarker from './CurrentLocationMarker'
+import SitePhotoLayer from './SitePhotoLayer'
+import TelemetryNearLayer from './TelemetryNearLayer'
+import { useAuth } from '../auth/AuthContext'
+import { useDtServingCellsForSessions, useDtSessionsNear, useSites, useTelemetrySessionsNear } from '../api/queries'
 import type { DtSample, DtServingCell, DtSessionDetail, DtTech, SiteListItem } from '../api/types'
 import { ACTIVITY_ROLE_LABELS } from './AttachActivityModal'
 import { clusterDtSessionsByArea, type DtSessionCluster } from '../lib/dtSessionClustering'
@@ -864,6 +868,32 @@ export default function DtExploreTab() {
 
   const { data: nearSessionsRaw, isLoading: sessionsLoading } = useDtSessionsNear(point, backendRadiusKm, techs)
 
+  // Telemetry sessions (2026-10-12): phone drives and Telemetry Drive Test
+  // sessions are stored apart from uploaded drive tests, so this search
+  // leaves them out unless the box is ticked. Off by default, and offered
+  // to admins and superadmins only, like the pages those sessions live on.
+  const { user } = useAuth()
+  const canSeeTelemetry = !!user && (user.role === 'admin' || user.role === 'superadmin')
+  const [includeTelemetry, setIncludeTelemetry] = useState(false)
+  const telemetryNear = useTelemetrySessionsNear(point, backendRadiusKm, canSeeTelemetry && includeTelemetry, techs)
+  const telemetryShown = canSeeTelemetry && includeTelemetry
+  // A district boundary is searched with a covering circle, so trim the
+  // points to the real shape, the same way the drive-test samples are.
+  const telemetryPoints = useMemo(() => {
+    const all = telemetryShown ? (telemetryNear.data?.points ?? []) : []
+    return shape.type === 'polygon' ? all.filter((p) => pointInPolygon(p.lat, p.lng, shape.points)) : all
+  }, [telemetryShown, telemetryNear.data, shape])
+  const telemetrySessions = useMemo(() => {
+    const all = telemetryShown ? (telemetryNear.data?.sessions ?? []) : []
+    if (shape.type !== 'polygon') return all
+    const kept = new Set(telemetryPoints.map((p) => p.session))
+    return all.filter((s) => kept.has(s.key))
+  }, [telemetryShown, telemetryNear.data, shape, telemetryPoints])
+  const telemetryNames = useMemo(
+    () => Object.fromEntries(telemetrySessions.map((s) => [s.key, s.name])),
+    [telemetrySessions],
+  )
+
   // Shared with FullscreenSync so re-fitting after a fullscreen resize
   // keeps the same search area visible, not wherever the pre-resize
   // viewport happened to be centered.
@@ -1165,6 +1195,12 @@ export default function DtExploreTab() {
               <div className="report-card-val">{sessionsLoading ? '…' : nearSessions.length}</div>
               <div className="report-card-label">Nearby Sessions</div>
             </div>
+            {telemetryShown && (
+              <div className="report-card">
+                <div className="report-card-val">{telemetryNear.isLoading ? '…' : telemetrySessions.length}</div>
+                <div className="report-card-label">Telemetry Sessions</div>
+              </div>
+            )}
             <div className="report-card">
               <div className="report-card-val">{shape.type === 'polygon' ? shape.name : `${radiusKm} km`}</div>
               <div className="report-card-label">{shape.type === 'polygon' ? 'Boundary' : 'Search Radius'}</div>
@@ -1190,6 +1226,19 @@ export default function DtExploreTab() {
               )}
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              {canSeeTelemetry && (
+                <label
+                  style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, marginRight: 8, cursor: 'pointer' }}
+                  title="Also show phone drives and Telemetry Drive Test sessions recorded in this area"
+                >
+                  <input
+                    type="checkbox"
+                    checked={includeTelemetry}
+                    onChange={(e) => setIncludeTelemetry(e.target.checked)}
+                  />
+                  Include telemetry sessions
+                </label>
+              )}
               <span style={{ fontSize: 10, color: '#6b7280', alignSelf: 'center' }}>Export:</span>
               <button
                 type="button"
@@ -1232,6 +1281,8 @@ export default function DtExploreTab() {
               zoom={DEFAULT_ZOOM}
               className="dt-coverage-map"
             >
+              <CurrentLocationMarker />
+              <SitePhotoLayer />
               <TileLayer
                 attribution={mapLayer === 'street' ? '&copy; OpenStreetMap contributors' : '&copy; Google'}
                 url={mapLayer === 'street' ? STREET_URL : SATELLITE_URL}
@@ -1247,6 +1298,7 @@ export default function DtExploreTab() {
               ) : (
                 <NearSamplesLayer sessions={nearSessions} metric={metric} servingCells={servingCells} />
               )}
+              {telemetryShown && <TelemetryNearLayer points={telemetryPoints} names={telemetryNames} />}
               <FullscreenSync isFullscreen={isFullscreen} bounds={currentBounds} />
               <InvalidateOnResize />
             </MapContainer>
@@ -1317,6 +1369,32 @@ export default function DtExploreTab() {
                 </button>
               )}
             </div>
+            {telemetryShown && (
+              <div className="dt-explore-list-col">
+                <div className="dt-explore-list-title">Telemetry Sessions ({telemetrySessions.length})</div>
+                {telemetryNear.isLoading && <div className="muted">Loading…</div>}
+                {telemetryNear.error && <div className="muted">Could not load telemetry sessions.</div>}
+                {!telemetryNear.isLoading && !telemetryNear.error && telemetrySessions.length === 0 && (
+                  <div className="muted">No telemetry sessions recorded in this area.</div>
+                )}
+                {telemetrySessions.map((s) => (
+                  <div key={s.key} style={{ padding: '4px 0', fontSize: 12 }}>
+                    <b>{s.name}</b>
+                    <div className="muted">
+                      {s.kind === 'telemetry_dt' ? 'Telemetry Drive Test' : 'Collections'} ·{' '}
+                      {new Date(s.started_at).toLocaleString()} · {s.samples_in_area} reading(s) here
+                    </div>
+                  </div>
+                ))}
+                {telemetryNear.data?.truncated && (
+                  <div className="muted">Only the newest readings are drawn. Narrow the radius to see them all.</div>
+                )}
+                <div className="muted" style={{ marginTop: 4 }}>
+                  White-ringed dots on the map, coloured by signal level (RSRP on 4G, RSCP on 3G, RxLev on 2G).
+                  The 4G / 3G / 2G buttons apply to these too.
+                </div>
+              </div>
+            )}
             <div className="dt-explore-list-col">
               <div className="dt-explore-list-title">Nearby Sessions ({nearSessions.length})</div>
               {nearSessions.length > 0 && (

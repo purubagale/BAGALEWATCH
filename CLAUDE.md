@@ -328,6 +328,83 @@ the app (Map tab, "Site photo" button, CameraX).
   run on a phone. The app talks to prod, so a phone test needs the prod
   deploy first.
 
+**Site photos, second round** (2026-10-12, built, NOT committed in either
+repo, not on prod):
+
+- Photos are for admin and superadmin only, pending or approved (list and
+  image endpoints, the site page section). The user decided this on
+  2026-10-12; viewers no longer see them.
+- A photo taken while a phone drive test runs carries that drive's
+  `drive_session_id` and then needs no site (`SitePhoto.site` is
+  nullable, migration 0120). The SDK exposes
+  `NetTelemetry.currentDriveSessionId()`.
+- `SitePhotoLayer.tsx` draws approved photos on maps: by drive session on
+  the Collections plot, by the area on screen on Sites, DT coverage, DT
+  Explore, Telemetry Coverage and the new Map view of the Site Photos
+  page. `CurrentLocationMarker.tsx` shows the viewer's own position on
+  the same maps; the position stays in the browser.
+- App Map tab shows and centres on the phone's position and asks for
+  location once per visit.
+- Live Site Sync now lists each created site and the fields that changed
+  in its result (`core/live_sites.py`), to explain "1 created" on every
+  run. The app's site lookup waits 30 s after a failure.
+- Server tested locally. The web maps and the app's Map tab changes have
+  not been seen running. After deploy, update the manuals and both decks:
+  the Viewer Manual still says viewers see site photos.
+- **CQI on the coverage map** (2026-10-12). The roll-ups averaged only the
+  phone-reported `cqi`, which is almost always null, so the CQI map was
+  grey. They now average `cqi.sample_cqi_sql()` (reported, else SINR
+  ladder, else RSRQ line); migration 0121 backfills bins from stored
+  samples. SQL and Python agree on every local sample.
+- **The RSRQ fallback line (CQI = RSRQ + 17) is not trustworthy.** On
+  prod the same RSRQ -11 showed CQI 10-12 from SINR and 6 from RSRQ. A
+  full-load physical model was tried and rejected (it gives 15 for the
+  RSRQ -9/-10 readings prod also has). `manage.py cqi_rsrq_calibration`
+  (read-only) compares the two on stored samples and prints a fitted
+  `CQI_CONFIG_JSON`. Waiting for its output from prod.
+- **Telemetry sessions in DT Explore** (2026-10-12). `core/telemetry_near.py`
+  (`/api/v2/telemetry/sessions-near/`), `TelemetryNearLayer.tsx`, and an
+  "Include telemetry sessions" tick box in Explore, off by default and
+  shown to admin and superadmin only. Covers named Telemetry Drive Test
+  sessions and Collections phone drives; operator trace sessions are
+  left out on purpose.
+- **App drive test and sharing** (2026-10-12, built, not yet seen
+  running). Start asks for location permission if missing, then "Share
+  this drive with NTC?". Everyone is asked each time; an employee may
+  tick "Remember my answer" (long-press Start to be asked again;
+  unticking the employee box forgets it). Share: sharing is switched on
+  for the drive if it was off (`DriveShare.autoOptIn`) and off again at
+  Stop. Keep on phone: recorded locally, nothing queued.
+  `NetTelemetry.startDriveTest(context, share)`.
+- **Uploads after sharing is switched off.** `UploadWorker` used to do
+  nothing once opted out, so the tail of a share window or drive and its
+  `drive_stop` marker stayed on the phone. `DriveShare.drainPending` now
+  lets the queue be sent until it is empty (unique work
+  `netplanning_drain_upload`, network constraint, backoff). Used by
+  `stopShare()` and by drive stop.
+- **Route popup on the phone map.** Each route point keeps the signal
+  read at it (`RouteTrail.Signal`, saved in drive history). Tapping the
+  line or the end marker shows it per technology, with position, in the
+  map library's standard bubble with dark text. One popup at a time; it
+  survives the 2-second redraw. Drives saved before this have no signal.
+- **Signal level by technology** (2026-10-12). One rule everywhere: RSRP
+  on 4G/5G, RSCP on 3G (RSRP scale), RSSI/RxLev on 2G (RxLev scale).
+  `core/telemetry_level.py` (Python and SQL), `lib/telemetryLevel.ts`,
+  and `RouteColor` in the app's `MapFragment.kt`. Before, RSRP-only code
+  drew every 3G and 2G phone reading grey. Applied to Collections, the
+  Explore telemetry layer (which now also obeys the 4G/3G/2G buttons via
+  `?tech=`), Area Sample, and Telemetry Coverage, whose bins gained
+  `level_mean` (migration 0122, backfilled). Telemetry Drive Test and
+  Live Samples already handled it per technology.
+- **App route colours.** The drive route on the phone is coloured by that
+  rule per point; a legend line sits under the status text.
+- The PC's page file was raised on 2026-10-12 (commit limit 19 GB to
+  24 GB), after builds failed for lack of memory.
+- The app build needs about 1.5 GB of free memory. When the PC is short,
+  use `-Xmx128m -XX:+UseSerialGC` on the wrapper JVM and
+  `-Dorg.gradle.jvmargs="-Xmx640m -XX:+UseSerialGC"` with
+  `-Pkotlin.compiler.execution.strategy=in-process`.
+
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an
 identified device. It was declined; Area Sample is the agreed

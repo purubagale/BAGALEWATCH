@@ -11,9 +11,13 @@ Three things stand in for that:
 
   * only a registered phone can upload (signed request, core/device_auth.py),
     so every photo is tied to a number;
-  * the phone must be within MAX_DISTANCE_M of the site it names;
-  * every upload starts PENDING and is shown to nobody but admins until one
-    of them approves it.
+  * the phone must be within MAX_DISTANCE_M of the site it names, or the
+    photo must belong to a phone drive test (2026-10-12);
+  * every upload starts PENDING until an admin approves it.
+
+Photos are for admins and superadmins only, pending or approved
+(2026-10-12). They show the surroundings of sites and of drive routes, so
+they are not opened to every signed-in user.
 
 The picture is re-encoded on arrival. That proves it is an image, caps its
 size, and drops whatever metadata the phone's camera wrote into it.
@@ -24,7 +28,9 @@ Device endpoints (signed), under /api/telemetry/v1/device/:
     POST site-photos/              one photo
 
 Web endpoints (login), under /api/v2/:
-    GET    site-photos/?site=&status=
+    GET    site-photos/?site=&status=&drive_session_id=
+    GET    site-photos/?points=1&min_lat=&max_lat=&min_lng=&max_lng=
+                                   approved photos as map points
     GET    site-photos/<id>/image/
     POST   site-photos/<id>/review/     {"action": "approve" | "reject"}
     DELETE site-photos/<id>/
@@ -32,6 +38,7 @@ Web endpoints (login), under /api/v2/:
 import base64
 import binascii
 import io
+import re
 from datetime import datetime, timedelta, timezone as dt_timezone
 
 from django.contrib.gis.db.models.functions import Distance
@@ -72,6 +79,8 @@ MAX_UPLOADS_PER_DAY_ALL = 5000      # every phone together
 # queue cannot grow without limit.
 MAX_PENDING = 2000
 PAGE_SIZE = 60
+# Most photo points one map request returns.
+MAX_MAP_POINTS = 2000
 # Kept this long, then removed by the daily maintenance run.
 REJECTED_RETENTION_DAYS = 30
 PENDING_RETENTION_DAYS = 90
@@ -80,6 +89,8 @@ PENDING_RETENTION_DAYS = 90
 AZIMUTH_FLAG_DEG = 20
 
 _SIGNAL_NUMBERS = ('rsrp', 'rsrq', 'sinr', 'pci', 'cqi')
+# A drive session id as the app makes it: a UUID, or at least that alphabet.
+_DRIVE_ID_RE = re.compile(r'^[A-Za-z0-9-]{8,36}$')
 _SIGNAL_TEXT = ('network_type', 'cell_id')
 
 
@@ -151,8 +162,9 @@ def _mask(msisdn):
 def _photo_row(photo, for_admin):
     row = {
         'id': photo.pk,
-        'site_id': photo.site_id,
-        'site_name': photo.site.name,
+        'site_id': photo.site_id or '',
+        'site_name': photo.site.name if photo.site else '',
+        'drive_session_id': photo.drive_session_id,
         'bearing_deg': photo.bearing_deg,
         'planned_azimuth': photo.planned_azimuth,
         'azimuth_difference': azimuth_difference(photo.bearing_deg, photo.planned_azimuth),
@@ -176,10 +188,6 @@ def _photo_row(photo, for_admin):
         row['reviewed_by'] = photo.reviewed_by.username if photo.reviewed_by else ''
         row['reviewed_at'] = photo.reviewed_at
     return row
-
-
-def _is_admin(user):
-    return getattr(user, 'role', '') in ('superadmin', 'admin')
 
 
 class DeviceNearbySitesView(APIView):
@@ -240,13 +248,24 @@ class DeviceSitePhotoUploadView(APIView):
             return Response({'detail': 'bearing_deg, lat and lon are required.'}, status=400)
 
         point = Point(lon, lat, srid=4326)
-        site = (
-            Site.objects.filter(pk=str(data.get('site_id', '')), location__distance_lte=(point, D(m=MAX_DISTANCE_M)))
-            .annotate(distance=Distance('location', point))
-            .first()
-        )
-        if site is None:
-            return Response({'detail': 'This phone is not near that site.'}, status=400)
+        site_id = str(data.get('site_id') or '')
+        drive_session_id = str(data.get('drive_session_id') or '')
+        if drive_session_id and not _DRIVE_ID_RE.match(drive_session_id):
+            return Response({'detail': 'The drive test reference is not valid.'}, status=400)
+        site = None
+        if site_id:
+            site = (
+                Site.objects.filter(pk=site_id, location__distance_lte=(point, D(m=MAX_DISTANCE_M)))
+                .annotate(distance=Distance('location', point))
+                .first()
+            )
+            if site is None:
+                return Response({'detail': 'This phone is not near that site.'}, status=400)
+        elif not drive_session_id:
+            # No site and no drive: nothing ties the picture to anything.
+            return Response(
+                {'detail': 'Choose a site, or take the photo during a drive test.'}, status=400,
+            )
 
         try:
             raw = base64.b64decode(str(data.get('image_b64', '')), validate=True)
@@ -293,6 +312,7 @@ class DeviceSitePhotoUploadView(APIView):
 
         photo = SitePhoto(
             site=site,
+            drive_session_id=drive_session_id,
             size_bytes=out.tell(),
             width=image.width,
             height=image.height,
@@ -301,7 +321,7 @@ class DeviceSitePhotoUploadView(APIView):
             lng=lon,
             accuracy_m=_number(data.get('accuracy_m'), 0, 100000),
             altitude_m=_number(data.get('altitude_m'), -500, 10000),
-            distance_to_site_m=round(site.distance.m),
+            distance_to_site_m=round(site.distance.m) if site else None,
             taken_at=taken_at,
             planned_azimuth=_number(data.get('planned_azimuth'), 0, 360),
             sector_label=str(data.get('sector_label') or '')[:200],
@@ -321,48 +341,50 @@ class DeviceSitePhotoUploadView(APIView):
 
 
 class SitePhotoListView(APIView):
-    """Photos for the site page and the review page. Anyone signed in sees
-    approved photos; pending and rejected ones are for admins only."""
-    permission_classes = [IsAuthenticated]
+    """Photos for the review page, the site page and the maps. Admin and
+    superadmin only."""
+    permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
 
     def get(self, request):
-        for_admin = _is_admin(request.user)
+        params = request.query_params
         qs = SitePhoto.objects.select_related('site', 'reviewed_by')
-        site_id = request.query_params.get('site')
+        site_id = params.get('site')
         if site_id:
             qs = qs.filter(site_id=site_id)
-        wanted = request.query_params.get('status', '')
-        if not for_admin:
+        drive_session_id = params.get('drive_session_id')
+        if drive_session_id:
+            qs = qs.filter(drive_session_id=drive_session_id)
+        if params.get('status') in dict(SitePhoto.STATUS_CHOICES):
+            qs = qs.filter(status=params['status'])
+
+        if params.get('points'):
+            # Map layer: approved photos only, inside the box the map shows.
             qs = qs.filter(status=SitePhoto.STATUS_APPROVED)
-        elif wanted in dict(SitePhoto.STATUS_CHOICES):
-            qs = qs.filter(status=wanted)
-        offset = int(_number(request.query_params.get('offset'), 0, 10_000_000) or 0)
+            box = [_number(params.get(k), -180, 180) for k in ('min_lat', 'max_lat', 'min_lng', 'max_lng')]
+            if None not in box:
+                qs = qs.filter(lat__gte=box[0], lat__lte=box[1], lng__gte=box[2], lng__lte=box[3])
+            rows = [_photo_row(photo, True) for photo in qs[:MAX_MAP_POINTS]]
+            return Response({'photos': rows, 'truncated': len(rows) == MAX_MAP_POINTS})
+
+        offset = int(_number(params.get('offset'), 0, 10_000_000) or 0)
         total = qs.count()
-        rows = [_photo_row(photo, for_admin) for photo in qs[offset:offset + PAGE_SIZE]]
-        payload = {'photos': rows, 'can_review': for_admin, 'total': total, 'page_size': PAGE_SIZE}
-        if for_admin:
-            payload['pending_count'] = SitePhoto.objects.filter(status=SitePhoto.STATUS_PENDING).count()
+        rows = [_photo_row(photo, True) for photo in qs[offset:offset + PAGE_SIZE]]
+        payload = {
+            'photos': rows, 'can_review': True, 'total': total, 'page_size': PAGE_SIZE,
+            'pending_count': SitePhoto.objects.filter(status=SitePhoto.STATUS_PENDING).count(),
+        }
         if site_id:
             site = Site.objects.filter(pk=site_id).first()
             payload['directions'] = planned_directions(site) if site else []
         return Response(payload)
 
 
-def _get_photo(request, pk):
-    photo = SitePhoto.objects.select_related('site').filter(pk=pk).first()
-    if photo is None:
-        return None
-    if photo.status != SitePhoto.STATUS_APPROVED and not _is_admin(request.user):
-        return None
-    return photo
-
-
 class SitePhotoImageView(APIView):
-    """The picture itself. Needs a login; an unapproved one needs an admin."""
-    permission_classes = [IsAuthenticated]
+    """The picture itself. Admin and superadmin only."""
+    permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
 
     def get(self, request, pk):
-        photo = _get_photo(request, pk)
+        photo = SitePhoto.objects.filter(pk=pk).first()
         if photo is None:
             return Response({'detail': 'Not found.'}, status=404)
         # ?size=thumb is what the lists ask for; the full picture is fetched
