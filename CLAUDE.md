@@ -374,7 +374,9 @@ repo, not on prod):
   actions from stored data. Agreed wording: "NTC-hosted", no model
   named, all three uses, admin and superadmin plus any role given the
   permission, engineer accepts or rejects every draft, numbers computed
-  by the server, no personal data to the model. It is in the Technical
+  by the server, no personal data to the model. Do not say it runs on a
+  separate server: same or different server is undecided (the user's
+  correction). It is in the Technical
   Manual (overview diagram, "Future plan" section with its own flow),
   the combined manual's overview diagram, the Admin Manual ("Planned: AI
   assistant"), management deck slide 14 and technical deck slide 21,
