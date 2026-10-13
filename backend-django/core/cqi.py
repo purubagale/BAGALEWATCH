@@ -13,9 +13,9 @@ Five methods, one entry point (`compute_cqi`):
   EESM           several subband SINRs folded into one effective SINR, then
                  SINR_MAPPING. Needs per-subband input, which a phone does
                  not give; available for drive-test logs that do.
-  RSRP_RSRQ      linear model on RSRQ, never below CQI 1. Rougher: RSRQ
-                 moves with cell load. Used as the fallback when a sample
-                 has no SINR.
+  RSRP_RSRQ      CQI read from RSRQ through a step table taken from NTC
+                 drive tests, never below CQI 1. Rougher: RSRQ moves with
+                 cell load. Used as the fallback when a sample has no SINR.
   CAPACITY       Shannon capacity per subband, averaged, then quantized.
                  With one SINR value it returns the same index as
                  SINR_MAPPING by construction.
@@ -81,6 +81,41 @@ _NAMED_THRESHOLDS = {
     '2DB_LADDER': SINR_THRESHOLDS_2DB_LADDER,
 }
 
+# RSRQ -> CQI steps, as (lowest RSRQ in dB, CQI), best first. A reading
+# takes the CQI of the first step it reaches; below the last step it gets
+# `rsrq_min_cqi`.
+#
+# Where it comes from (2026-10-12): 31,269 readings of three NTC 4G drive
+# tests (Chitwan twice, Bara) that carry both SINR and RSRQ. For each whole
+# dB of RSRQ, the mean of the CQI worked out from SINR, rounded. The
+# straight line used before (CQI = RSRQ + 17) read 3 to 5 steps too low
+# over the range most readings fall in: at RSRQ -11 dB it gave 6 where the
+# drive tests average 11. Average miss against the SINR-based CQI on that
+# data: this table 2.0 steps, the old line 4.2, the best straight line 2.2
+# (and that one reads too high where quality is poor).
+#
+# Tried and rejected on the same data: turning RSRQ into SINR with the
+# physical formula SINR = 12 x RSRQ / (1 - RSRQ x (2 + 10 x load)). It needs
+# the serving cell's load, which a sample does not carry; with any one
+# fixed load it misses by 3.5 steps or more.
+#
+# Limits: three drive tests, drive-test equipment and not phones, at least
+# one a download test (a loaded cell shows a lower RSRQ for the same SINR,
+# so the table may read a little high for an idle phone). RSRQ explains
+# under half of the variation in CQI. Rerun `manage.py cqi_rsrq_calibration
+# --drive-tests` when more drive tests are stored; it prints a fresh table.
+RSRQ_TABLE_NTC_DT = (
+    (-9.5, 12),    # -9 dB and better
+    (-11.5, 11),   # -10, -11
+    (-12.5, 10),   # -12
+    (-13.5, 8),    # -13
+    (-14.5, 6),    # -14
+    (-15.5, 5),    # -15
+    (-16.5, 4),    # -16
+    (-17.5, 3),    # -17
+    (-19.5, 2),    # -18, -19
+)
+
 DEFAULT_CONFIG = {
     # 15 ascending values (or one of the names above): min SINR for CQI 1..15.
     'sinr_thresholds_db': SINR_THRESHOLDS_BRUENINGHAUS_DB,
@@ -90,8 +125,11 @@ DEFAULT_CONFIG = {
     # How SINR_MAPPING folds a list of subband SINRs: 'eesm' or 'mean'
     # (plain average of the dB values).
     'subband_combine': 'eesm',
-    # CQI = a * RSRQ + b, clamped to 0..15. Defaults give RSRQ -10 dB ->
-    # CQI 7, -3 dB -> 14, -16 dB or worse -> rsrq_min_cqi.
+    # RSRQ -> CQI steps: a list of [lowest RSRQ dB, CQI] pairs, best first.
+    # None switches back to the straight line below.
+    'rsrq_table': RSRQ_TABLE_NTC_DT,
+    # Used only when rsrq_table is None: CQI = a * RSRQ + b, clamped to
+    # 0..15. These give RSRQ -10 dB -> CQI 7, -3 dB -> 14.
     'rsrq_slope': 1.0,
     'rsrq_intercept': 17.0,
     # Lowest CQI the RSRQ estimate may give (2026-10-12). CQI 0 means "out of
@@ -134,7 +172,34 @@ def resolve_config(config=None):
         merged['capacity_thresholds'] = _check_thresholds(merged['capacity_thresholds'], 'capacity_thresholds')
     if not merged['eesm_beta'] or merged['eesm_beta'] <= 0:
         raise CqiError('eesm_beta must be greater than 0')
+    if merged['rsrq_table'] is not None:
+        merged['rsrq_table'] = _check_rsrq_table(merged['rsrq_table'])
     return merged
+
+
+def _check_rsrq_table(steps):
+    try:
+        steps = [(float(low), int(cqi)) for low, cqi in steps]
+    except (TypeError, ValueError):
+        raise CqiError('rsrq_table must be a list of [lowest RSRQ dB, CQI] pairs')
+    if not steps:
+        raise CqiError('rsrq_table must not be empty')
+    if any(b[0] >= a[0] or b[1] > a[1] for a, b in zip(steps, steps[1:])):
+        raise CqiError('rsrq_table must run from the best RSRQ down, and its CQI must not rise')
+    if any(not 0 <= cqi <= 15 for _low, cqi in steps):
+        raise CqiError('rsrq_table CQI values must be 0..15')
+    return steps
+
+
+def _by_rsrq(rsrq_db, cfg):
+    """The RSRQ estimate: the step table when one is set, else the line."""
+    floor = int(cfg['rsrq_min_cqi'])
+    if cfg['rsrq_table'] is None:
+        return max(floor, _clamp(cfg['rsrq_slope'] * float(rsrq_db) + cfg['rsrq_intercept']))
+    for low, cqi in cfg['rsrq_table']:
+        if float(rsrq_db) >= low:
+            return max(floor, cqi)
+    return floor
 
 
 def _check_thresholds(values, name):
@@ -246,7 +311,7 @@ def compute_cqi(sinr_db=None, rsrp_dbm=None, rsrq_db=None, method=SINR_MAPPING, 
     elif method == RSRP_RSRQ:
         if rsrq_db is None:
             raise CqiError('rsrq_dB is required for RSRP_RSRQ')
-        cqi = max(int(cfg['rsrq_min_cqi']), _clamp(cfg['rsrq_slope'] * float(rsrq_db) + cfg['rsrq_intercept']))
+        cqi = _by_rsrq(rsrq_db, cfg)
     elif method == CAPACITY:
         capacities = [capacity_bps_hz(v) for v in _as_list(sinr_db)]
         capacity = sum(capacities) if cfg['capacity_combine'] == 'sum' else sum(capacities) / len(capacities)
@@ -304,11 +369,15 @@ def sample_cqi_sql():
     ladder = ' '.join(
         f'WHEN sinr_db >= {float(thresholds[i - 1])!r} THEN {i}' for i in range(15, 0, -1)
     )
+    if cfg['rsrq_table'] is None:
+        from_rsrq = f'GREATEST({floor}, LEAST(15, round({slope!r} * rsrq_db + {intercept!r})))'
+    else:
+        steps = ' '.join(f'WHEN rsrq_db >= {low!r} THEN {max(floor, cqi)}' for low, cqi in cfg['rsrq_table'])
+        from_rsrq = f'(CASE {steps} ELSE {floor} END)'
     return (
         "CASE WHEN cqi BETWEEN 0 AND 15 THEN cqi "
         f"WHEN network_type = 'LTE' AND sinr_db IS NOT NULL THEN (CASE {ladder} ELSE 0 END) "
-        "WHEN network_type = 'LTE' AND rsrq_db IS NOT NULL "
-        f"THEN GREATEST({floor}, LEAST(15, round({slope!r} * rsrq_db + {intercept!r}))) END"
+        f"WHEN network_type = 'LTE' AND rsrq_db IS NOT NULL THEN {from_rsrq} END"
     )
 
 

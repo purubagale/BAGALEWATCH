@@ -250,6 +250,7 @@ export default function CollectionsPage() {
                     <th>Lng</th>
                     <th>Accuracy (m)</th>
                     <th>Network</th>
+                    <th title="Operating band the phone was on: band number and MHz. Empty for readings sent by an older app">Band</th>
                     <th title="Signal level: RSRP on 4G, RSCP on 3G, RxLev on 2G">Level (dBm)</th>
                     <th>RSRQ</th>
                     <th>SINR</th>
@@ -265,6 +266,7 @@ export default function CollectionsPage() {
                       <td>{s.lng.toFixed(5)}</td>
                       <td>{s.accuracy_m != null ? Math.round(s.accuracy_m) : '—'}</td>
                       <td>{s.network_type || '—'}</td>
+                      <td>{s.band_label || '—'}</td>
                       <td>{levelText(s)}</td>
                       <td>{s.rsrq_db ?? '—'}</td>
                       <td>{s.sinr_db ?? '—'}</td>

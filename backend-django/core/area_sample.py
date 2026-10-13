@@ -27,6 +27,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from . import radio_band
 from .audit import log_audit_event
 from .cqi import sample_cqi_fields
 from .fcm import send_sample_request_push
@@ -202,6 +203,7 @@ class AreaSampleRequestSamplesView(APIView):
                 'rscp_dbm': s.rscp_dbm,
                 'ecio_db': s.ecio_db,
                 'rx_qual': s.rx_qual,
+                **radio_band.fields(s.network_type, s.arfcn, s.band, s.band_mhz),
                 'cqi': s.cqi,
                 'cqi_derived': s.cqi_derived,
                 **sample_cqi_fields(s.cqi, s.sinr_db, s.rsrq_db, s.network_type),

@@ -1,21 +1,28 @@
 """
-python manage.py cqi_rsrq_calibration [--days N]
+python manage.py cqi_rsrq_calibration [--drive-tests] [--days N]
 
 Read-only. Checks the RSRQ fallback of the CQI estimate against this
-network's own data.
+network's own data, and prints a table to use in its place.
 
-Some phones report SINR and some do not. For a sample with no SINR the CQI
-is estimated from RSRQ with a straight line (core/cqi.py, `rsrq_slope` and
-`rsrq_intercept`). RSRQ moves with cell load as well as with quality, so
-that line is a guess until it is compared with real samples. This command
-takes every stored LTE sample that has BOTH an SINR and an RSRQ, works out
-the CQI from SINR (the better estimate), and shows per RSRQ value what the
-RSRQ line says next to it. It then fits the line to the data and prints
-the setting to use.
+For a sample with no SINR the CQI is estimated from RSRQ with a step table
+(core/cqi.py, `rsrq_table`). RSRQ moves with cell load as well as with
+quality, so the table is only as good as the data it was taken from. This
+command takes readings that have BOTH an SINR and an RSRQ, works out the
+CQI from SINR (the better estimate), and shows per whole dB of RSRQ what
+the current RSRQ estimate says next to it.
 
-It changes nothing. To apply the fitted line, put the printed
-CQI_CONFIG_JSON in .env and restart django. Bins already rolled up keep
-the averages they were given.
+Two sources:
+
+  (default)       phone samples (TelemetrySample, LTE) of the last --days.
+                  Many phones report no SINR at all; prod had none on
+                  2026-10-12, and then there is nothing to compare.
+  --drive-tests   every stored 4G drive-test reading (DriveTestSample).
+                  These always carry both values, so this is the source
+                  that works. The built-in table came from three of them.
+
+It changes nothing. To apply the printed table, put the CQI_CONFIG_JSON
+line in .env and restart django. Coverage bins already rolled up keep the
+averages they were given.
 """
 from datetime import timedelta
 
@@ -23,66 +30,97 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from core.cqi import RSRP_RSRQ, compute_cqi, resolve_config
-from core.models import TelemetrySample
+from core.models import DriveTestSample, TelemetrySample
 
-MIN_PAIRS_FOR_FIT = 50
+# An RSRQ value with fewer readings than this is too thin to set a step from.
+MIN_PER_STEP = 50
+MIN_TOTAL = 500
 
 
 class Command(BaseCommand):
-    help = 'Compare the RSRQ-based CQI estimate with the SINR-based one on stored samples (read-only).'
+    help = 'Compare the RSRQ-based CQI estimate with the SINR-based one on stored readings (read-only).'
 
     def add_arguments(self, parser):
-        parser.add_argument('--days', type=int, default=90, help='How far back to look (default 90).')
+        parser.add_argument('--drive-tests', action='store_true',
+                            help='Use 4G drive-test readings, not phone samples.')
+        parser.add_argument('--days', type=int, default=90,
+                            help='Phone samples only: how far back to look (default 90).')
+
+    def _pairs(self, o):
+        if o['drive_tests']:
+            return (DriveTestSample.objects
+                    .filter(session__tech='4G', sinr__isnull=False, rsrq__isnull=False)
+                    .exclude(cell_role='neighbor')
+                    .values_list('rsrq', 'sinr')), '4G drive-test readings with both SINR and RSRQ'
+        since = timezone.now() - timedelta(days=o['days'])
+        return (TelemetrySample.objects
+                .filter(network_type='LTE', received_at__gte=since, sinr_db__isnull=False, rsrq_db__isnull=False)
+                .values_list('rsrq_db', 'sinr_db')), (
+                    f'LTE phone samples with both SINR and RSRQ in the last {o["days"]} days')
 
     def handle(self, *args, **o):
-        since = timezone.now() - timedelta(days=o['days'])
-        pairs = TelemetrySample.objects.filter(
-            network_type='LTE', received_at__gte=since, sinr_db__isnull=False, rsrq_db__isnull=False,
-        ).values_list('rsrq_db', 'sinr_db')
-
-        by_rsrq = {}
-        xs, ys = [], []
+        pairs, label = self._pairs(o)
+        cache, by_rsrq, n = {}, {}, 0
         for rsrq, sinr in pairs.iterator(chunk_size=5000):
-            from_sinr = compute_cqi(sinr_db=sinr)['cqi_index']
-            by_rsrq.setdefault(int(round(rsrq)), []).append(from_sinr)
-            xs.append(float(rsrq))
-            ys.append(float(from_sinr))
+            key = round(float(sinr), 1)
+            if key not in cache:
+                cache[key] = compute_cqi(sinr_db=key)['cqi_index']
+            by_rsrq.setdefault(int(round(rsrq)), []).append(cache[key])
+            n += 1
 
-        n = len(xs)
-        self.stdout.write(f'LTE samples with both SINR and RSRQ in the last {o["days"]} days: {n}')
+        self.stdout.write(f'{label}: {n}')
         if n == 0:
-            self.stdout.write('Nothing to compare. The RSRQ line cannot be checked on this data.')
+            self.stdout.write('Nothing to compare.')
+            if not o['drive_tests']:
+                self.stdout.write('Phones often report no SINR. Try: manage.py cqi_rsrq_calibration --drive-tests')
             return
 
         cfg = resolve_config()
-        self.stdout.write(f'Current line: CQI = {cfg["rsrq_slope"]} x RSRQ + {cfg["rsrq_intercept"]}')
+        current = 'a step table' if cfg['rsrq_table'] is not None else (
+            f'the line CQI = {cfg["rsrq_slope"]} x RSRQ + {cfg["rsrq_intercept"]}')
+        self.stdout.write(f'Current RSRQ estimate: {current}')
         self.stdout.write('')
-        self.stdout.write('RSRQ dB | samples | CQI from SINR (mean) | CQI from RSRQ line | difference')
+        self.stdout.write('RSRQ dB | readings | CQI from SINR (mean) | current estimate | difference')
+        miss = 0.0
         for rsrq in sorted(by_rsrq, reverse=True):
             values = by_rsrq[rsrq]
             mean = sum(values) / len(values)
-            line = compute_cqi(rsrq_db=rsrq, method=RSRP_RSRQ)['cqi_index']
-            self.stdout.write(f'{rsrq:7d} | {len(values):7d} | {mean:20.1f} | {line:18d} | {line - mean:+.1f}')
-
-        if n < MIN_PAIRS_FOR_FIT:
-            self.stdout.write('')
-            self.stdout.write(f'Fewer than {MIN_PAIRS_FOR_FIT} samples: too few to fit a line. Collect more first.')
-            return
-
-        mean_x, mean_y = sum(xs) / n, sum(ys) / n
-        sxx = sum((x - mean_x) ** 2 for x in xs)
-        if sxx == 0:
-            self.stdout.write('')
-            self.stdout.write('Every sample has the same RSRQ: a line cannot be fitted.')
-            return
-        slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / sxx
-        intercept = mean_y - slope * mean_x
-        # How far the fitted line still is from the SINR-based value, on average.
-        error = sum(abs(max(0, min(15, round(slope * x + intercept))) - y) for x, y in zip(xs, ys)) / n
+            now = compute_cqi(rsrq_db=rsrq, method=RSRP_RSRQ)['cqi_index']
+            miss += sum(abs(now - v) for v in values)
+            self.stdout.write(f'{rsrq:7d} | {len(values):8d} | {mean:20.1f} | {now:16d} | {now - mean:+.1f}')
         self.stdout.write('')
-        self.stdout.write(f'Fitted line: CQI = {slope:.2f} x RSRQ + {intercept:.1f}')
-        self.stdout.write(f'Average miss of the fitted line against the SINR-based CQI: {error:.1f} steps')
+        self.stdout.write(f'Average miss of the current estimate against the SINR-based CQI: {miss / n:.1f} steps')
+
+        if n < MIN_TOTAL:
+            self.stdout.write(f'Fewer than {MIN_TOTAL} readings: too few to make a table from. Collect more first.')
+            return
+
+        # One step per whole dB that has enough readings: its rounded mean,
+        # never allowed to rise as RSRQ falls. Equal neighbours are merged.
+        steps, last = [], 15
+        for rsrq in sorted((q for q, v in by_rsrq.items() if len(v) >= MIN_PER_STEP), reverse=True):
+            values = by_rsrq[rsrq]
+            cqi = min(last, int(round(sum(values) / len(values))))
+            last = cqi
+            if steps and steps[-1][1] == cqi:
+                steps[-1][0] = rsrq - 0.5
+            else:
+                steps.append([rsrq - 0.5, cqi])
+        floor = int(cfg['rsrq_min_cqi'])
+        steps = [s for s in steps if s[1] > floor]
+        if not steps:
+            self.stdout.write('No RSRQ value has enough readings to set a step.')
+            return
+
+        def fitted(q):
+            return next((cqi for low, cqi in steps if q >= low), floor)
+
+        new_miss = sum(abs(fitted(q) - v) for q, values in by_rsrq.items() for v in values) / n
+        self.stdout.write('')
+        self.stdout.write('Table from this data (lowest RSRQ dB of each step, CQI):')
+        for low, cqi in steps:
+            self.stdout.write(f'  RSRQ >= {low:6.1f} dB -> CQI {cqi}')
+        self.stdout.write(f'  below that        -> CQI {floor}')
+        self.stdout.write(f'Its average miss on this same data: {new_miss:.1f} steps')
         self.stdout.write('To use it, set in .env and restart django:')
-        self.stdout.write(
-            f"CQI_CONFIG_JSON='{{\"rsrq_slope\": {slope:.2f}, \"rsrq_intercept\": {intercept:.1f}}}'"
-        )
+        self.stdout.write("CQI_CONFIG_JSON='{\"rsrq_table\": " + str(steps).replace(' ', '') + "}'")

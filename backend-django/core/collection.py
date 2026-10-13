@@ -26,6 +26,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from . import radio_band
 from .access import PERM_VIEW_IDENTITY, CanViewDrives, user_has
 from .mfa import decrypt_secret, encrypt_secret
 from .cqi import cqi_from_sinr, sample_cqi_fields
@@ -278,6 +279,8 @@ class CollectionSessionSamplesView(APIView):
                     'rsrq_db': r.rsrq_db, 'sinr_db': r.sinr_db,
                     # A trace sample stores RSSI but no RSCP, Ec/Io or Rx quality.
                     'rscp_dbm': None, 'ecio_db': None, 'rssi_dbm': r.rssi_dbm, 'rx_qual': None,
+                    # A trace sample carries no channel number, so no band.
+                    **radio_band.fields(r.network_type, None, None, None),
                     # `cqi` is what the phone reported, often null. A trace
                     # sample stores no estimate, so it is worked out here
                     # from the sample's own SINR (LTE only).
@@ -307,6 +310,7 @@ class CollectionSessionSamplesView(APIView):
                     # Levels for the stretches of a drive spent on 3G or 2G
                     # (2026-10-12): without them those points had no level.
                     'rscp_dbm': r.rscp_dbm, 'ecio_db': r.ecio_db, 'rssi_dbm': r.rssi_dbm, 'rx_qual': r.rx_qual,
+                    **radio_band.fields(r.network_type, r.arfcn, r.band, r.band_mhz),
                     'cqi': r.cqi, 'cqi_derived': r.cqi_derived,
                     # Shown value, where it came from (reported / sinr /
                     # rsrq) and its 3GPP modulation and efficiency
