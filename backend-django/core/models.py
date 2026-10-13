@@ -1498,6 +1498,10 @@ class DriveTestSample(models.Model):
         db_table = 'v2_dt_samples'
         indexes = [
             models.Index(fields=['session']),
+            # Every reading served by one site, for the site page's measured
+            # coverage (2026-10-13, core/site_coverage.py). Without it that
+            # read scanned the whole table: 3.7 s on 900,000 rows.
+            models.Index(fields=['serving_site_id'], name='v2_dt_samp_serving_site_idx'),
             # 2026-08-10 perf audit finding — drive_test.py's `near` action
             # (Explore by Coordinates) used to do a bounding-box prefilter
             # on plain lat/lng "before the exact haversine check in

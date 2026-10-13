@@ -1549,6 +1549,38 @@ textarea:focus {
 /* Sector-expansion note (2026-08-09) — shown under the mini-map whenever
    at least one sector's own GPS override diverges from the site's own
    location, see SiteLocationMiniMap.tsx's points computation. */
+/* Layer switches and their explanations (2026-10-13). The switches sit
+   inside the map box so they stay reachable in fullscreen. */
+.site-mini-map-layers {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 500;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 5px 8px;
+  border-radius: var(--radius-md);
+  background: rgba(15, 17, 22, 0.78);
+  color: #f5f7fa;
+  font-size: 11px;
+}
+.site-mini-map-layers label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.site-mini-map-layers input { margin: 0; }
+.site-mini-map-legend {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.site-mini-map-legend-row { margin-top: 3px; color: var(--text-primary); }
+.site-mini-map-legend-chip {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
 .site-mini-map-note {
   margin-top: 8px;
   font-size: 11px;

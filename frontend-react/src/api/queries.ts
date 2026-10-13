@@ -1,7 +1,9 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef } from 'react'
 import { ApiError, apiFetch, apiJson } from './client'
-import type { SitePhoto, SitePhotoList, TelemetryNearResponse } from './types'
+import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
+  SiteMeasuredCoverage,
+} from './types'
 import type {
   CollectionSessionRow,
   CollectionSessionSample,
@@ -155,6 +157,17 @@ export function useSiteDtSessions(siteId: string | undefined) {
     queryKey: ['site-dt-sessions', siteId],
     queryFn: () => apiJson<SiteDtSession[]>(`/api/v2/sites/${siteId}/dt-sessions/`),
     enabled: !!siteId,
+  })
+}
+
+// Readings matched to this site's sectors, for the site map's "Measured"
+// layer. Fetched only once that layer is switched on.
+export function useSiteMeasuredCoverage(siteId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['site-measured-coverage', siteId],
+    queryFn: () => apiJson<SiteMeasuredCoverage>(`/api/v2/sites/${siteId}/measured-coverage/`),
+    enabled: !!siteId && enabled,
+    staleTime: 5 * 60 * 1000,
   })
 }
 

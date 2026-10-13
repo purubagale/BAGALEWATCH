@@ -2469,6 +2469,40 @@ export interface SampleCqiFields {
   spectral_efficiency: number | null
 }
 
+// Where a site's sectors were actually received (2026-10-13,
+// core/site_coverage.py). `squares` are about 55 m on a side; `key` ties a
+// square to its sector (the cell name, else the sector label).
+export interface SiteMeasuredSector {
+  key: string
+  cell_name: string
+  sector: string
+  tech: string
+  azimuth: number | null
+  drive_test_readings: number
+  phone_readings: number
+  p50_km: number | null
+  p90_km: number | null
+  max_km: number | null
+}
+
+export interface SiteMeasuredSquare {
+  key: string
+  source: 'drive_test' | 'phone'
+  lat: number
+  lng: number
+  level: number | null
+  n: number
+}
+
+export interface SiteMeasuredCoverage {
+  site: string
+  square_m: number
+  sectors: SiteMeasuredSector[]
+  squares: SiteMeasuredSquare[]
+  truncated: boolean
+  phone_readings_included: boolean
+}
+
 // Operating band of a phone reading (2026-10-13, core/radio_band.py).
 // `arfcn` is the channel number the phone reported, `band` the 3GPP band
 // number (none on 2G), `band_mhz` its common name, `band_label` the text

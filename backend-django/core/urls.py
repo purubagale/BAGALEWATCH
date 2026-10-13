@@ -5,7 +5,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from . import (api_auth, area_sample, audit, auth_log, backup, collection, consent, dashboard, device_identity,
                device_lookup, device_trace, drive_test, emergency,
                exports, ip_block, issues, kpi_trend, mfa, password_reset, reports, rescue, rf_audit,
-               rf_reports, roles, site_import, site_photo, sso_views, system_doc,
+               rf_reports, roles, site_import, site_coverage, site_photo, sso_views, system_doc,
                telemetry_admin, telemetry_near, views, volte_quality)
 
 router = DefaultRouter()
@@ -214,6 +214,9 @@ urlpatterns = [
     # views for why these replace TelemetryLiveSamplesView as the
     # promotable, consent-scoped path.
     # Site photos from the mobile app (2026-10-11) -- see core/site_photo.py.
+    # Where a site's sectors were actually received (2026-10-13) -- see core/site_coverage.py.
+    path('sites/<str:site_id>/measured-coverage/', site_coverage.SiteMeasuredCoverageView.as_view(),
+         name='site-measured-coverage'),
     path('site-photos/', site_photo.SitePhotoListView.as_view(), name='site-photos'),
     path('site-photos/<int:pk>/', site_photo.SitePhotoDetailView.as_view(), name='site-photo-detail'),
     path('site-photos/<int:pk>/image/', site_photo.SitePhotoImageView.as_view(), name='site-photo-image'),

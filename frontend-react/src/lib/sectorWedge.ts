@@ -42,6 +42,23 @@ export function destinationPoint(lat: number, lng: number, bearingDeg: number, d
   return [toDeg(lat2), toDeg(lng2)]
 }
 
+// Where the centre of a sector's main beam meets the ground, from the
+// antenna's height and its total downtilt (2026-10-13): height divided by
+// the tangent of the tilt. Flat ground is assumed, which is the whole
+// limit of it: on a hill the real distance can be far longer or shorter.
+// Null when the height is unknown or the tilt is zero or less, since such
+// a beam does not come down to flat ground at all.
+export const TILT_REACH_DRAW_MAX_M = 5000
+
+export function tiltReachM(
+  heightM: number | null | undefined, mechTiltDeg: number | null | undefined, elecTiltDeg: number | null | undefined,
+): number | null {
+  if (heightM == null || heightM <= 0) return null
+  const tilt = (mechTiltDeg ?? 0) + (elecTiltDeg ?? 0)
+  if (tilt <= 0 || tilt >= 90) return null
+  return heightM / Math.tan(toRad(tilt))
+}
+
 /** Builds a pie-slice polygon for one sector's theoretical antenna
  * coverage — a ring starting at the site point, sweeping an arc from
  * `azimuthDeg - beamwidthDeg/2` to `azimuthDeg + beamwidthDeg/2` at
