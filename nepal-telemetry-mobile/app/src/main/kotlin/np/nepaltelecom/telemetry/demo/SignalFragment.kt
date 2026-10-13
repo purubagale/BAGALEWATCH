@@ -13,6 +13,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import np.nepaltelecom.telemetry.NetTelemetry
 import np.nepaltelecom.telemetry.model.Sample
+import np.nepaltelecom.telemetry.model.RadioBand
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -188,7 +189,11 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
         primary?.let { sparkline.add(it) }
 
         valOperator.text = if (s.mcc == null && s.mnc == null) DASH else "${s.mcc ?: "?"} / ${s.mnc ?: "?"}"
-        valNetwork.text = s.networkType
+        // The technology with the band the phone is on: "LTE · B3 · 1800".
+        valNetwork.text = listOfNotNull(
+            s.networkType,
+            RadioBand.label(s.networkType, s.band, if (s.networkType == "GSM") s.bcch ?: s.arfcn else s.arfcn),
+        ).joinToString(" · ")
         valCell.text = cellLabel(s)
         valTac.text = s.tac?.toString() ?: DASH
         valPci.text = s.pci?.toString() ?: DASH

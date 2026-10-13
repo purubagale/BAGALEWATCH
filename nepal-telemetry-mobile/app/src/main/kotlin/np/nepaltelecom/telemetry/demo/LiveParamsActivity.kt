@@ -7,6 +7,7 @@ import androidx.appcompat.app.AppCompatActivity
 import np.nepaltelecom.telemetry.NetTelemetry
 import np.nepaltelecom.telemetry.model.Sample
 import java.util.Date
+import np.nepaltelecom.telemetry.model.RadioBand
 
 /**
  * Shows this phone's live cell, signal and location readings on screen, read
@@ -60,6 +61,8 @@ class LiveParamsActivity : AppCompatActivity() {
                     section("Cell ID (ECI)", s.cellId.orDash())
                     section("eNB : sector", s.cellId?.let { "${it shr 8} : ${it and 0xFFL}" }.orDash())
                     section("PCI", s.pci.orDash())
+                    section("Band", RadioBand.label(s.networkType, s.band, s.arfcn).orDash())
+                    section("Channel (EARFCN)", s.arfcn.orDash())
                     section("TAC", s.tac.orDash())
                     section("RSRP", s.rsrpDbm.withUnit("dBm"))
                     section("RSRQ", s.rsrqDb.withUnit("dB"))
@@ -70,6 +73,8 @@ class LiveParamsActivity : AppCompatActivity() {
                 "UMTS" -> {
                     section("Cell ID", s.cellId.orDash())
                     section("Scrambling code (PSC)", s.scramblingCode.orDash())
+                    section("Band", RadioBand.label(s.networkType, s.band, s.arfcn).orDash())
+                    section("Channel (UARFCN)", s.arfcn.orDash())
                     section("LAC", s.tac.orDash())
                     section("RSCP", s.rscpDbm.withUnit("dBm"))
                     section("Ec/Io", s.ecioDb.withUnit("dB"))
@@ -77,6 +82,7 @@ class LiveParamsActivity : AppCompatActivity() {
                 }
                 "GSM" -> {
                     section("Cell ID", s.cellId.orDash())
+                    section("Band", RadioBand.label(s.networkType, s.band, s.bcch ?: s.arfcn).orDash())
                     section("BCCH (ARFCN)", s.bcch.orDash())
                     section("BSIC", s.bsic.orDash())
                     section("LAC", s.tac.orDash())

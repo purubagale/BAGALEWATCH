@@ -150,6 +150,7 @@ internal class DriveHistoryStore(context: Context) {
         putOpt("rxq", s.rxQual); putOpt("cqi", s.cqi); putOpt("pci", s.pci)
         putOpt("psc", s.scramblingCode); putOpt("bcch", s.bcch); putOpt("bsic", s.bsic)
         putOpt("cid", s.cellId)
+        putOpt("ch", s.arfcn); putOpt("band", s.band)
     }
 
     private fun JSONObject.intOrNull(key: String): Int? = if (has(key) && !isNull(key)) getInt(key) else null
@@ -161,6 +162,7 @@ internal class DriveHistoryStore(context: Context) {
         rxQual = o.intOrNull("rxq"), cqi = o.intOrNull("cqi"), pci = o.intOrNull("pci"),
         scramblingCode = o.intOrNull("psc"), bcch = o.intOrNull("bcch"), bsic = o.intOrNull("bsic"),
         cellId = if (o.has("cid") && !o.isNull("cid")) o.getLong("cid") else null,
+        arfcn = o.intOrNull("ch"), band = o.intOrNull("band"),
     )
 
     private fun distanceM(a: RouteTrail.Point, b: RouteTrail.Point): Double {

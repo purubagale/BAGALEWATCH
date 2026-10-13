@@ -49,6 +49,13 @@ data class Sample(
     val scramblingCode: Int? = null,
     val bcch: Int? = null,
     val bsic: Int? = null,
+    // Operating band (2026-10-13). [arfcn] is the serving cell's channel
+    // number: EARFCN on 4G, UARFCN on 3G, NR-ARFCN on 5G, BCCH ARFCN on 2G.
+    // [band] is the 3GPP band number: what the phone reports on Android 11
+    // and later, else worked out from the channel (see [RadioBand]). Null on
+    // 2G, where the server names the band from the channel.
+    val arfcn: Int? = null,
+    val band: Int? = null,
     val batteryPct: Int?,
     val triggerReason: String,      // "periodic" | "handover" | "manual" | "drive" | "drive_start" | "drive_stop"
     // Set on fixes and markers taken during a drive test (2026-10-04). One UUID
@@ -80,6 +87,8 @@ data class Sample(
         putOpt("scrambling_code", scramblingCode)
         putOpt("bcch", bcch)
         putOpt("bsic", bsic)
+        putOpt("arfcn", arfcn)
+        putOpt("band", band)
         putOpt("battery_pct", batteryPct)
         put("trigger_reason", triggerReason)
         putOpt("drive_session_id", driveSessionId)
@@ -109,6 +118,8 @@ data class Sample(
             scramblingCode = o.optIntOrNull("scrambling_code"),
             bcch = o.optIntOrNull("bcch"),
             bsic = o.optIntOrNull("bsic"),
+            arfcn = o.optIntOrNull("arfcn"),
+            band = o.optIntOrNull("band"),
             batteryPct = o.optIntOrNull("battery_pct"),
             triggerReason = o.optString("trigger_reason", "periodic"),
             driveSessionId = o.optString("drive_session_id", "").takeIf { it.isNotEmpty() },

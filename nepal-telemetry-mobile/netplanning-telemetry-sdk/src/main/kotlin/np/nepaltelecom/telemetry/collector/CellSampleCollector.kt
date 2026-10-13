@@ -24,6 +24,7 @@ import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.suspendCancellableCoroutine
 import np.nepaltelecom.telemetry.model.CellReading
 import np.nepaltelecom.telemetry.model.Sample
+import np.nepaltelecom.telemetry.model.RadioBand
 import np.nepaltelecom.telemetry.storage.DeviceIdentity
 import kotlin.coroutines.resume
 
@@ -119,6 +120,8 @@ internal class CellSampleCollector(
             scramblingCode = cell?.scramblingCode,
             bcch = cell?.bcch,
             bsic = cell?.bsic,
+            arfcn = cell?.arfcn,
+            band = cell?.band,
             batteryPct = readBatteryPct(),
             triggerReason = triggerReason,
             driveSessionId = driveSessionId,
@@ -196,6 +199,8 @@ internal class CellSampleCollector(
             rxQual = null,
             rscpDbm = null,
             ecioDb = null,
+            arfcn = info.cellIdentity.earfcn.toIntOrNull(),
+            band = lteBand(info.cellIdentity),
         )
         // rscp/ecNo (2026-09-03, "for 3g rscp and ec/io"). Only getEcNo()
         // is public SDK API (added in API 30, R) -- getRscp() exists on
@@ -230,6 +235,8 @@ internal class CellSampleCollector(
             } else {
                 null
             },
+            arfcn = info.cellIdentity.uarfcn.toIntOrNull(),
+            band = RadioBand.bandOf("UMTS", info.cellIdentity.uarfcn.toIntOrNull()),
         )
         // getBitErrorRate() (2026-09-03, "for 2g rx level and rx qual") --
         // TS 27.007 8.5's GSM bit error rate, 0-7, is the same TS 45.008
@@ -263,9 +270,28 @@ internal class CellSampleCollector(
             },
             rscpDbm = null,
             ecioDb = null,
+            // The channel is the BCCH again. 2G has no band number; the
+            // server names the band (900, 1800) from the channel.
+            arfcn = info.cellIdentity.arfcn.toIntOrNull(),
         )
         else -> parseNrCellInfo(info) // isolated: CellInfoNr needs API 29+, see below
     }
+
+    /**
+     * The 4G band: the one the phone reports (Android 11 and later), else
+     * the one its channel number falls in. Kept in its own function because
+     * getBands() does not exist before API 30.
+     */
+    private fun lteBand(id: android.telephony.CellIdentityLte): Int? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            id.bands.firstOrNull { it > 0 }?.let { return it }
+        }
+        return RadioBand.bandOf("LTE", id.earfcn.toIntOrNull())
+    }
+
+    /** The 5G band the phone reports. There is no channel table for 5G here. */
+    private fun nrBand(id: android.telephony.CellIdentityNr): Int? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) id.bands.firstOrNull { it > 0 } else null
 
     // Kept in its own function (rather than a fourth `is` branch above) for
     // more than readability: CellInfoNr/CellIdentityNr/CellSignalStrengthNr
@@ -294,6 +320,8 @@ internal class CellSampleCollector(
             rxQual = null,
             rscpDbm = null,
             ecioDb = null,
+            arfcn = identity.nrarfcn.toIntOrNull(),
+            band = nrBand(identity),
         )
     }
 
@@ -401,6 +429,7 @@ internal class CellSampleCollector(
                 rscpDbm = null,
                 ecioDb = null,
                 cqi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) sig.cqi.toIntOrNull() else null,
+                band = lteBand(id),
             )
         }
         is CellInfoWcdma -> {
@@ -428,6 +457,7 @@ internal class CellSampleCollector(
                 } else {
                     null
                 },
+                band = RadioBand.bandOf("UMTS", id.uarfcn.toIntOrNull()),
             )
         }
         is CellInfoGsm -> {
@@ -487,6 +517,9 @@ internal class CellSampleCollector(
         val bsic: Int? = null,
         // 2026-10-05 -- LTE CQI the modem reports (API 29+). Null for other RATs.
         val cqi: Int? = null,
+        // 2026-10-13 -- channel number and operating band, see Sample.kt.
+        val arfcn: Int? = null,
+        val band: Int? = null,
     )
 }
 

@@ -9,26 +9,6 @@ import kotlin.math.sqrt
 /** Display helpers for radio and location values. Nothing here is sent anywhere. */
 object RfMath {
 
-    /**
-     * LTE band for an EARFCN, for the FDD bands in use in Nepal and the region.
-     * Approximate: the table covers the bands most often seen here, and an
-     * EARFCN outside it is shown as "EARFCN n" rather than guessed.
-     */
-    fun lteBandLabel(earfcn: Int?): String? {
-        val e = earfcn ?: return null
-        val band = when (e) {
-            in 0..599 -> "B1 · 2100"
-            in 1200..1949 -> "B3 · 1800"
-            in 2400..2649 -> "B5 · 850"
-            in 2750..3449 -> "B7 · 2600"
-            in 3450..3799 -> "B8 · 900"
-            in 6150..6449 -> "B20 · 800"
-            in 9210..9659 -> "B28 · 700"
-            else -> null
-        }
-        return band ?: "EARFCN $e"
-    }
-
     /*
      * LTE CQI from SINR (dB): the lowest SINR at which each CQI index is usable.
      * Brueninghaus et al., PIMRC 2005. Same table as the server's

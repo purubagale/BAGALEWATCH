@@ -12,6 +12,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import np.nepaltelecom.telemetry.NetTelemetry
 import np.nepaltelecom.telemetry.model.CellReading
+import np.nepaltelecom.telemetry.model.RadioBand
 
 /**
  * Every cell the modem can see: the serving cell first, then neighbours by
@@ -77,7 +78,7 @@ class CellsFragment : Fragment(R.layout.fragment_cells) {
             ).apply { bottomMargin = dp(10) }
         }
 
-        val band = if (c.networkType == "LTE") RfMath.lteBandLabel(c.earfcn) else null
+        val band = RadioBand.label(c.networkType, c.band, if (c.networkType == "GSM") c.bcch else c.earfcn)
         val title = buildString {
             append(c.networkType)
             band?.let { append(" · $it") }

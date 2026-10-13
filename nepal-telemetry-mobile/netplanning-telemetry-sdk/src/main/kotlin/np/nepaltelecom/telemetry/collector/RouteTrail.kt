@@ -31,12 +31,15 @@ object RouteTrail {
         val bcch: Int? = null,
         val bsic: Int? = null,
         val cellId: Long? = null,
+        val arfcn: Int? = null,
+        val band: Int? = null,
     ) {
         companion object {
             fun from(s: Sample) = Signal(
                 networkType = s.networkType, rsrpDbm = s.rsrpDbm, rsrqDb = s.rsrqDb, sinrDb = s.sinrDb,
                 rssiDbm = s.rssiDbm, rscpDbm = s.rscpDbm, ecioDb = s.ecioDb, rxQual = s.rxQual, cqi = s.cqi,
                 pci = s.pci, scramblingCode = s.scramblingCode, bcch = s.bcch, bsic = s.bsic, cellId = s.cellId,
+                arfcn = s.arfcn, band = s.band,
             )
         }
     }

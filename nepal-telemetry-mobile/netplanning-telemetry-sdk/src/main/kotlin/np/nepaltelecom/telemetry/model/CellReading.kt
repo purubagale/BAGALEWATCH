@@ -27,4 +27,5 @@ data class CellReading(
     val rscpDbm: Int?,
     val ecioDb: Int?,
     val cqi: Int? = null,           // LTE CQI the modem reports (API 29+), or null
+    val band: Int? = null,          // 3GPP band number on 4G and 3G; null on 2G (see RadioBand)
 )

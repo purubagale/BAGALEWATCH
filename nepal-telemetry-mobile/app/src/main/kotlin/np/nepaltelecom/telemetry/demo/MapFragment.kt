@@ -34,6 +34,7 @@ import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import np.nepaltelecom.telemetry.model.RadioBand
 
 /**
  * The drive route on a map. It shows the live drive by default. "Past drives"
@@ -526,17 +527,20 @@ private fun describe(target: OverlayWithIW, p: RouteTrail.Point) {
             target.title = "${if (s.networkType == "NR") "5G" else "4G"} · RSRP ${s.rsrpDbm.unit("dBm")}"
             target.snippet = "RSRQ ${s.rsrqDb.unit("dB")} · SINR ${s.sinrDb.unit("dB")}" +
                 (s.cqi?.let { " · CQI $it" } ?: "") + "<br>PCI ${s.pci ?: "—"}" +
-                (s.cellId?.let { " · eNB:sector ${it shr 8}:${it and 0xFFL}" } ?: "")
+                (s.cellId?.let { " · eNB:sector ${it shr 8}:${it and 0xFFL}" } ?: "") +
+                (RadioBand.label(s.networkType, s.band, s.arfcn)?.let { "<br>Band $it" } ?: "")
         }
         "UMTS" -> {
             target.title = "3G · RSCP ${s.rscpDbm.unit("dBm")}"
             target.snippet = "Ec/Io ${s.ecioDb.unit("dB")} · RSSI ${s.rssiDbm.unit("dBm")}" +
-                "<br>PSC ${s.scramblingCode ?: "—"}" + (s.cellId?.let { " · Cell $it" } ?: "")
+                "<br>PSC ${s.scramblingCode ?: "—"}" + (s.cellId?.let { " · Cell $it" } ?: "") +
+                (RadioBand.label(s.networkType, s.band, s.arfcn)?.let { "<br>Band $it" } ?: "")
         }
         "GSM" -> {
             target.title = "2G · RSSI ${s.rssiDbm.unit("dBm")}"
             target.snippet = "Rx quality ${s.rxQual ?: "—"}" +
-                "<br>BCCH ${s.bcch ?: "—"} · BSIC ${s.bsic ?: "—"}" + (s.cellId?.let { " · Cell $it" } ?: "")
+                "<br>BCCH ${s.bcch ?: "—"} · BSIC ${s.bsic ?: "—"}" + (s.cellId?.let { " · Cell $it" } ?: "") +
+                (RadioBand.label(s.networkType, s.band, s.bcch ?: s.arfcn)?.let { "<br>Band $it" } ?: "")
         }
         else -> {
             target.title = "No service"
