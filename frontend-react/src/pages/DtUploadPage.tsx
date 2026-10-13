@@ -1,6 +1,6 @@
 import type { ChangeEvent, DragEvent } from 'react'
 import { useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { apiErrorMessage } from '../api/client'
 import { useAppendDtSamples, useCreateDtSession, useDeleteDtSession, useDtSessions, useSites } from '../api/queries'
@@ -226,6 +226,7 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
   let pci: number | null = null
   let band = ''
   let cqi: number | null = null
+  let cqiEstimated = false
   let dl: number | null = null
   let rxQual: number | null = null
   let bcch: number | null = null
@@ -247,6 +248,7 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     // actually on is real data this app already decodes).
     band = bandStr(row.band)
     cqi = int(row.cqi)
+    cqiEstimated = cqi != null && (row as { cqiEstimated?: unknown }).cqiEstimated === true
     // Real DL throughput, when TEMS declared it — a genuine field this
     // engine confirmed against a real 4G DL capture (see trpAnalysis.ts's
     // module comment), not the never-verified extraction CLAUDE.md flags
@@ -281,7 +283,7 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     date: row.isoTs.slice(0, 10),
     lat, lng,
     rsrp: primary,
-    rsrq, sinr, dl, pci, band, cqi,
+    rsrq, sinr, dl, pci, band, cqi, cqi_estimated: cqiEstimated,
     serving_site_id: null,
     serving_site_name: null,
     serving_sector: null,
@@ -645,7 +647,11 @@ export default function DtUploadPage() {
   const [parsedSamples, setParsedSamples] = useState<DtSample[] | null>(null)
   const [parseErr, setParseErr] = useState<string | null>(null)
   const [saveErr, setSaveErr] = useState<string | null>(null)
-  const [savedMsg, setSavedMsg] = useState<string | null>(null)
+  // Sessions saved from the template tab during this visit, newest first
+  // (2026-10-13). The page used to jump to Session History after each
+  // save; it now stays, so several logs can be uploaded one after another,
+  // and each saved session is listed here with a link that opens it.
+  const [savedSessions, setSavedSessions] = useState<{ id: number; name: string; points: number }[]>([])
   const [dupPrompt, setDupPrompt] = useState<{ existing: DtSessionListItem; driveTestDate: string; gpsCount: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -724,13 +730,11 @@ export default function DtUploadPage() {
     setParsedSamples(null)
     setParseErr(null)
     setSaveErr(null)
-    setSavedMsg(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   async function handleFile(file: File) {
     setParseErr(null)
-    setSavedMsg(null)
     setSaveErr(null)
     try {
       let rows: string[][]
@@ -798,7 +802,6 @@ export default function DtUploadPage() {
   async function doSave() {
     if (!parsedSamples || !meta) return
     setSaveErr(null)
-    setSavedMsg(null)
     try {
       const created = await saveSessionChunked(
         {
@@ -811,12 +814,13 @@ export default function DtUploadPage() {
         },
         parsedSamples,
       )
-      // Jump to the Session History page with the new session pre-
-      // selected (2026-08-09: these were one page/tab before — now
-      // separate routes, so a query param stands in for what used to be
-      // `setTab('history'); setSelectedSessionId(created.id)`. See
-      // DtSessionHistoryPage.tsx, which reads this on mount.
-      navigate(`${DT_SESSION_HISTORY_PATH}?session=${created.id}`)
+      // Stay on this page and clear the form for the next log
+      // (2026-10-13). The saved session is listed with a link to Session
+      // History, which opens it on the map (DtSessionHistoryPage.tsx reads
+      // `?session=` on mount).
+      const savedName = sessionName || uploadedFile?.name || 'DT Session'
+      setSavedSessions((list) => [{ id: created.id, name: savedName, points: parsedSamples.length }, ...list])
+      setSaveProgress(null)
       resetUpload()
       setSessionName('')
       setDriveMode('')
@@ -1089,7 +1093,18 @@ export default function DtUploadPage() {
 
               {parseErr && <div className="form-error">{parseErr}</div>}
               {saveErr && <div className="form-error">{saveErr}</div>}
-              {savedMsg && <div className="form-success">{savedMsg}</div>}
+              {savedSessions.length > 0 && (
+                <div className="form-success">
+                  {savedSessions.map((saved, i) => (
+                    <div key={saved.id}>
+                      {i === 0 ? 'Saved: ' : 'Saved earlier: '}
+                      <b>{saved.name}</b> ({saved.points.toLocaleString()} points).{' '}
+                      <Link to={`${DT_SESSION_HISTORY_PATH}?session=${saved.id}`}>Open it in Session History</Link>
+                    </div>
+                  ))}
+                  <div>You can upload the next log above.</div>
+                </div>
+              )}
 
               {parsedSamples && meta && (
                 <>

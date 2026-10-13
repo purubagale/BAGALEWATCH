@@ -810,7 +810,7 @@ class DriveTestSampleSerializer(serializers.ModelSerializer):
     class Meta:
         model = DriveTestSample
         fields = [
-            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band', 'cqi',
+            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band', 'cqi', 'cqi_estimated',
             'serving_site_id', 'serving_site_name', 'serving_sector', 'serving_cell_name',
             'serving_local_cell_id', 'serving_dist_km', 'cell_role', 'rx_qual',
             'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
@@ -893,6 +893,8 @@ def _coerce_dt_sample(raw):
             out[f] = str(v)[:maxlen]
     if not out['cell_role']:
         out['cell_role'] = 'serving'
+    # Only a reading that has a CQI can have an estimated one.
+    out['cqi_estimated'] = bool(raw.get('cqi_estimated')) and out['cqi'] is not None
     return out
 
 
@@ -905,7 +907,7 @@ _DT_COPY_COLUMNS = (
     'serving_site_id', 'serving_site_name', 'serving_sector', 'serving_cell_name',
     'serving_local_cell_id', 'serving_dist_km', 'cell_role', 'rx_qual',
     'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
-    'cqi',
+    'cqi', 'cqi_estimated',
 )
 _DT_COPY_SQL = (
     'COPY v2_dt_samples (' + ', '.join(_DT_COPY_COLUMNS) + ') FROM STDIN WITH (FORMAT text)'
@@ -954,7 +956,7 @@ def _bulk_insert_dt_samples(session_id, rows):
             _copy_field(r['bcch']), _copy_field(r['bsic']),
             _copy_field(r['rscp']), _copy_field(r['ecno']),
             _copy_field(r['scrambling_code']),
-            _copy_field(r['cqi']),
+            _copy_field(r['cqi']), 't' if r.get('cqi_estimated') else 'f',
         )) + '\n')
     buf.seek(0)
     with connection.cursor() as cur:
@@ -986,7 +988,7 @@ class DriveTestSamplePlotSerializer(serializers.ModelSerializer):
     class Meta:
         model = DriveTestSample
         fields = [
-            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band', 'cqi',
+            'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band', 'cqi', 'cqi_estimated',
             'serving_site_name', 'rx_qual', 'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
             # serving-cell attribution (dt_serving_cell.py): serving_site_id
             # keys the per-session /serving-cells/ lookup that the coverage

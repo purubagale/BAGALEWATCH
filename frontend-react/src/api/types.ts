@@ -778,6 +778,9 @@ export interface DtSample {
   // LTE-only 3GPP Channel Quality Indicator, 0-15, higher is better --
   // see DriveTestSample.cqi's docstring in models.py.
   cqi: number | null
+  // True when `cqi` was filled in from SINR at upload (a TEMS .trp log
+  // carries none); false or absent when the test phone measured it.
+  cqi_estimated?: boolean
   // Serving-cell attribution (dt_serving_cell.py). `serving_site_id` +
   // `serving_dist_km` come back on the plot fetch and drive the coverage
   // map's hover connector (see useDtServingCells / DtCoverageMap). The

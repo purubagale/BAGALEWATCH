@@ -1458,6 +1458,12 @@ class DriveTestSample(models.Model):
     # SignalFloatField. Null for 2G/3G samples (CQI doesn't apply to
     # those techs) and for any 4G upload path that doesn't supply it.
     cqi = models.SmallIntegerField(null=True, blank=True)
+    # True when `cqi` was worked out from SINR at upload and not measured
+    # (2026-10-13). A TEMS .trp log carries no CQI, so the upload page
+    # fills one in from SINR; an Excel export from the TEMS server carries
+    # the CQI the test phone reported. Both sat in `cqi` unmarked, and a
+    # calibration built on the filled-in values went wrong for it.
+    cqi_estimated = models.BooleanField(default=False)
     dl = SignalFloatField(null=True, blank=True)
     pci = models.IntegerField(null=True, blank=True)
     # LTE band this sample's serving cell was on (e.g. "3", "20") --

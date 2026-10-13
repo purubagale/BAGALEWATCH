@@ -328,7 +328,10 @@ export default function DtCoverageMap({
           </button>
         ))}
       </div>
-      {activeMetric.note && <div className="muted" style={{ fontSize: 10, marginBottom: 6 }}>{activeMetric.note}</div>}
+      {/* The CQI note applies only where the CQI shown was filled in from SINR, not measured. */}
+      {activeMetric.note && (activeMetric.key !== 'cqi' || samples.some((s) => s.cqi_estimated)) && (
+        <div className="muted" style={{ fontSize: 10, marginBottom: 6 }}>{activeMetric.note}</div>
+      )}
       <MapContainer key={mapKey} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
         <InvalidateOnResize />
         <CurrentLocationMarker />

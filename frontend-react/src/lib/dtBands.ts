@@ -157,10 +157,10 @@ export interface DtMetric {
   unit: string
   bands: Band[]
   // Optional short disclaimer shown alongside this metric's tab/legend
-  // (2026-09-29) — only set for 'cqi': real .trp captures never log a raw
-  // CQI value (confirmed against two real 4G DL files — see
-  // cqiFromSinr.ts), so this metric is derived from SINR, not measured
-  // directly, and every place it's shown needs to say so.
+  // (2026-09-29) — only set for 'cqi': a .trp capture logs no CQI, so the
+  // upload fills one in from SINR (cqiFromSinr.ts). An Excel export from
+  // the TEMS server does carry measured CQI, so since 2026-10-13 the note
+  // is shown only when the readings on screen are marked `cqi_estimated`.
   note?: string
 }
 
@@ -188,7 +188,7 @@ export function metricsForTech(tech: DtTech): DtMetric[] {
     { key: 'sinr', label: 'SINR', unit: ' dB', bands: SINR_BANDS },
     {
       key: 'cqi', label: 'CQI', unit: '', bands: CQI_BANDS,
-      note: 'Derived from SINR (no real .trp capture logs a raw CQI value) — an estimate, not a direct measurement.',
+      note: 'Estimated from SINR: this log carries no measured CQI. An estimate, not a direct measurement.',
     },
     // DL Throughput (2026-09-23, "Download Plot from PDCP") -- DriveTestSample.dl
     // already stored/returned per sample and already flows through

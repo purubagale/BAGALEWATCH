@@ -396,6 +396,15 @@ export function parseEngineeringParamRows(rows: string[][]): ParsedEngineeringPa
   const iTowerRemark = findCol(header, 'towerremark')
 
   if (iCellName < 0) throw new Error('Could not find a "Cell Name" column in this file.')
+  // A 2G or 3G RF Database also has a Cell Name column, so it used to be
+  // accepted here (2026-10-13): the page read its first sheet and sent
+  // the rows as 4G engineering parameters. A 4G list has a PCI column and
+  // none of the 2G/3G identities.
+  if (iPci < 0 && ['bcch', 'bsic', 'psc', 'uarfcn'].some((k) => findCol(header, k) >= 0)) {
+    throw new Error(
+      'This looks like a 2G or 3G RF Database, not a 4G engineering parameter file. Use the 2G RF Database or 3G RF Database box.',
+    )
+  }
 
   const records: ParsedEngineeringParamRow[] = []
   for (let r = 1; r < rows.length; r++) {

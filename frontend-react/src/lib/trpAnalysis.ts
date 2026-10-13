@@ -1288,6 +1288,9 @@ export async function trpaAnalyzeFile(buffer: ArrayBuffer, fileName: string, opt
     // from — never fabricated when sinr itself is missing too.
     if (chosenTech === '4G' && srv.cqi == null && typeof srv.sinr === 'number') {
       srv.cqi = deriveCqiFromSinr(srv.sinr)
+      // Saved with the reading (2026-10-13), so a filled-in value is never
+      // mistaken for one the test phone measured.
+      srv.cqiEstimated = true
     }
     // Band correction (2026-09-30) — see LTE_BAND_DL_EARFCN's comment
     // above for the real-file evidence that the raw decoded Band field is
