@@ -15,15 +15,8 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.fragment.app.Fragment
-import androidx.work.BackoffPolicy
-import androidx.work.ExistingWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
-import androidx.work.WorkRequest
-import androidx.work.workDataOf
 import np.nepaltelecom.telemetry.storage.HardwareInfo
 import com.google.android.material.button.MaterialButton
-import java.util.concurrent.TimeUnit
 
 /**
  * The "Requests from NTC" card in Settings (2026-10-05). It registers this
@@ -109,57 +102,28 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
         handler.removeCallbacks(poll)
     }
 
+    /** The form's button. The work itself is shared with the pop-up, see [Registration]. */
     private fun register() {
         val msisdn = msisdnInput.text.toString().trim()
         if (msisdn.isEmpty()) {
             setStatus(context.getString(R.string.req_need_number))
             return
         }
-        prefs.edit().putString(KEY_MSISDN, msisdn).apply()
         setStatus(context.getString(R.string.req_registering))
-        Thread {
-            val message = try {
-                DeviceKeys.ensureKey()
-                TraceApi.register(msisdn, TraceApi.challenge(), APP_VERSION, HardwareInfo.hardwareId(context))
-                prefs.edit().putBoolean(KEY_REGISTERED, true).apply()
-                FcmToken.fetchAndUpload(context)
-                // Best effort: identity is recorded when the device is registered.
-                val userType = if (StaffMode.isEmployee(context)) "employee" else "general"
-                runCatching { TraceApi.uploadIdentity(Build.MODEL, Build.MANUFACTURER, userType, HardwareInfo.hardwareId(context)) }
-                context.getString(R.string.req_registered)
-            } catch (e: Exception) {
-                // Immediate attempt failed -- fall back to a WorkManager
-                // retry (2026-10-08) so a transient network/VPN miss at
-                // this exact moment doesn't need the user to notice and
-                // tap the button again themselves, same reliability as
-                // every other request this app already queues.
-                enqueueRegisterRetry(msisdn)
-                context.getString(R.string.req_failed_retrying, friendlyErrorMessage(e))
-            }
-            onMain {
-                setStatus(message)
+        Registration.register(context, msisdn) { ok, message ->
+            if (fragment.isAdded) {
+                // Once registered the message above the list says so; a failure is explained here.
+                setStatus(if (ok) "" else message)
                 refreshRegistrationUi()
+                Thread { refreshRequests() }.start()
             }
-            refreshRequests()
-        }.start()
+        }
     }
 
-    /** Unique, REPLACE-enqueued so retrying again (e.g. the user taps Register
-     * a second time before the first retry has landed) never stacks up more
-     * than one pending attempt -- only the most recently typed number is ever
-     * the one that eventually gets sent. */
-    private fun enqueueRegisterRetry(msisdn: String) {
-        val data = workDataOf(
-            TraceRegisterWorker.KEY_MSISDN to msisdn,
-            TraceRegisterWorker.KEY_APP_VERSION to APP_VERSION,
-        )
-        val request = OneTimeWorkRequestBuilder<TraceRegisterWorker>()
-            .setInputData(data)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
-            .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            TraceRegisterWorker.WORK_NAME, ExistingWorkPolicy.REPLACE, request,
-        )
+    /** The pop-up registered the phone while Settings was open. */
+    fun onRegistrationChanged() {
+        setStatus("")
+        refreshRegistrationUi()
     }
 
     private fun refreshRequests() {
@@ -296,12 +260,11 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
         // so this panel's own poll loop (gated on that same flag) picks it
         // up on its next tick without needing a separate observer.
         internal const val PREFS = "dtwatch_device"
-        private const val KEY_MSISDN = "msisdn"
+        internal const val KEY_MSISDN = "msisdn"
         internal const val KEY_REGISTERED = "registered"
         private const val STATUS_PENDING = "PENDING"
         private const val STATUS_ACCEPTED = "ACCEPTED"
         private const val POLL_MS = 30_000L
         private const val STOP_REFRESH_MS = 2_000L
-        private const val APP_VERSION = "1.0"
     }
 }

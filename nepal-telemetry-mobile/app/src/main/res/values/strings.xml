@@ -41,7 +41,7 @@
     <string name="signal_title">Signal</string>
     <string name="signal_no_reading">Grant location to see live readings.</string>
     <string name="quick_setup_title">Quick setup</string>
-    <string name="quick_setup_body">Allow location so this app can show your live signal, cells, and Wi-Fi networks.\n\nAllowing location also lets the app share anonymous network-quality data with NTC. Nothing you see on screen is uploaded, and you can turn uploads off at any time in Settings.</string>
+    <string name="quick_setup_body">This app needs three permissions to work.\n\n• Location and phone: to read your live signal and nearby Wi-Fi. Android reports neither without them.\n• Notifications: so a request from NTC can reach you.\n\nWhen you allow them, the app sends anonymous signal readings to NTC for about one minute, then stops by itself. After that, sharing stays off until you turn it on in Settings.</string>
     <string name="quick_setup_grant">Grant permissions</string>
     <string name="quick_setup_later">Not now</string>
     <string name="banner_open_settings">Open settings</string>
@@ -61,7 +61,12 @@
     <string name="label_cqi">CQI (4G)</string>
     <string name="label_updated">Updated</string>
     <string name="employee_check">I am an NTC employee</string>
-    <string name="employee_hint">Only Settings is available until this is ticked. Your choice is kept on this phone for now. It will come from the NTC app login once that is connected.</string>
+    <string name="employee_hint">Tick this to add the Cells and Map tabs. Without it the app shows Signal, Wi-Fi and Settings. Your choice is kept on this phone for now. It will come from the NTC app login once that is connected.</string>
+    <string name="reg_prompt_title">Register this phone</string>
+    <string name="reg_prompt_body">Enter this phone\'s mobile number so NTC can send it a request when needed. Nothing is shared until you accept a request. You can also do this later in Settings.</string>
+    <string name="reg_prompt_later">Later</string>
+    <string name="reg_already_title">Already registered</string>
+    <string name="reg_already_body">This phone is already registered as %1$s. Nothing more is needed after the update.</string>
     <string name="req_title">Requests from NTC</string>
     <string name="push_channel">Trace requests</string>
     <string name="push_title">Location request from NTC</string>
@@ -80,7 +85,7 @@
     <string name="req_registered">Registered. Requests will appear here.</string>
     <string name="req_failed">Failed: %1$s</string>
     <string name="req_failed_retrying">%1$s Will keep trying in the background.</string>
-    <string name="req_registered_as">Registered as %1$s.</string>
+    <string name="req_registered_as">This phone is registered as %1$s.</string>
     <string name="req_offline">Could not reach the server. Try again shortly.</string>
     <string name="req_none">No requests right now.</string>
     <string name="req_status">Request status: %1$s</string>

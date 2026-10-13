@@ -97,6 +97,11 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         requests?.start()
     }
 
+    /** The registration pop-up finished while this screen was open. */
+    fun onRegistrationChanged() {
+        requests?.onRegistrationChanged()
+    }
+
     override fun onPause() {
         requests?.stop()
         super.onPause()
