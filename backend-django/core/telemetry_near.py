@@ -25,6 +25,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from . import radio_band
 from .cqi import sample_cqi_fields
 from .models import CollectionSession, TelemetryDriveTestConsent, TelemetryDriveTestSession, TelemetrySample
 from .telemetry import _scope_by_operator
@@ -37,7 +38,7 @@ MAX_NAMED_SESSIONS = 200
 MAX_POINTS = 4000
 _POINT_FIELDS = (
     'lat', 'lng', 'ts', 'network_type', 'rsrp_dbm', 'rsrq_db', 'sinr_db', 'cqi', 'pci',
-    'rscp_dbm', 'ecio_db', 'rssi_dbm', 'rx_qual',
+    'rscp_dbm', 'ecio_db', 'rssi_dbm', 'rx_qual', 'band', 'band_mhz',
 )
 # Explore's technology buttons, as the network types a phone reports.
 _TECH_NETWORKS = {'4G': ('LTE', 'NR'), '3G': ('UMTS',), '2G': ('GSM',)}
@@ -61,6 +62,7 @@ def _points(qs, key, room):
             # A phone drive changes technology as it goes: 3G reports RSCP
             # and Ec/Io, 2G reports RSSI (RxLevel) and Rx quality.
             'rscp': s['rscp_dbm'], 'ecio': s['ecio_db'], 'rssi': s['rssi_dbm'], 'rxqual': s['rx_qual'],
+            'band_label': radio_band.label(s['network_type'], s['band'], s['band_mhz']),
             'cqi': sample_cqi_fields(s['cqi'], s['sinr_db'], s['rsrq_db'], s['network_type'])['cqi_value'],
         })
     return rows

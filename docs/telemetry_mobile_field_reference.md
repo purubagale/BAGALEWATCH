@@ -26,6 +26,8 @@ Base URLs (see `telemetry_pipeline_mobile_handoff.md` for keys and hosts):
 | `scrambling_code` | integer | no | UMTS primary scrambling code, 0–511 | `CellIdentityWcdma.getPsc()` | Added 2026-10-04. Null on other RATs. |
 | `bcch` | integer | no | GSM BCCH ARFCN, 0–1023 | `CellIdentityGsm.getArfcn()` | Added 2026-10-04. Null on other RATs. Works from API 24. |
 | `bsic` | integer | no | GSM BSIC, 0–63 | `CellIdentityGsm.getBsic()` | Added 2026-10-04. Null on other RATs. Works from API 24. |
+| `arfcn` | integer | no | channel number of the serving cell | `CellIdentityLte.getEarfcn()`, `CellIdentityWcdma.getUarfcn()`, `CellIdentityNr.getNrarfcn()`, `CellIdentityGsm.getArfcn()` | Added 2026-10-13. The server works out the band from it. |
+| `band` | integer | no | 3GPP band number, e.g. 3 (1800 MHz), 20 (800 MHz) | `CellIdentityLte.getBands()` / `CellIdentityNr.getBands()` on Android 11+, else from the channel | Added 2026-10-13. Omit on 2G or when unknown. A reported band wins over the channel. |
 | `tac` | integer | no | Tracking Area Code (LTE/NR) or Location Area Code (2G/3G) | `CellIdentity*.getTac()` / `getLac()` | |
 | `mcc` | string | no | e.g. `"429"` | `CellIdentity*.getMccString()` | |
 | `mnc` | string | no | e.g. `"01"` | `CellIdentity*.getMncString()` | |

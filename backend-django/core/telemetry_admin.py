@@ -41,6 +41,7 @@ from .models import (
     TelemetrySample,
     TelemetrySpeedResult,
 )
+from . import radio_band
 from .audit import log_audit_event
 from .cqi import sample_cqi_fields
 from .telemetry_level import sample_level
@@ -493,6 +494,8 @@ class TelemetryLiveSamplesView(APIView):
                 'scrambling_code': s.scrambling_code,
                 'bcch': s.bcch,
                 'bsic': s.bsic,
+                # Operating band (2026-10-13), see core/radio_band.py.
+                **radio_band.fields(s.network_type, s.arfcn, s.band, s.band_mhz),
                 'region': s.region,
                 'serving_site_id': s.serving_site_id,
                 'serving_cell_name': s.serving_cell_name,
@@ -874,6 +877,7 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 # GPS accuracy of this fix, in metres (see ROUTE_MAX_ACCURACY_M).
                 'gps_accuracy_m': s.gps_accuracy_m,
                 'drive_session_id': s.drive_session_id,
+                **radio_band.fields(s.network_type, s.arfcn, s.band, s.band_mhz),
                 # Serving-cell identity (2026-10-07) -- same fields
                 # TelemetryLiveSamplesView already returns above; this view
                 # had never picked them up. Lets the frontend's declusterPlot

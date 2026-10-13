@@ -1,69 +1,114 @@
-# DT-WATCH Telemetry Ingestion Pipeline — Mobile Integration Guide
+# DT-WATCH Telemetry Pipeline and Mobile App: Handoff to the NT Mobile App Team
 
-**For:** the mobile app developer integrating drive-test / crowdsourced network telemetry with DT-WATCH
-**Owner (backend/web):** Puru
-**Last updated:** 2026-09-21
+**For:** the Nepal Telecom mobile app developer team
 
-## 1. What this document covers
+**From:** Puru (RAN O&M, owner of the DT-WATCH server and web application)
 
-DT-WATCH already has a working, deployed backend pipeline for receiving network-quality
-samples (GPS position + serving-cell + signal metrics) from subscriber devices. This is a
-**separate surface from the DT-WATCH web app's own API** — it is public-internet-facing,
-authenticated by a simple API key (not a user login), and designed for high-volume,
-unattended background uploads from a phone.
+**Last updated:** 2026-10-13. This version replaces the guide of 2026-09-21 and its two addenda.
 
-This document is everything the mobile app needs to integrate against it: authentication,
-every endpoint, exact request/response payloads, the sample data model, consent and
-opt-out handling, rate limiting, and a working reference Android SDK that already
-implements most of the client side.
+## 1. Summary
 
-Out of scope here: the DT-WATCH admin/web app's own JWT-authenticated API
-(`/api/v2/telemetry/...`), which is for DT-WATCH staff to view coverage maps, manage keys,
-and run drive-test sessions — the mobile app never calls that surface directly.
+DT-WATCH is NTC's RAN O&M web application. It has a server-side pipeline that
+receives signal readings from phones, and a working Android app and SDK that
+send them. Both are built and running on test phones against the live server.
+The app is not published.
 
-## 2. Base URL
+What we are handing over:
 
-All endpoints in this document are mounted under:
+- the **device API** of the server (section 4 onward): every endpoint a phone calls;
+- the **Android SDK** (`netplanning-telemetry-sdk`) and the **reference app**
+  built on it (section 14);
+- the list of things only the app team or NTC can complete (section 15).
+
+Three things need the app team more than anything else:
+
+1. **Carrier-privileged status** for the app, so it can read the SIM's number
+   and call statistics. Today the user types the number.
+2. **Play Integrity** at registration. Today the app sends no integrity token.
+3. **Signing every upload with the phone's own key**, so the shared key can be
+   removed from the APK.
+
+## 2. How the pieces fit
 
 ```
-/api/telemetry/v1/
+Phone (app + SDK)  --HTTPS-->  DT-WATCH server  <--HTTPS--  Web application (staff)
+                                     |
+                     Firebase push --+--> phone (two message types)
 ```
 
-on the DT-WATCH Django backend. Ask Puru for the actual host/port for your target
-environment (dev/staging/production) — the mobile app talks to the Django backend
-directly, not through a reverse proxy path.
+- The phone and the web application never talk to each other. Both talk to the server.
+- The phone uses only the device API under `/api/telemetry/v1/`. It never calls
+  the staff API under `/api/v2/`.
+- Nothing leaves the phone until the user turns a sharing feature on. Each
+  feature has its own switch and its own endpoint.
 
-## 3. Authentication
+What the server does with a reading, so the app does not have to:
 
-Every endpoint on this surface (except `/health/`) requires a **Telemetry Ingest Key** —
-a credential type separate from DT-WATCH user logins and separate from the partner
-data-exchange API key. It exists specifically so a compromised or throttled telemetry
-key can never touch anything else in the system.
+| Step | Detail |
+|---|---|
+| Hides the device | `device_id` is replaced by a salted SHA-256 hash before storage |
+| Finds the serving site | Matches PCI (4G), scrambling code (3G) or BCCH and BSIC (2G) to a site within 5 km |
+| Estimates CQI | From SINR; from RSRQ by a step table when SINR is missing. The app sends no CQI |
+| Picks the level to show | RSRP on 4G and 5G, RSCP on 3G, RSSI on 2G |
+| Names the band | From the channel number, or the band the phone reports: "B3 (1800)" |
+| Averages | Hourly, into map cells of about 150 m |
+| Deletes | Raw readings after 90 days; the averaged cells are kept |
 
-- **Format:** `tel_<48 hex chars>`, e.g. `tel_a1b2c3...` — shown once, at creation, by a
-  DT-WATCH superadmin. It cannot be retrieved again; losing it means issuing a new one.
-- **How to send it**, either header works:
-  - `Authorization: Bearer tel_<key>` (this is what the reference SDK uses)
-  - `X-API-Key: tel_<key>`
-- **Getting a key:** ask Puru to generate one from the DT-WATCH admin panel
-  (`TelemetryIngestKey`). Each key has its own name, an optional expiry, and its own
-  rate limit (see §7), so a dev/staging key and a production key should be separate keys.
-- Keys can be deactivated instantly by an admin if a build is compromised or misbehaving.
+## 3. Hosts and credentials
 
-## 4. Endpoints
+**Production:** `https://dtwatch.ntc.net.np`. It has a private address and is
+reachable only on the NTC network or VPN. A public app needs a public route to
+the device API; that is an open decision (section 15).
 
-### 4.1 `POST /api/telemetry/v1/samples/` — upload a batch of readings
+There are two credentials. They are separate from staff logins.
 
-This is the one endpoint that matters for day-to-day operation: the app collects samples
-locally and periodically uploads them in a batch.
+| Credential | What it is | Used for | Status |
+|---|---|---|---|
+| Shared ingest key | `tel_` + 48 hex characters, compiled into the app. Sent as `Authorization: Bearer tel_...` or `X-API-Key` | Samples, speed results, push token, rescue enrolment, drive-test consent | In use. To be retired (section 15) |
+| Device key | An EC P-256 key pair in the Android Keystore; the private key cannot be exported. Each request is signed (section 7) | Registration-only features: trace requests, site photos, device identity | In use for those features only |
 
-**Request:** a JSON array of sample objects (see §5 for the exact fields). Not an object,
-not a single sample — always an array, even for one sample.
+Ask Puru for a key. A key is shown once when created, has its own rate limit
+(600 batches a minute by default) and can be switched off at any time. Never
+commit a key or `google-services.json` to a repository.
+
+Every endpoint that accepts the shared key also accepts a signed device call,
+and prefers it: if `X-Signature` is present the key is ignored.
+
+## 4. Endpoint catalogue
+
+All paths are under `/api/telemetry/v1/`. "Key" means the shared ingest key or
+a signed call. "Signed" means a registered phone only.
+
+| Path | Method | Auth | Purpose |
+|---|---|---|---|
+| `health/` | GET | none | Reachability check |
+| `samples/` | POST | Key | Batch of signal readings (section 5) |
+| `push-token/` | POST | Key | Push address of a sharing phone (section 8) |
+| `speed-samples/` | POST | Key | One speed test result (section 10) |
+| `speedtest/ping/`, `download/`, `upload/` | GET, GET, POST | none, rate limited | Far end of the speed test |
+| `rescue-enroll/` | POST | Key | Rescue sharing on or off, with the number (section 12) |
+| `drive-test-consent/` | POST | Key | Standing consent to be included in staff drive-test sessions |
+| `drive-test-consent-message/` | GET | none | Current consent wording |
+| `volte-samples/` | POST | Key | Call quality. Dormant (section 13) |
+| `device/challenge/` | GET | none | One-time value for registration |
+| `device/register/` | POST | none, rate limited | Registers the phone's public key with its number |
+| `device/fcm-token/` | PUT | Signed | Push address of a registered phone |
+| `device-identity/` | POST | Signed | Model, user type and, when readable, number and IMEI |
+| `device/trace-requests/` | GET | Signed | Open location requests for this phone |
+| `device/trace-requests/<id>/respond/` | POST | Signed | Accept, reject or stop |
+| `device/trace-requests/<id>/samples/` | POST | Signed | Location fixes, only while accepted |
+| `device/trace-requests/<id>/speedtest/...` | GET, POST | Signed | Speed test tied to an accepted request |
+| `device/nearby-sites/` | GET | Signed | Sites within 1 km, for the photo screen |
+| `device/site-photos/` | POST | Signed | One site or drive photo (section 11) |
+
+## 5. Signal samples
+
+`POST /api/telemetry/v1/samples/` with a JSON **array** of objects, even for one reading.
 
 ```json
 [
   {
-    "device_id": "3f9a1c2e-...-uuid",
+    "device_id": "3f9a1c2e-7b1d-4e8a-9c2f-5a6b7c8d9e0f",
     "ts": 1758444000000,
     "lat": 27.7172,
     "lon": 85.3240,
@@ -76,490 +121,464 @@ not a single sample — always an array, even for one sample.
     "network_type": "LTE",
     "rsrp_dbm": -95,
     "rsrq_db": -10,
-    "rssi_dbm": null,
     "sinr_db": 12,
-    "rx_qual": null,
-    "rscp_dbm": null,
-    "ecio_db": null,
-    "cqi": 9,
+    "arfcn": 1650,
+    "band": 3,
     "battery_pct": 76,
     "trigger_reason": "periodic"
   }
 ]
 ```
 
-**Limits:** up to 2000 samples per request. The reference SDK batches at 200 — any batch
-size up to the 2000 cap is fine, 200 is just what the sample client happens to use.
+### 5.1 Fields
 
-**Responses:**
+Only `device_id` and `ts` are required. A bad optional field becomes null; it
+does not fail the batch. Unknown keys are ignored. There is no field for IMEI,
+Android ID or phone number.
+
+| Key | Type | Notes |
+|---|---|---|
+| `device_id` | string | Required. A random ID the SDK generates and keeps per install. Never IMEI, Android ID or a number |
+| `ts` | integer | Required. Epoch **milliseconds**, time of the reading |
+| `lat`, `lon` | float | WGS84. The key is `lon`, not `lng` |
+| `gps_accuracy_m` | float | Metres |
+| `cell_id` | integer | Use a 64-bit type; a 5G cell identity is 36 bits |
+| `pci` | integer | 4G and 5G only |
+| `scrambling_code` | integer | 3G only, 0 to 511 |
+| `bcch`, `bsic` | integer | 2G only: ARFCN 0 to 1023, BSIC 0 to 63 |
+| `arfcn` | integer | Channel number of the serving cell: EARFCN on 4G, UARFCN on 3G, NR-ARFCN on 5G, BCCH ARFCN on 2G. Added 2026-10-13 |
+| `band` | integer | 3GPP band number (3 for 1800 MHz, 20 for 800 MHz). Send what the phone reports (`getBands()`, Android 11 and later). Leave it out on 2G, or when unknown. Added 2026-10-13 |
+| `tac` | integer | Tracking area code, or location area code on 2G and 3G |
+| `mcc`, `mnc` | string | For example `"429"`, `"01"` |
+| `network_type` | string | `LTE`, `NR`, `UMTS`, `GSM` or `UNKNOWN`. Anything else becomes `UNKNOWN` |
+| `rsrp_dbm`, `rsrq_db`, `sinr_db` | integer | 4G and 5G. Null on 2G and 3G |
+| `rssi_dbm` | integer | 2G and 3G level |
+| `rx_qual` | integer | 2G only, 0 to 7. Send null for "unknown" (99) |
+| `rscp_dbm`, `ecio_db` | integer | 3G only, Android 10 and later |
+| `cqi` | integer | Accepted, but the SDK does not send it; Android rarely exposes it |
+| `battery_pct` | integer | 0 to 100 |
+| `trigger_reason` | string | See 5.2. Anything else becomes `periodic` |
+| `drive_session_id` | string | Up to 36 characters. Groups the readings of one drive or one share window |
+
+**Band.** Send `arfcn` on every reading; it is available from Android 7. The
+server works out the band from it when `band` is missing, and names it in MHz
+(900, 1800, 2100). A band the phone reports wins over the channel. The server's
+table covers 4G bands 1, 2, 3, 4, 5, 7, 8, 20, 28, 38, 39, 40, 41, 3G bands 1,
+2, 3, 5, 8, and 2G 850, 900 and 1800. A 5G reading gets a band only if the
+phone reports one. Readings from an app built before 13 October 2026 carry no
+channel, so they show no band; 2G readings are the exception, since `bcch`
+already is the channel.
+
+**SINR matters.** On the live server on 12 October 2026, none of 2,099 4G
+readings carried `sinr_db`. Without it the server falls back to a rougher CQI
+estimate from RSRQ. Please check `CellSignalStrengthLte.getRssnr()` on the
+target phones and send it whenever the modem reports it.
+
+### 5.2 Trigger reasons
+
+| Value | Sent when |
+|---|---|
+| `periodic` | The background job runs, every 15 minutes while sharing |
+| `handover` | The serving cell changes, at most once every 2 minutes |
+| `manual` | The user asks for a reading |
+| `drive` | A fix during a phone drive test, every 2 seconds |
+| `drive_start`, `drive_stop` | Markers at the start and end of a drive or share window |
+| `on_demand` | The phone answers a request from the server (section 8) |
+
+### 5.3 Responses
 
 | Status | Body | Meaning |
 |---|---|---|
-| 202 | `{"accepted": N, "opt_out": bool}` | Batch stored. `opt_out: true` means the backend has a pending remote opt-out request for one of the devices in this batch — see §8.2, the app **must** act on this. |
-| 200 | `{"accepted": 0, "duplicate": true}` | This exact batch was already received before (see §6, idempotency) — treat as success, do not retry. |
-| 400 | `{"detail": "..."}` | Malformed body (not an array, missing/invalid `device_id` or `ts` on some sample, etc). |
-| 401 | `{"detail": "invalid or missing telemetry ingest key"}` | Bad or missing key. |
-| 413 | `{"detail": "max 2000 samples per request"}` | Batch too large — split it. |
-| 429 | `{"detail": "rate limit exceeded"}` | Too many batches this minute for this key (§7) — back off and retry later. |
+| 202 | `{"accepted": N, "opt_out": bool}` | Stored. If `opt_out` is true the phone must switch sharing off (section 6) |
+| 200 | `{"accepted": 0, "duplicate": true}` | The same batch was already received. Treat as success |
+| 400 | `{"detail": "..."}` | Not an array, or a reading without `device_id` or `ts` |
+| 401 | `{"detail": "..."}` | Bad key or bad signature. After retirement: `shared telemetry key retired; update the app` |
+| 413 | `{"detail": "max 2000 samples per request"}` | Split the batch |
+| 429 | `{"detail": "rate limit exceeded"}` | Back off and retry |
 
-### 4.2 `GET /api/telemetry/v1/health/` — liveness probe
+- **Batch size:** up to 2,000. The SDK sends 200.
+- **Retries:** resend the identical array. The server remembers a hash of each
+  batch, so a retry does not create duplicates. Do not reorder or rebuild it.
+- **Rate:** 600 batches a minute per shared key; 60 a minute per signed phone.
 
-No auth required. Returns `{"status": "ok", "service": "telemetry-ingest", "time": "<iso8601>"}`.
-Use this to confirm the endpoint is reachable before queueing real uploads against it —
-useful for a first-run connectivity check or a status screen.
+## 6. Sharing and consent in the app
 
-### 4.3 `POST /api/telemetry/v1/rescue-enroll/` — optional: emergency-locator opt-in
+The app implements these rules today. A new app must keep them.
 
-Only relevant if the app also implements the rescue-beacon feature (a subscriber opts in
-to sharing their last known location for search-and-rescue use). Not required for basic
-telemetry/coverage collection — skip this section if that feature isn't in scope for your
-build.
+- **Off by default.** Nothing is collected or sent until the user turns sharing on.
+- **Share with NTC** opens a window of 60 minutes. It ends on its own, and the
+  user can end it earlier. The window survives a restart.
+- **Drive test.** Start asks for location permission if missing, then asks
+  "Share this drive with NTC?". Share switches sharing on for the drive and off
+  again at Stop. Keep on phone records locally and queues nothing. An employee
+  may tick "Remember my answer".
+- **After sharing is switched off**, what is already queued is still sent, so a
+  drive's last readings and its stop marker reach the server. Nothing new is collected.
+- **Remote opt-out.** When a `samples/` response has `"opt_out": true`, the SDK
+  switches sharing off on that upload cycle. This is one instruction, not a
+  standing block: the user can opt in again.
+- **Uploads wait for Wi-Fi** by default (`uploadOnlyOnUnmetered`), so readings
+  can arrive well after they were taken. A manual upload does not wait.
+- **Separate consents.** Rescue sharing and drive-test consent each need their
+  own explicit action. General sharing never implies them.
+- **Location permission** is foreground only. The app does not ask for
+  background location.
 
-**Request:**
-```json
-{ "device_id": "<raw device id, same string used for samples>", "consent": true, "msisdn": "+977..." }
-```
-`msisdn` is required when `consent: true` (must look like a phone number: digits, spaces,
-`+`/`-`, 7–20 chars). To withdraw, send `{"device_id": "...", "consent": false}` — the
-`msisdn` field isn't needed for withdrawal.
+## 7. Registering a phone and signing requests
 
-**Response:** `{"enrolled": true}` on enroll, or `{"enrolled": false, "removed": bool}` on
-withdrawal (`removed` is normally true; see the backend note below on a rare
-emergency-override case where withdrawal is "soft" instead of erasing the record — that's
-a backend-policy detail the app doesn't need to branch on, just always send `consent`
-truthfully and read `enrolled`).
+Registration is needed for trace requests, site photos and device identity.
 
-Note: this is the **only** place in the whole pipeline where the app sends its raw,
-un-hashed device id together with a real phone number — because the device itself is the
-one making that link, at the moment its own subscriber opts in.
+### 7.1 Registration
 
-### 4.4 `POST /api/telemetry/v1/drive-test-consent/` — optional: per-device drive-test flag
-
-Only relevant for a session-scoped "drive test" feature where DT-WATCH staff run a
-time-boxed data-collection session and want only consenting devices' samples visible in
-that session's view. This flag has **no effect on whether samples are stored at all** —
-regular ingestion via §4.1 is unaffected either way. Skip this if your build doesn't need
-session-level consent gating.
-
-**Request:** `{ "device_id": "<raw device id>", "consent": true }`
-**Response:** `{"consent": true}` (echoes back the flag now on file). A device can flip
-this at any time; a later-viewed session reflects the change immediately.
-
-### 4.5 `GET /api/telemetry/v1/drive-test-consent-message/` — optional: fetch consent copy
-
-Returns `{"message": "<current consent text>"}` — lets the app display centrally-editable
-consent wording (managed by a DT-WATCH superadmin) instead of hardcoding copy that would
-need a new app release to change. Purely optional — the app is equally free to hardcode
-its own wording and never call this.
-
-### 4.6 `POST /api/telemetry/v1/volte-samples/` — optional: VoLTE/VoNR call-quality upload
-
-**Added 2026-10-02. Not implemented in the reference SDK yet — see §12 for the full
-addendum (why this requires carrier-privileged app status, which Android API to use, and
-the complete field reference).** Same auth as §4.1 (`Authorization: Bearer tel_<key>` or
-`X-API-Key`), same JSON-array-of-objects shape, same 2000-per-request cap.
+1. `GET device/challenge/` returns `{"challenge": "...", "expires_in": 300}`. Single use.
+2. `POST device/register/`:
 
 ```json
-[
-  {
-    "device_id": "3f9a1c2e-...-uuid",
-    "ts": 1758444000000,
-    "network_type": "LTE",
-    "codec": "AMR-WB",
-    "call_duration_s": 42,
-    "packet_loss_pct": 0.5,
-    "jitter_ms": 8,
-    "rtt_ms": 60,
-    "quality_level": "GOOD",
-    "lat": 27.7172,
-    "lon": 85.3240,
-    "cell_id": 123456,
-    "pci": 301,
-    "mcc": "429",
-    "mnc": "01"
-  }
-]
+{
+  "public_key": "<PEM, EC P-256>",
+  "challenge": "...",
+  "play_integrity_token": "",
+  "msisdn": "+97798...",
+  "fcm_token": "...",
+  "app_version": "0.1",
+  "manufacturer": "HUAWEI",
+  "phone_model": "...",
+  "hardware_id": "..."
+}
 ```
 
-**Responses:** `202 {"accepted": N}` on success; `400`/`401`/`413` same meanings as §4.1.
-No `opt_out`/duplicate-detection handling on this endpoint (see §12 for why).
+| Status | Meaning |
+|---|---|
+| 200 | `{"device_id": "...", "registered": true, "created": bool}` |
+| 400 | Bad key, bad number, or bad or expired challenge |
+| 403 | Integrity check failed, or the phone was revoked. The text is the same for both |
+| 409 | The number is already registered on another phone |
+| 429 | More than 10 attempts a minute from one address |
 
-## 5. Sample fields (`TelemetrySample`)
+- `device_id` is the first 32 hex characters of the SHA-256 of the public key
+  (DER, `SubjectPublicKeyInfo`). The server computes it from the PEM.
+- One number has one active registered phone. Moving a number is a superadmin action.
+- `hardware_id` is a SHA-256 of the Android ID with a fixed prefix. It lets the
+  server see that two IDs belong to one phone.
 
-Only `device_id` and `ts` are required. Every other field degrades to `null`/omitted
-rather than failing the whole batch — a batch of 200 samples should not be rejected
-because one optional field on one sample is bad.
+**Current state, to be changed by the app team:** the user types the number
+("Register this phone" in Settings) and it is not verified against the SIM. The
+app sends an empty `play_integrity_token`, so the server runs with the
+integrity check switched off. The app retries registration in the background
+with a fresh challenge each time.
 
-| Field | Type | Notes |
-|---|---|---|
-| `device_id` | string | **Required.** A locally generated pseudonymous ID (e.g. a UUID) — never IMEI, Android ID, or MSISDN. The backend one-way-hashes this before storage; it can never be reversed back to your raw value. Use the *same* raw value consistently per device (needed for accurate distinct-device counts) but never a subscriber-identifying value. |
-| `ts` | integer (epoch ms) | **Required.** When the reading was taken, on-device clock. |
-| `lat`, `lon` | float | GPS position. Note the wire field is `lon`, not `lng` (the backend stores it as `lng` internally, but the JSON key it accepts is `lon`). |
-| `gps_accuracy_m` | float | GPS fix accuracy in meters. |
-| `cell_id` | integer | Serving cell ID. Use a 64-bit-safe integer type client-side — 5G NR's cell identifier (NCI) is 36-bit and won't fit in a 32-bit int. |
-| `pci` | integer | Physical Cell ID. |
-| `tac` | integer | Tracking Area Code (LTE/NR) / Location Area Code (2G/3G). |
-| `mcc`, `mnc` | string | Mobile Country/Network Code of the serving cell. |
-| `network_type` | string | One of `LTE`, `NR`, `UMTS`, `GSM`, `UNKNOWN`. Anything else is coerced to `UNKNOWN` server-side. |
-| `rsrp_dbm`, `rsrq_db`, `sinr_db` | integer | **LTE/NR only.** Leave `null` on 2G/3G. |
-| `rssi_dbm` | integer | Populated on GSM/UMTS (and usable as a general signal-strength fallback); not the metric to use for LTE/NR quality — use RSRP/RSRQ/SINR there. |
-| `rx_qual` | integer | **GSM only** — RxQual class, 0–7 (3GPP TS 45.008/27.007 §8.5). |
-| `rscp_dbm`, `ecio_db` | integer | **WCDMA (3G) only.** Only obtainable on Android 10+ (API 29+) devices — send `null` below that. |
-| `cqi` | integer | **LTE/NR only.** Channel Quality Indicator, 0–15, higher is better. |
-| `battery_pct` | integer | Device battery %, 0–100. |
-| `trigger_reason` | string | One of `periodic`, `handover`, `manual`. Anything else is coerced to `periodic`. |
+### 7.2 Signing
 
-Notes:
-- RSRP/RSRQ/SINR/CQI alone aren't meaningful for 2G/3G radios — that's why `rx_qual` (GSM)
-  and `rscp_dbm`/`ecio_db` (WCDMA) exist as their proper standard-defined equivalents,
-  rather than trying to force 2G/3G readings into the LTE/NR fields.
-- Any JSON keys beyond this set are silently ignored (data minimization — the backend only
-  ever accepts this exact metric set, by design, and has no field at all for IMEI /
-  Android ID / MSISDN).
-
-## 6. Idempotency (safe retries)
-
-The backend computes a content hash over the batch (`device_id` + `ts` of every sample in
-it) and remembers it. If your upload worker retries the exact same batch after a network
-failure or a non-2xx response, the retry comes back `200 {"accepted": 0, "duplicate": true}`
-instead of inserting duplicates. Practically: **retry a failed batch by resending the
-identical unmodified array** — don't reconstruct or reorder it, or the hash (and the
-dedupe) won't match.
-
-## 7. Rate limiting
-
-Each ingest key has its own per-minute batch-count limit (`rate_limit_per_min`, default
-600/minute — plenty for normal use; ask Puru if a specific key needs a different value).
-Exceeding it returns `429`. There's no documented "retry-after" header — back off and
-retry on your own schedule (the reference SDK relies on WorkManager's exponential backoff
-for this).
-
-## 8. Consent & privacy model
-
-### 8.1 What the backend guarantees
-- The backend never stores anything that could resolve to a subscriber identity. There is
-  no IMEI/Android-ID/MSISDN column anywhere in the sample pipeline.
-- `device_id` is one-way hashed (salted SHA-256) the moment a batch is received — even
-  someone with full database access cannot recover your raw device id from it.
-- The one narrow exception is the rescue-beacon feature (§4.3), where the *device itself*
-  deliberately links its id to a phone number, only when its own subscriber opts in.
-
-### 8.2 Remote opt-out — the one thing the app must implement
-The backend has **no way to directly flip a device's local opt-in flag** — that flag only
-lives on the device. What it *can* do is leave a "please opt this device out" request
-(e.g. a DT-WATCH admin ending a drive-test session and choosing "end & opt out"). The way
-this reaches the device is entirely through the ingest response:
-
-> Every `POST /samples/` response includes `"opt_out": true|false`. When the app sees
-> `opt_out: true`, it must stop collecting/uploading for that device (flip its own local
-> opt-in flag off) on that same upload cycle.
-
-This is a one-shot instruction, not a standing rule — if the subscriber opts back in
-later, they aren't immediately re-opted-out by a stale request.
-
-**Important gap to know about:** the bundled reference SDK (§9) does **not** currently
-read the response body at all — it only checks the HTTP status code. Reading and acting
-on `opt_out` needs to be added; it's a small change (parse the JSON response in
-`TelemetryApi.uploadBatch`, call the local opt-out) but it is not done yet in the sample
-code, despite older code comments assuming it is. Flagging this explicitly so it isn't
-missed.
-
-## 9. Reference Android SDK — a real starting point, not just a spec
-
-There is already a working (unbuilt/unverified, but carefully written and reviewed)
-Android library module for this exact pipeline: **`netplanning-telemetry-sdk`**. It was
-built for an earlier pilot and already implements most of the client-side plumbing this
-integration needs. I'm attaching/sharing it — start from this rather than from scratch.
-
-### 9.1 What it already does
-- Reads serving-cell ID/PCI/TAC/MCC-MNC/RSRP/RSRQ/RSSI/SINR via `TelephonyManager`, plus a
-  one-shot GPS fix via `FusedLocationProviderClient` (not a continuous lock).
-- Samples on two triggers: a periodic WorkManager tick (15-minute floor — Android's own
-  `PeriodicWorkRequest` enforces this) and an event-triggered sample on cell/signal change
-  while the app is alive (throttled, default once per 60s).
-- Queues samples locally (flat JSONL file) and flushes them in batches of 200 on its own
-  schedule, Wi-Fi-only by default.
-- Enforces its own opt-in gate at the collection layer (`NetTelemetry.optIn()`/`optOut()`)
-  — collection refuses to run at all if the stored flag is off, regardless of what calls it.
-- Generates and stores the pseudonymous device id itself (`DeviceIdentity`, in
-  `EncryptedSharedPreferences`) — you don't need to build this part.
-
-### 9.2 Public API surface (this is the entire integration surface for the host app)
-```kotlin
-NetTelemetry.init(context, TelemetryConfig(endpointUrl = "...", apiKey = "tel_..."))  // call from Application.onCreate(), NOT an Activity
-NetTelemetry.optIn()      // wire to your consent screen's "agree" action
-NetTelemetry.optOut()     // wire to "withdraw" / settings toggle
-NetTelemetry.isOptedIn()
-NetTelemetry.getStatus()  // queued sample count, last sample time — for a status/debug screen
-NetTelemetry.sampleNow()  // optional manual "check my signal now" trigger
-```
-`TelemetryConfig.endpointUrl` should be set to
-`https://<your-dtwatch-host>/api/telemetry/v1/samples/`, and `apiKey` to the `tel_...` key
-Puru issues you.
-
-The **init-from-`Application.onCreate()`** requirement matters: WorkManager can and will
-run the sampling/upload workers after Android has killed and relaunched the app's process
-in the background. If `init()` only ran once inside an Activity, it's a no-op after that.
-
-### 9.3 Required permissions (already declared in the module's manifest)
-`ACCESS_FINE_LOCATION` (required), `READ_PHONE_STATE` (defensive, some OEMs gate cell info
-behind it), `ACCESS_NETWORK_STATE`, `INTERNET`. The host app must request
-`ACCESS_FINE_LOCATION` through its own runtime-permission flow before calling `optIn()` —
-the SDK checks for the permission and just returns no sample if it's missing; it does not
-prompt for permissions itself.
-
-`ACCESS_BACKGROUND_LOCATION` is deliberately left out/commented — declaring it requires
-Play Console justification. Without it the SDK still works whenever the app is foregrounded
-or recently backgrounded; decide with your own team whether background-location approval
-is worth pursuing for more reliable long-backgrounded sampling.
-
-### 9.4 Known gaps between this SDK and the current backend (fill these in)
-The SDK was written before a few backend fields/behaviors existed. Concretely, before
-building against it:
-
-1. **Missing fields in `Sample.kt` / `CellSampleCollector.kt`:** `rx_qual`, `rscp_dbm`,
-   `ecio_db` (2G/3G metrics, §5) and `cqi` (LTE/NR) aren't collected or serialized yet —
-   add them to `Sample`, populate them in `CellSampleCollector.parseCellInfo()` from the
-   corresponding `CellSignalStrengthGsm`/`CellSignalStrengthWcdma`/`CellSignalStrengthLte`
-   APIs, and include them in `toJson()`.
-2. **`opt_out` response handling isn't implemented** — see §8.2 above. `TelemetryApi.
-   uploadBatch()` currently only checks the HTTP status; it needs to parse the JSON body
-   and call `NetTelemetry.optOut()` locally when `opt_out: true` comes back.
-3. **Rescue-enroll and drive-test-consent (§4.3/§4.4) have no client calls yet** — only
-   needed if your build uses those features; otherwise skip them.
-4. This SDK was never compiled (written in an environment with no Android SDK/emulator
-   access) — treat it as a solid, reviewed starting point, not a drop-in verified library.
-   Building it in a real Android Studio project on a couple of real devices should be the
-   first thing done with it.
-5. **VoLTE/VoNR call-quality collection (§4.6) isn't implemented at all** — not a gap in
-   an existing feature, a whole feature not yet started. Blocked on a real external
-   prerequisite (carrier-privileged app status), not just unwritten code — see §12 for the
-   full addendum before starting this one.
-
-### 9.5 What's deliberately NOT in the SDK
-No UI (consent screens, a signal-quality view) — that's the host app's job. No iOS build
-— iOS's CoreTelephony doesn't expose cell ID/signal metrics to third-party apps at all, so
-there's no iOS equivalent of the RF-detail collection; an iOS build could still contribute
-GPS + coarse network-generation status if that's ever wanted.
-
-## 10. Quick start checklist
-
-1. Ask Puru for: a `tel_...` ingest key, and the real base URL for your target environment.
-2. Confirm reachability: `GET /api/telemetry/v1/health/` (no auth needed).
-3. Drop in `netplanning-telemetry-sdk` (§9), call `NetTelemetry.init()` from
-   `Application.onCreate()` with your endpoint + key.
-4. Wire your consent UI to `optIn()`/`optOut()`; request `ACCESS_FINE_LOCATION` first.
-5. Fill the gaps in §9.4 (new fields, `opt_out` response handling) before real rollout.
-6. Send a real test batch, confirm `202 {"accepted": N, ...}`, and check with Puru that
-   the samples show up in the DT-WATCH admin's telemetry coverage/live-samples view.
-7. Only implement §4.3/§4.4 if the rescue-beacon or session-consent features are in scope
-   for this build.
-
-## 11. Who to ask
-
-Backend/API questions, ingest keys, and confirming data is landing correctly: Puru (owns
-the DT-WATCH backend/web app going forward). This document reflects the pipeline as
-deployed on 2026-09-21; if the backend adds fields or endpoints later, treat this as a
-snapshot, not a live spec — ask before assuming.
-
-## 12. VoLTE/VoNR call-quality addendum (2026-10-02)
-
-The backend's `/volte-samples/` endpoint (§4.6) and its server-side ITU-T G.107 E-model
-MOS estimator are built and live. **Nothing on the SDK side exists yet** — this section is
-the complete spec for whoever implements it, not a description of working code.
-
-### 12.1 Blocking prerequisite: carrier-privileged app status
-
-Real VoLTE call-quality metrics come from Android's `CallQuality` API, which requires the
-`READ_PRECISE_PHONE_STATE` permission. **This is a privileged/signature permission a normal
-Play Store app cannot just request and have granted** — it is restricted to apps with
-carrier privileges (a certificate relationship tied to the SIM/carrier config) or
-system/privileged apps. Getting this app carrier-privileged status is an NTC-internal
-provisioning process, not an app-code change — **do not start building §12.2 below until
-that status is confirmed to exist for your build**, since the collection code is silently
-inert without it (the permission check simply fails; there is no error to debug).
-
-### 12.2 What to collect, and which Android API
-
-- Register `TelephonyCallback.CallAttributesListener` (API 31+) or, for API 29–30,
-  `PhoneStateListener` with `LISTEN_CALL_ATTRIBUTES_CHANGED` set — both deliver a
-  `CallQuality` object during an active call.
-- At call end, read from the last-received `CallQuality`: downlink/uplink packet loss,
-  jitter, round-trip time, codec, and the call's overall `CallQuality.Level` enum
-  (`EXCELLENT`/`GOOD`/`FAIR`/`POOR`/`BAD`/`NOT_AVAILABLE`).
-- **Do not compute a MOS value on-device.** Send the raw metrics; the backend computes the
-  estimate (see §12.4 for why) — sending a client-computed MOS would just be ignored, the
-  `/volte-samples/` endpoint has no field for one.
-- Send the captured metrics as one `POST /api/telemetry/v1/volte-samples/` call per
-  completed call, using the exact field names in §4.6's example payload. Note the field
-  name differences from §4.1's RF-sample payload: `codec` (string), `packet_loss_pct`
-  (0–100 float), `jitter_ms`/`rtt_ms` (float, milliseconds), `quality_level` (the raw
-  Android enum string, sent exactly as-is — do not translate or number-code it).
-
-### 12.3 Codec coverage on the backend side — report this honestly, don't work around it
-
-**Updated 2026-10-02 (third pass).** Three tiers now, not two — every VoLTE codec produces
-*some* estimate, but the UI/API must distinguish how trustworthy each one is
-(`mos_is_provisional` on every sample, see §4.6):
-
-- **Verified** (`mos_is_provisional: false`) — AMR-WB (real ITU-T G.113 Appendix IV
-  wideband constants, 12.65 kbit/s mode), plus G.711/G.729 for general testing.
-- **Provisional** (`mos_is_provisional: true`, explicit 2026-10-02 decision: ship an
-  approximate number now rather than block, correct later) — **EVS**, real G.113 Appendix V
-  constants run through the wideband formula as a stand-in for the unverified fullband
-  E-model; **AMR-NB**, no ITU source found at all, proxied via GSM-EFR's verified
-  narrowband value (AMR-NB's 12.2 kbit/s mode is algorithmically derived from GSM-EFR, a
-  defensible stand-in, not an arbitrary one). Expect these numbers to shift once a real
-  source is found — the SDK side needs no change when that happens, only the backend table.
-- **Unavailable** (`mos_estimate: null`) — any codec with literally no entry, or any call
-  reporting packet loss for a codec with no published robustness factor to account for it.
-
-This is a known, tracked state, not something the SDK needs to work around — keep sending
-the raw metrics regardless of codec or provisional status; the estimate tier improves
-automatically as backend coverage is extended, with no SDK change needed.
-
-One thing worth flagging back if you find out otherwise: Android's `CallQuality` API
-reports a codec TYPE, not the negotiated bitrate, so the backend's AMR-WB estimate always
-uses the 12.65 kbit/s constants regardless of which of AMR-WB's 9 possible bitrates a real
-call actually negotiated — a representative-rate approximation, not a per-call exact
-match. If the SDK ever gains a way to read the actual negotiated bitrate, say so; the
-backend table has per-bitrate AMR-WB constants ready to wire in.
-
-### 12.4 Why this is a separate pipeline from §4.1's RF samples
-
-Different cadence (one upload per completed call, not a periodic/handover tick), no
-`opt_out`/duplicate-batch handling (call volume doesn't need it), and no on-device MOS
-computation (keeping that server-side means a future constant correction — see §12.3 —
-applies retroactively via a backend deploy, not an app re-release to every device).
-
-## 13. Device-bound, consent-gated tracing (2026-10-04)
-
-Written for: the Android SDK team. This section replaces the shared-key device
-model for two things: trace uploads (new) and every ingest call (retirement
-below). Only DT-WATCH operators can start a trace. The app never starts one
-itself, and it never sends location until the user has accepted and the OS
-location permission is granted.
-
-### 13.1 Credential: a Keystore keypair, never the APK key
-
-- On first launch, generate an EC P-256 keypair in the Android Keystore with the
-  private key non-exportable. Keep it there. Never write it to disk, prefs, or logs.
-- The device id is the SHA-256 of the public key's DER encoding
-  (`SubjectPublicKeyInfo`), first 32 hex chars. The server recomputes it from the
-  PEM you send, so the id cannot be chosen independently of the key.
-- The shared `tel_` key is retired (§13.6). Do not add new uses of it.
-
-### 13.2 Registration: silent, on install and on every update
-
-No user prompt. Run it at app start whenever no registration exists for the
-current key, and again after an app update.
-
-1. `GET /api/telemetry/v1/device/challenge/` → `{"challenge": "...", "expires_in": 300}`.
-   The challenge is single-use and expires after 5 minutes.
-2. Request a Play Integrity token with the challenge as its nonce.
-3. `POST /api/telemetry/v1/device/register/` with JSON:
-   `{"public_key": "<PEM>", "challenge": "...", "play_integrity_token": "...", "msisdn": "+977...", "fcm_token": "...", "app_version": "1.2.3"}`.
-   `msisdn` comes from the SIM through the carrier-privileged API. The app never
-   asks the user for it.
-
-Responses: `200 {"device_id": "...", "registered": true, "created": bool}`;
-`403` on a failed integrity check or a revoked device (the detail is always
-generic, so a probing client learns nothing); `409` if the MSISDN is already
-bound to a different device; `400` on a bad challenge or key; `429` on too many
-attempts from one IP.
-
-Re-registering the same key updates msisdn, fcm_token, and app_version. It never
-un-revokes a device.
-
-### 13.3 Signing every device call
-
-Every call after registration, except the two above, carries four headers:
+Every signed call carries four headers.
 
 | Header | Value |
 |---|---|
-| `X-Device-Id` | the `device_id` from registration |
-| `X-Timestamp` | current epoch **seconds** (not ms); must be within ±120 s of server time |
-| `X-Nonce` | 8–128 chars of `[A-Za-z0-9_-]`, unique per request |
-| `X-Signature` | base64 (standard, padded) of the DER ECDSA-SHA256 signature |
+| `X-Device-Id` | The `device_id` from registration |
+| `X-Timestamp` | Epoch **seconds**, within 120 seconds of server time |
+| `X-Nonce` | 8 to 128 characters of `[A-Za-z0-9_-]`, unique per request |
+| `X-Signature` | Standard base64 of the DER ECDSA-SHA256 signature |
 
-The signed string is one line, UTF-8, with no trailing newline:
+The signed text is one line, UTF-8, no trailing newline:
 
 ```
 METHOD|PATH|TIMESTAMP|NONCE|SHA256_HEX_OF_BODY
 ```
 
-- `METHOD` is uppercase. `PATH` is the request path including the leading `/api/…`
-  and with no query string.
-- `SHA256_HEX_OF_BODY` is the lowercase hex SHA-256 of the exact body bytes you
-  send. For GET and other body-less requests it is the hash of the empty string.
-- Send the same bytes you hashed. Do not re-serialize JSON after signing.
+- `METHOD` in capitals. `PATH` starts with `/api/` and has no query string.
+- The hash is lowercase hex of the exact bytes sent. For a request with no body
+  it is the hash of the empty string.
+- Send the bytes you hashed. Do not serialise the JSON again after signing.
+- A repeated nonce or a timestamp outside the window returns 401.
+- Use `Signature.getInstance("SHA256withECDSA")` with the Keystore key.
 
-Use the Keystore's `Signature.getInstance("SHA256withECDSA")`. Encode the result
-as standard base64 (not URL-safe).
+## 8. Push messages and readings on request
 
-A replayed nonce gets `401`, and so does a timestamp outside the window.
+The server sends Firebase **data** messages only. Each carries a type and an
+ID, never a number, a case reference or a position.
 
-### 13.4 Push and polling
+| `type` | Sent to | The phone then |
+|---|---|---|
+| `sample_request` | A sharing phone (`push-token/`) | Takes one reading and uploads it with `trigger_reason` `on_demand` |
+| `trace_request` | A registered phone (`device/fcm-token/`) | Fetches its open requests and shows the consent screen |
 
-- FCM data messages only, with `{"type": "trace_request", "request_id": "<uuid>"}`.
-  The push carries no MSISDN, case reference, or location. Do not show the push
-  payload to the user as-is.
-- On a `trace_request` push, and also on every app start and every ~15 minutes,
-  call `GET /api/telemetry/v1/device/trace-requests/`. That returns only open
-  requests (`PENDING` or `ACCEPTED`) with `id`, `status`, `consent_at`, `expires_at`,
-  and `created_at`. Push is an accelerator. Polling is the reliable path.
-- Renew the FCM token with `PUT /api/telemetry/v1/device/fcm-token/` whenever FCM rotates it.
+The two push addresses are stored separately on purpose.
 
-### 13.5 Consent and sampling
+- `POST push-token/` with `{"device_id": "<SDK id>", "fcm_token": "..."}` when
+  sharing starts. Send an empty `fcm_token` when sharing stops; the server then
+  deletes the row. A phone that is not sharing is never asked for a reading.
+- `PUT device/fcm-token/` with `{"fcm_token": "..."}` whenever Firebase rotates
+  the token of a registered phone.
 
-1. For a `PENDING` request, show a full-screen consent prompt. Accept and Reject
-   both go to `POST /api/telemetry/v1/device/trace-requests/<id>/respond/` with
-   `{"action": "accept" | "reject"}`. Each action is valid only from one specific
-   state, and any other state returns `409`.
-   If the response has `"operator_attested": true`, an operator has recorded the
-   user's agreement by phone. Show the prompt as "An NTC operator recorded your
-   agreement by phone. Tap Accept to continue." The phone-call record does not
-   start the trace. Only this on-device Accept does, so the user always makes the
-   final decision on their own phone.
-2. **Only after Accept**, request `ACCESS_FINE_LOCATION` at runtime. If the
-   user refuses the OS grant, keep the request `ACCEPTED` on the server and tell
-   the user location is off. Do not send anything.
-3. While sampling, run a foreground service with a persistent notification:
-   "Location shared with NTC network team until HH:MM — Stop". Its Stop action
-   calls `respond/` with `{"action": "stop"}`, which moves the request to `REVOKED`.
-4. Send fixes in batches to `POST /api/telemetry/v1/device/trace-requests/<id>/samples/`
-   as a JSON array of `{"ts": <epoch ms>, "lat": ..., "lon": ..., "accuracy_m": ...}`.
-   The server accepts a fix only if `ts` is inside `[consent_at, expires_at]`.
-   Out-of-window and malformed items are counted in `rejected` and dropped, and
-   they never fail the batch. Keep `ts` honest: use the fix's own time. Do not
-   back-date it.
-5. Stop sampling when the request expires, is `REVOKED`, `CANCELLED`, or
-   `EXPIRED`, or when the user revokes. A `409` on samples means the request
-   is no longer `ACCEPTED`. Stop the service and do not retry.
+A reading on request (Area Sample in the web application): staff pick an area;
+the server asks the phones that shared there in the last 24 hours and are
+sharing now; readings that arrive within 15 minutes are shown with no device
+ID. The phone checks its own sharing switch before it answers, and gives up
+after 15 seconds without a position.
 
-### 13.6 Retiring the shared key
+Status: the server side is live. On 12 October 2026 a request on the live
+server found a sharing phone but the push was not delivered; the cause is
+being checked on the server (Firebase setting or outbound access).
 
-- Crowdsourced ingest (`samples/`, `volte-samples/`) accepts signed device calls
-  right away. Ship signing in the next build.
-- The shared `tel_` key still works until `TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL`
-  is set on the server. After that date it returns `401 "shared telemetry key
-  retired; update the app"`. A device-signed call is unaffected either way.
-- Until then, the key stays in the APK, and anyone who extracts it can still post
-  crowdsourced rows. That is the risk the cutoff closes. Tracing is not affected,
-  because trace samples are accepted only on device-signed calls.
-- Crowdsourced rows from a signed device are always owned by that device. A body
-  `device_id` is ignored.
+## 9. Location requests (trace)
 
-### 13.7 Blocking external prerequisites
+Only DT-WATCH staff can create a request, and only for a registered phone. The
+phone never starts one.
 
-- **Firebase project** for FCM, with the service-account credential supplied to
-  the server (`FCM_SERVICE_ACCOUNT_JSON`) and `google-services.json` in the app.
-- **Play Integrity** linked to the Google Cloud project that holds that service
-  account, with the package name set on the server (`PLAY_INTEGRITY_PACKAGE_NAME`).
-  `PLAY_INTEGRITY_REQUIRED` defaults to true, so registration fails closed until
-  this is in place.
-- **Carrier-privileged status** for the SIM MSISDN read (§12.1). Without it, the
-  app has no number to register.
-- The server's push and integrity checks are inert until the first two are
-  configured. A trace still works by polling, but registration cannot succeed
-  until Play Integrity is configured or explicitly turned off on a dev server.
+```
+PENDING --accept--> ACCEPTED --stop--> REVOKED
+PENDING --reject--> REJECTED
+PENDING or ACCEPTED --staff cancel--> CANCELLED
+any open state after expires_at --> EXPIRED
+```
+
+1. On a `trace_request` push, on app start and about every 15 minutes, call
+   `GET device/trace-requests/`. It returns open requests with `id`, `status`,
+   `consent_at`, `expires_at`, `created_at`. Push only speeds this up; polling
+   is the reliable path.
+2. Show a full-screen consent prompt for a `PENDING` request. Send the answer to
+   `POST device/trace-requests/<id>/respond/` with `{"action": "accept" | "reject"}`.
+   An action from the wrong state returns 409.
+3. If the request has `"operator_attested": true`, staff recorded the user's
+   agreement by phone. Say so on the prompt. The request still starts only when
+   the user taps Accept on the phone.
+4. Ask for location permission only after Accept.
+5. While sharing, run a foreground service with a notification that shows the
+   end time and a Stop action. Stop sends `{"action": "stop"}`.
+6. Send fixes to `POST device/trace-requests/<id>/samples/` as an array of
+   `{"ts": <epoch ms>, "lat": .., "lon": .., "accuracy_m": ..}`. A fix is kept
+   only if `ts` is between `consent_at` and `expires_at`. Others are counted in
+   `rejected` and dropped.
+7. A 409 on samples means the request is no longer accepted. Stop and do not retry.
+
+A request lasts 120 minutes by default.
+
+## 10. Speed test
+
+The test runs only when the user taps Start. It takes about 20 seconds and
+about 8 MB of mobile data.
+
+| Call | Detail |
+|---|---|
+| `GET speedtest/ping/` | Returns 204 with no body |
+| `GET speedtest/download/?bytes=N` | N bytes that cannot be compressed. Default 6 MB, at most 20 MB |
+| `POST speedtest/upload/` | Reads the body, at most 20 MB. Returns `{"received_bytes": N}` |
+
+These three need no key and are limited to 60 requests a minute per address.
+The app sends no ID with them and the server stores nothing.
+
+The result goes to `POST speed-samples/`, only while the user is sharing:
+
+```json
+{"device_id": "<SDK id>", "ts": 1758444000000, "ping_median_ms": 38,
+ "jitter_ms": 4, "download_mbps": 21.4, "upload_mbps": 6.2,
+ "network_type": "LTE", "rsrp_dbm": -90}
+```
+
+Returns `201 {"stored": true}`. Limited to 20 a minute.
+
+A second set under `device/trace-requests/<id>/speedtest/` is signed and works
+only while that request is accepted. Its result call takes `ran_at` (epoch ms,
+inside the consent window) in place of `ts`.
+
+## 11. Site photos
+
+A staff member points the phone along a sector and takes a photo. The server
+shows the direction the phone faced next to the sector's planned azimuth. A
+registered phone is required.
+
+1. `GET device/nearby-sites/?lat=..&lon=..` returns up to five sites within 1 km:
+
+```json
+{"sites": [{"id": "KTM856", "name": "...", "distance_m": 140,
+            "directions": [{"azimuth": 20.0, "sectors": "J20, J3"}]}]}
+```
+
+2. `POST device/site-photos/`:
+
+```json
+{
+  "image_b64": "<base64 JPEG>",
+  "bearing_deg": 24.5,
+  "lat": 27.7172, "lon": 85.3240,
+  "accuracy_m": 8, "altitude_m": 1320,
+  "taken_at": 1758444000000,
+  "site_id": "KTM856",
+  "planned_azimuth": 20, "sector_label": "J20, J3",
+  "drive_session_id": "",
+  "note": "",
+  "signal": {"network_type": "LTE", "rsrp": -88, "rsrq": -10, "sinr": 12, "pci": 116, "cell_id": "..."}
+}
+```
+
+Returns `201 {"id": N, "status": "pending"}`.
+
+| Rule | Value |
+|---|---|
+| Required | `image_b64`, `bearing_deg`, `lat`, `lon`, and either `site_id` or `drive_session_id` |
+| Site photo | The phone must be within 1 km of the site |
+| Drive photo | Taken while a phone drive test runs. Send that drive's `drive_session_id`; no site is needed |
+| Picture | JPEG, at most 2 MB and 8 megapixels. The app sends about 0.5 MB at 1600 px |
+| Volume | 100 a day per phone, 5,000 a day in total. Refused while 2,000 await review |
+| After upload | Every photo waits for an admin to approve it. Only admins and superadmins see photos |
+
+The picture travels as base64 inside the JSON body so that the request is
+signed like any other. The server re-encodes it and drops its metadata. The
+bearing is the direction of the back camera with the phone held upright, read
+from the rotation-vector sensor and corrected to true north. A phone compass is
+typically within 5 to 15 degrees.
+
+## 12. Rescue sharing, drive-test consent, device identity
+
+**Rescue sharing** (`POST rescue-enroll/`). The subscriber agrees that staff may
+see the phone's last known position during a declared emergency.
+
+- Enrol: `{"device_id": "<SDK id>", "consent": true, "msisdn": "+977..."}` returns `{"enrolled": true}`.
+  Optional: `manufacturer`, `phone_model`, `app_version`, `hardware_id`.
+- Withdraw: `{"device_id": "...", "consent": false}` returns `{"enrolled": false, "removed": bool}`.
+- Enrolling carries no position. The position updates only from ordinary
+  samples while the phone is sharing.
+- A subscriber who withdrew is never shown by a lookup, even in an emergency.
+
+**Drive-test consent** (`POST drive-test-consent/`) with
+`{"device_id": "...", "consent": true}` returns `{"consent": true}`. It decides
+whether this phone's readings may appear in a staff drive-test session. It does
+not affect whether samples are stored. `GET drive-test-consent-message/`
+returns `{"message": "..."}`, the wording a superadmin maintains.
+
+**Device identity** (`POST device-identity/`, signed). Every field is optional:
+`msisdn`, `imei`, `phone_model`, `manufacturer`, `user_type` (`general` or
+`employee`), `hardware_id`. An empty string clears a field. Returns
+`{"stored": [...]}` with field names only. A normal Android app cannot read the
+number or IMEI, so those stay empty until the app is carrier-privileged.
+
+## 13. Call quality (VoLTE and VoNR): built on the server, not in the app
+
+`POST volte-samples/` takes an array, one object per finished call:
+
+```json
+[{"device_id": "...", "ts": 1758444000000, "network_type": "LTE",
+  "codec": "AMR-WB", "call_duration_s": 42, "packet_loss_pct": 0.5,
+  "jitter_ms": 8, "rtt_ms": 60, "quality_level": "GOOD",
+  "lat": 27.7172, "lon": 85.3240, "cell_id": 123456, "pci": 301,
+  "mcc": "429", "mnc": "01"}]
+```
+
+Returns `202 {"accepted": N}`.
+
+- **Blocked on carrier privilege.** The figures come from Android's
+  `CallQuality`, which needs `READ_PRECISE_PHONE_STATE`. Only a
+  carrier-privileged or system app is granted it. Without it the listener is
+  silent, with no error.
+- **API:** `TelephonyCallback.CallAttributesListener` (API 31 and later), or
+  `PhoneStateListener` with `LISTEN_CALL_ATTRIBUTES_CHANGED` (API 29 and 30).
+  Read the last `CallQuality` at the end of the call.
+- **Send raw figures only.** The server computes the score with the ITU-T G.107
+  E-model. Send `quality_level` exactly as Android names it.
+- **Codec coverage on the server:** AMR-WB, G.711 and G.729 use published
+  constants. EVS and AMR-NB give a provisional score. Any other codec gives no score.
+
+## 14. The Android SDK and the reference app
+
+**Source:** `nepal-telemetry-project`, pushed to the `mobile` branch. Two
+modules: `netplanning-telemetry-sdk` (the library) and `app` (the reference app,
+package `np.nepaltelecom.telemetry.demo`). Kotlin, min SDK 26, target SDK 34,
+JDK 17. Build with `:app:assembleDebug`.
+
+The reference app's Application class and `google-services.json` are not in the
+repository, because they hold the ingest key and the Firebase project. Puru
+supplies them separately.
+
+### 14.1 What the app does today
+
+| Tab or screen | Function |
+|---|---|
+| Signal | Gauge of the serving cell's level, quality rating, 3-minute history, technology and band, speed test |
+| Cells | Serving and neighbour cells as the modem reports them, each with its band |
+| Map | Own position, drive test (Start, Stop, Upload, Past), route coloured by signal level, tap a point for its reading, Site photo |
+| Wi-Fi | Wi-Fi readings |
+| Settings | Employee tick box, Share with NTC, rescue sharing, Register this phone, battery settings |
+
+The "I am an NTC employee" tick box only opens the tabs and marks drives as
+staff drives. It grants nothing on the server. The app has no staff login.
+
+### 14.2 SDK entry points
+
+Call `init` from `Application.onCreate()`, not from an Activity: WorkManager
+restarts the process in the background and needs the configuration.
+
+```kotlin
+NetTelemetry.init(context, TelemetryConfig(endpointUrl = "...", apiKey = "tel_..."))
+
+NetTelemetry.startShare(capMinutes = 60)   // returns the end time
+NetTelemetry.stopShare()
+NetTelemetry.optIn(); NetTelemetry.optOut(); NetTelemetry.isOptedIn()
+
+NetTelemetry.startDriveTest(context, share = true)
+NetTelemetry.stopDriveTest(context)
+NetTelemetry.currentDriveSessionId()
+NetTelemetry.routeTrail(); NetTelemetry.driveSessions()
+
+NetTelemetry.readLiveSample { }; NetTelemetry.readCellsNow { }
+NetTelemetry.sampleNow(); NetTelemetry.uploadNow(); NetTelemetry.getStatus()
+
+NetTelemetry.setPushToken(token)           // from FirebaseMessagingService.onNewToken
+NetTelemetry.answerSampleRequest()         // on a sample_request push
+NetTelemetry.reportSpeedTest(...)
+NetTelemetry.enrollForRescue(msisdn); NetTelemetry.optOutOfRescue()
+NetTelemetry.setDriveTestConsent(true)
+```
+
+### 14.3 Configuration (`TelemetryConfig`)
+
+| Field | Default | Meaning |
+|---|---|---|
+| `endpointUrl` | required | Full URL of `samples/` |
+| `apiKey` | null | The shared ingest key |
+| `samplingIntervalMinutes` | 15 | Android's floor for periodic work is 15 |
+| `uploadIntervalMinutes` | 30 | How often the queue is sent |
+| `uploadOnlyOnUnmetered` | true | Wait for Wi-Fi |
+| `minHandoverSampleIntervalSeconds` | 120 | Gap between cell-change readings |
+| `rescueEnrollUrl`, `driveTestConsentUrl`, `driveTestConsentMessageUrl`, `speedSamplesUrl`, `pushTokenUrl` | null | Each feature is off until its URL is set |
+| `defaultOptIn` | false | Keep false unless the app's own terms cover collection from install |
+
+Trace requests, registration and site photos live in the reference app
+(`TraceApi`, `DeviceKeys`, `TraceRegisterWorker`, `TracePush`,
+`TraceSharingService`, `SitePhotoActivity`), not in the SDK.
+
+### 14.4 Permissions
+
+- SDK: `ACCESS_FINE_LOCATION`, `READ_PHONE_STATE`, `ACCESS_NETWORK_STATE`,
+  `INTERNET`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION`.
+- App: `POST_NOTIFICATIONS`, `CAMERA` (asked only when the photo screen opens),
+  `ACCESS_WIFI_STATE`, `CHANGE_WIFI_STATE`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
+- Not requested: `ACCESS_BACKGROUND_LOCATION`.
+
+### 14.5 Behaviour to know when testing
+
+- Battery restrictions stop push messages reaching an idle phone. The app
+  offers a button to lift them, and a second one for Huawei start-up settings.
+- A drive test records a fix every 2 seconds and drops fixes worse than 30 m.
+- Past drives stay on the phone. Deleting one there does not delete it on the server.
+- Error messages shown to the user are general. Details go to the device log.
+- iOS does not expose cell or signal figures to apps, so there is no iOS
+  equivalent of the signal collection.
+
+## 15. What is open
+
+| Item | Who | Why it matters |
+|---|---|---|
+| Carrier-privileged status for the app | NTC, app team | Read the number from the SIM; read IMEI; measure call quality |
+| Play Integrity at registration | App team, with the Google Cloud project | A copied or modified app can register today. The server check exists and is switched off |
+| Sign all uploads with the device key | App team | The shared key is in the APK. Anyone who extracts it can post readings. The server can then set a date after which the key is refused |
+| Send SINR | App team | No live 4G reading carried it on 12 October 2026 |
+| Staff login in the app | App team, NTC identity team | "NTC employee" is a tick box. Site photos rest on registration, distance and admin review instead |
+| Firebase project owned by NTC | App team | Push for reading requests and location requests |
+| Public route to the device API | NTC network team | The live server is reachable only inside NTC or over VPN |
+| Push end to end on the live server | Puru | A reading request was not delivered on 12 October 2026 |
+| Publishing | App team | The app is installed on a few test phones only |
+
+## 16. Who to ask
+
+Server, keys, and whether data is arriving: Puru. This document describes the
+server as of 13 October 2026. If something here disagrees with what the server
+returns, the server is right; please report the difference.

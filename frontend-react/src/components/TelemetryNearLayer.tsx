@@ -30,6 +30,7 @@ export default function TelemetryNearLayer({
           >
             <Tooltip>
               {names[p.session] ?? 'Telemetry'} · {level.tech ?? p.network_type}
+              {p.band_label ? ` · ${p.band_label}` : ''}
               {level.value != null ? ` · ${level.name} ${level.value} dBm` : ' · no level'}
               {level.tech === '4G' && p.rsrq != null ? ` · RSRQ ${p.rsrq} dB` : ''}
               {level.tech === '4G' && p.sinr != null ? ` · SINR ${p.sinr} dB` : ''}

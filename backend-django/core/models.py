@@ -2245,6 +2245,15 @@ class TelemetrySample(models.Model):
     scrambling_code = models.SmallIntegerField(null=True, blank=True)
     bcch = models.SmallIntegerField(null=True, blank=True)
     bsic = models.SmallIntegerField(null=True, blank=True)
+    # Operating band (2026-10-13), see core/radio_band.py:
+    #   - arfcn: the serving cell's channel number as the phone reports it
+    #     (EARFCN on 4G, UARFCN on 3G, NR-ARFCN on 5G, BCCH ARFCN on 2G).
+    #   - band: 3GPP band number, from the phone or worked out from arfcn.
+    #     Null on 2G.
+    #   - band_mhz: the band's common name in MHz (900, 1800, 2100 ...).
+    arfcn = models.IntegerField(null=True, blank=True)
+    band = models.SmallIntegerField(null=True, blank=True)
+    band_mhz = models.SmallIntegerField(null=True, blank=True)
     battery_pct = models.SmallIntegerField(null=True, blank=True)
     trigger_reason = models.CharField(max_length=16, choices=TRIGGERS, default='periodic')
     # Groups a drive's fixes and markers (2026-10-04). Set by the phone, a UUID

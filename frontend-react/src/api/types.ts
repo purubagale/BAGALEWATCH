@@ -1861,7 +1861,7 @@ export interface TelemetryCoverageParams {
   limit?: number
 }
 
-export interface TelemetryLiveSample {
+export interface TelemetryLiveSample extends SampleBandFields {
   device_id: string
   ts: number
   received_at: string
@@ -2197,7 +2197,7 @@ export interface AreaSampleCreateInput {
   label?: string
 }
 
-export interface AreaSampleReading extends SampleCqiFields {
+export interface AreaSampleReading extends SampleCqiFields, SampleBandFields {
   ts: string
   lat: number
   lng: number
@@ -2466,7 +2466,18 @@ export interface SampleCqiFields {
   spectral_efficiency: number | null
 }
 
-export interface CollectionSessionSample extends SampleCqiFields {
+// Operating band of a phone reading (2026-10-13, core/radio_band.py).
+// `arfcn` is the channel number the phone reported, `band` the 3GPP band
+// number (none on 2G), `band_mhz` its common name, `band_label` the text
+// to show: "B3 (1800)", "900", or "" when the reading carries none.
+export interface SampleBandFields {
+  arfcn?: number | null
+  band?: number | null
+  band_mhz?: number | null
+  band_label?: string
+}
+
+export interface CollectionSessionSample extends SampleCqiFields, SampleBandFields {
   ts: string
   lat: number
   lng: number
@@ -2573,6 +2584,7 @@ export interface TelemetryNearPoint {
   ecio: number | null
   rssi: number | null
   rxqual: number | null
+  band_label?: string
 }
 
 export interface TelemetryNearResponse {

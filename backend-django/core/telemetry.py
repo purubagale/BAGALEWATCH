@@ -35,6 +35,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from . import radio_band
 from .models import TelemetryBatch, TelemetryIngestKey, _point_or_none
 
 from .subscriber_device import touch_seen
@@ -258,7 +259,14 @@ def coerce_sample(raw, received_at):
 
     lat, lng = _f(raw.get('lat')), _f(raw.get('lon'))
     nt = str(raw.get('network_type') or 'UNKNOWN').upper()
+    nt = nt if nt in _NET_TYPES else 'UNKNOWN'
     tr = str(raw.get('trigger_reason') or 'periodic').lower()
+    # Operating band (2026-10-13): the phone's channel number, and its band
+    # when it reports one. See core/radio_band.py.
+    arfcn = _int(raw.get('arfcn'))
+    if arfcn is not None and not 0 <= arfcn <= 4_000_000:
+        arfcn = None
+    band, band_mhz = radio_band.resolve(nt, arfcn, _i16(raw.get('band')), _i16(raw.get('bcch')))
     return {
         'device_id': device_id,
         'ts': ts,
@@ -271,7 +279,7 @@ def coerce_sample(raw, received_at):
         'tac': _int(raw.get('tac')),
         'mcc': (str(raw.get('mcc') or ''))[:6],
         'mnc': (str(raw.get('mnc') or ''))[:6],
-        'network_type': nt if nt in _NET_TYPES else 'UNKNOWN',
+        'network_type': nt,
         'rsrp_dbm': _i16(raw.get('rsrp_dbm')),
         'rsrq_db': _i16(raw.get('rsrq_db')),
         'rssi_dbm': _i16(raw.get('rssi_dbm')),
@@ -295,6 +303,9 @@ def coerce_sample(raw, received_at):
         'scrambling_code': _i16(raw.get('scrambling_code')),
         'bcch': _i16(raw.get('bcch')),
         'bsic': _i16(raw.get('bsic')),
+        'arfcn': arfcn,
+        'band': band,
+        'band_mhz': band_mhz,
         'battery_pct': _i16(raw.get('battery_pct')),
         'trigger_reason': tr if tr in _TRIGGERS else 'periodic',
         # drive_session_id (2026-10-04): groups a drive's fixes and markers.
@@ -354,7 +365,7 @@ _COPY_COLS = (
     'cell_id', 'pci', 'tac', 'mcc', 'mnc', 'network_type',
     'rsrp_dbm', 'rsrq_db', 'rssi_dbm', 'sinr_db', 'rx_qual', 'rscp_dbm', 'ecio_db',
     'battery_pct', 'trigger_reason', 'region', 'cqi', 'cqi_derived',
-    'scrambling_code', 'bcch', 'bsic',
+    'scrambling_code', 'bcch', 'bsic', 'arfcn', 'band', 'band_mhz',
     'serving_site_id', 'serving_cell_name', 'serving_sector', 'serving_local_cell_id', 'serving_dist_km',
     'drive_session_id',
 )
@@ -445,6 +456,7 @@ def bulk_insert_samples(rows):
             _cf(r['battery_pct']), _cf(r['trigger_reason']), _cf(r['region']),
             _cf(r['cqi']), _cf(r['cqi_derived']),
             _cf(r['scrambling_code']), _cf(r['bcch']), _cf(r['bsic']),
+            _cf(r.get('arfcn')), _cf(r.get('band')), _cf(r.get('band_mhz')),
             _cf(r.get('serving_site_id') or ''), _cf(r.get('serving_cell_name') or ''),
             _cf(r.get('serving_sector') or ''), _cf(r.get('serving_local_cell_id')),
             _cf(r.get('serving_dist_km')),
