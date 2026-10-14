@@ -92,6 +92,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        Collector.resumeIfSharing(this)
         // A request was accepted from its notification: ask for unrestricted battery now, once.
         if (BatteryAccess.takePendingPrompt(this)) {
             runCatching { startActivity(BatteryAccess.requestUnrestrictedIntent(this)) }

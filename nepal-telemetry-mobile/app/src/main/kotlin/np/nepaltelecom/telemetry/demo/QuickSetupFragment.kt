@@ -33,7 +33,7 @@ class QuickSetupFragment : Fragment(R.layout.fragment_quick_setup) {
         if (grants[Manifest.permission.ACCESS_FINE_LOCATION] != true) {
             Toast.makeText(requireContext(), R.string.quick_setup_denied, Toast.LENGTH_LONG).show()
         } else {
-            FirstRunSample.start()
+            FirstRunSample.start(requireContext())
         }
         finish()
     }

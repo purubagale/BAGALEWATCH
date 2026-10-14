@@ -31,7 +31,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
         if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true) {
-            NetTelemetry.startShare()
+            Collector.startSharing(requireContext())
             refresh()
         } else {
             toast("Location permission is required for telemetry sampling")
@@ -44,7 +44,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
         view.findViewById<Button>(R.id.optInButton).setOnClickListener {
             if (hasLocationPermission()) {
-                NetTelemetry.startShare()
+                Collector.startSharing(requireContext())
                 refresh()
             } else {
                 permissionLauncher.launch(
@@ -64,7 +64,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         }
 
         view.findViewById<Button>(R.id.optOutButton).setOnClickListener {
-            NetTelemetry.stopShare()
+            Collector.stopSharing(requireContext())
             refresh()
         }
 
@@ -174,7 +174,9 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             append("Queued samples: ${status.queuedSampleCount}\n")
             append("Last sample at: ${status.lastSampleAtMs?.let { Date(it) } ?: "never"}\n")
             val until = NetTelemetry.shareExpiresAtMs()
-            if (until != null) {
+            if (until != null && Collector.enabled) {
+                append("Sharing: a reading every 15 seconds and a speed test every 30 minutes on mobile data, until you tap Stop sharing")
+            } else if (until != null) {
                 val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(Date(until))
                 append("Sharing until $time, then it stops by itself")
             } else {

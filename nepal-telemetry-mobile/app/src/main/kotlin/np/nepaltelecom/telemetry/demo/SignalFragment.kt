@@ -9,6 +9,7 @@ import android.provider.Settings
 import android.view.View
 import android.widget.Button
 import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import np.nepaltelecom.telemetry.NetTelemetry
@@ -80,14 +81,25 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
         speedButton = view.findViewById(R.id.speedStartButton)
         speedResult = view.findViewById(R.id.speedResult)
         speedButton.setOnClickListener { runSpeedTest() }
+        speedHint = view.findViewById(R.id.speedHint)
+        view.findViewById<Button>(R.id.reportProblemButton).setOnClickListener {
+            (activity as? AppCompatActivity)?.let { ReportProblem.start(it) }
+        }
     }
 
-    /** Runs on the user's tap only. The test is blocking, so it goes on a background thread. */
+    private lateinit var speedHint: TextView
+
+    /**
+     * Runs on the user's tap only. The test is blocking, so it goes on a
+     * background thread. It goes over mobile data even while on Wi-Fi
+     * (2026-10-14); with mobile data off it falls back to Wi-Fi and says so.
+     */
     private fun runSpeedTest() {
         speedButton.isEnabled = false
         speedResult.text = getString(R.string.speed_running)
+        val context = requireContext().applicationContext
         Thread {
-            val result = SpeedTest.run()
+            val result = SpeedTest.runOnMobileData(context, fallback = true) ?: SpeedTest.run()
             activity?.runOnUiThread {
                 if (isAdded) showSpeedResult(result)
             }
@@ -98,6 +110,7 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
         speedButton.isEnabled = true
         if (r.error != null) {
             speedResult.text = getString(R.string.speed_error, r.error)
+            speedHint.visibility = View.GONE
             return
         }
         val radio = lastSample?.let { s ->
@@ -106,14 +119,19 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
         } ?: getString(R.string.speed_no_radio)
         speedResult.text = getString(
             R.string.speed_result,
-            fmt(r.pingMedianMs), fmt(r.jitterMs), fmt(r.downloadMbps), fmt(r.uploadMbps), radio,
+            fmt(r.pingMedianMs), fmt(r.jitterMs), fmt(r.packetLossPct), fmt(r.downloadMbps), fmt(r.uploadMbps), radio,
         )
-        // Shared with NTC only while sharing is on (2026-10-07); otherwise this is a no-op.
+        speedHint.text = ProblemHints.explain(lastSample, r)
+        speedHint.visibility = View.VISIBLE
+        // Shared with NTC only while sharing is on (2026-10-07), and only a
+        // mobile-data result: a Wi-Fi one says nothing about NTC's network.
+        if (!r.onMobileData) return
         val s = lastSample
         NetTelemetry.reportSpeedTest(
             pingMedianMs = r.pingMedianMs, jitterMs = r.jitterMs,
             downloadMbps = r.downloadMbps, uploadMbps = r.uploadMbps,
             networkType = s?.networkType, rsrpDbm = s?.rsrpDbm ?: s?.rscpDbm ?: s?.rssiDbm,
+            packetLossPct = r.packetLossPct,
         )
     }
 

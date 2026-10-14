@@ -12,6 +12,8 @@
     <!-- Wi-Fi scan for the phone-only Wi-Fi tab (2026-10-04). Results stay on the phone. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- Speed test over mobile data while on Wi-Fi (2026-10-14). -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Site photo (2026-10-11). Asked for only when that screen is opened. -->
@@ -49,6 +51,12 @@
 
         <service
             android:name=".TraceSharingService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <!-- Collector edition only (2026-10-14): a reading every minute while sharing. -->
+        <service
+            android:name=".CollectorService"
             android:exported="false"
             android:foregroundServiceType="location" />
 

@@ -149,6 +149,11 @@ object TraceApi {
         request("POST", "device/site-photos/", body, signed = true)
     }
 
+    /** "Report a problem" (2026-10-14): one report with the phone's reading and speed test. */
+    fun reportProblem(body: String) {
+        request("POST", "device/problem-reports/", body, signed = true)
+    }
+
     private fun request(method: String, path: String, body: String?, signed: Boolean): String =
         call(method, path, body?.toByteArray(Charsets.UTF_8), "application/json", signed) {
             it.bufferedReader().use { reader -> reader.readText() }

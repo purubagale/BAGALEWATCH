@@ -188,6 +188,24 @@
                 android:text="@string/speed_not_run"
                 android:textColor="@color/text_secondary"
                 android:textSize="14sp" />
+
+            <!-- Plain explanation of the reading and the last test (2026-10-14). -->
+            <TextView
+                android:id="@+id/speedHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/reportProblemButton"
+                style="@style/Widget.App.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/report_button" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

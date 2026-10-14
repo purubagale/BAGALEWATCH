@@ -15,7 +15,8 @@ object StaffMode {
     private const val KEY_DRIVE_SHARE = "drive_share_answer"
 
     fun isEmployee(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_EMPLOYEE, false)
+        // The collector edition goes to staff only, so its box starts ticked (2026-10-14).
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_EMPLOYEE, Collector.enabled)
 
     fun setEmployee(context: Context, value: Boolean) {
         val edit = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

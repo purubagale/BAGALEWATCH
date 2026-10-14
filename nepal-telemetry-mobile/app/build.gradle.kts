@@ -20,6 +20,28 @@ android {
         versionName = "0.1"
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
+    // Two editions (2026-10-14). "standard" is the normal app. "collector" is
+    // for a small group of staff gathering test data: sharing has no time
+    // limit (it runs until the user stops it); a reading is taken every
+    // 15 seconds, plus a speed test every 30 minutes on mobile data. Same application ID, so Firebase keeps working
+    // and installing one replaces the other on a phone.
+    flavorDimensions += "edition"
+    productFlavors {
+        create("standard") {
+            dimension = "edition"
+            buildConfigField("boolean", "COLLECTOR", "false")
+        }
+        create("collector") {
+            dimension = "edition"
+            versionNameSuffix = "-collector"
+            buildConfigField("boolean", "COLLECTOR", "true")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false

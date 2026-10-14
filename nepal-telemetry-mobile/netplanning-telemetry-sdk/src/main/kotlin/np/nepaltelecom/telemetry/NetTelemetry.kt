@@ -492,6 +492,7 @@ object NetTelemetry {
         uploadMbps: Double?,
         networkType: String?,
         rsrpDbm: Int?,
+        packetLossPct: Double? = null,
     ) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before reportSpeedTest()" }
         val config = internalConfig ?: return
@@ -507,6 +508,7 @@ object NetTelemetry {
                         put("ts", System.currentTimeMillis())
                         pingMedianMs?.let { put("ping_median_ms", it) }
                         jitterMs?.let { put("jitter_ms", it) }
+                        packetLossPct?.let { put("packet_loss_pct", it) }
                         downloadMbps?.let { put("download_mbps", it) }
                         uploadMbps?.let { put("upload_mbps", it) }
                         networkType?.let { put("network_type", it) }

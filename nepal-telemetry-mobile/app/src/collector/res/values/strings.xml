@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Collector edition (2026-10-14): only the texts that differ from the standard app. -->
+<resources>
+    <string name="app_name">NetTelemetry Collector</string>
+    <string name="quick_setup_body">This is the test-data edition of the app, for NTC staff.\n\nIt needs three permissions to work.\n\n• Location and phone: to read your live signal and nearby Wi-Fi. Android reports neither without them.\n• Notifications: to show that sharing is on.\n\nWhen you allow them, the app starts sending anonymous signal readings to NTC, one every 15 seconds, and a speed test every 30 minutes while on mobile data (about 8 MB each). It keeps going until you tap Stop on the notification or Stop sharing in Settings. Please also allow the app to run without battery restrictions when asked.</string>
+</resources>
