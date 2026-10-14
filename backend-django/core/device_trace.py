@@ -232,6 +232,22 @@ class DeviceRegisterView(APIView):
 
 # ── Device: signed endpoints ───────────────────────────────────────────
 
+class DeviceSdkLinkView(APIView):
+    """`POST /api/telemetry/v1/device/sdk-link/` -- body `{"sdk_device_id": "..."}`
+    (2026-10-14). Ties this registered phone to its SDK device id, so its
+    signed uploads keep the identity its shared-key uploads had (see
+    DeviceCredential.sdk_device_hash and core.telemetry.ingest_row_device_id)."""
+    authentication_classes = [DeviceSignatureAuthentication]
+    permission_classes = [IsDevice]
+
+    def post(self, request):
+        raw = str(request.data.get('sdk_device_id') or '').strip()
+        if not raw or len(raw) > 128:
+            return Response({'detail': 'sdk_device_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        DeviceCredential.objects.filter(pk=request.user.pk).update(sdk_device_hash=hash_device_id(raw))
+        return Response({'linked': True})
+
+
 class DeviceFcmTokenView(APIView):
     """`PUT /api/telemetry/v1/device/fcm-token/` -- body `{"fcm_token": "..."}`."""
     authentication_classes = [DeviceSignatureAuthentication]

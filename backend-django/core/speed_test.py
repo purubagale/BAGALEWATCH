@@ -25,7 +25,7 @@ from rest_framework.views import APIView
 
 from .auth_log import _client_ip
 from .models import TelemetrySpeedResult
-from .telemetry import hash_device_id, resolve_ingest_caller
+from .telemetry import hash_device_id, ingest_row_device_id, resolve_ingest_caller
 
 MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -157,7 +157,7 @@ class TelemetrySpeedResultIngestView(APIView):
         raw_device_id = str(data.get('device_id') or '').strip()
         if device is None and not raw_device_id:
             return Response({'detail': 'device_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        device_id = device.device_hash if device else hash_device_id(raw_device_id)
+        device_id = ingest_row_device_id(device) if device else hash_device_id(raw_device_id)
 
         try:
             ts = datetime.fromtimestamp(int(data['ts']) / 1000, tz=dt_timezone.utc)

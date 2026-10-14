@@ -1917,6 +1917,10 @@ export interface TelemetryLiveSample extends SampleBandFields {
   // 0-15, higher is better. An estimate, not a measured value (see backend
   // telemetry.py's cqi_from_sinr). Null for non-LTE samples.
   cqi_derived?: number | null
+  // The CQI to show (2026-10-14): reported, else from SINR, else from RSRQ
+  // (core/cqi.py sample_cqi_fields). Live Samples and Telemetry Drive Test.
+  cqi_value?: number | null
+  cqi_source?: 'reported' | 'sinr' | 'rsrq' | null
   // GPS accuracy of this fix in metres (2026-10-04). Route endpoint only.
   gps_accuracy_m?: number | null
   // Moving-average coordinates for route lines (2026-10-04). Route endpoint
@@ -1962,6 +1966,45 @@ export interface VolteCallQualitySample {
 
 export interface VolteQualityListResponse {
   samples: VolteCallQualitySample[]
+}
+
+// Calls as an ordinary app sees them (2026-10-14, core/call_context.py):
+// which voice network the call used, no quality figures.
+export type CallOutcome = 'volte' | 'vowifi' | 'fallback' | 'legacy' | 'unknown'
+
+export interface CallContextRow {
+  device: string
+  started_at: string
+  duration_s: number | null
+  outcome: CallOutcome
+  voice_networks: string
+  data_network_before: string
+  network_type: string
+  cell_id: number | null
+  pci: number | null
+  level_dbm: number | null
+  end_network_type: string
+  end_level_dbm: number | null
+  lat: number | null
+  lng: number | null
+}
+
+export interface CallContextCell {
+  cell_id: number
+  pci: number | null
+  network_type: string
+  calls: number
+  fallback: number
+  site_id: string | null
+  cell_name: string
+}
+
+export interface CallContextResponse {
+  days: number
+  total: number
+  by_outcome: Record<CallOutcome, number>
+  top_fallback_cells: CallContextCell[]
+  calls: CallContextRow[]
 }
 
 export interface TelemetryLiveSamplesResponse {

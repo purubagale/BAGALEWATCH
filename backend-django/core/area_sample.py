@@ -32,7 +32,7 @@ from .audit import log_audit_event
 from .cqi import sample_cqi_fields
 from .fcm import send_sample_request_push
 from .models import AreaSampleRequest, TelemetryPushToken, TelemetrySample
-from .telemetry import _scope_by_operator, hash_device_id, resolve_ingest_caller
+from .telemetry import _scope_by_operator, hash_device_id, ingest_row_device_id, resolve_ingest_caller
 from .views import IsAdminOrSuperadmin
 
 PUSH_TOKEN_RATE_PER_MIN = 30
@@ -70,7 +70,7 @@ class TelemetryPushTokenView(APIView):
         raw_device_id = str(data.get('device_id') or '').strip()
         if device is None and not raw_device_id:
             return Response({'detail': 'device_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        device_id = device.device_hash if device else hash_device_id(raw_device_id)
+        device_id = ingest_row_device_id(device) if device else hash_device_id(raw_device_id)
 
         token = str(data.get('fcm_token') or '').strip()[:512]
         if not token:

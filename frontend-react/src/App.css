@@ -2485,6 +2485,12 @@ textarea:focus {
 }
 .dt-legend-item { display: flex; align-items: center; gap: 5px; }
 .dt-legend-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+/* PCI legend entries isolate one PCI on click; PCI numbers on the map when
+   zoomed in (DtExploreTab.tsx, 2026-10-14). */
+.dt-legend-pick { background: none; border: 1px solid transparent; border-radius: 4px; padding: 1px 4px; font: inherit; color: inherit; cursor: pointer; }
+.dt-legend-pick:hover { border-color: var(--border, #d1d5db); }
+.dt-legend-pick.active { border-color: #0153a5; background: rgba(1, 83, 165, 0.1); font-weight: 600; }
+.dt-pci-label { background: rgba(255, 255, 255, 0.9); border: 1px solid #1e2330; border-radius: 3px; padding: 0 3px; font-size: 11px; font-weight: 600; color: #1e2330; white-space: nowrap; width: auto !important; height: auto !important; }
 
 /* Compare Sessions — multi-panel small-multiples layout (2026-08-05,
    replacing a single map + metric-tab switcher per user-attached v1

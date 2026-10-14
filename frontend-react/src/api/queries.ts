@@ -1427,6 +1427,7 @@ import type {
   TelemetryLiveSamplesParams,
   TelemetryLiveSamplesResponse,
   VolteQualityListResponse,
+  CallContextResponse,
 } from '../api/types'
 
 // Delta-fetch accumulator (2026-10-02 perf follow-up, "suggest me the
@@ -1492,6 +1493,15 @@ export function useVolteQualitySamples(minutes: number) {
     queryKey: ['telemetry-volte-samples', minutes],
     queryFn: () => apiJson<VolteQualityListResponse>(`/api/v2/telemetry/volte-samples/?minutes=${minutes}`),
     refetchInterval: 10_000,
+  })
+}
+
+// Calls from phones without quality figures (2026-10-14, core/call_context.py).
+export function useCallContext(days: number) {
+  return useQuery({
+    queryKey: ['telemetry-call-samples', days],
+    queryFn: () => apiJson<CallContextResponse>(`/api/v2/telemetry/call-samples/?days=${days}`),
+    refetchInterval: 60_000,
   })
 }
 

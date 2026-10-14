@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import { useTelemetryLiveSamples } from '../api/queries'
 import type { TelemetryLiveSample } from '../api/types'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
+import { CQI_COLUMN_HINT, cqiLabel } from '../lib/cqiDisplay'
 
 // Telemetry Live Samples (dev/pilot-testing tool) -- raw, ungrouped
 // points from core/telemetry_admin.py's TelemetryLiveSamplesView
@@ -187,8 +188,8 @@ export default function TelemetryLiveSamplesPage() {
                 <th title="Operating band the phone was on: band number and MHz. Empty for readings sent by an older app">Band</th>
                 <th>Operator (MCC/MNC)</th>
                 <th>Signal</th>
-                {/* CQI is derived from SINR on the server (estimate, not measured). LTE only. */}
-                <th title="Estimated from SINR, LTE only">CQI (4G, est.)</th>
+                {/* Reported by the phone, else estimated from SINR, else from RSRQ (2026-10-14). */}
+                <th title={CQI_COLUMN_HINT}>CQI (4G)</th>
                 <th>Lat</th>
                 <th>Lng</th>
                 <th>Trigger</th>
@@ -207,7 +208,7 @@ export default function TelemetryLiveSamplesPage() {
                       for GSM, RSCP+Ec/Io for WCDMA (falling back to RSSI on
                       pre-Android-10 devices where those aren't available). */}
                   <td>{formatSignal(s)}</td>
-                  <td>{s.network_type === 'LTE' && s.cqi_derived != null ? s.cqi_derived : '-'}</td>
+                  <td>{s.network_type === 'LTE' && s.cqi_value != null ? cqiLabel({ cqi_value: s.cqi_value, cqi_source: s.cqi_source ?? null }) : '-'}</td>
                   <td>{s.lat?.toFixed(5)}</td>
                   <td>{s.lng?.toFixed(5)}</td>
                   <td>{s.trigger_reason}</td>

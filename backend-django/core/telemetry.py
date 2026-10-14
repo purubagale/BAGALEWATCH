@@ -102,6 +102,39 @@ def resolve_ingest_caller(request):
     return None, key, None
 
 
+#: 3G levels outside this range are the modem's "no value" codes (2026-10-14).
+#: 3GPP reports RSCP as an index 0..96 for -120..-24 dBm; many modems put the
+#: top of the range (-24 dBm, with Ec/Io 0) when they have no measurement,
+#: typically just after a call falls back to 3G. Seen on a Huawei in Lalitpur.
+WCDMA_LEVEL_MIN_DBM = -125
+WCDMA_LEVEL_MAX_DBM = -25
+
+
+def _wcdma_levels(network_type, rscp, ecio, rssi):
+    """RSCP, Ec/Io and RSSI of a 3G reading with the modem's no-value codes
+    removed. Other technologies pass through unchanged."""
+    if network_type != 'UMTS':
+        return rscp, ecio, rssi
+
+    def valid(level):
+        return level if level is not None and WCDMA_LEVEL_MIN_DBM <= level <= WCDMA_LEVEL_MAX_DBM else None
+
+    rscp, rssi = valid(rscp), valid(rssi)
+    if ecio is not None and not -30 <= ecio <= 0:
+        ecio = None
+    # Ec/Io 0 with no usable level is the same no-value code, not a perfect pilot.
+    if ecio == 0 and rscp is None:
+        ecio = None
+    return rscp, ecio, rssi
+
+
+def ingest_row_device_id(device):
+    """The device_id stored on rows a signed device uploads (2026-10-14): its
+    linked SDK id when the phone has sent one (device/sdk-link/), so signed
+    and shared-key uploads of one phone share an identity; else the key's own."""
+    return device.sdk_device_hash or device.device_hash
+
+
 def _resolve_key(raw):
     """Look the key up by its non-secret prefix, verify the full hash,
     check active/expiry. Returns the TelemetryIngestKey or None."""
@@ -267,6 +300,8 @@ def coerce_sample(raw, received_at):
     if arfcn is not None and not 0 <= arfcn <= 4_000_000:
         arfcn = None
     band, band_mhz = radio_band.resolve(nt, arfcn, _i16(raw.get('band')), _i16(raw.get('bcch')))
+    rscp, ecio, rssi = _wcdma_levels(nt, _i16(raw.get('rscp_dbm')), _i16(raw.get('ecio_db')),
+                                     _i16(raw.get('rssi_dbm')))
     return {
         'device_id': device_id,
         'ts': ts,
@@ -282,14 +317,14 @@ def coerce_sample(raw, received_at):
         'network_type': nt,
         'rsrp_dbm': _i16(raw.get('rsrp_dbm')),
         'rsrq_db': _i16(raw.get('rsrq_db')),
-        'rssi_dbm': _i16(raw.get('rssi_dbm')),
+        'rssi_dbm': rssi,
         'sinr_db': _i16(raw.get('sinr_db')),
         # rx_qual (GSM RxQual 0-7) / rscp_dbm & ecio_db (WCDMA) -- see
         # models.py's TelemetrySample field comment for what these are and
         # why RSRP/RSRQ/SINR/RSSI alone aren't enough for 2G/3G.
         'rx_qual': _i16(raw.get('rx_qual')),
-        'rscp_dbm': _i16(raw.get('rscp_dbm')),
-        'ecio_db': _i16(raw.get('ecio_db')),
+        'rscp_dbm': rscp,
+        'ecio_db': ecio,
         # cqi (2026-09-15) -- device-reported CQI. The SDK no longer sends it
         # (the modem value isn't a direct reading on every device), so this
         # is normally null. See cqi_derived below for the value the UI shows.
@@ -561,7 +596,7 @@ class TelemetryIngestView(APIView):
         # device_id is ignored, so one device cannot post for another.
         if device:
             for r in rows:
-                r['device_id'] = device.device_hash
+                r['device_id'] = ingest_row_device_id(device)
 
         attach_telemetry_serving_cells(rows)
 

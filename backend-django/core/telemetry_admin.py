@@ -54,6 +54,12 @@ from .views import IsAdminOrSuperadmin, IsSuperadminOnly
 # frontend's subsampleForMap().
 _MAX_RAW_SCAN = 200_000
 _DEFAULT_COVERAGE_LIMIT = 5000
+
+
+def _cqi_shown(sample):
+    """`cqi_value` and `cqi_source` of one sample for the lists (2026-10-14)."""
+    fields = sample_cqi_fields(sample.cqi, sample.sinr_db, sample.rsrq_db, sample.network_type)
+    return {'cqi_value': fields['cqi_value'], 'cqi_source': fields['cqi_source']}
 _MAX_COVERAGE_LIMIT = 20_000
 
 
@@ -475,6 +481,10 @@ class TelemetryLiveSamplesView(APIView):
                 # cqi_derived (2026-10-04) -- LTE CQI estimated from this
                 # sample's SINR (see models.py's TelemetrySample.cqi_derived).
                 'cqi_derived': s.cqi_derived,
+                # The CQI to show (2026-10-14): reported, else from SINR, else
+                # from RSRQ -- the same chain as the coverage map. Phones often
+                # report no SINR, and those rows showed no CQI at all.
+                **_cqi_shown(s),
                 # rssi_dbm (2026-09-03) -- GSM/UMTS (2G/3G) samples only
                 # ever populate this, never rsrp_dbm/rsrq_db/sinr_db (LTE/
                 # NR-only fields, see CellSampleCollector.kt's
@@ -860,6 +870,7 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 # cqi_derived (2026-10-04) -- LTE CQI estimated from SINR
                 # (see models.py's TelemetrySample.cqi_derived).
                 'cqi_derived': s.cqi_derived,
+                **_cqi_shown(s),
                 # rssi_dbm (2026-09-03, "need to collect any 2g, 3g or 4g
                 # data") -- GSM/UMTS samples only ever populate this, never
                 # rsrp_dbm/rsrq_db/sinr_db (LTE/NR-only fields -- see

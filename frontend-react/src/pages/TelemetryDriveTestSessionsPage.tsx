@@ -19,6 +19,7 @@ import {
   bandColor, type Band,
 } from '../lib/dtBands'
 import { declusterForPlot } from '../lib/declusterPlot'
+import { cqiLabel } from '../lib/cqiDisplay'
 
 // Scoped drive-test sessions over the crowdsourced telemetry pipeline
 // (2026-09-01) -- the promotable, consent-scoped replacement for the
@@ -83,7 +84,9 @@ function formatSignal(s: TelemetryLiveSample): string {
     if (s.rsrp_dbm != null) parts.push(`RSRP ${s.rsrp_dbm} dBm`)
     if (s.rsrq_db != null) parts.push(`RSRQ ${s.rsrq_db} dB`)
     if (s.sinr_db != null) parts.push(`SINR ${s.sinr_db} dB`)
-    if (s.cqi_derived != null) parts.push(`CQI ${s.cqi_derived} (est.)`)
+    // Reported, else from SINR, else from RSRQ (2026-10-14); older servers send only cqi_derived.
+    if (s.cqi_value != null) parts.push(`CQI ${cqiLabel({ cqi_value: s.cqi_value, cqi_source: s.cqi_source ?? null })}`)
+    else if (s.cqi_derived != null) parts.push(`CQI ${s.cqi_derived} (est.)`)
     return parts.join(', ')
   }
   if (s.rssi_dbm != null) return `${s.rssi_dbm} dBm (RSSI)`
@@ -136,7 +139,7 @@ function metricsForLiveTech(tech: LiveTech): LiveMetric[] {
     { key: 'primary', label: 'RSRP', unit: ' dBm', bands: RSRP_BANDS, value: (s) => s.rsrp_dbm },
     { key: 'rsrq', label: 'RSRQ', unit: ' dB', bands: RSRQ_BANDS, value: (s) => s.rsrq_db },
     { key: 'sinr', label: 'SINR', unit: ' dB', bands: SINR_BANDS, value: (s) => s.sinr_db },
-    { key: 'cqi', label: 'CQI (est.)', unit: '', bands: CQI_BANDS, value: (s) => s.cqi_derived },
+    { key: 'cqi', label: 'CQI', unit: '', bands: CQI_BANDS, value: (s) => (s.network_type === 'LTE' ? s.cqi_value ?? s.cqi_derived : null) },
   ]
 }
 

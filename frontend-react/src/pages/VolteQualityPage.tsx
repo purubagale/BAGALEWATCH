@@ -1,5 +1,121 @@
 import { useState } from 'react'
-import { useVolteQualitySamples } from '../api/queries'
+import { useCallContext, useVolteQualitySamples } from '../api/queries'
+import type { CallOutcome } from '../api/types'
+
+// Calls from phones (2026-10-14, core/call_context.py): what an ordinary
+// app can see of a call -- the voice network it used, not its quality.
+const OUTCOME_LABEL: Record<CallOutcome, string> = {
+  volte: 'Stayed on VoLTE / VoNR',
+  vowifi: 'Wi-Fi calling',
+  fallback: 'Fell back to 2G/3G',
+  legacy: 'On 2G/3G, no 4G before the call',
+  unknown: 'Unknown',
+}
+const OUTCOME_ORDER: CallOutcome[] = ['volte', 'fallback', 'legacy', 'vowifi', 'unknown']
+
+function CallsSection() {
+  const [days, setDays] = useState(7)
+  const { data, isLoading, error } = useCallContext(days)
+  const total = data?.total ?? 0
+  const pct = (n: number) => (total ? `${Math.round((100 * n) / total)}%` : '-')
+
+  return (
+    <section style={{ marginTop: 32 }}>
+      <h2>Calls from phones</h2>
+      <p className="muted">
+        Phones that share with NTC report each call: the voice network it used, the network just before, how long
+        it lasted, and the cell and signal at its start and end. There are no quality figures here and no phone
+        numbers. A call that falls back to 2G/3G where the phone was on 4G points at VoLTE coverage or core issues
+        around that cell.
+      </p>
+      <div className="edit-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginBottom: 12 }}>
+        <label>
+          Period
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+            <option value={1}>Last day</option>
+            <option value={7}>Last 7 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
+        </label>
+      </div>
+      {isLoading && <div className="page-status">Loading calls...</div>}
+      {error && <div className="page-status page-status-error">Could not load calls.</div>}
+      {data && total === 0 && (
+        <div className="page-status">No calls reported in this period yet.</div>
+      )}
+      {data && total > 0 && (
+        <>
+          <table className="admin-table" style={{ maxWidth: 520 }}>
+            <thead>
+              <tr><th>Call</th><th>Calls</th><th>Share</th></tr>
+            </thead>
+            <tbody>
+              {OUTCOME_ORDER.map((o) => (
+                <tr key={o}>
+                  <td>{OUTCOME_LABEL[o]}</td>
+                  <td>{data.by_outcome[o].toLocaleString()}</td>
+                  <td>{pct(data.by_outcome[o])}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <h3 style={{ marginTop: 20 }}>Cells where calls most often fell back</h3>
+          {data.top_fallback_cells.length === 0 ? (
+            <div className="page-status">No call fell back to 2G/3G in this period.</div>
+          ) : (
+            <table className="admin-table">
+              <thead>
+                <tr><th>Cell at call start</th><th>PCI</th><th>Network</th><th>Calls</th><th>Fell back</th></tr>
+              </thead>
+              <tbody>
+                {data.top_fallback_cells.map((c) => (
+                  <tr key={`${c.cell_id}-${c.network_type}`}>
+                    <td>{c.site_id ? `${c.site_id}${c.cell_name ? ` · ${c.cell_name}` : ''}` : c.cell_id}</td>
+                    <td>{c.pci ?? '-'}</td>
+                    <td>{c.network_type || '-'}</td>
+                    <td>{c.calls}</td>
+                    <td>{c.fallback} ({Math.round((100 * c.fallback) / c.calls)}%)</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          <h3 style={{ marginTop: 20 }}>Latest calls</h3>
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Phone</th><th>Started</th><th>Duration</th><th>Call</th><th>Voice network</th>
+                <th>Before the call</th><th>Cell at start</th><th>Signal at start</th><th>Signal at end</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.calls.map((c, i) => (
+                <tr key={i}>
+                  <td>{c.device}</td>
+                  <td>{new Date(c.started_at).toLocaleString()}</td>
+                  <td>{c.duration_s != null ? `${c.duration_s}s` : '-'}</td>
+                  <td>{OUTCOME_LABEL[c.outcome]}</td>
+                  <td>{c.voice_networks.replace(/,/g, ' → ') || '-'}</td>
+                  <td>{c.data_network_before || '-'}</td>
+                  <td>{c.cell_id != null ? `${c.network_type} ${c.cell_id}${c.pci != null ? ` / PCI ${c.pci}` : ''}` : '-'}</td>
+                  <td>{c.level_dbm != null ? `${c.level_dbm} dBm` : '-'}</td>
+                  <td>{c.end_level_dbm != null ? `${c.end_level_dbm} dBm${c.end_network_type ? ` (${c.end_network_type})` : ''}` : '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="muted" style={{ fontSize: 11, marginTop: 6 }}>
+            {total.toLocaleString()} call(s) in the last {days} day(s); the latest {data.calls.length} are listed.
+            Signal is RSRP on 4G/5G, RSCP on 3G and RSSI on 2G.
+          </p>
+        </>
+      )}
+    </section>
+  )
+}
 
 // VoLTE Quality (dev/pilot-testing tool) -- raw, ungrouped VoLTE/VoNR
 // call-quality samples from core/volte_quality.py's VolteQualityListView
@@ -115,6 +231,7 @@ export default function VolteQualityPage() {
           </p>
         </>
       )}
+      <CallsSection />
     </div>
   )
 }

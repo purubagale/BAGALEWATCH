@@ -95,7 +95,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import VolteCallSample
-from .telemetry import MAX_SAMPLES_PER_REQUEST, _f, _int, _scope_by_operator, hash_device_id, resolve_ingest_caller
+from .telemetry import (MAX_SAMPLES_PER_REQUEST, _f, _int, _scope_by_operator, hash_device_id,
+                        ingest_row_device_id, resolve_ingest_caller)
 from .views import IsSuperadminOnly
 
 _NET_TYPES = {'LTE', 'NR', 'UNKNOWN'}
@@ -321,7 +322,7 @@ class VolteSampleIngestView(APIView):
         # A signed device may only write rows for itself (see TelemetryIngestView).
         if device:
             for r in rows:
-                r['device_id'] = device.device_hash
+                r['device_id'] = ingest_row_device_id(device)
 
         # Plain per-row .save() (not bulk_create()) -- deliberately, so the
         # model's own save() override computes `location` from lat/lng for
