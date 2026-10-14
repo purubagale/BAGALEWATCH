@@ -486,6 +486,14 @@ class Sector(models.Model):
     sector = models.CharField(max_length=100, blank=True, default='')
     tech = models.CharField(max_length=100, blank=True, default='')
     local_cell_id = models.IntegerField(null=True, blank=True)
+    # The eNodeB a 4G sector belongs to (2026-10-13), from the "NodeB ID"
+    # column of the LTE engineering parameter file. With `local_cell_id` it
+    # gives the cell identity a phone reports: eNodeB ID x 256 + local cell
+    # ID. A reading that carries that identity is matched to its sector
+    # exactly (core/dt_serving_cell.py), with no need for the PCI, which
+    # several sites share. Checked against a TEMS log: eNodeB 3092 cell 1
+    # is CDR092 J3, and so on for every cell compared.
+    enodeb_id = models.IntegerField(null=True, blank=True)
     height = models.FloatField(null=True, blank=True)
     azimuth = models.FloatField(null=True, blank=True)
     mech_tilt = models.FloatField(null=True, blank=True)
@@ -601,6 +609,7 @@ class Sector(models.Model):
             models.Index(fields=['pci']),
             models.Index(fields=['scrambling_code']),
             models.Index(fields=['bcch', 'bsic']),
+            models.Index(fields=['enodeb_id', 'local_cell_id'], name='v2_sector_cell_identity_idx'),
         ]
 
     def __str__(self):
@@ -1484,6 +1493,11 @@ class DriveTestSample(models.Model):
     serving_cell_name = models.CharField(max_length=100, blank=True, null=True)
     serving_local_cell_id = models.IntegerField(null=True, blank=True)
     serving_dist_km = SignalFloatField(null=True, blank=True)
+    # The serving cell's own identity as the log gives it (2026-10-13): on 4G
+    # the 28-bit cell identity, eNodeB ID x 256 + cell ID. A TEMS .trp log
+    # carries it; an Excel export does if the column is included. Where it
+    # is present the serving sector is found from it exactly.
+    cell_id = models.BigIntegerField(null=True, blank=True)
     cell_role = models.CharField(max_length=10, choices=ROLE_CHOICES, blank=True, default='serving')
     rx_qual = SignalFloatField(null=True, blank=True)
     bcch = models.IntegerField(null=True, blank=True)

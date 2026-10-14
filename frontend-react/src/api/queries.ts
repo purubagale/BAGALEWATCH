@@ -162,10 +162,14 @@ export function useSiteDtSessions(siteId: string | undefined) {
 
 // Readings matched to this site's sectors, for the site map's "Measured"
 // layer. Fetched only once that layer is switched on.
-export function useSiteMeasuredCoverage(siteId: string | undefined, enabled: boolean) {
+export function useSiteMeasuredCoverage(siteId: string | undefined, enabled: boolean, session: number | null = null) {
   return useQuery({
-    queryKey: ['site-measured-coverage', siteId],
-    queryFn: () => apiJson<SiteMeasuredCoverage>(`/api/v2/sites/${siteId}/measured-coverage/`),
+    queryKey: ['site-measured-coverage', siteId, session],
+    queryFn: () => apiJson<SiteMeasuredCoverage>(
+      `/api/v2/sites/${siteId}/measured-coverage/${session ? `?session=${session}` : ''}`,
+    ),
+    // Keeps the dots on screen while another drive test is being fetched.
+    placeholderData: (previous) => previous,
     enabled: !!siteId && enabled,
     staleTime: 5 * 60 * 1000,
   })

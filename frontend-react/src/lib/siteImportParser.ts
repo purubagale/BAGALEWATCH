@@ -330,6 +330,9 @@ export interface ParsedEngineeringParamRow {
   beamwidth: number | null
   radius: number | null
   max_tx_power_dbm: number | null
+  // The eNodeB a 4G sector belongs to ("NodeB ID" in the LTE engineering
+  // parameter file). Null from the other sources.
+  enodeb_id?: number | null
   carrier: string
   site_band: string
   // 2G/3G RF Database fields (2026-09-27, parseRfDatabaseRows below) —
@@ -371,6 +374,8 @@ export function parseEngineeringParamRows(rows: string[][]): ParsedEngineeringPa
   const header = rows[0].map(normalize)
   const iCellName = findCol(header, 'cellname')
   const iPci = findCol(header, 'pci')
+  // "NodeB ID" in the LTE list; "Node IDENTITY" beside it is a name, not this number.
+  const iEnodeb = findCol(header, 'nodebid', 'enodebid', 'enbid')
   const iHeight = findCol(header, 'antennaheight')
   const iAzimuth = findCol(header, 'azimuth')
   const iMt = findCol(header, 'mechdowntilt')
@@ -415,6 +420,7 @@ export function parseEngineeringParamRows(rows: string[][]): ParsedEngineeringPa
     records.push({
       cell_name: cellName,
       pci: int(row, iPci),
+      enodeb_id: int(row, iEnodeb),
       height: num(row, iHeight),
       azimuth: num(row, iAzimuth),
       mech_tilt: num(row, iMt),

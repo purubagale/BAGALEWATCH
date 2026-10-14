@@ -135,7 +135,7 @@ SECTOR_FIELDS = [
 # every call site below.
 SECTOR_UPDATE_FIELDS = SECTOR_FIELDS + ['lat', 'lng']
 _INT_FIELDS = {
-    'local_cell_id', 'pci',
+    'local_cell_id', 'pci', 'enodeb_id',
     # 2G/3G RF Database fields (2026-09-27) -- see
     # ENGINEERING_SECTOR_FIELDS's own comment below for the full list and
     # which tech each one comes from.
@@ -197,7 +197,7 @@ KPI_UPDATE_FIELDS = KPI_FIELDS + ['kpi_entered', 'kpi_date']
 # reaches this field list, so 'max_tx_power_dbm' above already covers it
 # -- no separate watts field needed.
 ENGINEERING_SECTOR_FIELDS = [
-    'pci', 'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'carrier', 'site_band',
+    'pci', 'enodeb_id', 'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'carrier', 'site_band',
     'beamwidth', 'radius', 'max_tx_power_dbm',
     'scrambling_code', 'bcch', 'bsic', 'cell_active_status', 'site_existence',
     'lac', 'ci', 'ncc', 'hsn', 'tch', 'total_trx', 'activated_trx',

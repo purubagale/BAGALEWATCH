@@ -781,6 +781,9 @@ export interface DtSample {
   // True when `cqi` was filled in from SINR at upload (a TEMS .trp log
   // carries none); false or absent when the test phone measured it.
   cqi_estimated?: boolean
+  // The serving cell's own identity as the log gives it: on 4G, eNodeB ID
+  // x 256 + cell ID. Lets the server find the sector exactly.
+  cell_id?: number | null
   // Serving-cell attribution (dt_serving_cell.py). `serving_site_id` +
   // `serving_dist_km` come back on the plot fetch and drive the coverage
   // map's hover connector (see useDtServingCells / DtCoverageMap). The
@@ -2483,6 +2486,19 @@ export interface SiteMeasuredSector {
   p50_km: number | null
   p90_km: number | null
   max_km: number | null
+  // Readings whose site could not be told from another that uses the same
+  // id, and the sites that share it.
+  uncertain_readings: number
+  same_id_sites: string[]
+  // How the readings agree with the stored azimuth; null on too few readings.
+  direction: {
+    readings: number
+    in_direction_pct: number
+    centre_deg: number | null
+    off_azimuth_deg: number | null
+    differs: boolean
+  } | null
+  antenna_change: { report: string; period: string; change: string } | null
 }
 
 export interface SiteMeasuredSquare {
@@ -2492,6 +2508,7 @@ export interface SiteMeasuredSquare {
   lng: number
   level: number | null
   n: number
+  uncertain: boolean
 }
 
 export interface SiteMeasuredCoverage {
@@ -2501,6 +2518,9 @@ export interface SiteMeasuredCoverage {
   squares: SiteMeasuredSquare[]
   truncated: boolean
   phone_readings_included: boolean
+  sessions: { id: number; name: string; date: string; readings: number }[]
+  session: number | null
+  direction_rules: { facing_deg: number; beside_site_m: number; min_readings: number; flag_deg: number }
 }
 
 // Operating band of a phone reading (2026-10-13, core/radio_band.py).

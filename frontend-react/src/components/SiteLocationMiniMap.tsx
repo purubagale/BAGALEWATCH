@@ -114,7 +114,8 @@ export default function SiteLocationMiniMap({
   const [showDiagram, setShowDiagram] = useState(true)
   const [showTilt, setShowTilt] = useState(false)
   const [showMeasured, setShowMeasured] = useState(false)
-  const measured = useSiteMeasuredCoverage(siteId, showMeasured)
+  const [measuredSession, setMeasuredSession] = useState<number | null>(null)
+  const measured = useSiteMeasuredCoverage(siteId, showMeasured, measuredSession)
 
   function toggleFullscreen() {
     const el = wrapRef.current
@@ -253,12 +254,15 @@ export default function SiteLocationMiniMap({
               pathOptions={{
                 color: colorByKey.get(q.key.trim().toLowerCase()) ?? UNKNOWN_SECTOR_COLOR,
                 fillColor: colorByKey.get(q.key.trim().toLowerCase()) ?? UNKNOWN_SECTOR_COLOR,
-                fillOpacity: 0.8, weight: q.source === 'phone' ? 2 : 0,
+                // Hollow: another site uses the same id and this reading could be its.
+                fillOpacity: q.uncertain ? 0 : 0.8,
+                weight: q.uncertain ? 1.5 : q.source === 'phone' ? 2 : 0,
               }}
             >
               <Tooltip direction="top">
                 {q.key} · {q.level != null ? `${q.level} dBm` : 'no level'} · {q.n} {q.n === 1 ? 'reading' : 'readings'} ·{' '}
                 {q.source === 'phone' ? 'phones' : 'drive test'}
+                {q.uncertain ? ' · may belong to another site with the same ID' : ''}
               </Tooltip>
             </CircleMarker>
           ))}
@@ -331,10 +335,33 @@ export default function SiteLocationMiniMap({
             'No stored reading is matched to this site. That means no drive test or phone reading named one of its cells, not that it has no coverage.'}
           {measured.data && measured.data.sectors.length > 0 && (
             <>
+              {/* What the direction figures leave out, said once for all sectors. */}
+              {measured.data.sessions.length > 0 && (
+                <label className="site-mini-map-legend-pick">
+                  Drive test{' '}
+                  <select
+                    value={measuredSession ?? ''}
+                    onChange={(e) => setMeasuredSession(e.target.value ? Number(e.target.value) : null)}
+                  >
+                    <option value="">All ({measured.data.sessions.length})</option>
+                    {measured.data.sessions.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.date || 'no date'} · {d.name || `Drive test ${d.id}`} · {d.readings.toLocaleString()}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <div>
                 Dots: where a reading served by the sector was taken, one per {measured.data.square_m} m square.
                 {measured.data.phone_readings_included ? ' Ringed dots are phone readings.' : ''}
+                {measured.data.squares.some((q) => q.uncertain)
+                  ? ' Hollow dots may belong to another site that uses the same ID.' : ''}
                 {measured.data.truncated ? ' Only the busiest squares are drawn.' : ''}
+              </div>
+              <div>
+                Direction is checked on readings at least {measured.data.direction_rules.beside_site_m} m from the site
+                and strong enough to be service. Nothing here changes the stored azimuth or tilt.
               </div>
               {measured.data.sectors.map((s) => {
                 const total = s.drive_test_readings + s.phone_readings
@@ -349,6 +376,30 @@ export default function SiteLocationMiniMap({
                     {s.p50_km != null && s.p90_km != null &&
                       `, half within ${s.p50_km} km, nine in ten within ${s.p90_km} km`}
                     {s.max_km != null && `, farthest ${s.max_km} km`}
+                    {s.direction && (
+                      <div className={s.direction.differs ? 'site-mini-map-legend-warn' : 'site-mini-map-legend-sub'}>
+                        {s.direction.differs ? '⚠ ' : ''}
+                        {s.direction.in_direction_pct}% of {s.direction.readings.toLocaleString()} readings lie where the
+                        sector points ({s.azimuth}°)
+                        {s.direction.centre_deg != null
+                          ? `; they centre on ${s.direction.centre_deg}°, ${s.direction.off_azimuth_deg}° away`
+                          : '; they are spread all round the site'}
+                        {s.direction.differs ? '. Check the azimuth on site, or whether these readings are this site\'s.' : '.'}
+                      </div>
+                    )}
+                    {s.uncertain_readings > 0 && (
+                      <div className="site-mini-map-legend-sub">
+                        {s.uncertain_readings.toLocaleString()} readings are uncertain: {s.same_id_sites.join(', ')}{' '}
+                        {s.same_id_sites.length === 1 ? 'uses' : 'use'} the same ID.
+                      </div>
+                    )}
+                    {s.antenna_change && (
+                      <div className="site-mini-map-legend-sub">
+                        An antenna change is on record for this sector
+                        {s.antenna_change.period ? ` (${s.antenna_change.period})` : ''}. Readings taken before it show the
+                        old direction or tilt.
+                      </div>
+                    )}
                   </div>
                 )
               })}

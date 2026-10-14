@@ -1574,6 +1574,10 @@ textarea:focus {
   color: var(--text-secondary);
 }
 .site-mini-map-legend-row { margin-top: 3px; color: var(--text-primary); }
+.site-mini-map-legend-sub { margin: 1px 0 0 14px; color: var(--text-secondary); }
+.site-mini-map-legend-warn { margin: 1px 0 0 14px; color: var(--status-warning); }
+.site-mini-map-legend-pick { display: block; margin-bottom: 4px; color: var(--text-primary); }
+.site-mini-map-legend-pick select { max-width: 100%; font-size: 11px; }
 .site-mini-map-legend-chip {
   display: inline-block;
   width: 9px;

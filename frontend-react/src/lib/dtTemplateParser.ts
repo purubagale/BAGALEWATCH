@@ -86,6 +86,9 @@ export function parseTemplateRows(rows: string[][], tech: DtTech): DtSample[] {
     iSinr = -1,
     iPci = -1,
     iCqi = -1,
+    iCellIdentity = -1,
+    iEnodeb = -1,
+    iCellPart = -1,
     iRxQual = -1,
     iBcch = -1,
     iBsic = -1,
@@ -110,6 +113,10 @@ export function parseTemplateRows(rows: string[][], tech: DtTech): DtSample[] {
     iSinr = findCol(header, 'sinr')
     iPci = findCol(header, 'pci')
     iCqi = findCol(header, 'cqi')
+    // Optional: the serving cell's own identity, whole or in its two parts.
+    iCellIdentity = findCol(header, 'servingcellidentity', 'cellidentity', 'eci', 'cellglobalid')
+    iEnodeb = findCol(header, 'enodebid', 'enbid', 'nodebid')
+    iCellPart = findCol(header, 'cellid', 'localcellid')
   }
 
   if (iLat < 0 || iLng < 0 || iPrimary < 0) {
@@ -209,6 +216,11 @@ export function parseTemplateRows(rows: string[][], tech: DtTech): DtSample[] {
         const v = parseInt(row[iCqi], 10)
         if (Number.isFinite(v)) rec.cqi = v
       }
+      const whole = iCellIdentity >= 0 ? parseInt(row[iCellIdentity], 10) : NaN
+      const enb = iEnodeb >= 0 ? parseInt(row[iEnodeb], 10) : NaN
+      const part = iCellPart >= 0 ? parseInt(row[iCellPart], 10) : NaN
+      if (Number.isFinite(whole) && whole > 255) rec.cell_id = whole
+      else if (Number.isFinite(enb) && Number.isFinite(part) && part >= 0 && part <= 255) rec.cell_id = enb * 256 + part
     } else if (tech === '3G') {
       rec.rscp = primary
       if (iEcno >= 0) {

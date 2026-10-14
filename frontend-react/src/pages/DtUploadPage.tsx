@@ -226,6 +226,7 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
   let pci: number | null = null
   let band = ''
   let cqi: number | null = null
+  let cellId: number | null = null
   let cqiEstimated = false
   let dl: number | null = null
   let rxQual: number | null = null
@@ -249,6 +250,14 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     band = bandStr(row.band)
     cqi = int(row.cqi)
     cqiEstimated = cqi != null && (row as { cqiEstimated?: unknown }).cqiEstimated === true
+    // The serving cell's identity (2026-10-13): the log's complete value,
+    // else built from its eNodeB and cell parts. The server finds the
+    // sector from it exactly, where the PCI alone can fit several sites.
+    const ids = row as { cellIdComplete?: unknown; cellIdEnb?: unknown; cellIdCell?: unknown }
+    const complete = int(ids.cellIdComplete)
+    const enb = int(ids.cellIdEnb)
+    const cellPart = int(ids.cellIdCell)
+    cellId = complete != null && complete > 255 ? complete : enb != null && cellPart != null ? enb * 256 + cellPart : null
     // Real DL throughput, when TEMS declared it — a genuine field this
     // engine confirmed against a real 4G DL capture (see trpAnalysis.ts's
     // module comment), not the never-verified extraction CLAUDE.md flags
@@ -283,7 +292,7 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     date: row.isoTs.slice(0, 10),
     lat, lng,
     rsrp: primary,
-    rsrq, sinr, dl, pci, band, cqi, cqi_estimated: cqiEstimated,
+    rsrq, sinr, dl, pci, band, cqi, cqi_estimated: cqiEstimated, cell_id: cellId,
     serving_site_id: null,
     serving_site_name: null,
     serving_sector: null,
@@ -575,10 +584,14 @@ type DupAction = 'cancel' | 'keep' | 'replace'
 // others above.
 const TEMPLATES: Record<DtTech, { header: string[]; sample: string[][]; fname: string }> = {
   '4G': {
-    header: ['S.N', 'Time', 'Date', 'Latitude', 'Longitude', 'Serving Cell RSRP (dBm)', 'Serving Cell RSRQ (dB)', 'Serving Cell RS SINR (dB)', 'CQI', 'PCI'],
+    // "Serving Cell Identity" is optional (2026-10-13) and worth including:
+    // with it each reading is matched to its exact sector, where the PCI
+    // alone can fit several sites. It is the 4G cell identity, eNodeB ID x
+    // 256 + cell ID. Separate "eNodeB ID" and "Cell ID" columns work too.
+    header: ['S.N', 'Time', 'Date', 'Latitude', 'Longitude', 'Serving Cell RSRP (dBm)', 'Serving Cell RSRQ (dB)', 'Serving Cell RS SINR (dB)', 'CQI', 'PCI', 'Serving Cell Identity'],
     sample: [
-      ['1', '4:24:57.000', '6/12/2026', '27.0234980', '84.8843140', '-74.9', '-8.0', '10.0', '11', '134'],
-      ['2', '4:24:59.000', '6/12/2026', '27.0234980', '84.8843140', '-74.8', '-8.7', '10.2', '11', '134'],
+      ['1', '4:24:57.000', '6/12/2026', '27.0234980', '84.8843140', '-74.9', '-8.0', '10.0', '11', '134', '784898'],
+      ['2', '4:24:59.000', '6/12/2026', '27.0234980', '84.8843140', '-74.8', '-8.7', '10.2', '11', '134', '784898'],
     ],
     fname: 'dt_import_template_4g.csv',
   },
