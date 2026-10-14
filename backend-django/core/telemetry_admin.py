@@ -928,6 +928,7 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 'ts': r.ts,
                 'ping_median_ms': r.ping_median_ms,
                 'jitter_ms': r.jitter_ms,
+                'packet_loss_pct': r.packet_loss_pct,
                 'download_mbps': r.download_mbps,
                 'upload_mbps': r.upload_mbps,
                 'network_type': r.network_type,

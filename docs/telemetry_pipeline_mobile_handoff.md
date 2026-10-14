@@ -206,6 +206,21 @@ target phones and send it whenever the modem reports it.
 The app implements these rules today. A new app must keep them.
 
 - **Off by default.** Nothing is collected or sent until the user turns sharing on.
+  The one exception is the first-install sample below.
+- **One-minute sample.** Whenever the user allows location on the setup screen
+  (first install, after an update, or any time the permission was missing),
+  the app shares for about one minute, takes a few readings, and switches
+  sharing off by itself. The setup screen says this before the user allows
+  anything. If the permission is already held, nothing is shared.
+- **First start after install.** The app asks for location, phone state and, on
+  Android 13 and later, notifications. Then a pop-up asks for the phone's number
+  to register it. The user can put either off.
+- **First start after an update.** The app first checks the permissions and
+  shows the setup screen if location is missing. It then checks whether the
+  phone is registered. If not, the same pop-up asks for the number. If it is, a message
+  says so and nothing more is asked.
+- **Settings** shows the registration form only while the phone is not
+  registered. After that it shows the registered number.
 - **Share with NTC** opens a window of 60 minutes. It ends on its own, and the
   user can end it earlier. The window survives a restart.
 - **Drive test.** Start asks for location permission if missing, then asks
@@ -262,7 +277,9 @@ Registration is needed for trace requests, site photos and device identity.
   server see that two IDs belong to one phone.
 
 **Current state, to be changed by the app team:** the user types the number
-("Register this phone" in Settings) and it is not verified against the SIM. The
+(in the pop-up at first start, or under "Register this phone" in Settings) and
+it is not verified against the SIM. "Registered" is what the phone remembers
+from the server's answer; it survives an update and is lost on uninstall. The
 app sends an empty `play_integrity_token`, so the server runs with the
 integrity check switched off. The app retries registration in the background
 with a fresh challenge each time.
@@ -498,8 +515,11 @@ supplies them separately.
 | Wi-Fi | Wi-Fi readings |
 | Settings | Employee tick box, Share with NTC, rescue sharing, Register this phone, battery settings |
 
-The "I am an NTC employee" tick box only opens the tabs and marks drives as
-staff drives. It grants nothing on the server. The app has no staff login.
+Everyone gets Signal, Wi-Fi and Settings. The Cells and Map tabs, and with Map
+the drive test and site photo, appear only after "I am an NTC employee" is
+ticked in Settings; until then they are not on the bar at all. The tick box
+also marks drives as staff drives. It grants nothing on the server. The app
+has no staff login.
 
 ### 14.2 SDK entry points
 

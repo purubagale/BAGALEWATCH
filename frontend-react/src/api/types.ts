@@ -761,6 +761,9 @@ export type DtTech = '4G' | '3G' | '2G'
 export type DtCellRole = 'serving' | 'neighbor'
 
 export interface DtSample {
+  // Set only on a 50 m square of Explore's wide search (2026-10-14): how many
+  // readings it stands for; its values are the weakest of each measurement.
+  square_n?: number
   ts: string
   date: string
   lat: number | null
@@ -778,6 +781,12 @@ export interface DtSample {
   // LTE-only 3GPP Channel Quality Indicator, 0-15, higher is better --
   // see DriveTestSample.cqi's docstring in models.py.
   cqi: number | null
+  // True when `cqi` was filled in from SINR at upload (a TEMS .trp log
+  // carries none); false or absent when the test phone measured it.
+  cqi_estimated?: boolean
+  // The serving cell's own identity as the log gives it: on 4G, eNodeB ID
+  // x 256 + cell ID. Lets the server find the sector exactly.
+  cell_id?: number | null
   // Serving-cell attribution (dt_serving_cell.py). `serving_site_id` +
   // `serving_dist_km` come back on the plot fetch and drive the coverage
   // map's hover connector (see useDtServingCells / DtCoverageMap). The
@@ -920,7 +929,15 @@ export interface DtSessionListItem {
   mode: string
   attachment_count: number
   activities: DtSessionActivityTag[]
+  // Retention (2026-10-14, core/dt_retention.py).
+  purpose?: DtPurpose
+  keep?: boolean
+  file_hash?: string
+  source_location?: string
+  readings_pruned?: number
 }
+
+export type DtPurpose = 'yearly' | 'complaint' | 'optimization' | 'other'
 
 // Optimization Activities (2026-09-12) -- see OptimizationActivity's
 // docstring in core/models.py for the before/after-change/re-verify
@@ -1091,6 +1108,9 @@ export interface DtSessionAttachment {
 export interface DtSessionDetail extends DtSessionListItem {
   samples: DtSample[]
   attachments: DtSessionAttachment[]
+  // Explore's area search only (2026-10-14): above 20,000 readings the
+  // server sends 50 m squares (or larger) instead of readings; 0 = every reading.
+  plot_step_m?: number
 }
 
 // ── Vendor RNO report importer (2026-09-15, updated 2026-09-26) ─────────
@@ -1377,6 +1397,9 @@ export interface DtSessionCreate {
   meta: DtSessionMeta
   samples: DtSample[]
   mode?: string
+  purpose?: DtPurpose
+  file_hash?: string
+  source_location?: string
 }
 
 // GET/PUT /permissions-matrix/ shape — excludes superadmin (see
@@ -2014,6 +2037,7 @@ export interface TelemetryDriveTestSpeedResult {
   ts: string
   ping_median_ms: number | null
   jitter_ms: number | null
+  packet_loss_pct?: number | null
   download_mbps: number | null
   upload_mbps: number | null
   network_type: string
@@ -2466,6 +2490,57 @@ export interface SampleCqiFields {
   spectral_efficiency: number | null
 }
 
+// Where a site's sectors were actually received (2026-10-13,
+// core/site_coverage.py). `squares` are about 55 m on a side; `key` ties a
+// square to its sector (the cell name, else the sector label).
+export interface SiteMeasuredSector {
+  key: string
+  cell_name: string
+  sector: string
+  tech: string
+  azimuth: number | null
+  drive_test_readings: number
+  phone_readings: number
+  p50_km: number | null
+  p90_km: number | null
+  max_km: number | null
+  // Readings whose site could not be told from another that uses the same
+  // id, and the sites that share it.
+  uncertain_readings: number
+  same_id_sites: string[]
+  // How the readings agree with the stored azimuth; null on too few readings.
+  direction: {
+    readings: number
+    in_direction_pct: number
+    centre_deg: number | null
+    off_azimuth_deg: number | null
+    differs: boolean
+  } | null
+  antenna_change: { report: string; period: string; change: string } | null
+}
+
+export interface SiteMeasuredSquare {
+  key: string
+  source: 'drive_test' | 'phone'
+  lat: number
+  lng: number
+  level: number | null
+  n: number
+  uncertain: boolean
+}
+
+export interface SiteMeasuredCoverage {
+  site: string
+  square_m: number
+  sectors: SiteMeasuredSector[]
+  squares: SiteMeasuredSquare[]
+  truncated: boolean
+  phone_readings_included: boolean
+  sessions: { id: number; name: string; date: string; readings: number }[]
+  session: number | null
+  direction_rules: { facing_deg: number; beside_site_m: number; min_readings: number; flag_deg: number }
+}
+
 // Operating band of a phone reading (2026-10-13, core/radio_band.py).
 // `arfcn` is the channel number the phone reported, `band` the 3GPP band
 // number (none on 2G), `band_mhz` its common name, `band_label` the text
@@ -2591,4 +2666,162 @@ export interface TelemetryNearResponse {
   sessions: TelemetryNearSession[]
   points: TelemetryNearPoint[]
   truncated: boolean
+}
+
+// ── Problem reports (2026-10-14, core/problem_report.py) ─────────────────
+
+export type ProblemCategory = 'no_signal' | 'slow_data' | 'call_drop' | 'stuck_2g3g' | 'other'
+export type ProblemStatus = 'new' | 'checked' | 'closed'
+
+export interface ProblemFinding {
+  kind: string
+  title: string
+  cause: string
+  action: string
+  evidence: string[]
+}
+
+export interface ProblemAreaSummary {
+  readings: number
+  share_4g_pct: number | null
+  rsrp_4g_mean: number | null
+  rsrq_4g_mean: number | null
+  readings_4g: number
+}
+
+export interface ProblemCheck {
+  radius_m: number
+  baseline_days: number
+  phones_at_time: ProblemAreaSummary
+  phones_before: ProblemAreaSummary
+  drive_tests: {
+    readings: number
+    readings_4g: number
+    rsrp_4g_mean: number | null
+    rsrq_4g_mean: number | null
+    dl_4g_mean: number | null
+    sessions: { id: number; name: string; date: string | null; tech: string }[]
+  }
+  serving: { site_id: string; name: string; cell_name: string; km: number | null; matched_by: string } | null
+  nearest_sites: { site_id: string; name: string; km: number }[]
+  findings: ProblemFinding[]
+  customer_reply: string
+}
+
+export interface ProblemReport {
+  id: number
+  source: 'app' | 'staff'
+  category: ProblemCategory
+  category_label: string
+  note: string
+  happened_at: string
+  created_at: string
+  lat: number
+  lng: number
+  network_type: string
+  band: string
+  pci: number | null
+  cell_id: number | null
+  level_dbm: number | null
+  rsrq_db: number | null
+  sinr_db: number | null
+  download_mbps: number | null
+  upload_mbps: number | null
+  ping_ms: number | null
+  jitter_ms: number | null
+  packet_loss_pct: number | null
+  phone_model: string
+  android_version: string
+  app_version: string
+  status: ProblemStatus
+  engineer_note: string
+  entered_by: string | null
+  checked_by: string | null
+  checked_at: string | null
+  // Superadmin only.
+  phone_number?: string | null
+  check?: ProblemCheck
+}
+
+// ── Drive-test retention and the Recent layer (2026-10-14) ───────────────
+
+export interface DtRecentEntry {
+  session_id: number
+  date: string
+  purpose: DtPurpose
+  n: number
+  rsrp_min: number | null
+  rsrp: number | null
+  rsrq: number | null
+  sinr: number | null
+  dl: number | null
+  cqi: number | null
+  rscp: number | null
+  ecno: number | null
+  rx_qual: number | null
+}
+
+export interface DtRecentSquare {
+  tech: DtTech
+  lat: number
+  lng: number
+  latest: DtRecentEntry
+  previous: DtRecentEntry | null
+}
+
+export interface DtRecentResponse {
+  squares: DtRecentSquare[]
+  sessions: Record<string, string>
+  square_m: number
+}
+
+export interface DtRetentionSettings {
+  enabled: boolean
+  yearly_keep: number
+  per_square_keep: number
+  detail_months: number
+  summary_years: number
+  min_readings: number
+  updated_by: string | null
+  updated_at: string | null
+}
+
+export interface DtPrunePlanItem {
+  session_id: number
+  name: string
+  tech: DtTech
+  purpose: DtPurpose
+  drive_date: string
+  action: 'reduced' | 'erased'
+  readings_removed: number
+  squares: number
+}
+
+export interface DtPruneRecordItem {
+  session_id: number
+  name: string
+  tech: string
+  purpose: string
+  drive_date: string | null
+  action: 'reduced' | 'erased'
+  readings_removed: number
+  created_at: string
+}
+
+export interface DtPruneRun {
+  id: number
+  status: 'planned' | 'approved' | 'running' | 'done' | 'failed' | 'discarded'
+  settings: Partial<DtRetentionSettings>
+  readings_to_remove: number
+  sessions_reduced: number
+  sessions_erased: number
+  created_at: string
+  created_by: string | null
+  approved_by: string | null
+  approved_at: string | null
+  finished_at: string | null
+  error: string
+  plan?: DtPrunePlanItem[]
+  plan_total?: number
+  records?: DtPruneRecordItem[]
 }

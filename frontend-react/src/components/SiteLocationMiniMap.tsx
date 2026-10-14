@@ -1,10 +1,11 @@
-import { MapContainer, Marker, Polygon, TileLayer, Tooltip, useMap } from 'react-leaflet'
+import { CircleMarker, MapContainer, Marker, Polygon, Polyline, TileLayer, Tooltip, useMap } from 'react-leaflet'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { useSiteMeasuredCoverage } from '../api/queries'
 import type { Sector } from '../api/types'
 import { divergentSectorPoints } from '../lib/sectorLocation'
-import { buildWedgePolygon } from '../lib/sectorWedge'
+import { TILT_REACH_DRAW_MAX_M, buildWedgePolygon, destinationPoint, tiltReachM } from '../lib/sectorWedge'
 import { statusColor } from '../lib/statusColor'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 
@@ -36,8 +37,45 @@ function wedgeColorForIndex(i: number): string {
 // in here for the plain OSM street layer this started with. A BTS site's
 // surroundings (rooftop mount, compound, access road) read far better on
 // imagery than on a street-only basemap, especially at this zoom.
+// Three things can be drawn for a sector (2026-10-13). They answer
+// different questions, so each has its own switch:
+//   diagram   the wedge above: direction from the site list, with a width
+//             and length that are the same for every sector on a band.
+//   tilt      a line to where the centre of the beam meets flat ground,
+//             from the antenna's height and tilt.
+//   measured  where readings served by the sector were really taken.
+const UNKNOWN_SECTOR_COLOR = '#94a3b8'
+
+function distanceText(m: number): string {
+  return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 10) * 10} m`
+}
+
+/** Zooms and moves the map so that everything drawn is inside it: the
+ * site, sectors at their own location, the wedges, the tilt lines and the
+ * measured dots, whichever are switched on. Runs again when that set
+ * changes and when the map changes size (fullscreen on or off), which is
+ * also when Leaflet has to be told its box changed. */
+function FitToDrawn({ corners, fitKey }: { corners: [number, number][]; fitKey: string }) {
+  const map = useMap()
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      map.invalidateSize()
+      if (corners.length > 1) {
+        map.fitBounds(L.latLngBounds(corners), { padding: [22, 22], maxZoom: FIT_MAX_ZOOM })
+      } else if (corners.length === 1) {
+        map.setView(corners[0], MINI_MAP_ZOOM)
+      }
+    })
+    return () => cancelAnimationFrame(raf)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitKey, map])
+  return null
+}
+
 const SATELLITE_URL = 'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
 const MINI_MAP_ZOOM = 16
+// How far in the automatic fit may go; a single small site would otherwise fill the box with one roof.
+const FIT_MAX_ZOOM = 18
 
 function InvalidateOnResize() {
   useMapInvalidateOnResize()
@@ -55,52 +93,11 @@ function dotIcon(color: string, size: number): L.DivIcon {
 
 type MapPoint = { lat: number; lng: number; label: string; kind: 'site' | 'sector' }
 
-// Re-fits the viewport whenever the actual SET of points changes (not on
-// every render) — same keyed-effect pattern as MapView.tsx's FitToScope,
-// just keyed on the points' own coordinates since this component has no
-// separate "scope" concept of its own.
-function FitToPoints({ points }: { points: MapPoint[] }) {
-  const map = useMap()
-  const key = points.map((p) => `${p.lat.toFixed(6)},${p.lng.toFixed(6)}`).join('|')
-  useEffect(() => {
-    if (points.length < 2) return
-    const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng] as [number, number]))
-    map.fitBounds(bounds, { padding: [28, 28], maxZoom: MINI_MAP_ZOOM })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, map])
-  return null
-}
-
-// Fullscreen toggling resizes this map's container without Leaflet ever
-// being told (same root cause DtExploreTab.tsx's own FullscreenSync
-// already documents — a stale internal Leaflet size cache from the
-// Fullscreen API's resize, not a tab-reveal). invalidateSize() on the
-// next frame plus a re-fit keeps the same site/sectors framed instead of
-// leaving the view wherever the pre-toggle 240px-tall box happened to be
-// scrolled/zoomed to.
-function FullscreenSync({ isFullscreen, points }: { isFullscreen: boolean; points: MapPoint[] }) {
-  const map = useMap()
-
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      map.invalidateSize()
-      if (points.length > 1) {
-        const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng] as [number, number]))
-        map.fitBounds(bounds, { padding: [28, 28] })
-      } else if (points.length === 1) {
-        map.setView([points[0].lat, points[0].lng], MINI_MAP_ZOOM)
-      }
-    })
-    return () => cancelAnimationFrame(raf)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, isFullscreen])
-
-  return null
-}
-
 export default function SiteLocationMiniMap({
-  lat, lng, status, sectors = [],
+  siteId, lat, lng, status, sectors = [],
 }: {
+  /** Needed for the measured layer; without it that switch is not offered. */
+  siteId?: string
   lat: number | null
   lng: number | null
   status: string
@@ -114,6 +111,11 @@ export default function SiteLocationMiniMap({
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [showDiagram, setShowDiagram] = useState(true)
+  const [showTilt, setShowTilt] = useState(false)
+  const [showMeasured, setShowMeasured] = useState(false)
+  const [measuredSession, setMeasuredSession] = useState<number | null>(null)
+  const measured = useSiteMeasuredCoverage(siteId, showMeasured, measuredSession)
 
   function toggleFullscreen() {
     const el = wrapRef.current
@@ -154,6 +156,54 @@ export default function SiteLocationMiniMap({
       }))
   }, [lat, lng, sectors])
 
+  // One colour per sector, shared by all three layers. Sectors with a wedge
+  // keep the colours they always had; the others follow on.
+  const colorByKey = useMemo(() => {
+    const out = new Map<string, string>()
+    const ordered = [...wedgeSectors.map((w) => w.sector), ...sectors.filter((s) => !wedgeSectors.some((w) => w.sector.id === s.id))]
+    ordered.forEach((s, i) => {
+      const color = wedgeColorForIndex(i)
+      if (s.cell_name) out.set(s.cell_name.trim().toLowerCase(), color)
+      out.set(`id:${s.id}`, color)
+    })
+    return out
+  }, [sectors, wedgeSectors])
+
+  // Reach from height and tilt: a line, not a wedge, so it needs no beamwidth
+  // and works for 2G and 3G sectors too.
+  const tiltLines = useMemo(() => {
+    if (lat == null || lng == null) return []
+    return sectors
+      .filter((s) => s.azimuth != null)
+      .map((s) => {
+        const reach = tiltReachM(s.height, s.mech_tilt, s.elec_tilt)
+        if (reach == null) return null
+        const origin: [number, number] = [s.lat ?? lat, s.lng ?? lng]
+        const drawn = Math.min(reach, TILT_REACH_DRAW_MAX_M)
+        return { sector: s, origin, reach, end: destinationPoint(origin[0], origin[1], s.azimuth as number, drawn) }
+      })
+      .filter((x): x is NonNullable<typeof x> => x != null)
+  }, [lat, lng, sectors])
+  const sectorsWithoutTiltReach = sectors.filter((s) => s.azimuth != null).length - tiltLines.length
+
+  const squares = showMeasured ? measured.data?.squares ?? [] : []
+
+  // Every corner of everything drawn, so the fit can take it all in.
+  const wedgeShapes = useMemo(
+    () => wedgeSectors.map(({ sector: s, origin }) => ({
+      sector: s,
+      positions: buildWedgePolygon(origin[0], origin[1], s.azimuth as number, s.beamwidth as number, s.radius as number),
+    })),
+    [wedgeSectors],
+  )
+  const drawnCorners = useMemo<[number, number][]>(() => {
+    const out: [number, number][] = points.map((p) => [p.lat, p.lng])
+    if (showDiagram) wedgeShapes.forEach((w) => w.positions.forEach((c) => out.push(c)))
+    if (showTilt) tiltLines.forEach((t) => out.push(t.end))
+    squares.forEach((q) => out.push([q.lat, q.lng]))
+    return out
+  }, [points, showDiagram, wedgeShapes, showTilt, tiltLines, squares])
+
   if (!points.length) {
     return <div className="site-mini-map-empty">No GPS coordinates recorded for this site.</div>
   }
@@ -192,12 +242,47 @@ export default function SiteLocationMiniMap({
               DtExploreTab.tsx both explicitly pass this same override. */}
           <TileLayer url={SATELLITE_URL} subdomains="0123" />
           <InvalidateOnResize />
-          <FitToPoints points={points} />
-          <FullscreenSync isFullscreen={isFullscreen} points={points} />
-          {wedgeSectors.map(({ sector: s, origin }, i) => (
+          <FitToDrawn
+            corners={drawnCorners}
+            fitKey={`${isFullscreen}|${showDiagram}|${showTilt}|${squares.length}|${drawnCorners.length}|${lat},${lng}`}
+          />
+          {squares.map((q, i) => (
+            <CircleMarker
+              key={`sq-${i}`}
+              center={[q.lat, q.lng]}
+              radius={q.source === 'phone' ? 4 : 3}
+              pathOptions={{
+                color: colorByKey.get(q.key.trim().toLowerCase()) ?? UNKNOWN_SECTOR_COLOR,
+                fillColor: colorByKey.get(q.key.trim().toLowerCase()) ?? UNKNOWN_SECTOR_COLOR,
+                // Hollow: another site uses the same id and this reading could be its.
+                fillOpacity: q.uncertain ? 0 : 0.8,
+                weight: q.uncertain ? 1.5 : q.source === 'phone' ? 2 : 0,
+              }}
+            >
+              <Tooltip direction="top">
+                {q.key} · {q.level != null ? `${q.level} dBm` : 'no level'} · {q.n} {q.n === 1 ? 'reading' : 'readings'} ·{' '}
+                {q.source === 'phone' ? 'phones' : 'drive test'}
+                {q.uncertain ? ' · may belong to another site with the same ID' : ''}
+              </Tooltip>
+            </CircleMarker>
+          ))}
+          {showTilt && tiltLines.map(({ sector: s, origin, reach, end }) => (
+            <Polyline
+              key={`tilt-${s.id}`}
+              positions={[origin, end]}
+              pathOptions={{ color: colorByKey.get(`id:${s.id}`) ?? UNKNOWN_SECTOR_COLOR, weight: 3, dashArray: '6 6' }}
+            >
+              <Tooltip direction="top" sticky>
+                {s.cell_name || s.sector} ({s.tech || '4G'}): the centre of the beam meets flat ground about{' '}
+                {distanceText(reach)} out ({s.height} m high, {(s.mech_tilt ?? 0) + (s.elec_tilt ?? 0)}° tilt)
+                {reach > TILT_REACH_DRAW_MAX_M ? `; drawn to ${distanceText(TILT_REACH_DRAW_MAX_M)}` : ''}
+              </Tooltip>
+            </Polyline>
+          ))}
+          {showDiagram && wedgeShapes.map(({ sector: s, positions }, i) => (
             <Polygon
               key={`wedge-${s.id}`}
-              positions={buildWedgePolygon(origin[0], origin[1], s.azimuth as number, s.beamwidth as number, s.radius as number)}
+              positions={positions}
               pathOptions={{ color: wedgeColorForIndex(i), fillColor: wedgeColorForIndex(i), fillOpacity: 0.3, weight: 1 }}
             >
               <Tooltip direction="top">
@@ -219,7 +304,109 @@ export default function SiteLocationMiniMap({
             </Marker>
           ))}
         </MapContainer>
+        <div className="site-mini-map-layers">
+          <label title="Direction from the site list. Width and length are the same for every sector on a band.">
+            <input type="checkbox" checked={showDiagram} onChange={(e) => setShowDiagram(e.target.checked)} /> Diagram
+          </label>
+          <label title="Where the centre of each beam meets flat ground, from antenna height and tilt. Hills change this.">
+            <input type="checkbox" checked={showTilt} onChange={(e) => setShowTilt(e.target.checked)} /> Reach from tilt
+          </label>
+          {siteId && (
+            <label title="Where readings served by each sector were really taken, from drive tests and phones.">
+              <input type="checkbox" checked={showMeasured} onChange={(e) => setShowMeasured(e.target.checked)} /> Measured
+            </label>
+          )}
+        </div>
       </div>
+      {showTilt && (
+        <div className="site-mini-map-legend">
+          {tiltLines.length === 0
+            ? 'No sector here has both an antenna height and a tilt above zero, so no reach can be worked out.'
+            : 'Dashed lines: where the centre of each beam meets the ground if the ground were flat. On a hill the real distance can be much longer or shorter.'}
+          {tiltLines.length > 0 && sectorsWithoutTiltReach > 0 &&
+            ` ${sectorsWithoutTiltReach} sector${sectorsWithoutTiltReach === 1 ? ' has' : 's have'} no line (no height, or no tilt).`}
+        </div>
+      )}
+      {showMeasured && (
+        <div className="site-mini-map-legend">
+          {measured.isLoading && 'Loading the readings…'}
+          {measured.isError && 'Could not load the readings.'}
+          {measured.data && measured.data.sectors.length === 0 &&
+            'No stored reading is matched to this site. That means no drive test or phone reading named one of its cells, not that it has no coverage.'}
+          {measured.data && measured.data.sectors.length > 0 && (
+            <>
+              {/* What the direction figures leave out, said once for all sectors. */}
+              {measured.data.sessions.length > 0 && (
+                <label className="site-mini-map-legend-pick">
+                  Drive test{' '}
+                  <select
+                    value={measuredSession ?? ''}
+                    onChange={(e) => setMeasuredSession(e.target.value ? Number(e.target.value) : null)}
+                  >
+                    <option value="">All ({measured.data.sessions.length})</option>
+                    {measured.data.sessions.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.date || 'no date'} · {d.name || `Drive test ${d.id}`} · {d.readings.toLocaleString()}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <div>
+                Dots: where a reading served by the sector was taken, one per {measured.data.square_m} m square.
+                {measured.data.phone_readings_included ? ' Ringed dots are phone readings.' : ''}
+                {measured.data.squares.some((q) => q.uncertain)
+                  ? ' Hollow dots may belong to another site that uses the same ID.' : ''}
+                {measured.data.truncated ? ' Only the busiest squares are drawn.' : ''}
+              </div>
+              <div>
+                Direction is checked on readings at least {measured.data.direction_rules.beside_site_m} m from the site
+                and strong enough to be service. Nothing here changes the stored azimuth or tilt.
+              </div>
+              {measured.data.sectors.map((s) => {
+                const total = s.drive_test_readings + s.phone_readings
+                return (
+                  <div key={s.key} className="site-mini-map-legend-row">
+                    <span
+                      className="site-mini-map-legend-chip"
+                      style={{ background: colorByKey.get(s.key.trim().toLowerCase()) ?? UNKNOWN_SECTOR_COLOR }}
+                    />
+                    <b>{s.sector || s.key}</b>
+                    {s.tech ? ` (${s.tech})` : ''}: {total.toLocaleString()} {total === 1 ? 'reading' : 'readings'}
+                    {s.p50_km != null && s.p90_km != null &&
+                      `, half within ${s.p50_km} km, nine in ten within ${s.p90_km} km`}
+                    {s.max_km != null && `, farthest ${s.max_km} km`}
+                    {s.direction && (
+                      <div className={s.direction.differs ? 'site-mini-map-legend-warn' : 'site-mini-map-legend-sub'}>
+                        {s.direction.differs ? '⚠ ' : ''}
+                        {s.direction.in_direction_pct}% of {s.direction.readings.toLocaleString()} readings lie where the
+                        sector points ({s.azimuth}°)
+                        {s.direction.centre_deg != null
+                          ? `; they centre on ${s.direction.centre_deg}°, ${s.direction.off_azimuth_deg}° away`
+                          : '; they are spread all round the site'}
+                        {s.direction.differs ? '. Check the azimuth on site, or whether these readings are this site\'s.' : '.'}
+                      </div>
+                    )}
+                    {s.uncertain_readings > 0 && (
+                      <div className="site-mini-map-legend-sub">
+                        {s.uncertain_readings.toLocaleString()} readings are uncertain: {s.same_id_sites.join(', ')}{' '}
+                        {s.same_id_sites.length === 1 ? 'uses' : 'use'} the same ID.
+                      </div>
+                    )}
+                    {s.antenna_change && (
+                      <div className="site-mini-map-legend-sub">
+                        An antenna change is on record for this sector
+                        {s.antenna_change.period ? ` (${s.antenna_change.period})` : ''}. Readings taken before it show the
+                        old direction or tilt.
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </>
+          )}
+        </div>
+      )}
       {hasDivergentSectors && (
         <div className="site-mini-map-note">
           ⚠ {points.length - 1} sector{points.length - 1 === 1 ? '' : 's'} at a different location than the site

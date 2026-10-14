@@ -4,7 +4,7 @@
 the isolation decision in models.py's TelemetryIngestKey docstring."""
 from django.urls import path
 
-from . import area_sample, device_identity, device_trace, site_photo, speed_test, trace_speed
+from . import area_sample, device_identity, device_trace, problem_report, site_photo, speed_test, trace_speed
 from .consent import DriveTestConsentMessageView, DriveTestConsentView
 from .rescue import RescueEnrollView
 from .telemetry import TelemetryHealthView, TelemetryIngestView
@@ -46,6 +46,8 @@ urlpatterns = [
     # Site photos from the app (2026-10-11) -- see core/site_photo.py.
     path('device/nearby-sites/', site_photo.DeviceNearbySitesView.as_view(), name='device-nearby-sites'),
     path('device/site-photos/', site_photo.DeviceSitePhotoUploadView.as_view(), name='device-site-photos'),
+    # "Report a problem" from the app (2026-10-14) -- see core/problem_report.py.
+    path('device/problem-reports/', problem_report.DeviceProblemReportView.as_view(), name='device-problem-reports'),
     path('device/trace-requests/', device_trace.DeviceTraceListView.as_view(), name='device-trace-list'),
     path('device/trace-requests/<uuid:trace_id>/respond/', device_trace.DeviceTraceRespondView.as_view(), name='device-trace-respond'),
     path('device/trace-requests/<uuid:trace_id>/samples/', device_trace.DeviceTraceSamplesView.as_view(), name='device-trace-samples'),

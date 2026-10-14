@@ -486,6 +486,14 @@ class Sector(models.Model):
     sector = models.CharField(max_length=100, blank=True, default='')
     tech = models.CharField(max_length=100, blank=True, default='')
     local_cell_id = models.IntegerField(null=True, blank=True)
+    # The eNodeB a 4G sector belongs to (2026-10-13), from the "NodeB ID"
+    # column of the LTE engineering parameter file. With `local_cell_id` it
+    # gives the cell identity a phone reports: eNodeB ID x 256 + local cell
+    # ID. A reading that carries that identity is matched to its sector
+    # exactly (core/dt_serving_cell.py), with no need for the PCI, which
+    # several sites share. Checked against a TEMS log: eNodeB 3092 cell 1
+    # is CDR092 J3, and so on for every cell compared.
+    enodeb_id = models.IntegerField(null=True, blank=True)
     height = models.FloatField(null=True, blank=True)
     azimuth = models.FloatField(null=True, blank=True)
     mech_tilt = models.FloatField(null=True, blank=True)
@@ -601,6 +609,7 @@ class Sector(models.Model):
             models.Index(fields=['pci']),
             models.Index(fields=['scrambling_code']),
             models.Index(fields=['bcch', 'bsic']),
+            models.Index(fields=['enodeb_id', 'local_cell_id'], name='v2_sector_cell_identity_idx'),
         ]
 
     def __str__(self):
@@ -905,6 +914,24 @@ class DriveTestSession(models.Model):
     # everything-else-is-immutable design (see this viewset's own
     # docstring for why v2 deliberately has no update/partial_update).
     remarks = models.TextField(blank=True, default='')
+    # True until the session's 50 m squares (DtPlotSquare) match its
+    # readings; set again whenever readings are added (2026-10-14).
+    plot_squares_stale = models.BooleanField(default=True)
+    # Retention (2026-10-14, core/dt_retention.py). Why the drive was run:
+    # only yearly drives count toward "the latest yearly drives" of a
+    # place. Existing sessions start as 'other' until someone sets it.
+    PURPOSES = [('yearly', 'Yearly (NTA)'), ('complaint', 'Complaint'),
+                ('optimization', 'Optimization'), ('other', 'Other')]
+    purpose = models.CharField(max_length=12, choices=PURPOSES, default='other')
+    # Pinned: retention never reduces or erases this session.
+    keep = models.BooleanField(default=False)
+    # Fingerprint (SHA-256) of the source file(s), worked out in the
+    # browser; the file itself is never uploaded. Finds a re-upload.
+    file_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    # Where the original file is kept (TEMS server path, a note).
+    source_location = models.CharField(max_length=255, blank=True, default='')
+    # Readings removed by retention; the session keeps its 50 m squares there.
+    readings_pruned = models.IntegerField(default=0)
     # Which "mode" this drive was run in -- Free Mode, a specific band-lock
     # (e.g. "B3 Lock", "B20 Lock"), Idle vs an active DL/UL session, etc.
     # (2026-09-23 request: real drive tests for one site aren't one file,
@@ -1458,6 +1485,12 @@ class DriveTestSample(models.Model):
     # SignalFloatField. Null for 2G/3G samples (CQI doesn't apply to
     # those techs) and for any 4G upload path that doesn't supply it.
     cqi = models.SmallIntegerField(null=True, blank=True)
+    # True when `cqi` was worked out from SINR at upload and not measured
+    # (2026-10-13). A TEMS .trp log carries no CQI, so the upload page
+    # fills one in from SINR; an Excel export from the TEMS server carries
+    # the CQI the test phone reported. Both sat in `cqi` unmarked, and a
+    # calibration built on the filled-in values went wrong for it.
+    cqi_estimated = models.BooleanField(default=False)
     dl = SignalFloatField(null=True, blank=True)
     pci = models.IntegerField(null=True, blank=True)
     # LTE band this sample's serving cell was on (e.g. "3", "20") --
@@ -1478,6 +1511,11 @@ class DriveTestSample(models.Model):
     serving_cell_name = models.CharField(max_length=100, blank=True, null=True)
     serving_local_cell_id = models.IntegerField(null=True, blank=True)
     serving_dist_km = SignalFloatField(null=True, blank=True)
+    # The serving cell's own identity as the log gives it (2026-10-13): on 4G
+    # the 28-bit cell identity, eNodeB ID x 256 + cell ID. A TEMS .trp log
+    # carries it; an Excel export does if the column is included. Where it
+    # is present the serving sector is found from it exactly.
+    cell_id = models.BigIntegerField(null=True, blank=True)
     cell_role = models.CharField(max_length=10, choices=ROLE_CHOICES, blank=True, default='serving')
     rx_qual = SignalFloatField(null=True, blank=True)
     bcch = models.IntegerField(null=True, blank=True)
@@ -1492,6 +1530,10 @@ class DriveTestSample(models.Model):
         db_table = 'v2_dt_samples'
         indexes = [
             models.Index(fields=['session']),
+            # Every reading served by one site, for the site page's measured
+            # coverage (2026-10-13, core/site_coverage.py). Without it that
+            # read scanned the whole table: 3.7 s on 900,000 rows.
+            models.Index(fields=['serving_site_id'], name='v2_dt_samp_serving_site_idx'),
             # 2026-08-10 perf audit finding — drive_test.py's `near` action
             # (Explore by Coordinates) used to do a bounding-box prefilter
             # on plain lat/lng "before the exact haversine check in
@@ -1508,6 +1550,114 @@ class DriveTestSample(models.Model):
 
     def __str__(self):
         return f'{self.session_id} @ ({self.lat}, {self.lng})'
+
+
+class DtRetentionSettings(models.Model):
+    """Drive-test retention rule (2026-10-14, core/dt_retention.py), one
+    row, superadmin only. Off until a superadmin switches it on; even then
+    nothing is removed until a dry run is approved."""
+    enabled = models.BooleanField(default=False)
+    yearly_keep = models.PositiveSmallIntegerField(default=2)        # latest yearly drives kept complete per square
+    per_square_keep = models.PositiveSmallIntegerField(default=2)    # most recent sessions kept per square
+    detail_months = models.PositiveSmallIntegerField(default=24)     # readings older than this become summary
+    summary_years = models.PositiveSmallIntegerField(default=5)      # summaries older than this are erased
+    min_readings = models.PositiveSmallIntegerField(default=3)       # readings for a session to count in a square
+    updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_dt_retention_settings'
+
+    def save(self, *args, **kwargs):
+        self.id = 1
+        super().save(*args, **kwargs)
+
+
+class DtPruneRun(models.Model):
+    """One dry run of the retention rule and, once approved, its execution."""
+    STATUSES = [('planned', 'Planned'), ('approved', 'Approved'), ('running', 'Running'),
+                ('done', 'Done'), ('failed', 'Failed'), ('discarded', 'Discarded')]
+    status = models.CharField(max_length=10, choices=STATUSES, default='planned')
+    settings_snapshot = models.JSONField(default=dict)
+    plan = models.JSONField(default=list)              # one entry per affected session
+    readings_to_remove = models.BigIntegerField(default=0)
+    sessions_reduced = models.IntegerField(default=0)
+    sessions_erased = models.IntegerField(default=0)
+    created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+    approved_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    approved_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True, default='')
+
+    class Meta:
+        db_table = 'v2_dt_prune_run'
+        ordering = ['-created_at']
+
+
+class DtPruneRecord(models.Model):
+    """What retention did to one session: kept indefinitely, unlike the audit
+    log, so it can always be told what was removed, when and on whose
+    approval. No foreign key to the session, which may be gone."""
+    ACTIONS = [('reduced', 'Readings reduced to summary'), ('erased', 'Session erased')]
+    run = models.ForeignKey(DtPruneRun, on_delete=models.PROTECT, related_name='records')
+    session_id_value = models.IntegerField()
+    session_name = models.CharField(max_length=255, blank=True, default='')
+    tech = models.CharField(max_length=10, blank=True, default='')
+    drive_date = models.DateField(null=True, blank=True)
+    purpose = models.CharField(max_length=12, blank=True, default='')
+    action = models.CharField(max_length=8, choices=ACTIONS)
+    readings_removed = models.IntegerField(default=0)
+    squares_reduced = models.IntegerField(default=0)
+    approved_by_name = models.CharField(max_length=150, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_dt_prune_record'
+        ordering = ['-created_at']
+
+
+class DtPlotSquare(models.Model):
+    """One 50 m square of one drive-test session (2026-10-14,
+    core/dt_plot_squares.py): how many readings fell in it and the weakest,
+    strongest and average of each measurement. Explore's wide searches read
+    these instead of every reading. Built from the readings, never edited by
+    hand; a session whose readings change is marked
+    `DriveTestSession.plot_squares_stale` and rebuilt when next searched."""
+    session = models.ForeignKey(DriveTestSession, on_delete=models.CASCADE, related_name='plot_squares')
+    sx = models.IntegerField()      # floor(lat * cells per degree)
+    sy = models.IntegerField()      # floor(lng * cells per degree)
+    lat = models.FloatField()       # mean position of the square's readings
+    lng = models.FloatField()
+    location = PointField(geography=True, srid=4326, spatial_index=True)
+    n = models.IntegerField()
+    rsrp_min = models.FloatField(null=True, blank=True)
+    rsrp_max = models.FloatField(null=True, blank=True)
+    rsrp_avg = models.FloatField(null=True, blank=True)
+    rsrq_min = models.FloatField(null=True, blank=True)
+    rsrq_avg = models.FloatField(null=True, blank=True)
+    sinr_min = models.FloatField(null=True, blank=True)
+    sinr_avg = models.FloatField(null=True, blank=True)
+    dl_min = models.FloatField(null=True, blank=True)
+    dl_avg = models.FloatField(null=True, blank=True)
+    cqi_min = models.FloatField(null=True, blank=True)
+    cqi_avg = models.FloatField(null=True, blank=True)
+    rscp_min = models.FloatField(null=True, blank=True)
+    rscp_avg = models.FloatField(null=True, blank=True)
+    ecno_min = models.FloatField(null=True, blank=True)
+    ecno_avg = models.FloatField(null=True, blank=True)
+    rx_qual_max = models.FloatField(null=True, blank=True)   # RxQual: higher is worse
+    rx_qual_avg = models.FloatField(null=True, blank=True)
+    # The weakest reading in the square (by RSRP, RSCP on 3G): its time,
+    # cell and serving site are shown for the square.
+    rep_id = models.BigIntegerField()
+    # Retention removed this session's readings here (2026-10-14,
+    # core/dt_retention.py); the square is now its only record of them.
+    detail_removed = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'v2_dt_plot_squares'
+        indexes = [models.Index(fields=['session'], name='v2_dt_plotsq_session_idx')]
 
 
 class DtBand(models.Model):
@@ -3084,6 +3234,8 @@ class TelemetrySpeedResult(models.Model):
     ts = models.DateTimeField()
     ping_median_ms = models.FloatField(null=True, blank=True)
     jitter_ms = models.FloatField(null=True, blank=True)
+    # Share of the test's pings that got no answer in time (2026-10-14).
+    packet_loss_pct = models.FloatField(null=True, blank=True)
     download_mbps = models.FloatField(null=True, blank=True)
     upload_mbps = models.FloatField(null=True, blank=True)
     network_type = models.CharField(max_length=8, blank=True, default='')
@@ -3094,6 +3246,66 @@ class TelemetrySpeedResult(models.Model):
         db_table = 'v2_telemetry_speed_result'
         ordering = ['-ts']
         indexes = [models.Index(fields=['device_id', 'ts'], name='v2_tel_speed_dev_ts_idx')]
+
+
+class ProblemReport(models.Model):
+    """A network problem reported from the app's "Report a problem" button,
+    or entered by an engineer from a customer's complaint (2026-10-14,
+    core/problem_report.py). A report from the app carries the phone's own
+    reading and a speed test taken when it was sent; the check compares
+    them with what other phones and drive tests measured around the spot."""
+
+    SOURCE_APP = 'app'
+    SOURCE_STAFF = 'staff'
+    SOURCES = [(SOURCE_APP, 'Mobile app'), (SOURCE_STAFF, 'Entered by staff')]
+    CATEGORIES = [
+        ('no_signal', 'No signal'),
+        ('slow_data', 'Slow data'),
+        ('call_drop', 'Call drops'),
+        ('stuck_2g3g', 'Stuck on 2G/3G'),
+        ('other', 'Other'),
+    ]
+    STATUS_NEW = 'new'
+    STATUSES = [(STATUS_NEW, 'New'), ('checked', 'Checked'), ('closed', 'Closed')]
+
+    source = models.CharField(max_length=8, choices=SOURCES)
+    device = models.ForeignKey('DeviceCredential', null=True, blank=True, on_delete=models.SET_NULL,
+                               related_name='problem_reports')
+    entered_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name='problem_reports_entered')
+    category = models.CharField(max_length=12, choices=CATEGORIES)
+    note = models.TextField(blank=True, default='')
+    happened_at = models.DateTimeField()
+    lat = models.FloatField()
+    lng = models.FloatField()
+    # The phone's reading when the report was sent; empty for staff entries.
+    network_type = models.CharField(max_length=12, blank=True, default='')
+    band = models.CharField(max_length=24, blank=True, default='')
+    pci = models.IntegerField(null=True, blank=True)
+    cell_id = models.BigIntegerField(null=True, blank=True)
+    level_dbm = models.SmallIntegerField(null=True, blank=True)   # RSRP on 4G/5G, RSCP on 3G, RSSI on 2G
+    rsrq_db = models.SmallIntegerField(null=True, blank=True)
+    sinr_db = models.SmallIntegerField(null=True, blank=True)
+    # The speed test taken when the report was sent, over mobile data.
+    download_mbps = models.FloatField(null=True, blank=True)
+    upload_mbps = models.FloatField(null=True, blank=True)
+    ping_ms = models.FloatField(null=True, blank=True)
+    jitter_ms = models.FloatField(null=True, blank=True)
+    packet_loss_pct = models.FloatField(null=True, blank=True)
+    phone_model = models.CharField(max_length=80, blank=True, default='')
+    android_version = models.CharField(max_length=16, blank=True, default='')
+    app_version = models.CharField(max_length=40, blank=True, default='')
+    status = models.CharField(max_length=8, choices=STATUSES, default=STATUS_NEW)
+    engineer_note = models.TextField(blank=True, default='')
+    checked_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name='problem_reports_checked')
+    checked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_problem_report'
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['status', 'created_at'], name='v2_problem_status_idx')]
 
 
 class TelemetryPushToken(models.Model):

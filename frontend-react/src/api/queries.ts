@@ -1,7 +1,11 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef } from 'react'
 import { ApiError, apiFetch, apiJson } from './client'
-import type { SitePhoto, SitePhotoList, TelemetryNearResponse } from './types'
+import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
+  SiteMeasuredCoverage,
+} from './types'
+import type { ProblemReport } from './types'
+import type { DtPruneRun, DtPurpose, DtRecentResponse, DtRetentionSettings } from './types'
 import type {
   CollectionSessionRow,
   CollectionSessionSample,
@@ -155,6 +159,21 @@ export function useSiteDtSessions(siteId: string | undefined) {
     queryKey: ['site-dt-sessions', siteId],
     queryFn: () => apiJson<SiteDtSession[]>(`/api/v2/sites/${siteId}/dt-sessions/`),
     enabled: !!siteId,
+  })
+}
+
+// Readings matched to this site's sectors, for the site map's "Measured"
+// layer. Fetched only once that layer is switched on.
+export function useSiteMeasuredCoverage(siteId: string | undefined, enabled: boolean, session: number | null = null) {
+  return useQuery({
+    queryKey: ['site-measured-coverage', siteId, session],
+    queryFn: () => apiJson<SiteMeasuredCoverage>(
+      `/api/v2/sites/${siteId}/measured-coverage/${session ? `?session=${session}` : ''}`,
+    ),
+    // Keeps the dots on screen while another drive test is being fetched.
+    placeholderData: (previous) => previous,
+    enabled: !!siteId && enabled,
+    staleTime: 5 * 60 * 1000,
   })
 }
 
@@ -1240,12 +1259,18 @@ export function useAppendDtSamples() {
 // DtSessionDetail (metadata + samples), just with `samples` trimmed
 // server-side to only the readings inside the searched radius — see
 // DriveTestSessionNearSerializer's docstring in serializers.py.
-export function useDtSessionsNear(point: { lat: number; lng: number } | null, radiusKm: number, techs: DtTech[]) {
+export function useDtSessionsNear(
+  point: { lat: number; lng: number } | null,
+  radiusKm: number,
+  techs: DtTech[],
+  outline = '',   // "lat,lng;lat,lng;…" of a district search (2026-10-14), '' for a circle
+) {
   return useQuery({
-    queryKey: ['dt-sessions-near', point?.lat, point?.lng, radiusKm, techs.join(',')],
+    queryKey: ['dt-sessions-near', point?.lat, point?.lng, radiusKm, techs.join(','), outline],
     queryFn: () =>
       apiJson<DtSessionDetail[]>(
-        `/api/v2/dt-sessions/near/?lat=${point!.lat}&lng=${point!.lng}&radius_km=${radiusKm}&tech=${techs.join(',')}`,
+        `/api/v2/dt-sessions/near/?lat=${point!.lat}&lng=${point!.lng}&radius_km=${radiusKm}&tech=${techs.join(',')}` +
+          (outline ? `&outline=${encodeURIComponent(outline)}` : ''),
       ),
     enabled: point !== null && techs.length > 0,
   })
@@ -1880,5 +1905,139 @@ export function useTelemetrySessionsNear(
       ),
     enabled: enabled && point != null,
     staleTime: 60_000,
+  })
+}
+
+// ── Problem reports (2026-10-14) ─────────────────────────────────────────
+
+export function useProblemReports(params: { status?: string; source?: string }) {
+  const qs = new URLSearchParams()
+  if (params.status) qs.set('status', params.status)
+  if (params.source) qs.set('source', params.source)
+  return useQuery({
+    queryKey: ['problem-reports', params.status ?? '', params.source ?? ''],
+    queryFn: () => apiJson<{ results: ProblemReport[] }>(`/api/v2/problem-reports/?${qs.toString()}`),
+  })
+}
+
+export function useProblemReport(id: number | null) {
+  return useQuery({
+    queryKey: ['problem-report', id],
+    queryFn: () => apiJson<ProblemReport>(`/api/v2/problem-reports/${id}/`),
+    enabled: id != null,
+  })
+}
+
+export function useCreateProblemReport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { category: string; note: string; lat: number; lng: number; happened_at: string }) =>
+      apiJson<ProblemReport>('/api/v2/problem-reports/', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['problem-reports'] }),
+  })
+}
+
+export function useUpdateProblemReport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: number; status?: string; engineer_note?: string }) =>
+      apiJson<{ id: number; status: string }>(`/api/v2/problem-reports/${id}/`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['problem-reports'] })
+      qc.invalidateQueries({ queryKey: ['problem-report', v.id] })
+    },
+  })
+}
+
+// ── Drive-test retention and the Recent layer (2026-10-14) ───────────────
+
+export function useUpdateDtSessionRetention(sessionId: number | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { purpose?: DtPurpose; keep?: boolean; source_location?: string }) =>
+      apiJson<{ purpose: DtPurpose; keep: boolean; source_location: string }>(
+        `/api/v2/dt-sessions/${sessionId}/retention/`,
+        { method: 'PATCH', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dt-session', sessionId] })
+      qc.invalidateQueries({ queryKey: ['dt-sessions'] })
+    },
+  })
+}
+
+export function useDtRecent(
+  point: { lat: number; lng: number } | null,
+  radiusKm: number,
+  techs: DtTech[],
+  outline: string,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['dt-recent', point?.lat, point?.lng, radiusKm, techs.join(','), outline],
+    queryFn: () =>
+      apiJson<DtRecentResponse>(
+        `/api/v2/dt-sessions/recent/?lat=${point!.lat}&lng=${point!.lng}&radius_km=${radiusKm}&tech=${techs.join(',')}` +
+          (outline ? `&outline=${encodeURIComponent(outline)}` : ''),
+      ),
+    enabled: enabled && point !== null && techs.length > 0,
+  })
+}
+
+export function useDtRetentionSettings() {
+  return useQuery({
+    queryKey: ['dt-retention-settings'],
+    queryFn: () => apiJson<DtRetentionSettings>('/api/v2/dt-retention/settings/'),
+  })
+}
+
+export function useSaveDtRetentionSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Partial<DtRetentionSettings>) =>
+      apiJson<DtRetentionSettings>('/api/v2/dt-retention/settings/', { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: (data) => qc.setQueryData(['dt-retention-settings'], data),
+  })
+}
+
+export function useDtPruneRuns() {
+  return useQuery({
+    queryKey: ['dt-prune-runs'],
+    queryFn: () => apiJson<{ results: DtPruneRun[] }>('/api/v2/dt-retention/runs/'),
+    // A run being carried out finishes on its own; keep the list current.
+    refetchInterval: (q) =>
+      q.state.data?.results.some((r) => r.status === 'approved' || r.status === 'running') ? 5000 : false,
+  })
+}
+
+export function useDtPruneRun(id: number | null) {
+  return useQuery({
+    queryKey: ['dt-prune-run', id],
+    queryFn: () => apiJson<DtPruneRun>(`/api/v2/dt-retention/runs/${id}/`),
+    enabled: id != null,
+    refetchInterval: (q) => (q.state.data?.status === 'approved' || q.state.data?.status === 'running' ? 5000 : false),
+  })
+}
+
+export function useCreateDtPruneRun() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiJson<DtPruneRun>('/api/v2/dt-retention/runs/', { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dt-prune-runs'] }),
+  })
+}
+
+export function useDtPruneRunAction() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, action }: { id: number; action: 'approve' | 'discard' }) =>
+      apiJson<DtPruneRun>(`/api/v2/dt-retention/runs/${id}/${action}/`, { method: 'POST' }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['dt-prune-runs'] })
+      qc.invalidateQueries({ queryKey: ['dt-prune-run', v.id] })
+    },
   })
 }

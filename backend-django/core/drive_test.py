@@ -16,8 +16,9 @@ the browser before the already-decoded session ever reaches the server.
 """
 import mimetypes
 
-from django.contrib.gis.geos import Point
+from django.contrib.gis.geos import Point, Polygon
 from django.contrib.gis.measure import D
+from django.db import connection
 from django.db.models import Avg, Count, F, IntegerField, OuterRef, Subquery
 from django.db.models.functions import Cast, Coalesce, Floor
 from django.http import FileResponse
@@ -27,6 +28,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from . import dt_plot_squares
 from .audit import log_audit_event
 from .dt_serving_cell import attach_serving_cells
 from .models import (
@@ -218,6 +220,38 @@ def sample_count_expr():
 # get_queryset() below.
 DT_SESSION_LIST_CAP = 500
 
+# Explore's area search (2026-10-14, near() below): above this many readings
+# the search reads 50 m squares (core/dt_plot_squares.py) instead of every
+# reading. A district search also sends its outline; readings within
+# NEAR_OUTLINE_MARGIN_M of it count, since the page sends a trimmed outline.
+NEAR_MAX_READINGS = 20_000
+NEAR_OUTLINE_MARGIN_M = 300
+NEAR_OUTLINE_MAX_POINTS = 400
+NEAR_PLOT_FIELDS = (
+    'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band', 'cqi',
+    'cqi_estimated', 'cell_id', 'serving_site_name', 'rx_qual', 'bcch', 'bsic', 'rscp', 'ecno',
+    'scrambling_code', 'serving_site_id', 'serving_dist_km',
+)
+
+
+def _near_outline(raw):
+    """The district outline Explore sends ("lat,lng;lat,lng;…") as a polygon,
+    or None when absent or not readable."""
+    try:
+        pts = [tuple(float(v) for v in p.split(',')) for p in (raw or '').split(';') if p]
+    except ValueError:
+        return None
+    if not 3 <= len(pts) <= NEAR_OUTLINE_MAX_POINTS or any(len(p) != 2 for p in pts):
+        return None
+    ring = [(lng, lat) for lat, lng in pts]
+    if ring[0] != ring[-1]:
+        ring.append(ring[0])
+    try:
+        poly = Polygon(ring, srid=4326)
+    except Exception:
+        return None
+    return poly if poly.valid else poly.buffer(0)
+
 
 class DriveTestSessionViewSet(
     mixins.ListModelMixin,
@@ -261,7 +295,7 @@ class DriveTestSessionViewSet(
         return DriveTestSessionListSerializer
 
     def get_permissions(self):
-        if self.action in ('create', 'destroy', 'samples', 'remarks', 'mode'):
+        if self.action in ('create', 'destroy', 'samples', 'remarks', 'mode', 'retention'):
             return [IsAuthenticated(), IsAdminOrSuperadmin()]
         if self.action == 'attachments':
             # GET (list) is read-only, same tier as retrieve/list below;
@@ -332,7 +366,8 @@ class DriveTestSessionViewSet(
         # DriveTestSessionWriteSerializer.create(); rows are a fixed shape.
         per_sample = len(str(rows[0])) if rows else 0
         session.size_bytes = (session.size_bytes or 0) + per_sample * len(rows)
-        session.save(update_fields=['meta', 'size_bytes'])
+        session.plot_squares_stale = True
+        session.save(update_fields=['meta', 'size_bytes', 'plot_squares_stale'])
         return Response({'appended': len(rows)}, status=201)
 
     @action(detail=True, methods=['patch'])
@@ -372,6 +407,33 @@ class DriveTestSessionViewSet(
         session.mode = mode
         session.save(update_fields=['mode'])
         return Response({'mode': session.mode})
+
+    @action(detail=True, methods=['patch'])
+    def retention(self, request, pk=None):
+        """`PATCH /api/v2/dt-sessions/<id>/retention/` (2026-10-14) -- why the
+        drive was run (`purpose`), whether retention may touch it (`keep`)
+        and where its original file is kept (`source_location`); any of the
+        three. See core/dt_retention.py for how they are used."""
+        session = self.get_object()
+        data = request.data if isinstance(request.data, dict) else {}
+        fields = []
+        if 'purpose' in data:
+            if data['purpose'] not in dict(DriveTestSession.PURPOSES):
+                return Response({'purpose': ['Unknown purpose.']}, status=400)
+            session.purpose = data['purpose']
+            fields.append('purpose')
+        if 'keep' in data:
+            session.keep = bool(data['keep'])
+            fields.append('keep')
+        if 'source_location' in data:
+            session.source_location = str(data['source_location'] or '')[:255]
+            fields.append('source_location')
+        if fields:
+            session.save(update_fields=fields)
+            log_audit_event(request, 'DT_SESSION.RETENTION', resource='dt_session', resource_id=session.pk,
+                            detail=f'purpose={session.purpose}, keep={session.keep}')
+        return Response({'purpose': session.purpose, 'keep': session.keep,
+                         'source_location': session.source_location})
 
     @action(detail=True, methods=['get', 'post'], url_path='attachments')
     def attachments(self, request, pk=None):
@@ -512,15 +574,42 @@ class DriveTestSessionViewSet(
         # separate "candidates" pass needed — the DB now does the exact
         # distance check itself.
         point = Point(lng, lat, srid=4326)
-        candidates = DriveTestSample.objects.filter(
-            location__distance_lte=(point, D(km=radius_km))
-        ).select_related('session')
+        candidates = DriveTestSample.objects.filter(location__distance_lte=(point, D(km=radius_km)))
+        # A district search sends its outline (2026-10-14): only readings in
+        # or near it are loaded, not the whole covering circle.
+        outline = _near_outline(request.query_params.get('outline'))
+        if outline is not None:
+            candidates = candidates.filter(location__dwithin=(outline, D(m=NEAR_OUTLINE_MARGIN_M)))
         if tech_list:
             candidates = candidates.filter(session__tech__in=tech_list)
 
-        by_session = {}
-        for sample in candidates:
-            by_session.setdefault(sample.session_id, []).append(sample)
+        # A wide search (a whole district) can hold hundreds of thousands of
+        # readings: Gulmi's 30 km circle held 318,698 on 2026-10-14, which
+        # ran the 1 GB server out of memory and the page showed no sessions.
+        # Above NEAR_MAX_READINGS the search reads the sessions' 50 m squares
+        # instead (core/dt_plot_squares.py): one dot per square, showing the
+        # weakest value of each measurement there.
+        # The squares carry their reading counts, so they also tell whether
+        # the search is small enough to send every reading.
+        by_session, step_m = dt_plot_squares.squares_near(
+            lat, lng, radius_km, outline.wkt if outline is not None else None, NEAR_OUTLINE_MARGIN_M,
+            tech_list, NEAR_MAX_READINGS,
+        )
+        if by_session is None:
+            # Plain rows, not model objects through the serializer: for tens of
+            # thousands of readings that took about 20 s (2026-10-14).
+            by_session = {}
+            for row in candidates.order_by('id').values('session_id', *NEAR_PLOT_FIELDS):
+                by_session.setdefault(row.pop('session_id'), []).append(row)
+            # Where retention removed a session's readings, its squares stand in.
+            pruned = DriveTestSession.objects.filter(readings_pruned__gt=0)
+            if tech_list:
+                pruned = pruned.filter(tech__in=tech_list)
+            for session_id, rows in dt_plot_squares.pruned_squares(
+                list(pruned.values_list('id', flat=True)), lat, lng, radius_km,
+                outline.wkt if outline is not None else None, NEAR_OUTLINE_MARGIN_M,
+            ).items():
+                by_session.setdefault(session_id, []).extend(rows)
 
         if not by_session:
             return Response([])
@@ -530,11 +619,41 @@ class DriveTestSessionViewSet(
             .annotate(sample_count=sample_count_expr(), attachment_count=_attachment_count_expr())
             .prefetch_related('activity_links__activity')
         )
-        for session in sessions:
-            session.filtered_samples = by_session[session.id]
         sessions.sort(key=lambda s: (s.date or '', s.saved_at), reverse=True)
 
-        return Response(DriveTestSessionNearSerializer(sessions, many=True, context={'request': request}).data)
+        # Same shape as DriveTestSessionNearSerializer: the list metadata plus
+        # the readings, with the fields of DriveTestSamplePlotSerializer.
+        data = DriveTestSessionListSerializer(sessions, many=True, context={'request': request}).data
+        for row in data:
+            row['samples'] = by_session[row['id']]
+            row['plot_step_m'] = step_m
+        return Response(data)
+
+    @action(detail=False, methods=['get'])
+    def recent(self, request):
+        """`GET /api/v2/dt-sessions/recent/?lat=&lng=&radius_km=&tech=&outline=`
+        (2026-10-14) -- Explore's Recent layer: for each 50 m square, the
+        most recent drive-test value and the one before it, from any session
+        (core/dt_plot_squares.py recent_squares). Same area parameters as near()."""
+        try:
+            lat = float(request.query_params['lat'])
+            lng = float(request.query_params['lng'])
+        except (KeyError, ValueError, TypeError):
+            return Response({'detail': 'lat and lng query params are required numbers'}, status=400)
+        try:
+            radius_km = max(0.1, min(float(request.query_params.get('radius_km', 2)), 50))
+        except ValueError:
+            radius_km = 2.0
+        tech_param = request.query_params.get('tech')
+        tech_list = [t for t in tech_param.split(',') if t] if tech_param else None
+        outline = _near_outline(request.query_params.get('outline'))
+        squares, names = dt_plot_squares.recent_squares(
+            lat, lng, radius_km, outline.wkt if outline is not None else None, NEAR_OUTLINE_MARGIN_M, tech_list,
+        )
+        if squares is None:
+            return Response({'detail': 'This area is too large for the recent view. Search a smaller area.'},
+                            status=400)
+        return Response({'squares': squares, 'sessions': names, 'square_m': dt_plot_squares.STEP_M})
 
     @action(detail=False, methods=['get'])
     def compare(self, request):

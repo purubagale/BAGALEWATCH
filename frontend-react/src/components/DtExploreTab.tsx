@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { MapContainer, TileLayer, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import CurrentLocationMarker from './CurrentLocationMarker'
 import SitePhotoLayer from './SitePhotoLayer'
 import TelemetryNearLayer from './TelemetryNearLayer'
 import { useAuth } from '../auth/AuthContext'
-import { useDtServingCellsForSessions, useDtSessionsNear, useSites, useTelemetrySessionsNear } from '../api/queries'
-import type { DtSample, DtServingCell, DtSessionDetail, DtTech, SiteListItem } from '../api/types'
+import { apiErrorMessage } from '../api/client'
+import { useDtRecent, useDtServingCellsForSessions, useDtSessionsNear, useSites, useTelemetrySessionsNear } from '../api/queries'
+import type { DtRecentEntry, DtRecentSquare, DtSample, DtServingCell, DtSessionDetail, DtTech, SiteListItem } from '../api/types'
+import { purposeLabel } from '../lib/dtPurpose'
 import { ACTIVITY_ROLE_LABELS } from './AttachActivityModal'
 import { clusterDtSessionsByArea, type DtSessionCluster } from '../lib/dtSessionClustering'
 import { ALL_TECHS, bandCategoryColor, bandColor, pciColor, subsampleForMap, type TaggedMetric } from '../lib/dtBands'
@@ -257,6 +259,91 @@ function FullscreenSync({ isFullscreen, bounds }: { isFullscreen: boolean; bound
   return null
 }
 
+// Explore's detail when zoomed in (2026-10-14): a wide search arrives as
+// 50 m squares; once the map shows at most DETAIL_MAX_KM across, every
+// reading in view is loaded and drawn there instead of the squares.
+const DETAIL_MAX_KM = 4
+
+interface ViewBox { s: number; w: number; n: number; e: number }
+
+function ViewWatcher({ onView }: { onView: (box: ViewBox) => void }) {
+  const map = useMapEvents({
+    moveend: () => {
+      const b = map.getBounds()
+      onView({ s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() })
+    },
+  })
+  return null
+}
+
+// Recent and Change views (2026-10-14): one dot per 50 m square, from the
+// sessions' squares. Recent = the most recent value measured there (faded
+// when older than RECENT_FADE_MONTHS); Change = latest minus the one before.
+type ExploreView = 'sessions' | 'recent' | 'change'
+const RECENT_FADE_MONTHS = 24
+// A change smaller than this is drawn grey ("about the same").
+const CHANGE_STEP: Record<string, number> = { rsrp: 3, rsrq: 2, sinr: 2, cqi: 1, dl: 2, ecno: 2, rx_qual: 1 }
+
+function monthsAgo(isoDate: string) {
+  const d = new Date(isoDate)
+  const now = new Date()
+  return (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth())
+}
+
+function RecentSquaresLayer({
+  squares, metric, view, names,
+}: {
+  squares: DtRecentSquare[]
+  metric: TaggedMetric
+  view: Exclude<ExploreView, 'sessions'>
+  names: Record<string, string>
+}) {
+  const map = useMap()
+  useEffect(() => {
+    const layer = L.layerGroup()
+    const key = metric.key as keyof DtRecentEntry
+    const lowerIsBetter = metric.key === 'rx_qual'
+    const fmt = (e: DtRecentEntry) => {
+      const v = e[key] as number | null
+      return `${e.date} · ${purposeLabel(e.purpose)} · ${names[String(e.session_id)] ?? 'Session ' + e.session_id}<br>` +
+        `${metric.label}: ${v == null ? '—' : v + metric.unit} (average of ${e.n} readings)`
+    }
+    for (const sq of squares) {
+      if (sq.tech !== metric.tech) continue
+      const latest = sq.latest[key] as number | null
+      if (latest == null) continue
+      let color: string
+      let opacity = 0.85
+      let text = `<b>Latest</b> ${fmt(sq.latest)}`
+      if (view === 'recent') {
+        color = bandColor(metric.bands, latest)
+        if (monthsAgo(sq.latest.date) > RECENT_FADE_MONTHS) opacity = 0.3
+        if (sq.previous) text += `<br><b>Before</b> ${fmt(sq.previous)}`
+      } else {
+        const before = sq.previous ? (sq.previous[key] as number | null) : null
+        if (before == null) continue
+        const change = Math.round((latest - before) * 10) / 10
+        const better = lowerIsBetter ? -change : change
+        const step = CHANGE_STEP[metric.key] ?? 2
+        color = better >= step ? '#16a34a' : better <= -step ? '#dc2626' : '#9ca3af'
+        text += `<br><b>Before</b> ${fmt(sq.previous as DtRecentEntry)}<br><b>Change</b> ${change > 0 ? '+' : ''}${change}${metric.unit}`
+      }
+      L.circleMarker([sq.lat, sq.lng], { radius: 4, color, fillColor: color, fillOpacity: opacity, weight: 0 })
+        .bindTooltip(text, { sticky: true, direction: 'top', offset: [0, -4] })
+        .addTo(layer)
+    }
+    layer.addTo(map)
+    return () => {
+      map.removeLayer(layer)
+    }
+  }, [map, squares, metric, view, names])
+  return null
+}
+
+function inBox(box: ViewBox, r: DtSample) {
+  return r.lat != null && r.lng != null && r.lat >= box.s && r.lat <= box.n && r.lng >= box.w && r.lng <= box.e
+}
+
 function SearchAreaLayer({ point, radiusKm, shape, label }: { point: LatLng; radiusKm: number; shape: SearchShape; label: string }) {
   const map = useMap()
 
@@ -450,7 +537,8 @@ function NearSamplesLayer({
         const sample = p.item
         const v = sample[metric.key] as number
         const color = bandColor(metric.bands, v)
-        const roleText = p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : ''
+        const roleText = (p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : '') +
+          (sample.square_n ? `<br>Weakest of ${sample.square_n} readings in this square` : '')
         const dot = L.circleMarker([p.lat, p.lng], {
           radius: 3,
           color,
@@ -866,7 +954,49 @@ export default function DtExploreTab() {
     return shape.type === 'polygon' ? polygonBoundingRadiusKm([point.lat, point.lng], shape.points) : radiusKm
   }, [point, radiusKm, shape])
 
-  const { data: nearSessionsRaw, isLoading: sessionsLoading } = useDtSessionsNear(point, backendRadiusKm, techs)
+  // The outline goes to the server too (2026-10-14), so it loads only the
+  // readings inside the district, not the whole covering circle. At most
+  // 150 corners; the server adds a margin for the corners left out, and the
+  // exact outline still trims below.
+  const outlineParam = useMemo(() => {
+    if (shape.type !== 'polygon' || shape.points.length < 3) return ''
+    const every = Math.ceil(shape.points.length / 150)
+    return shape.points
+      .filter((_, i) => i % every === 0)
+      .map(([la, ln]) => `${la.toFixed(5)},${ln.toFixed(5)}`)
+      .join(';')
+  }, [shape])
+
+  const { data: nearSessionsRaw, isLoading: sessionsLoading, error: sessionsError } = useDtSessionsNear(point, backendRadiusKm, techs, outlineParam)
+  // A wide search arrives as squares (2026-10-14): the square size, 0 = every reading.
+  const plotStepM = nearSessionsRaw?.[0]?.plot_step_m ?? 0
+
+  // Sessions, Recent or Change view of the map (2026-10-14).
+  const [exploreView, setExploreView] = useState<ExploreView>('sessions')
+  const recent = useDtRecent(point, backendRadiusKm, techs, outlineParam, exploreView !== 'sessions')
+
+  // Zoomed in on a search that arrived as squares: every reading in view.
+  const [viewBox, setViewBox] = useState<ViewBox | null>(null)
+  const detailBox = useMemo(() => {
+    if (!plotStepM || !viewBox) return null
+    const across = haversineKm(viewBox.s, viewBox.w, viewBox.n, viewBox.e)
+    return across <= DETAIL_MAX_KM ? viewBox : null
+  }, [plotStepM, viewBox])
+  const detailCenter = useMemo(
+    () => (detailBox ? { lat: (detailBox.s + detailBox.n) / 2, lng: (detailBox.w + detailBox.e) / 2 } : null),
+    [detailBox],
+  )
+  const { data: detailRaw, isFetching: detailLoading } = useDtSessionsNear(
+    detailCenter,
+    detailBox ? haversineKm(detailBox.s, detailBox.w, detailBox.n, detailBox.e) / 2 + 0.05 : 0.1,
+    techs,
+    detailBox
+      ? [[detailBox.s, detailBox.w], [detailBox.n, detailBox.w], [detailBox.n, detailBox.e], [detailBox.s, detailBox.e]]
+        .map(([la, ln]) => `${la.toFixed(5)},${ln.toFixed(5)}`).join(';')
+      : '',
+  )
+  // Used only when the server sent every reading for the view, not squares again.
+  const detail = detailBox && detailRaw && detailRaw.every((s) => !s.plot_step_m) ? detailRaw : null
 
   // Telemetry sessions (2026-10-12): phone drives and Telemetry Drive Test
   // sessions are stored apart from uploaded drive tests, so this search
@@ -917,11 +1047,20 @@ export default function DtExploreTab() {
 
   const nearSessions = useMemo(() => {
     if (!nearSessionsRaw) return []
-    if (shape.type !== 'polygon') return nearSessionsRaw
-    return nearSessionsRaw
+    let sessions = nearSessionsRaw
+    if (detail && detailBox) {
+      // Inside the view, the readings take the place of the squares.
+      const readings = new Map(detail.map((s) => [s.id, s.samples.filter((r) => inBox(detailBox, r))]))
+      sessions = sessions.map((s) => ({
+        ...s,
+        samples: [...s.samples.filter((r) => !inBox(detailBox, r)), ...(readings.get(s.id) ?? [])],
+      }))
+    }
+    if (shape.type !== 'polygon') return sessions
+    return sessions
       .map((s) => ({ ...s, samples: s.samples.filter((r) => r.lat != null && r.lng != null && pointInPolygon(r.lat as number, r.lng as number, shape.points)) }))
       .filter((s) => s.samples.length > 0)
-  }, [nearSessionsRaw, shape])
+  }, [nearSessionsRaw, shape, detail, detailBox])
 
   // "Latest per area" clustering over the currently-shown near-sessions
   // list (see the latestOnly state comment above). Grouped by the same
@@ -1182,6 +1321,20 @@ export default function DtExploreTab() {
         <div className="page-status">Search by coordinates, city, district, or Site ID to explore nearby sites and drive-test coverage.</div>
       ) : (
         <>
+          {sessionsError && (
+            <div className="page-status" style={{ color: '#dc2626' }}>
+              The drive tests for this area could not be loaded. Try a smaller area or try again.
+            </div>
+          )}
+          {plotStepM > 0 && (
+            <div className="page-status">
+              {detail
+                ? 'Zoomed in: every reading in view is shown. Outside the view, each dot is a square.'
+                : detailLoading
+                  ? 'Loading every reading in view…'
+                  : `This area holds many drive-test readings, so each dot is a ${plotStepM} m square of one session, showing the weakest value of the chosen measurement there. Zoom in to about ${DETAIL_MAX_KM} km across to see every reading.`}
+            </div>
+          )}
           <div className="report-summary-cards" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', marginTop: 12 }}>
             <div className="report-card">
               <div className="report-card-val" style={{ fontSize: 15 }}>{pointLabel}</div>
@@ -1207,7 +1360,31 @@ export default function DtExploreTab() {
             </div>
           </div>
 
-          <div className="report-toolbar" style={{ marginTop: 12, marginBottom: 0 }}>
+          <div className="report-toolbar" style={{ marginTop: 12, marginBottom: 0, gap: 6 }}>
+            {(['sessions', 'recent', 'change'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                className={exploreView === v ? 'btn-primary btn-small' : 'btn-secondary btn-small'}
+                onClick={() => setExploreView(v)}
+                title={v === 'sessions' ? 'Every session found here'
+                  : v === 'recent' ? 'The most recent value measured in each 50 m square, from any session'
+                    : 'Each 50 m square compared with the drive before it'}
+              >
+                {v === 'sessions' ? 'Sessions' : v === 'recent' ? 'Recent' : 'Change'}
+              </button>
+            ))}
+            {exploreView !== 'sessions' && (
+              <span className="muted" style={{ fontSize: 12 }}>
+                {recent.isLoading ? 'Loading…'
+                  : recent.error ? apiErrorMessage(recent.error)
+                    : exploreView === 'recent'
+                      ? `The most recent value in each 50 m square, from any drive; faded when older than ${RECENT_FADE_MONTHS} months.`
+                      : 'Green: better than the drive before; red: worse; grey: about the same. Only squares measured at least twice.'}
+              </span>
+            )}
+          </div>
+          <div className="report-toolbar" style={{ marginTop: 6, marginBottom: 0 }}>
             <div className="feat-tabs" style={{ borderBottom: 'none', flexWrap: 'wrap' }}>
               {visibleMetrics.map((m) => (
                 <div key={m.tag} className={!isPciTab && !isBandTab && m.tag === metric.tag ? 'feat-tab active' : 'feat-tab'} onClick={() => setMetricTag(m.tag)}>
@@ -1291,7 +1468,11 @@ export default function DtExploreTab() {
               />
               <SearchAreaLayer point={pointTuple as LatLng} radiusKm={radiusKm} shape={shape} label={pointLabel} />
               <NearSitesLayer sites={nearSites} onSelect={setSelectedSite} />
-              {isPciTab ? (
+              {exploreView !== 'sessions' ? (
+                !isPciTab && !isBandTab && recent.data && (
+                  <RecentSquaresLayer squares={recent.data.squares} metric={metric} view={exploreView} names={recent.data.sessions} />
+                )
+              ) : isPciTab ? (
                 <PciSamplesLayer sessions={nearSessions} />
               ) : isBandTab ? (
                 <BandSamplesLayer sessions={nearSessions} />
@@ -1299,6 +1480,7 @@ export default function DtExploreTab() {
                 <NearSamplesLayer sessions={nearSessions} metric={metric} servingCells={servingCells} />
               )}
               {telemetryShown && <TelemetryNearLayer points={telemetryPoints} names={telemetryNames} />}
+              <ViewWatcher onView={setViewBox} />
               <FullscreenSync isFullscreen={isFullscreen} bounds={currentBounds} />
               <InvalidateOnResize />
             </MapContainer>

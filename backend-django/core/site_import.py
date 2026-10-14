@@ -135,7 +135,7 @@ SECTOR_FIELDS = [
 # every call site below.
 SECTOR_UPDATE_FIELDS = SECTOR_FIELDS + ['lat', 'lng']
 _INT_FIELDS = {
-    'local_cell_id', 'pci',
+    'local_cell_id', 'pci', 'enodeb_id',
     # 2G/3G RF Database fields (2026-09-27) -- see
     # ENGINEERING_SECTOR_FIELDS's own comment below for the full list and
     # which tech each one comes from.
@@ -197,7 +197,7 @@ KPI_UPDATE_FIELDS = KPI_FIELDS + ['kpi_entered', 'kpi_date']
 # reaches this field list, so 'max_tx_power_dbm' above already covers it
 # -- no separate watts field needed.
 ENGINEERING_SECTOR_FIELDS = [
-    'pci', 'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'carrier', 'site_band',
+    'pci', 'enodeb_id', 'height', 'azimuth', 'mech_tilt', 'elec_tilt', 'carrier', 'site_band',
     'beamwidth', 'radius', 'max_tx_power_dbm',
     'scrambling_code', 'bcch', 'bsic', 'cell_active_status', 'site_existence',
     'lac', 'ci', 'ncc', 'hsn', 'tch', 'total_trx', 'activated_trx',
@@ -359,7 +359,10 @@ class ImportSitesView(APIView):
             return Response({'detail': 'rows must be a list.'}, status=400)
 
         tech = None
-        if kind == 'sectors':
+        # `tech` also narrows an engineering-parameters import (2026-10-13):
+        # each box on the page is for one technology, and a file dropped
+        # into the wrong box must not write to another technology's sectors.
+        if kind in ('sectors', 'engineering_params'):
             raw_tech = (body.get('tech') or '').strip().upper()
             if raw_tech:
                 if raw_tech not in ('4G', '3G', '2G'):
@@ -372,7 +375,7 @@ class ImportSitesView(APIView):
             elif kind == 'sectors':
                 result = self._apply_sectors(rows, tech=tech)
             else:
-                result = self._apply_engineering_params(rows)
+                result = self._apply_engineering_params(rows, tech=tech)
 
         return Response(result)
 
@@ -591,7 +594,7 @@ class ImportSitesView(APIView):
         }
 
     @staticmethod
-    def _apply_engineering_params(rows):
+    def _apply_engineering_params(rows, tech=None):
         """`kind='engineering_params'` (2026-09-26 request: "for 4G I
         found more parameters with data for sectors that are also need to
         be managed", from a real nationwide LTE engineering-parameter
@@ -629,13 +632,32 @@ class ImportSitesView(APIView):
         same mechanism a `.docx` antenna-change-log table already feeds,
         rather than a second change-tracking path in this module.
         """
-        sector_by_cell = {
-            s.cell_name.strip().lower(): s
-            for s in Sector.objects.select_related('site').exclude(cell_name='')
-        }
+        # With `tech`, only that technology's sectors can match (2026-10-13).
+        # Only the columns this import reads or writes are loaded: with every
+        # column of 51,000 sectors and their sites, a worker ran out of
+        # memory on a small server and the import failed with no message.
+        sectors = Sector.objects.select_related('site').exclude(cell_name='').only(
+            'id', 'cell_name', 'tech', *ENGINEERING_SECTOR_FIELDS,
+            'site__id', *(f'site__{f}' for f in ENGINEERING_SITE_FIELDS),
+        )
+        if tech:
+            sectors = sectors.filter(tech=tech)
+        sector_by_cell = {s.cell_name.strip().lower(): s for s in sectors.iterator(chunk_size=5000)}
+        other_tech = {}
+        if tech:
+            other_tech = {
+                name.strip().lower(): t
+                for name, t in Sector.objects.exclude(cell_name='').exclude(tech=tech)
+                .values_list('cell_name', 'tech').iterator(chunk_size=5000)
+            }
 
         sectors_to_update: dict[int, Sector] = {}
         sites_to_update: dict[str, Site] = {}
+        # Only the columns some row really changed are written (2026-10-13).
+        # Writing all 25 sector columns for 10,000 sectors took over a
+        # minute, and on the live server the page gave up waiting (504).
+        sector_fields_changed: set[str] = set()
+        site_fields_changed: set[str] = set()
         errors = []
         skipped = 0
 
@@ -646,6 +668,12 @@ class ImportSitesView(APIView):
                 errors.append(f'Row {i + 1}: missing Cell Name, skipped.')
                 continue
             sector = sector_by_cell.get(cell_name.lower())
+            if sector is None and cell_name.lower() in other_tech:
+                errors.append(
+                    f'Row {i + 1} ({cell_name}): this is a {other_tech[cell_name.lower()]} cell, and this '
+                    f'import is for {tech}. Skipped.'
+                )
+                continue
             if sector is None:
                 errors.append(
                     f'Row {i + 1} ({cell_name}): no matching sector found -- sectors are managed by the '
@@ -661,6 +689,7 @@ class ImportSitesView(APIView):
                         continue
                     if getattr(sector, field) != new_val:
                         setattr(sector, field, new_val)
+                        sector_fields_changed.add(field)
                         changed = True
             except (TypeError, ValueError):
                 errors.append(f'Row {i + 1} ({cell_name}): invalid numeric field, skipped.')
@@ -677,6 +706,7 @@ class ImportSitesView(APIView):
                 new_val = str(raw_val).strip()
                 if getattr(site, field) != new_val:
                     setattr(site, field, new_val)
+                    site_fields_changed.add(field)
                     site_changed = True
             if site_changed:
                 sites_to_update[site.pk] = site
@@ -685,9 +715,13 @@ class ImportSitesView(APIView):
                 skipped += 1
 
         if sectors_to_update:
-            Sector.objects.bulk_update(list(sectors_to_update.values()), ENGINEERING_SECTOR_FIELDS, batch_size=1000)
+            Sector.objects.bulk_update(
+                list(sectors_to_update.values()),
+                [f for f in ENGINEERING_SECTOR_FIELDS if f in sector_fields_changed], batch_size=500)
         if sites_to_update:
-            Site.objects.bulk_update(list(sites_to_update.values()), ENGINEERING_SITE_FIELDS, batch_size=1000)
+            Site.objects.bulk_update(
+                list(sites_to_update.values()),
+                [f for f in ENGINEERING_SITE_FIELDS if f in site_fields_changed], batch_size=500)
 
         return {
             'sectors_updated': len(sectors_to_update), 'sites_updated': len(sites_to_update),

@@ -13,9 +13,10 @@ Five methods, one entry point (`compute_cqi`):
   EESM           several subband SINRs folded into one effective SINR, then
                  SINR_MAPPING. Needs per-subband input, which a phone does
                  not give; available for drive-test logs that do.
-  RSRP_RSRQ      CQI read from RSRQ through a step table taken from NTC
-                 drive tests, never below CQI 1. Rougher: RSRQ moves with
-                 cell load. Used as the fallback when a sample has no SINR.
+  RSRP_RSRQ      CQI read from RSRQ through a step table fitted to the CQI
+                 measured in NTC drive tests, never below CQI 1. Rougher:
+                 RSRQ moves with cell load. Used as the fallback when a
+                 sample has no SINR.
   CAPACITY       Shannon capacity per subband, averaged, then quantized.
                  With one SINR value it returns the same index as
                  SINR_MAPPING by construction.
@@ -85,35 +86,40 @@ _NAMED_THRESHOLDS = {
 # takes the CQI of the first step it reaches; below the last step it gets
 # `rsrq_min_cqi`.
 #
-# Where it comes from (2026-10-12): 31,269 readings of three NTC 4G drive
-# tests (Chitwan twice, Bara) that carry both SINR and RSRQ. For each whole
-# dB of RSRQ, the mean of the CQI worked out from SINR, rounded. The
-# straight line used before (CQI = RSRQ + 17) read 3 to 5 steps too low
-# over the range most readings fall in: at RSRQ -11 dB it gave 6 where the
-# drive tests average 11. Average miss against the SINR-based CQI on that
-# data: this table 2.0 steps, the old line 4.2, the best straight line 2.2
-# (and that one reads too high where quality is poor).
+# Where it comes from (2026-10-13): 750,186 readings of nine NTC 4G drive
+# tests exported from the TEMS server (Palpa, Gulmi, Syangja, Arghakhanchi,
+# July 2026), each carrying the CQI the test phone itself reported next to
+# its RSRQ. For each whole dB of RSRQ, the mean measured CQI, rounded and
+# kept from rising as RSRQ falls. Tested on a session left out of the fit,
+# the table misses the measured CQI by 2.2 steps on average, with no
+# overall bias.
 #
-# Tried and rejected on the same data: turning RSRQ into SINR with the
-# physical formula SINR = 12 x RSRQ / (1 - RSRQ x (2 + 10 x load)). It needs
-# the serving cell's load, which a sample does not carry; with any one
-# fixed load it misses by 3.5 steps or more.
+# History, because both earlier versions were wrong in a known way:
+#   * the straight line CQI = RSRQ + 17 read about 3 steps low (miss 3.2);
+#   * the table of 2026-10-12 was built from CQI worked out from SINR in
+#     three TEMS logs, not from measured CQI. It inherited the SINR
+#     table's error and read about 1.2 steps high (miss 2.7), worse than
+#     answering the mean CQI every time (miss 2.4).
 #
-# Limits: three drive tests, drive-test equipment and not phones, at least
-# one a download test (a loaded cell shows a lower RSRQ for the same SINR,
-# so the table may read a little high for an idle phone). RSRQ explains
-# under half of the variation in CQI. Rerun `manage.py cqi_rsrq_calibration
-# --drive-tests` when more drive tests are stored; it prints a fresh table.
-RSRQ_TABLE_NTC_DT = (
-    (-9.5, 12),    # -9 dB and better
-    (-11.5, 11),   # -10, -11
-    (-12.5, 10),   # -12
-    (-13.5, 8),    # -13
-    (-14.5, 6),    # -14
-    (-15.5, 5),    # -15
-    (-16.5, 4),    # -16
-    (-17.5, 3),    # -17
-    (-19.5, 2),    # -18, -19
+# Limits, to keep in mind when reading a value marked "est. RSRQ":
+#   * RSRQ alone says little: this table is only a little better than a
+#     constant. A reading within 2 steps of the truth is the realistic aim.
+#   * The drives are hill districts in the west, test equipment, during
+#     downloads. A phone sitting idle shows a better RSRQ for the same
+#     radio conditions, so the table may read high for idle phones.
+#   * Below -20 dB there are few readings (about 2,000). Their measured
+#     mean stays near 4, so the last step is held at 4.
+#   * Adding RSRP as a second input brings the miss to 2.0 (not built).
+# `manage.py cqi_rsrq_calibration --drive-tests` reprints the table from
+# whatever measured CQI is stored.
+RSRQ_TABLE_NTC_MEASURED = (
+    (-8.5, 10),    # -8 dB and better
+    (-10.5, 9),    # -9, -10
+    (-12.5, 8),    # -11, -12
+    (-14.5, 7),    # -13, -14
+    (-16.5, 6),    # -15, -16
+    (-17.5, 5),    # -17
+    (-99.0, 4),    # -18 and worse
 )
 
 DEFAULT_CONFIG = {
@@ -127,7 +133,7 @@ DEFAULT_CONFIG = {
     'subband_combine': 'eesm',
     # RSRQ -> CQI steps: a list of [lowest RSRQ dB, CQI] pairs, best first.
     # None switches back to the straight line below.
-    'rsrq_table': RSRQ_TABLE_NTC_DT,
+    'rsrq_table': RSRQ_TABLE_NTC_MEASURED,
     # Used only when rsrq_table is None: CQI = a * RSRQ + b, clamped to
     # 0..15. These give RSRQ -10 dB -> CQI 7, -3 dB -> 14.
     'rsrq_slope': 1.0,

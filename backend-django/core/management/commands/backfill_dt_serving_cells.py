@@ -21,6 +21,8 @@ from django.core.management.base import BaseCommand
 from core.dt_serving_cell import attach_serving_cells
 from core.models import DriveTestSample, DriveTestSession
 
+CHUNK = 5000
+
 _SERVING_FIELDS = (
     'serving_site_id', 'serving_site_name', 'serving_cell_name', 'serving_sector',
     'serving_local_cell_id', 'serving_dist_km',
@@ -43,42 +45,54 @@ class Command(BaseCommand):
         total = attributed_sessions = attributed_rows = 0
         for session in qs.iterator():
             total += 1
-            samples = list(
-                DriveTestSample.objects.filter(session=session).order_by('id')
-            )
-            if not samples:
-                continue
-            rows = [
-                {
-                    'lat': s.lat, 'lng': s.lng, 'pci': s.pci,
-                    'bcch': s.bcch, 'bsic': s.bsic, 'scrambling_code': s.scrambling_code,
-                }
-                for s in samples
-            ]
-            attach_serving_cells(rows, session.tech or '4G')
-            hits = [(s, r) for s, r in zip(samples, rows) if r.get('serving_site_id')]
-            label = session.name or session.id
-            if not hits:
-                self.stdout.write(f'session {label}: no serving cells resolved (0 of {len(samples)})')
-                continue
-            attributed_sessions += 1
-            attributed_rows += len(hits)
-            if dry_run:
-                sites = {r['serving_site_id'] for _, r in hits}
-                self.stdout.write(
-                    f'[dry-run] session {label}: {len(hits)}/{len(samples)} samples -> '
-                    f'{len(sites)} site(s) {sorted(sites)}'
+            # In chunks (2026-10-13): a long drive is 140,000 readings, too
+            # many to hold as full objects on a small server.
+            hits = moved = seen = 0
+            sites = set()
+            last_id = 0
+            while True:
+                samples = list(
+                    DriveTestSample.objects.filter(session=session, id__gt=last_id).order_by('id')
+                    .only('id', 'lat', 'lng', 'pci', 'bcch', 'bsic', 'scrambling_code', 'cell_id', *_SERVING_FIELDS)[:CHUNK]
                 )
+                if not samples:
+                    break
+                last_id = samples[-1].id
+                seen += len(samples)
+                rows = [
+                    {
+                        'lat': s.lat, 'lng': s.lng, 'pci': s.pci,
+                        'bcch': s.bcch, 'bsic': s.bsic, 'scrambling_code': s.scrambling_code,
+                        'cell_id': s.cell_id,
+                    }
+                    for s in samples
+                ]
+                attach_serving_cells(rows, session.tech or '4G')
+                changed = []
+                for s, r in zip(samples, rows):
+                    if r.get('serving_site_id'):
+                        hits += 1
+                        sites.add(r['serving_site_id'])
+                    if any(getattr(s, f) != r.get(f) for f in _SERVING_FIELDS):
+                        if (s.serving_site_id or None) != r.get('serving_site_id'):
+                            moved += 1
+                        for f in _SERVING_FIELDS:
+                            setattr(s, f, r.get(f))
+                        changed.append(s)
+                if changed and not dry_run:
+                    DriveTestSample.objects.bulk_update(changed, list(_SERVING_FIELDS), batch_size=1000)
+            label = session.name or session.id
+            if not seen:
                 continue
-            for s, r in hits:
-                for f in _SERVING_FIELDS:
-                    setattr(s, f, r.get(f))
-            DriveTestSample.objects.bulk_update(
-                [s for s, _ in hits], list(_SERVING_FIELDS), batch_size=2000
+            if hits:
+                attributed_sessions += 1
+                attributed_rows += hits
+            prefix = '[dry-run] ' if dry_run else ''
+            self.stdout.write(
+                f'{prefix}session {label}: {hits}/{seen} readings matched to {len(sites)} site(s); '
+                f'{moved} given to a different site than before'
             )
-            self.stdout.write(f'session {label}: attributed {len(hits)}/{len(samples)} samples')
 
-        verb = 'Would attribute' if dry_run else 'Attributed'
         self.stdout.write(self.style.SUCCESS(
-            f'{verb} {attributed_rows} sample(s) across {attributed_sessions} of {total} session(s).'
+            f'Attributed {attributed_rows} sample(s) across {attributed_sessions} of {total} session(s).'
         ))

@@ -1,10 +1,10 @@
 import type { ChangeEvent, DragEvent } from 'react'
 import { useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { apiErrorMessage } from '../api/client'
 import { useAppendDtSamples, useCreateDtSession, useDeleteDtSession, useDtSessions, useSites } from '../api/queries'
-import type { DtCallSummary, DtDownloadSummary, DtSample, DtSessionCreate, DtSessionDetail, DtSessionListItem, DtSessionMeta, DtTech, SiteListItem } from '../api/types'
+import type { DtCallSummary, DtDownloadSummary, DtPurpose, DtSample, DtSessionCreate, DtSessionDetail, DtSessionListItem, DtSessionMeta, DtTech, SiteListItem } from '../api/types'
 import { isAllowed } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import DtCallDownloadSummary from '../components/DtCallDownloadSummary'
@@ -12,6 +12,7 @@ import DtCoverageMap from '../components/DtCoverageMap'
 import { DT_SESSION_HISTORY_PATH } from '../constants/opaqueRoutes'
 import { MAX_MAP_DOTS, subsampleForMap } from '../lib/dtBands'
 import { DriveModeSelect } from '../lib/dtDriveMode'
+import { PurposeSelect, combinedFingerprint, fileFingerprint } from '../lib/dtPurpose'
 import { computeSessionMeta, csvTextToRows, haversineKm, parseTemplateRows } from '../lib/dtTemplateParser'
 import { genAnalyzeFile } from '../lib/genAnalysis'
 import { trpaAnalyzeFile, trpaSummarizeCallEvents, trpaSummarizeDownloadEvents, type TrpaEventRow, type TrpaRow } from '../lib/trpAnalysis'
@@ -226,6 +227,8 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
   let pci: number | null = null
   let band = ''
   let cqi: number | null = null
+  let cellId: number | null = null
+  let cqiEstimated = false
   let dl: number | null = null
   let rxQual: number | null = null
   let bcch: number | null = null
@@ -247,6 +250,15 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     // actually on is real data this app already decodes).
     band = bandStr(row.band)
     cqi = int(row.cqi)
+    cqiEstimated = cqi != null && (row as { cqiEstimated?: unknown }).cqiEstimated === true
+    // The serving cell's identity (2026-10-13): the log's complete value,
+    // else built from its eNodeB and cell parts. The server finds the
+    // sector from it exactly, where the PCI alone can fit several sites.
+    const ids = row as { cellIdComplete?: unknown; cellIdEnb?: unknown; cellIdCell?: unknown }
+    const complete = int(ids.cellIdComplete)
+    const enb = int(ids.cellIdEnb)
+    const cellPart = int(ids.cellIdCell)
+    cellId = complete != null && complete > 255 ? complete : enb != null && cellPart != null ? enb * 256 + cellPart : null
     // Real DL throughput, when TEMS declared it — a genuine field this
     // engine confirmed against a real 4G DL capture (see trpAnalysis.ts's
     // module comment), not the never-verified extraction CLAUDE.md flags
@@ -281,7 +293,7 @@ function trpRowToDtSample(row: TrpaRow, tech: DtTech): DtSample | null {
     date: row.isoTs.slice(0, 10),
     lat, lng,
     rsrp: primary,
-    rsrq, sinr, dl, pci, band, cqi,
+    rsrq, sinr, dl, pci, band, cqi, cqi_estimated: cqiEstimated, cell_id: cellId,
     serving_site_id: null,
     serving_site_name: null,
     serving_sector: null,
@@ -313,6 +325,8 @@ interface PendingTrpSession {
   mode: string
   driveTestDate: string
   sourceFiles: string[]
+  // Fingerprint of the source files (2026-10-14); the files are never sent.
+  fileHash?: string
   // How many raw radio samples the decoder actually found across all of
   // this tech's source file(s), before the group-level cap in
   // buildTrpSessions below (if it even triggered) cut it down to what's
@@ -573,10 +587,14 @@ type DupAction = 'cancel' | 'keep' | 'replace'
 // others above.
 const TEMPLATES: Record<DtTech, { header: string[]; sample: string[][]; fname: string }> = {
   '4G': {
-    header: ['S.N', 'Time', 'Date', 'Latitude', 'Longitude', 'Serving Cell RSRP (dBm)', 'Serving Cell RSRQ (dB)', 'Serving Cell RS SINR (dB)', 'CQI', 'PCI'],
+    // "Serving Cell Identity" is optional (2026-10-13) and worth including:
+    // with it each reading is matched to its exact sector, where the PCI
+    // alone can fit several sites. It is the 4G cell identity, eNodeB ID x
+    // 256 + cell ID. Separate "eNodeB ID" and "Cell ID" columns work too.
+    header: ['S.N', 'Time', 'Date', 'Latitude', 'Longitude', 'Serving Cell RSRP (dBm)', 'Serving Cell RSRQ (dB)', 'Serving Cell RS SINR (dB)', 'CQI', 'PCI', 'Serving Cell Identity'],
     sample: [
-      ['1', '4:24:57.000', '6/12/2026', '27.0234980', '84.8843140', '-74.9', '-8.0', '10.0', '11', '134'],
-      ['2', '4:24:59.000', '6/12/2026', '27.0234980', '84.8843140', '-74.8', '-8.7', '10.2', '11', '134'],
+      ['1', '4:24:57.000', '6/12/2026', '27.0234980', '84.8843140', '-74.9', '-8.0', '10.0', '11', '134', '784898'],
+      ['2', '4:24:59.000', '6/12/2026', '27.0234980', '84.8843140', '-74.8', '-8.7', '10.2', '11', '134', '784898'],
     ],
     fname: 'dt_import_template_4g.csv',
   },
@@ -641,11 +659,23 @@ export default function DtUploadPage() {
   // real field. Curated dropdown + free text, optional -- blank means
   // "not set," same as an older session that predates this field.
   const [driveMode, setDriveMode] = useState('')
+  // Retention (2026-10-14, core/dt_retention.py): why the drive was run
+  // (asked every time; only yearly drives count as "the latest yearly
+  // drives" of a place) and where the original file is kept. The file
+  // itself is never sent, only its fingerprint, to find a re-upload.
+  const [purpose, setPurpose] = useState<DtPurpose | ''>('')
+  const [sourceLocation, setSourceLocation] = useState('')
+  const [fileHash, setFileHash] = useState('')
+  const trpHashesRef = useRef<Map<string, string>>(new Map())
   const [uploadedFile, setUploadedFile] = useState<{ name: string } | null>(null)
   const [parsedSamples, setParsedSamples] = useState<DtSample[] | null>(null)
   const [parseErr, setParseErr] = useState<string | null>(null)
   const [saveErr, setSaveErr] = useState<string | null>(null)
-  const [savedMsg, setSavedMsg] = useState<string | null>(null)
+  // Sessions saved from the template tab during this visit, newest first
+  // (2026-10-13). The page used to jump to Session History after each
+  // save; it now stays, so several logs can be uploaded one after another,
+  // and each saved session is listed here with a link that opens it.
+  const [savedSessions, setSavedSessions] = useState<{ id: number; name: string; points: number }[]>([])
   const [dupPrompt, setDupPrompt] = useState<{ existing: DtSessionListItem; driveTestDate: string; gpsCount: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -724,13 +754,11 @@ export default function DtUploadPage() {
     setParsedSamples(null)
     setParseErr(null)
     setSaveErr(null)
-    setSavedMsg(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   async function handleFile(file: File) {
     setParseErr(null)
-    setSavedMsg(null)
     setSaveErr(null)
     try {
       let rows: string[][]
@@ -744,6 +772,7 @@ export default function DtUploadPage() {
       const records = parseTemplateRows(rows, tech)
       if (!records.length) throw new Error('No valid GPS-tagged rows found in this file.')
       setUploadedFile({ name: file.name })
+      setFileHash(await fileFingerprint(await file.arrayBuffer()))
       setParsedSamples(records)
       // Auto-name every fresh upload — v1 parity (bts_monitor.html's
       // saveDtSession(): `DT_Excel_%dtDate%_%districtname%_%techtype%`
@@ -781,9 +810,17 @@ export default function DtUploadPage() {
   // `findDuplicateFor` so the .trp upload flow below can reuse the exact
   // same check per detected-tech session group, instead of only the
   // single active template upload.
-  function findDuplicateFor(fileKey: string, forDate: string, gpsCount: number): DtSessionListItem | undefined {
+  function findDuplicateFor(
+    fileKey: string, forDate: string, gpsCount: number, hash = '', forTech?: DtTech,
+  ): DtSessionListItem | undefined {
     if (!sessions) return undefined
+    // Same file fingerprint and technology: certainly the same log (2026-10-14).
+    if (hash) {
+      const same = sessions.find((s) => s.file_hash === hash && (!forTech || s.tech === forTech))
+      if (same) return same
+    }
     return sessions.find((s) => {
+
       const names = s.meta?.fileNames
       const sFileKey = names && names.length ? [...names].sort().join('|') : s.name
       return sFileKey === fileKey && s.date === forDate && s.meta?.gpsCount === gpsCount
@@ -792,13 +829,12 @@ export default function DtUploadPage() {
   function findDuplicate(): DtSessionListItem | undefined {
     if (!meta) return undefined
     const fileKey = uploadedFile ? uploadedFile.name : sessionName
-    return findDuplicateFor(fileKey, driveTestDate, meta.gpsCount)
+    return findDuplicateFor(fileKey, driveTestDate, meta.gpsCount, fileHash, tech)
   }
 
   async function doSave() {
     if (!parsedSamples || !meta) return
     setSaveErr(null)
-    setSavedMsg(null)
     try {
       const created = await saveSessionChunked(
         {
@@ -808,15 +844,19 @@ export default function DtUploadPage() {
           uploaded_date: new Date().toISOString().slice(0, 10),
           meta,
           mode: driveMode,
+          purpose: purpose || 'other',
+          file_hash: fileHash,
+          source_location: sourceLocation.trim(),
         },
         parsedSamples,
       )
-      // Jump to the Session History page with the new session pre-
-      // selected (2026-08-09: these were one page/tab before — now
-      // separate routes, so a query param stands in for what used to be
-      // `setTab('history'); setSelectedSessionId(created.id)`. See
-      // DtSessionHistoryPage.tsx, which reads this on mount.
-      navigate(`${DT_SESSION_HISTORY_PATH}?session=${created.id}`)
+      // Stay on this page and clear the form for the next log
+      // (2026-10-13). The saved session is listed with a link to Session
+      // History, which opens it on the map (DtSessionHistoryPage.tsx reads
+      // `?session=` on mount).
+      const savedName = sessionName || uploadedFile?.name || 'DT Session'
+      setSavedSessions((list) => [{ id: created.id, name: savedName, points: parsedSamples.length }, ...list])
+      setSaveProgress(null)
       resetUpload()
       setSessionName('')
       setDriveMode('')
@@ -878,6 +918,7 @@ export default function DtUploadPage() {
       setTrpQueue([...working])
       try {
         const buf = await files[i].arrayBuffer()
+        trpHashesRef.current.set(files[i].name, await fileFingerprint(buf))
         if (/\.gen$/i.test(files[i].name)) {
           // Huawei GENEX Probe log (2026-10-09). 2G serving cell + GPS only,
           // no events. See lib/genAnalysis.ts for what is and isn't decoded.
@@ -904,6 +945,11 @@ export default function DtUploadPage() {
     if (!built.length) {
       setTrpStatusMsg('File(s) parsed, but no valid Nepal-bounded GPS+signal samples were extracted from any of them.')
       return
+    }
+    // One fingerprint per session from its source files' (2026-10-14).
+    for (const b of built) {
+      const hashes = b.sourceFiles.map((name) => trpHashesRef.current.get(name)).filter((h): h is string => !!h)
+      if (hashes.length === b.sourceFiles.length) b.fileHash = await combinedFingerprint(hashes)
     }
     setTrpSessions(built)
     setTrpActiveIdx(0)
@@ -955,6 +1001,9 @@ export default function DtUploadPage() {
           uploaded_date: new Date().toISOString().slice(0, 10),
           meta: s.meta,
           mode: s.mode,
+          purpose: purpose || 'other',
+          file_hash: s.fileHash ?? '',
+          source_location: sourceLocation.trim(),
         },
         s.samples,
       )
@@ -975,7 +1024,7 @@ export default function DtUploadPage() {
     // optional (it's a general-purpose untyped-JSON-blob shape), so this
     // narrows with `?? 0` rather than a non-null assertion.
     const gpsCount = s.meta.gpsCount ?? 0
-    const dup = findDuplicateFor(fileKey, s.driveTestDate, gpsCount)
+    const dup = findDuplicateFor(fileKey, s.driveTestDate, gpsCount, s.fileHash, s.tech)
     if (dup) {
       setTrpDupPrompt({ idx, existing: dup, driveTestDate: s.driveTestDate, gpsCount })
       return
@@ -1036,6 +1085,19 @@ export default function DtUploadPage() {
             </div>
           </div>
 
+          <div className="report-toolbar dt-upload-about">
+            <PurposeSelect value={purpose} onChange={setPurpose} />
+            <input
+              type="text"
+              placeholder="Where the original file is kept (optional, e.g. TEMS server path)"
+              value={sourceLocation}
+              onChange={(e) => setSourceLocation(e.target.value)}
+              maxLength={255}
+              style={{ flex: 1, minWidth: 260 }}
+            />
+            {!purpose && <span className="muted" style={{ fontSize: 12 }}>Choose the purpose before saving.</span>}
+          </div>
+
           {mode === 'template' && (
             <>
               <div className="report-toolbar">
@@ -1089,7 +1151,18 @@ export default function DtUploadPage() {
 
               {parseErr && <div className="form-error">{parseErr}</div>}
               {saveErr && <div className="form-error">{saveErr}</div>}
-              {savedMsg && <div className="form-success">{savedMsg}</div>}
+              {savedSessions.length > 0 && (
+                <div className="form-success">
+                  {savedSessions.map((saved, i) => (
+                    <div key={saved.id}>
+                      {i === 0 ? 'Saved: ' : 'Saved earlier: '}
+                      <b>{saved.name}</b> ({saved.points.toLocaleString()} points).{' '}
+                      <Link to={`${DT_SESSION_HISTORY_PATH}?session=${saved.id}`}>Open it in Session History</Link>
+                    </div>
+                  ))}
+                  <div>You can upload the next log above.</div>
+                </div>
+              )}
 
               {parsedSamples && meta && (
                 <>
@@ -1120,7 +1193,7 @@ export default function DtUploadPage() {
                     </div>
                   )}
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                    <button className="btn-primary" type="button" onClick={handleSaveClick} disabled={savingBusy}>
+                    <button className="btn-primary" type="button" onClick={handleSaveClick} disabled={savingBusy || !purpose}>
                       {savingBusy ? 'Saving…' : 'Save Session'}
                     </button>
                     <button className="btn-secondary" type="button" onClick={resetUpload}>
@@ -1249,7 +1322,7 @@ export default function DtUploadPage() {
                     </div>
                   )}
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                    <button className="btn-primary" type="button" onClick={() => handleTrpSaveClick(trpActiveIdx)} disabled={savingBusy}>
+                    <button className="btn-primary" type="button" onClick={() => handleTrpSaveClick(trpActiveIdx)} disabled={savingBusy || !purpose}>
                       {savingBusy ? 'Saving…' : 'Save Session'}
                     </button>
                     <button className="btn-secondary" type="button" onClick={() => skipTrpSession(trpActiveIdx)}>

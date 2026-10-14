@@ -26,6 +26,8 @@ import DtCallDownloadSummary from '../components/DtCallDownloadSummary'
 import DtCoverageMap from '../components/DtCoverageMap'
 import { assignDtCompareOrder } from '../lib/dtCompareAssignment'
 import { DriveModeSelect } from '../lib/dtDriveMode'
+import { purposeLabel } from '../lib/dtPurpose'
+import DtSessionRetentionPanel from '../components/DtSessionRetentionPanel'
 import { clusterDtSessionsByArea, type DtSessionCluster } from '../lib/dtSessionClustering'
 
 // Split out of the former single-page DtDataManagerPage.tsx (2026-08-09
@@ -660,7 +662,10 @@ export default function DtSessionHistoryPage() {
                         </div>
                       )}
                     </td>
-                    <td>{s.tech}</td>
+                    <td>
+                      {s.tech}
+                      <div className="muted" style={{ fontSize: 11 }}>{purposeLabel(s.purpose)}{s.keep ? ' · kept' : ''}</div>
+                    </td>
                     <td>{s.mode || <span className="muted">—</span>}</td>
                     <td>{s.date ?? '—'}</td>
                     <td className="dt-remarks-cell" title={s.remarks || undefined}>
@@ -895,6 +900,8 @@ export default function DtSessionHistoryPage() {
                             <p className="muted">{sessionDetail.mode || 'Not set.'}</p>
                           )}
                         </div>
+
+                        <DtSessionRetentionPanel session={sessionDetail} canEdit={canDelete} />
 
                         {/* Attachments (2026-09-07) — arbitrary supporting
                             files, NOT the original .trp/.gpx (those are

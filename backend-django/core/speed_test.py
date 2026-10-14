@@ -176,6 +176,7 @@ class TelemetrySpeedResultIngestView(APIView):
             device_id=device_id, ts=ts,
             ping_median_ms=_speed_num(data, 'ping_median_ms', 10_000),
             jitter_ms=_speed_num(data, 'jitter_ms', 10_000),
+            packet_loss_pct=_speed_num(data, 'packet_loss_pct', 100),
             download_mbps=_speed_num(data, 'download_mbps', 10_000),
             upload_mbps=_speed_num(data, 'upload_mbps', 10_000),
             network_type=str(data.get('network_type') or '').strip().upper()[:8],

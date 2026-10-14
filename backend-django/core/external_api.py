@@ -342,7 +342,8 @@ class ExternalDtSampleListCreateView(ExternalApiView):
         )
         added = len(ser.validated_data)
         session.size_bytes = (session.size_bytes or 0) + sum(len(str(s)) for s in ser.validated_data)
-        session.save(update_fields=['size_bytes'])
+        session.plot_squares_stale = True   # its 50 m squares are built again (core/dt_plot_squares.py)
+        session.save(update_fields=['size_bytes', 'plot_squares_stale'])
         return Response(
             {'session_id': session.id, 'samples_added': added, 'total_samples': session.samples.count()},
             status=201,

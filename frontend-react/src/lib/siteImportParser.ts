@@ -330,6 +330,9 @@ export interface ParsedEngineeringParamRow {
   beamwidth: number | null
   radius: number | null
   max_tx_power_dbm: number | null
+  // The eNodeB a 4G sector belongs to ("NodeB ID" in the LTE engineering
+  // parameter file). Null from the other sources.
+  enodeb_id?: number | null
   carrier: string
   site_band: string
   // 2G/3G RF Database fields (2026-09-27, parseRfDatabaseRows below) —
@@ -371,6 +374,8 @@ export function parseEngineeringParamRows(rows: string[][]): ParsedEngineeringPa
   const header = rows[0].map(normalize)
   const iCellName = findCol(header, 'cellname')
   const iPci = findCol(header, 'pci')
+  // "NodeB ID" in the LTE list; "Node IDENTITY" beside it is a name, not this number.
+  const iEnodeb = findCol(header, 'nodebid', 'enodebid', 'enbid')
   const iHeight = findCol(header, 'antennaheight')
   const iAzimuth = findCol(header, 'azimuth')
   const iMt = findCol(header, 'mechdowntilt')
@@ -396,6 +401,15 @@ export function parseEngineeringParamRows(rows: string[][]): ParsedEngineeringPa
   const iTowerRemark = findCol(header, 'towerremark')
 
   if (iCellName < 0) throw new Error('Could not find a "Cell Name" column in this file.')
+  // A 2G or 3G RF Database also has a Cell Name column, so it used to be
+  // accepted here (2026-10-13): the page read its first sheet and sent
+  // the rows as 4G engineering parameters. A 4G list has a PCI column and
+  // none of the 2G/3G identities.
+  if (iPci < 0 && ['bcch', 'bsic', 'psc', 'uarfcn'].some((k) => findCol(header, k) >= 0)) {
+    throw new Error(
+      'This looks like a 2G or 3G RF Database, not a 4G engineering parameter file. Use the 2G RF Database or 3G RF Database box.',
+    )
+  }
 
   const records: ParsedEngineeringParamRow[] = []
   for (let r = 1; r < rows.length; r++) {
@@ -406,6 +420,7 @@ export function parseEngineeringParamRows(rows: string[][]): ParsedEngineeringPa
     records.push({
       cell_name: cellName,
       pci: int(row, iPci),
+      enodeb_id: int(row, iEnodeb),
       height: num(row, iHeight),
       azimuth: num(row, iAzimuth),
       mech_tilt: num(row, iMt),

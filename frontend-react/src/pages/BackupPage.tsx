@@ -352,7 +352,7 @@ function EngineeringParamImportSlot() {
     try {
       const res = await apiJson<EngineeringParamImportResult>('/api/v2/backup/import-sites/', {
         method: 'POST',
-        body: JSON.stringify({ kind: 'engineering_params', rows }),
+        body: JSON.stringify({ kind: 'engineering_params', tech: '4G', rows }),
       })
       setResult(res)
       setRows(null)
@@ -488,7 +488,7 @@ function RfDatabaseImportSlot({ tech, label }: { tech: '2G' | '3G'; label: strin
     try {
       const res = await apiJson<EngineeringParamImportResult>('/api/v2/backup/import-sites/', {
         method: 'POST',
-        body: JSON.stringify({ kind: 'engineering_params', rows }),
+        body: JSON.stringify({ kind: 'engineering_params', tech, rows }),
       })
       setResult(res)
       setRows(null)

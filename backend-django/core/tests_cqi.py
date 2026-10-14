@@ -119,14 +119,14 @@ class RsrqTests(SimpleTestCase):
 
     def test_table_is_the_default(self):
         r = compute_cqi(rsrq_db=-10, method=RSRP_RSRQ)
-        self.assertEqual(r['cqi_index'], 11)
-        self.assertEqual(r['modulation'], '64QAM')
+        self.assertEqual(r['cqi_index'], 9)
+        self.assertEqual(r['modulation'], '16QAM')
         self.assertEqual(r['method_used'], RSRP_RSRQ)
         self.assertIsNone(r['effective_sinr_db'])
 
     def test_table_steps(self):
-        expected = {-3: 12, -9: 12, -10: 11, -11: 11, -12: 10, -13: 8, -14: 6, -15: 5,
-                    -16: 4, -17: 3, -18: 2, -19: 2, -20: 1, -25: 1}
+        expected = {-3: 10, -8: 10, -9: 9, -10: 9, -11: 8, -12: 8, -13: 7, -14: 7, -15: 6,
+                    -16: 6, -17: 5, -18: 4, -20: 4, -21: 4, -25: 4}
         self.assertEqual({q: self.rsrq(q) for q in expected}, expected)
 
     def test_table_never_rises_as_rsrq_falls(self):
@@ -134,8 +134,8 @@ class RsrqTests(SimpleTestCase):
         self.assertEqual(values, sorted(values, reverse=True))
 
     def test_a_half_db_reading_rounds_to_its_whole_db(self):
-        self.assertEqual(self.rsrq(-11.4), 11)
-        self.assertEqual(self.rsrq(-11.6), 10)
+        self.assertEqual(self.rsrq(-10.4), 9)
+        self.assertEqual(self.rsrq(-10.6), 8)
 
     def test_custom_table(self):
         self.assertEqual(self.rsrq(-12, {'rsrq_table': [[-10, 9], [-15, 4]]}), 4)
@@ -157,7 +157,10 @@ class RsrqTests(SimpleTestCase):
         self.assertEqual(self.rsrq(5, self.LINE), 15)
 
     def test_floor_is_configurable(self):
-        self.assertEqual(self.rsrq(-25, {'rsrq_min_cqi': 0}), 0)
+        # The built-in table has a step for every RSRQ, so the floor is
+        # reached only below a table that stops short.
+        self.assertEqual(self.rsrq(-25, {'rsrq_min_cqi': 0}), 4)
+        self.assertEqual(self.rsrq(-25, {'rsrq_min_cqi': 0, 'rsrq_table': [[-10, 9]]}), 0)
         self.assertEqual(self.rsrq(-25, {'rsrq_min_cqi': 0, 'rsrq_table': None}), 0)
 
     def test_floor_does_not_touch_sinr_or_reported(self):
@@ -232,7 +235,7 @@ class SampleFieldsTests(SimpleTestCase):
         f = sample_cqi_fields(None, 17, -12, 'LTE')
         self.assertEqual((f['cqi_value'], f['cqi_source'], f['spectral_efficiency']), (12, 'sinr', 3.9023))
         f = sample_cqi_fields(None, None, -10, 'LTE')
-        self.assertEqual((f['cqi_value'], f['cqi_source'], f['modulation']), (11, 'rsrq', '64QAM'))
+        self.assertEqual((f['cqi_value'], f['cqi_source'], f['modulation']), (9, 'rsrq', '16QAM'))
 
     def test_out_of_range_report_is_ignored(self):
         # Android's "unavailable" is Integer.MAX_VALUE.
