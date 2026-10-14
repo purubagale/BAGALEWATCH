@@ -3909,6 +3909,14 @@ textarea:focus {
 .site-photo-view-toggle { display: flex; gap: 6px; margin: 0 0 12px; }
 .site-photo-map { height: 520px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 
+/* Drive-Test Retention (2026-10-14) -- DtRetentionPage. */
+.retention-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.retention-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.retention-field input { max-width: 120px; }
+.retention-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; grid-column: 1 / -1; margin-top: 6px; }
+.retention-run { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 12px; }
+.retention-row-open td { background: rgba(37, 99, 235, 0.06); }
+
 /* Problem Reports (2026-10-14) -- ProblemReportsPage: the list, one report
    with its check, and the complaint form. */
 .problem-toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 12px 0; }

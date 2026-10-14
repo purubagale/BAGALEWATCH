@@ -59,6 +59,7 @@ const KNOWN_ROUTES: { path: string; label: string }[] = [
   { path: '/a4s7pq', label: 'Area Sample' },
   { path: '/p6h2sv', label: 'Site Photos' },
   { path: '/r4q7cx', label: 'Problem Reports' },
+  { path: '/d5r8vt', label: 'Drive-Test Retention' },
   { path: '/i8s4kw', label: 'Issues' },
   { path: '/g3q7nx', label: 'RF Reports' },
   { path: '/k9d4wr', label: 'DT Plot Catalog' },

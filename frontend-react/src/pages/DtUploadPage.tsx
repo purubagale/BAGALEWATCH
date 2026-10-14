@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { apiErrorMessage } from '../api/client'
 import { useAppendDtSamples, useCreateDtSession, useDeleteDtSession, useDtSessions, useSites } from '../api/queries'
-import type { DtCallSummary, DtDownloadSummary, DtSample, DtSessionCreate, DtSessionDetail, DtSessionListItem, DtSessionMeta, DtTech, SiteListItem } from '../api/types'
+import type { DtCallSummary, DtDownloadSummary, DtPurpose, DtSample, DtSessionCreate, DtSessionDetail, DtSessionListItem, DtSessionMeta, DtTech, SiteListItem } from '../api/types'
 import { isAllowed } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import DtCallDownloadSummary from '../components/DtCallDownloadSummary'
@@ -12,6 +12,7 @@ import DtCoverageMap from '../components/DtCoverageMap'
 import { DT_SESSION_HISTORY_PATH } from '../constants/opaqueRoutes'
 import { MAX_MAP_DOTS, subsampleForMap } from '../lib/dtBands'
 import { DriveModeSelect } from '../lib/dtDriveMode'
+import { PurposeSelect, combinedFingerprint, fileFingerprint } from '../lib/dtPurpose'
 import { computeSessionMeta, csvTextToRows, haversineKm, parseTemplateRows } from '../lib/dtTemplateParser'
 import { genAnalyzeFile } from '../lib/genAnalysis'
 import { trpaAnalyzeFile, trpaSummarizeCallEvents, trpaSummarizeDownloadEvents, type TrpaEventRow, type TrpaRow } from '../lib/trpAnalysis'
@@ -324,6 +325,8 @@ interface PendingTrpSession {
   mode: string
   driveTestDate: string
   sourceFiles: string[]
+  // Fingerprint of the source files (2026-10-14); the files are never sent.
+  fileHash?: string
   // How many raw radio samples the decoder actually found across all of
   // this tech's source file(s), before the group-level cap in
   // buildTrpSessions below (if it even triggered) cut it down to what's
@@ -656,6 +659,14 @@ export default function DtUploadPage() {
   // real field. Curated dropdown + free text, optional -- blank means
   // "not set," same as an older session that predates this field.
   const [driveMode, setDriveMode] = useState('')
+  // Retention (2026-10-14, core/dt_retention.py): why the drive was run
+  // (asked every time; only yearly drives count as "the latest yearly
+  // drives" of a place) and where the original file is kept. The file
+  // itself is never sent, only its fingerprint, to find a re-upload.
+  const [purpose, setPurpose] = useState<DtPurpose | ''>('')
+  const [sourceLocation, setSourceLocation] = useState('')
+  const [fileHash, setFileHash] = useState('')
+  const trpHashesRef = useRef<Map<string, string>>(new Map())
   const [uploadedFile, setUploadedFile] = useState<{ name: string } | null>(null)
   const [parsedSamples, setParsedSamples] = useState<DtSample[] | null>(null)
   const [parseErr, setParseErr] = useState<string | null>(null)
@@ -761,6 +772,7 @@ export default function DtUploadPage() {
       const records = parseTemplateRows(rows, tech)
       if (!records.length) throw new Error('No valid GPS-tagged rows found in this file.')
       setUploadedFile({ name: file.name })
+      setFileHash(await fileFingerprint(await file.arrayBuffer()))
       setParsedSamples(records)
       // Auto-name every fresh upload — v1 parity (bts_monitor.html's
       // saveDtSession(): `DT_Excel_%dtDate%_%districtname%_%techtype%`
@@ -798,9 +810,17 @@ export default function DtUploadPage() {
   // `findDuplicateFor` so the .trp upload flow below can reuse the exact
   // same check per detected-tech session group, instead of only the
   // single active template upload.
-  function findDuplicateFor(fileKey: string, forDate: string, gpsCount: number): DtSessionListItem | undefined {
+  function findDuplicateFor(
+    fileKey: string, forDate: string, gpsCount: number, hash = '', forTech?: DtTech,
+  ): DtSessionListItem | undefined {
     if (!sessions) return undefined
+    // Same file fingerprint and technology: certainly the same log (2026-10-14).
+    if (hash) {
+      const same = sessions.find((s) => s.file_hash === hash && (!forTech || s.tech === forTech))
+      if (same) return same
+    }
     return sessions.find((s) => {
+
       const names = s.meta?.fileNames
       const sFileKey = names && names.length ? [...names].sort().join('|') : s.name
       return sFileKey === fileKey && s.date === forDate && s.meta?.gpsCount === gpsCount
@@ -809,7 +829,7 @@ export default function DtUploadPage() {
   function findDuplicate(): DtSessionListItem | undefined {
     if (!meta) return undefined
     const fileKey = uploadedFile ? uploadedFile.name : sessionName
-    return findDuplicateFor(fileKey, driveTestDate, meta.gpsCount)
+    return findDuplicateFor(fileKey, driveTestDate, meta.gpsCount, fileHash, tech)
   }
 
   async function doSave() {
@@ -824,6 +844,9 @@ export default function DtUploadPage() {
           uploaded_date: new Date().toISOString().slice(0, 10),
           meta,
           mode: driveMode,
+          purpose: purpose || 'other',
+          file_hash: fileHash,
+          source_location: sourceLocation.trim(),
         },
         parsedSamples,
       )
@@ -895,6 +918,7 @@ export default function DtUploadPage() {
       setTrpQueue([...working])
       try {
         const buf = await files[i].arrayBuffer()
+        trpHashesRef.current.set(files[i].name, await fileFingerprint(buf))
         if (/\.gen$/i.test(files[i].name)) {
           // Huawei GENEX Probe log (2026-10-09). 2G serving cell + GPS only,
           // no events. See lib/genAnalysis.ts for what is and isn't decoded.
@@ -921,6 +945,11 @@ export default function DtUploadPage() {
     if (!built.length) {
       setTrpStatusMsg('File(s) parsed, but no valid Nepal-bounded GPS+signal samples were extracted from any of them.')
       return
+    }
+    // One fingerprint per session from its source files' (2026-10-14).
+    for (const b of built) {
+      const hashes = b.sourceFiles.map((name) => trpHashesRef.current.get(name)).filter((h): h is string => !!h)
+      if (hashes.length === b.sourceFiles.length) b.fileHash = await combinedFingerprint(hashes)
     }
     setTrpSessions(built)
     setTrpActiveIdx(0)
@@ -972,6 +1001,9 @@ export default function DtUploadPage() {
           uploaded_date: new Date().toISOString().slice(0, 10),
           meta: s.meta,
           mode: s.mode,
+          purpose: purpose || 'other',
+          file_hash: s.fileHash ?? '',
+          source_location: sourceLocation.trim(),
         },
         s.samples,
       )
@@ -992,7 +1024,7 @@ export default function DtUploadPage() {
     // optional (it's a general-purpose untyped-JSON-blob shape), so this
     // narrows with `?? 0` rather than a non-null assertion.
     const gpsCount = s.meta.gpsCount ?? 0
-    const dup = findDuplicateFor(fileKey, s.driveTestDate, gpsCount)
+    const dup = findDuplicateFor(fileKey, s.driveTestDate, gpsCount, s.fileHash, s.tech)
     if (dup) {
       setTrpDupPrompt({ idx, existing: dup, driveTestDate: s.driveTestDate, gpsCount })
       return
@@ -1051,6 +1083,19 @@ export default function DtUploadPage() {
             <div className={mode === 'trp' ? 'feat-tab active' : 'feat-tab'} onClick={() => setMode('trp')}>
               .trp / .gen Files (4G/3G/2G)
             </div>
+          </div>
+
+          <div className="report-toolbar dt-upload-about">
+            <PurposeSelect value={purpose} onChange={setPurpose} />
+            <input
+              type="text"
+              placeholder="Where the original file is kept (optional, e.g. TEMS server path)"
+              value={sourceLocation}
+              onChange={(e) => setSourceLocation(e.target.value)}
+              maxLength={255}
+              style={{ flex: 1, minWidth: 260 }}
+            />
+            {!purpose && <span className="muted" style={{ fontSize: 12 }}>Choose the purpose before saving.</span>}
           </div>
 
           {mode === 'template' && (
@@ -1148,7 +1193,7 @@ export default function DtUploadPage() {
                     </div>
                   )}
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                    <button className="btn-primary" type="button" onClick={handleSaveClick} disabled={savingBusy}>
+                    <button className="btn-primary" type="button" onClick={handleSaveClick} disabled={savingBusy || !purpose}>
                       {savingBusy ? 'Saving…' : 'Save Session'}
                     </button>
                     <button className="btn-secondary" type="button" onClick={resetUpload}>
@@ -1277,7 +1322,7 @@ export default function DtUploadPage() {
                     </div>
                   )}
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                    <button className="btn-primary" type="button" onClick={() => handleTrpSaveClick(trpActiveIdx)} disabled={savingBusy}>
+                    <button className="btn-primary" type="button" onClick={() => handleTrpSaveClick(trpActiveIdx)} disabled={savingBusy || !purpose}>
                       {savingBusy ? 'Saving…' : 'Save Session'}
                     </button>
                     <button className="btn-secondary" type="button" onClick={() => skipTrpSession(trpActiveIdx)}>

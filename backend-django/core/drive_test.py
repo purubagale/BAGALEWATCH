@@ -295,7 +295,7 @@ class DriveTestSessionViewSet(
         return DriveTestSessionListSerializer
 
     def get_permissions(self):
-        if self.action in ('create', 'destroy', 'samples', 'remarks', 'mode'):
+        if self.action in ('create', 'destroy', 'samples', 'remarks', 'mode', 'retention'):
             return [IsAuthenticated(), IsAdminOrSuperadmin()]
         if self.action == 'attachments':
             # GET (list) is read-only, same tier as retrieve/list below;
@@ -407,6 +407,33 @@ class DriveTestSessionViewSet(
         session.mode = mode
         session.save(update_fields=['mode'])
         return Response({'mode': session.mode})
+
+    @action(detail=True, methods=['patch'])
+    def retention(self, request, pk=None):
+        """`PATCH /api/v2/dt-sessions/<id>/retention/` (2026-10-14) -- why the
+        drive was run (`purpose`), whether retention may touch it (`keep`)
+        and where its original file is kept (`source_location`); any of the
+        three. See core/dt_retention.py for how they are used."""
+        session = self.get_object()
+        data = request.data if isinstance(request.data, dict) else {}
+        fields = []
+        if 'purpose' in data:
+            if data['purpose'] not in dict(DriveTestSession.PURPOSES):
+                return Response({'purpose': ['Unknown purpose.']}, status=400)
+            session.purpose = data['purpose']
+            fields.append('purpose')
+        if 'keep' in data:
+            session.keep = bool(data['keep'])
+            fields.append('keep')
+        if 'source_location' in data:
+            session.source_location = str(data['source_location'] or '')[:255]
+            fields.append('source_location')
+        if fields:
+            session.save(update_fields=fields)
+            log_audit_event(request, 'DT_SESSION.RETENTION', resource='dt_session', resource_id=session.pk,
+                            detail=f'purpose={session.purpose}, keep={session.keep}')
+        return Response({'purpose': session.purpose, 'keep': session.keep,
+                         'source_location': session.source_location})
 
     @action(detail=True, methods=['get', 'post'], url_path='attachments')
     def attachments(self, request, pk=None):
@@ -574,6 +601,15 @@ class DriveTestSessionViewSet(
             by_session = {}
             for row in candidates.order_by('id').values('session_id', *NEAR_PLOT_FIELDS):
                 by_session.setdefault(row.pop('session_id'), []).append(row)
+            # Where retention removed a session's readings, its squares stand in.
+            pruned = DriveTestSession.objects.filter(readings_pruned__gt=0)
+            if tech_list:
+                pruned = pruned.filter(tech__in=tech_list)
+            for session_id, rows in dt_plot_squares.pruned_squares(
+                list(pruned.values_list('id', flat=True)), lat, lng, radius_km,
+                outline.wkt if outline is not None else None, NEAR_OUTLINE_MARGIN_M,
+            ).items():
+                by_session.setdefault(session_id, []).extend(rows)
 
         if not by_session:
             return Response([])
@@ -592,6 +628,32 @@ class DriveTestSessionViewSet(
             row['samples'] = by_session[row['id']]
             row['plot_step_m'] = step_m
         return Response(data)
+
+    @action(detail=False, methods=['get'])
+    def recent(self, request):
+        """`GET /api/v2/dt-sessions/recent/?lat=&lng=&radius_km=&tech=&outline=`
+        (2026-10-14) -- Explore's Recent layer: for each 50 m square, the
+        most recent drive-test value and the one before it, from any session
+        (core/dt_plot_squares.py recent_squares). Same area parameters as near()."""
+        try:
+            lat = float(request.query_params['lat'])
+            lng = float(request.query_params['lng'])
+        except (KeyError, ValueError, TypeError):
+            return Response({'detail': 'lat and lng query params are required numbers'}, status=400)
+        try:
+            radius_km = max(0.1, min(float(request.query_params.get('radius_km', 2)), 50))
+        except ValueError:
+            radius_km = 2.0
+        tech_param = request.query_params.get('tech')
+        tech_list = [t for t in tech_param.split(',') if t] if tech_param else None
+        outline = _near_outline(request.query_params.get('outline'))
+        squares, names = dt_plot_squares.recent_squares(
+            lat, lng, radius_km, outline.wkt if outline is not None else None, NEAR_OUTLINE_MARGIN_M, tech_list,
+        )
+        if squares is None:
+            return Response({'detail': 'This area is too large for the recent view. Search a smaller area.'},
+                            status=400)
+        return Response({'squares': squares, 'sessions': names, 'square_m': dt_plot_squares.STEP_M})
 
     @action(detail=False, methods=['get'])
     def compare(self, request):

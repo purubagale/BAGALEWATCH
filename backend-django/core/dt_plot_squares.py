@@ -25,12 +25,12 @@ _BUILD_SQL = f"""
     INSERT INTO v2_dt_plot_squares
         (session_id, sx, sy, lat, lng, location, n,
          rsrp_min, rsrp_max, rsrp_avg, rsrq_min, rsrq_avg, sinr_min, sinr_avg, dl_min, dl_avg,
-         cqi_min, cqi_avg, rscp_min, rscp_avg, ecno_min, ecno_avg, rx_qual_max, rx_qual_avg, rep_id)
+         cqi_min, cqi_avg, rscp_min, rscp_avg, ecno_min, ecno_avg, rx_qual_max, rx_qual_avg, rep_id, detail_removed)
     SELECT session_id, sx, sy, avg(lat), avg(lng),
            ST_SetSRID(ST_MakePoint(avg(lng), avg(lat)), 4326)::geography, count(*),
            min(rsrp), max(rsrp), avg(rsrp), min(rsrq), avg(rsrq), min(sinr), avg(sinr), min(dl), avg(dl),
            min(cqi), avg(cqi), min(rscp), avg(rscp), min(ecno), avg(ecno), max(rx_qual), avg(rx_qual),
-           (array_agg(id ORDER BY COALESCE(rscp, rsrp) ASC NULLS LAST, id))[1]
+           (array_agg(id ORDER BY COALESCE(rscp, rsrp) ASC NULLS LAST, id))[1], false
     FROM (SELECT *, floor(lat * {CELLS_PER_DEGREE})::int AS sx, floor(lng * {CELLS_PER_DEGREE})::int AS sy
           FROM v2_dt_samples
           WHERE session_id = ANY(%s) AND lat IS NOT NULL AND lng IS NOT NULL) s
@@ -44,7 +44,10 @@ def rebuild(session_ids):
     if not session_ids:
         return
     with connection.cursor() as cursor:
-        cursor.execute('DELETE FROM v2_dt_plot_squares WHERE session_id = ANY(%s)', [session_ids])
+        # Squares whose readings retention removed are the only record of
+        # them, so they are kept; the rest is built again from the readings.
+        cursor.execute('DELETE FROM v2_dt_plot_squares WHERE session_id = ANY(%s) AND NOT detail_removed',
+                       [session_ids])
         cursor.execute(_BUILD_SQL, [session_ids])
     DriveTestSession.objects.filter(id__in=session_ids).update(plot_squares_stale=False)
 
@@ -96,7 +99,34 @@ def squares_near(lat, lng, radius_km, outline_wkt, outline_margin_m, tech_list, 
         if len(merged) <= max_rows:
             break
     rows = merged
+    return _rows_out(rows), step_m
 
+
+def pruned_squares(session_ids, lat, lng, radius_km, outline_wkt, outline_margin_m):
+    """{session id: [square rows]} for the squares of these sessions whose
+    readings retention removed, so a full-reading view still shows them."""
+    if not session_ids:
+        return {}
+    where = ['q.detail_removed', 'q.session_id = ANY(%s)',
+             'ST_DWithin(q.location, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s)']
+    params = [list(session_ids), lng, lat, radius_km * 1000.0]
+    if outline_wkt:
+        where.append('ST_Intersects(q.location::geometry, '
+                     'ST_Buffer(ST_GeomFromText(%s, 4326)::geography, %s)::geometry)')
+        params += [outline_wkt, outline_margin_m + STEP_M]
+    cols = ('session_id', 'sx', 'sy', 'lat', 'lng', 'n', 'rsrp_min', 'rsrp_max', 'rsrp_avg', 'rsrq_min', 'rsrq_avg',
+            'sinr_min', 'sinr_avg', 'dl_min', 'dl_avg', 'cqi_min', 'cqi_avg', 'rscp_min', 'rscp_avg',
+            'ecno_min', 'ecno_avg', 'rx_qual_max', 'rx_qual_avg', 'rep_id')
+    with connection.cursor() as cursor:
+        cursor.execute(f"SELECT {', '.join('q.' + c for c in cols)} FROM v2_dt_plot_squares q "
+                       f"WHERE {' AND '.join(where)}", params)
+        rows = [dict(zip(cols, r)) for r in cursor.fetchall()]
+    return _rows_out(rows)
+
+
+def _rows_out(rows):
+    """Square rows in the shape of a reading for Explore. The weakest
+    reading's own details are filled in when it still exists."""
     reps = {}
     rep_ids = [r['rep_id'] for r in rows]
     if rep_ids:
@@ -121,7 +151,7 @@ def squares_near(lat, lng, radius_km, outline_wkt, outline_margin_m, tech_list, 
             'square_n': r['n'], 'rsrp_max': _round(r['rsrp_max'], 2), 'rsrp_avg': _round(r['rsrp_avg']),
             'sinr_avg': _round(r['sinr_avg']), 'dl_avg': _round(r['dl_avg']),
         })
-    return by_session, step_m
+    return by_session
 
 
 def _round(v, places=1):
@@ -161,3 +191,62 @@ def _level(r):
 
 def _pick(f, a, b):
     return b if a is None else a if b is None else f(a, b)
+
+
+# ── Recent layer (2026-10-14) ──────────────────────────────────────────────
+# For each square and technology: the most recent and the one before it,
+# from any drive-test session that measured the square. Explore draws the
+# latest value, the previous one, or the change between them.
+
+RECENT_MIN_READINGS = 3
+RECENT_MAX_SQUARES = 40_000
+_RECENT_VALUES = ('rsrp', 'rsrq', 'sinr', 'dl', 'cqi', 'rscp', 'ecno', 'rx_qual')
+
+
+def recent_squares(lat, lng, radius_km, outline_wkt, outline_margin_m, tech_list):
+    """([square], {session id: name}) or (None, None) when the area holds too many squares."""
+    rebuild_stale()
+    where = ['ST_DWithin(q.location, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s)',
+             f'q.n >= {RECENT_MIN_READINGS}']
+    params = [lng, lat, radius_km * 1000.0]
+    if outline_wkt:
+        where.append('ST_Intersects(q.location::geometry, '
+                     'ST_Buffer(ST_GeomFromText(%s, 4326)::geography, %s)::geometry)')
+        params += [outline_wkt, outline_margin_m + STEP_M]
+    if tech_list:
+        where.append("COALESCE(NULLIF(s.tech, ''), '4G') = ANY(%s)")
+        params.append(list(tech_list))
+    avgs = ', '.join(f'q.{v}_avg' for v in _RECENT_VALUES)
+    sql = f"""
+        SELECT * FROM (
+            SELECT COALESCE(NULLIF(s.tech, ''), '4G') AS tech, q.sx, q.sy, q.lat, q.lng, q.n, q.session_id,
+                   COALESCE(s.date, s.saved_at::date) AS drive_date, s.purpose, q.rsrp_min, {avgs},
+                   row_number() OVER (PARTITION BY COALESCE(NULLIF(s.tech, ''), '4G'), q.sx, q.sy
+                                      ORDER BY COALESCE(s.date, s.saved_at::date) DESC, s.saved_at DESC) AS rk
+            FROM v2_dt_plot_squares q JOIN v2_dt_sessions s ON s.id = q.session_id
+            WHERE {' AND '.join(where)}
+        ) ranked WHERE rk <= 2
+        ORDER BY tech, sx, sy, rk
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        cols = [c[0] for c in cursor.description]
+        rows = [dict(zip(cols, r)) for r in cursor.fetchall()]
+
+    squares = {}
+    for r in rows:
+        key = (r['tech'], r['sx'], r['sy'])
+        entry = {
+            'session_id': r['session_id'], 'date': r['drive_date'].isoformat(), 'purpose': r['purpose'], 'n': r['n'],
+            'rsrp_min': _round(r['rsrp_min'], 2),
+            **{v: _round(r[f'{v}_avg']) for v in _RECENT_VALUES},
+        }
+        if key not in squares:
+            squares[key] = {'tech': r['tech'], 'lat': r['lat'], 'lng': r['lng'], 'latest': entry, 'previous': None}
+        else:
+            squares[key]['previous'] = entry
+    if len(squares) > RECENT_MAX_SQUARES:
+        return None, None
+    ids = {r['session_id'] for r in rows}
+    names = dict(DriveTestSession.objects.filter(id__in=ids).values_list('id', 'name'))
+    return list(squares.values()), {str(k): v for k, v in names.items()}

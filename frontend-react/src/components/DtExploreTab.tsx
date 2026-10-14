@@ -7,8 +7,10 @@ import CurrentLocationMarker from './CurrentLocationMarker'
 import SitePhotoLayer from './SitePhotoLayer'
 import TelemetryNearLayer from './TelemetryNearLayer'
 import { useAuth } from '../auth/AuthContext'
-import { useDtServingCellsForSessions, useDtSessionsNear, useSites, useTelemetrySessionsNear } from '../api/queries'
-import type { DtSample, DtServingCell, DtSessionDetail, DtTech, SiteListItem } from '../api/types'
+import { apiErrorMessage } from '../api/client'
+import { useDtRecent, useDtServingCellsForSessions, useDtSessionsNear, useSites, useTelemetrySessionsNear } from '../api/queries'
+import type { DtRecentEntry, DtRecentSquare, DtSample, DtServingCell, DtSessionDetail, DtTech, SiteListItem } from '../api/types'
+import { purposeLabel } from '../lib/dtPurpose'
 import { ACTIVITY_ROLE_LABELS } from './AttachActivityModal'
 import { clusterDtSessionsByArea, type DtSessionCluster } from '../lib/dtSessionClustering'
 import { ALL_TECHS, bandCategoryColor, bandColor, pciColor, subsampleForMap, type TaggedMetric } from '../lib/dtBands'
@@ -271,6 +273,70 @@ function ViewWatcher({ onView }: { onView: (box: ViewBox) => void }) {
       onView({ s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() })
     },
   })
+  return null
+}
+
+// Recent and Change views (2026-10-14): one dot per 50 m square, from the
+// sessions' squares. Recent = the most recent value measured there (faded
+// when older than RECENT_FADE_MONTHS); Change = latest minus the one before.
+type ExploreView = 'sessions' | 'recent' | 'change'
+const RECENT_FADE_MONTHS = 24
+// A change smaller than this is drawn grey ("about the same").
+const CHANGE_STEP: Record<string, number> = { rsrp: 3, rsrq: 2, sinr: 2, cqi: 1, dl: 2, ecno: 2, rx_qual: 1 }
+
+function monthsAgo(isoDate: string) {
+  const d = new Date(isoDate)
+  const now = new Date()
+  return (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth())
+}
+
+function RecentSquaresLayer({
+  squares, metric, view, names,
+}: {
+  squares: DtRecentSquare[]
+  metric: TaggedMetric
+  view: Exclude<ExploreView, 'sessions'>
+  names: Record<string, string>
+}) {
+  const map = useMap()
+  useEffect(() => {
+    const layer = L.layerGroup()
+    const key = metric.key as keyof DtRecentEntry
+    const lowerIsBetter = metric.key === 'rx_qual'
+    const fmt = (e: DtRecentEntry) => {
+      const v = e[key] as number | null
+      return `${e.date} · ${purposeLabel(e.purpose)} · ${names[String(e.session_id)] ?? 'Session ' + e.session_id}<br>` +
+        `${metric.label}: ${v == null ? '—' : v + metric.unit} (average of ${e.n} readings)`
+    }
+    for (const sq of squares) {
+      if (sq.tech !== metric.tech) continue
+      const latest = sq.latest[key] as number | null
+      if (latest == null) continue
+      let color: string
+      let opacity = 0.85
+      let text = `<b>Latest</b> ${fmt(sq.latest)}`
+      if (view === 'recent') {
+        color = bandColor(metric.bands, latest)
+        if (monthsAgo(sq.latest.date) > RECENT_FADE_MONTHS) opacity = 0.3
+        if (sq.previous) text += `<br><b>Before</b> ${fmt(sq.previous)}`
+      } else {
+        const before = sq.previous ? (sq.previous[key] as number | null) : null
+        if (before == null) continue
+        const change = Math.round((latest - before) * 10) / 10
+        const better = lowerIsBetter ? -change : change
+        const step = CHANGE_STEP[metric.key] ?? 2
+        color = better >= step ? '#16a34a' : better <= -step ? '#dc2626' : '#9ca3af'
+        text += `<br><b>Before</b> ${fmt(sq.previous as DtRecentEntry)}<br><b>Change</b> ${change > 0 ? '+' : ''}${change}${metric.unit}`
+      }
+      L.circleMarker([sq.lat, sq.lng], { radius: 4, color, fillColor: color, fillOpacity: opacity, weight: 0 })
+        .bindTooltip(text, { sticky: true, direction: 'top', offset: [0, -4] })
+        .addTo(layer)
+    }
+    layer.addTo(map)
+    return () => {
+      map.removeLayer(layer)
+    }
+  }, [map, squares, metric, view, names])
   return null
 }
 
@@ -905,6 +971,10 @@ export default function DtExploreTab() {
   // A wide search arrives as squares (2026-10-14): the square size, 0 = every reading.
   const plotStepM = nearSessionsRaw?.[0]?.plot_step_m ?? 0
 
+  // Sessions, Recent or Change view of the map (2026-10-14).
+  const [exploreView, setExploreView] = useState<ExploreView>('sessions')
+  const recent = useDtRecent(point, backendRadiusKm, techs, outlineParam, exploreView !== 'sessions')
+
   // Zoomed in on a search that arrived as squares: every reading in view.
   const [viewBox, setViewBox] = useState<ViewBox | null>(null)
   const detailBox = useMemo(() => {
@@ -1290,7 +1360,31 @@ export default function DtExploreTab() {
             </div>
           </div>
 
-          <div className="report-toolbar" style={{ marginTop: 12, marginBottom: 0 }}>
+          <div className="report-toolbar" style={{ marginTop: 12, marginBottom: 0, gap: 6 }}>
+            {(['sessions', 'recent', 'change'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                className={exploreView === v ? 'btn-primary btn-small' : 'btn-secondary btn-small'}
+                onClick={() => setExploreView(v)}
+                title={v === 'sessions' ? 'Every session found here'
+                  : v === 'recent' ? 'The most recent value measured in each 50 m square, from any session'
+                    : 'Each 50 m square compared with the drive before it'}
+              >
+                {v === 'sessions' ? 'Sessions' : v === 'recent' ? 'Recent' : 'Change'}
+              </button>
+            ))}
+            {exploreView !== 'sessions' && (
+              <span className="muted" style={{ fontSize: 12 }}>
+                {recent.isLoading ? 'Loading…'
+                  : recent.error ? apiErrorMessage(recent.error)
+                    : exploreView === 'recent'
+                      ? `The most recent value in each 50 m square, from any drive; faded when older than ${RECENT_FADE_MONTHS} months.`
+                      : 'Green: better than the drive before; red: worse; grey: about the same. Only squares measured at least twice.'}
+              </span>
+            )}
+          </div>
+          <div className="report-toolbar" style={{ marginTop: 6, marginBottom: 0 }}>
             <div className="feat-tabs" style={{ borderBottom: 'none', flexWrap: 'wrap' }}>
               {visibleMetrics.map((m) => (
                 <div key={m.tag} className={!isPciTab && !isBandTab && m.tag === metric.tag ? 'feat-tab active' : 'feat-tab'} onClick={() => setMetricTag(m.tag)}>
@@ -1374,7 +1468,11 @@ export default function DtExploreTab() {
               />
               <SearchAreaLayer point={pointTuple as LatLng} radiusKm={radiusKm} shape={shape} label={pointLabel} />
               <NearSitesLayer sites={nearSites} onSelect={setSelectedSite} />
-              {isPciTab ? (
+              {exploreView !== 'sessions' ? (
+                !isPciTab && !isBandTab && recent.data && (
+                  <RecentSquaresLayer squares={recent.data.squares} metric={metric} view={exploreView} names={recent.data.sessions} />
+                )
+              ) : isPciTab ? (
                 <PciSamplesLayer sessions={nearSessions} />
               ) : isBandTab ? (
                 <BandSamplesLayer sessions={nearSessions} />

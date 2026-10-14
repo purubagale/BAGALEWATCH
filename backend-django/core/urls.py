@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import (api_auth, area_sample, audit, auth_log, backup, collection, consent, dashboard, device_identity,
-               device_lookup, device_trace, drive_test, emergency,
+               device_lookup, device_trace, drive_test, dt_retention, emergency,
                exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_report, reports, rescue, rf_audit,
                rf_reports, roles, site_import, site_coverage, site_photo, sso_views, system_doc,
                telemetry_admin, telemetry_near, views, volte_quality)
@@ -220,6 +220,12 @@ urlpatterns = [
     # Problem reports from the app or entered from complaints (2026-10-14) -- see core/problem_report.py.
     path('problem-reports/', problem_report.ProblemReportListView.as_view(), name='problem-reports'),
     path('problem-reports/<int:pk>/', problem_report.ProblemReportDetailView.as_view(), name='problem-report-detail'),
+    # Drive-test retention, superadmin (2026-10-14) -- see core/dt_retention.py.
+    path('dt-retention/settings/', dt_retention.RetentionSettingsView.as_view(), name='dt-retention-settings'),
+    path('dt-retention/runs/', dt_retention.RetentionRunListView.as_view(), name='dt-retention-runs'),
+    path('dt-retention/runs/<int:pk>/', dt_retention.RetentionRunDetailView.as_view(), name='dt-retention-run'),
+    path('dt-retention/runs/<int:pk>/approve/', dt_retention.RetentionRunApproveView.as_view(), name='dt-retention-approve'),
+    path('dt-retention/runs/<int:pk>/discard/', dt_retention.RetentionRunDiscardView.as_view(), name='dt-retention-discard'),
     path('site-photos/', site_photo.SitePhotoListView.as_view(), name='site-photos'),
     path('site-photos/<int:pk>/', site_photo.SitePhotoDetailView.as_view(), name='site-photo-detail'),
     path('site-photos/<int:pk>/image/', site_photo.SitePhotoImageView.as_view(), name='site-photo-image'),

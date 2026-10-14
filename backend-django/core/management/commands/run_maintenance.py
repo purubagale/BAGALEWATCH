@@ -8,6 +8,7 @@ Runs the background jobs in one process, one thread each:
     roll_telemetry_bins    coverage-bin roll-up
     prune_audit_log        audit-log and expired-token retention
     prune_site_photos      old rejected and unreviewed site photos
+    apply_dt_retention     drive-test retention runs a superadmin approved
 
 Each job is the existing command run with --loop, so its interval,
 settings and behaviour are unchanged. entrypoint.sh starts this next to
@@ -26,7 +27,8 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.db import close_old_connections, connection
 
-JOBS = ('sync_live_sites', 'telemetry_maintenance', 'roll_telemetry_bins', 'prune_audit_log', 'prune_site_photos')
+JOBS = ('sync_live_sites', 'telemetry_maintenance', 'roll_telemetry_bins', 'prune_audit_log', 'prune_site_photos',
+        'apply_dt_retention')
 RESTART_DELAY_SECONDS = 60
 # Arbitrary fixed number, only has to be the same in every runner.
 LOCK_KEY = 20261011

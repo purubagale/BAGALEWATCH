@@ -568,7 +568,7 @@ TELEMETRY_MAINTENANCE_INTERVAL_HOURS = int(os.environ.get('TELEMETRY_MAINTENANCE
 # AuditEvent together on this same cutoff; the `audit-log-maintenance`
 # compose service runs it on a daily loop, same pattern as
 # TELEMETRY_RETENTION_DAYS/`telemetry-maintenance` above.
-AUDIT_LOG_RETENTION_DAYS = int(os.environ.get('AUDIT_LOG_RETENTION_DAYS', 30))
+AUDIT_LOG_RETENTION_DAYS = int(os.environ.get('AUDIT_LOG_RETENTION_DAYS', 180))  # 6 months (2026-10-14)
 
 # Continuous coverage-bin rollup (2026-09-01, `telemetry-bin-roller`
 # compose service, core/management/commands/roll_telemetry_bins.py) — runs

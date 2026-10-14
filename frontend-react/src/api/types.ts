@@ -929,7 +929,15 @@ export interface DtSessionListItem {
   mode: string
   attachment_count: number
   activities: DtSessionActivityTag[]
+  // Retention (2026-10-14, core/dt_retention.py).
+  purpose?: DtPurpose
+  keep?: boolean
+  file_hash?: string
+  source_location?: string
+  readings_pruned?: number
 }
+
+export type DtPurpose = 'yearly' | 'complaint' | 'optimization' | 'other'
 
 // Optimization Activities (2026-09-12) -- see OptimizationActivity's
 // docstring in core/models.py for the before/after-change/re-verify
@@ -1389,6 +1397,9 @@ export interface DtSessionCreate {
   meta: DtSessionMeta
   samples: DtSample[]
   mode?: string
+  purpose?: DtPurpose
+  file_hash?: string
+  source_location?: string
 }
 
 // GET/PUT /permissions-matrix/ shape — excludes superadmin (see
@@ -2730,4 +2741,87 @@ export interface ProblemReport {
   // Superadmin only.
   phone_number?: string | null
   check?: ProblemCheck
+}
+
+// ── Drive-test retention and the Recent layer (2026-10-14) ───────────────
+
+export interface DtRecentEntry {
+  session_id: number
+  date: string
+  purpose: DtPurpose
+  n: number
+  rsrp_min: number | null
+  rsrp: number | null
+  rsrq: number | null
+  sinr: number | null
+  dl: number | null
+  cqi: number | null
+  rscp: number | null
+  ecno: number | null
+  rx_qual: number | null
+}
+
+export interface DtRecentSquare {
+  tech: DtTech
+  lat: number
+  lng: number
+  latest: DtRecentEntry
+  previous: DtRecentEntry | null
+}
+
+export interface DtRecentResponse {
+  squares: DtRecentSquare[]
+  sessions: Record<string, string>
+  square_m: number
+}
+
+export interface DtRetentionSettings {
+  enabled: boolean
+  yearly_keep: number
+  per_square_keep: number
+  detail_months: number
+  summary_years: number
+  min_readings: number
+  updated_by: string | null
+  updated_at: string | null
+}
+
+export interface DtPrunePlanItem {
+  session_id: number
+  name: string
+  tech: DtTech
+  purpose: DtPurpose
+  drive_date: string
+  action: 'reduced' | 'erased'
+  readings_removed: number
+  squares: number
+}
+
+export interface DtPruneRecordItem {
+  session_id: number
+  name: string
+  tech: string
+  purpose: string
+  drive_date: string | null
+  action: 'reduced' | 'erased'
+  readings_removed: number
+  created_at: string
+}
+
+export interface DtPruneRun {
+  id: number
+  status: 'planned' | 'approved' | 'running' | 'done' | 'failed' | 'discarded'
+  settings: Partial<DtRetentionSettings>
+  readings_to_remove: number
+  sessions_reduced: number
+  sessions_erased: number
+  created_at: string
+  created_by: string | null
+  approved_by: string | null
+  approved_at: string | null
+  finished_at: string | null
+  error: string
+  plan?: DtPrunePlanItem[]
+  plan_total?: number
+  records?: DtPruneRecordItem[]
 }

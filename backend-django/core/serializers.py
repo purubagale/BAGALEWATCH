@@ -1025,6 +1025,8 @@ class DriveTestSessionListSerializer(serializers.ModelSerializer):
             'id', 'name', 'tech', 'date', 'uploaded_date', 'saved_at',
             'uploaded_by_name', 'meta', 'size_bytes', 'sample_count', 'remarks', 'mode', 'attachment_count',
             'activities',
+            # Retention (2026-10-14, core/dt_retention.py).
+            'purpose', 'keep', 'file_hash', 'source_location', 'readings_pruned',
         ]
 
     def get_uploaded_by_name(self, obj):
@@ -1666,7 +1668,8 @@ class DriveTestSessionWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DriveTestSession
-        fields = ['id', 'name', 'tech', 'date', 'uploaded_date', 'meta', 'samples', 'remarks', 'mode']
+        fields = ['id', 'name', 'tech', 'date', 'uploaded_date', 'meta', 'samples', 'remarks', 'mode',
+                  'purpose', 'file_hash', 'source_location']
         read_only_fields = ['id']
 
     def validate_samples(self, value):

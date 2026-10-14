@@ -917,6 +917,21 @@ class DriveTestSession(models.Model):
     # True until the session's 50 m squares (DtPlotSquare) match its
     # readings; set again whenever readings are added (2026-10-14).
     plot_squares_stale = models.BooleanField(default=True)
+    # Retention (2026-10-14, core/dt_retention.py). Why the drive was run:
+    # only yearly drives count toward "the latest yearly drives" of a
+    # place. Existing sessions start as 'other' until someone sets it.
+    PURPOSES = [('yearly', 'Yearly (NTA)'), ('complaint', 'Complaint'),
+                ('optimization', 'Optimization'), ('other', 'Other')]
+    purpose = models.CharField(max_length=12, choices=PURPOSES, default='other')
+    # Pinned: retention never reduces or erases this session.
+    keep = models.BooleanField(default=False)
+    # Fingerprint (SHA-256) of the source file(s), worked out in the
+    # browser; the file itself is never uploaded. Finds a re-upload.
+    file_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    # Where the original file is kept (TEMS server path, a note).
+    source_location = models.CharField(max_length=255, blank=True, default='')
+    # Readings removed by retention; the session keeps its 50 m squares there.
+    readings_pruned = models.IntegerField(default=0)
     # Which "mode" this drive was run in -- Free Mode, a specific band-lock
     # (e.g. "B3 Lock", "B20 Lock"), Idle vs an active DL/UL session, etc.
     # (2026-09-23 request: real drive tests for one site aren't one file,
@@ -1537,6 +1552,71 @@ class DriveTestSample(models.Model):
         return f'{self.session_id} @ ({self.lat}, {self.lng})'
 
 
+class DtRetentionSettings(models.Model):
+    """Drive-test retention rule (2026-10-14, core/dt_retention.py), one
+    row, superadmin only. Off until a superadmin switches it on; even then
+    nothing is removed until a dry run is approved."""
+    enabled = models.BooleanField(default=False)
+    yearly_keep = models.PositiveSmallIntegerField(default=2)        # latest yearly drives kept complete per square
+    per_square_keep = models.PositiveSmallIntegerField(default=2)    # most recent sessions kept per square
+    detail_months = models.PositiveSmallIntegerField(default=24)     # readings older than this become summary
+    summary_years = models.PositiveSmallIntegerField(default=5)      # summaries older than this are erased
+    min_readings = models.PositiveSmallIntegerField(default=3)       # readings for a session to count in a square
+    updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_dt_retention_settings'
+
+    def save(self, *args, **kwargs):
+        self.id = 1
+        super().save(*args, **kwargs)
+
+
+class DtPruneRun(models.Model):
+    """One dry run of the retention rule and, once approved, its execution."""
+    STATUSES = [('planned', 'Planned'), ('approved', 'Approved'), ('running', 'Running'),
+                ('done', 'Done'), ('failed', 'Failed'), ('discarded', 'Discarded')]
+    status = models.CharField(max_length=10, choices=STATUSES, default='planned')
+    settings_snapshot = models.JSONField(default=dict)
+    plan = models.JSONField(default=list)              # one entry per affected session
+    readings_to_remove = models.BigIntegerField(default=0)
+    sessions_reduced = models.IntegerField(default=0)
+    sessions_erased = models.IntegerField(default=0)
+    created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+    approved_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    approved_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True, default='')
+
+    class Meta:
+        db_table = 'v2_dt_prune_run'
+        ordering = ['-created_at']
+
+
+class DtPruneRecord(models.Model):
+    """What retention did to one session: kept indefinitely, unlike the audit
+    log, so it can always be told what was removed, when and on whose
+    approval. No foreign key to the session, which may be gone."""
+    ACTIONS = [('reduced', 'Readings reduced to summary'), ('erased', 'Session erased')]
+    run = models.ForeignKey(DtPruneRun, on_delete=models.PROTECT, related_name='records')
+    session_id_value = models.IntegerField()
+    session_name = models.CharField(max_length=255, blank=True, default='')
+    tech = models.CharField(max_length=10, blank=True, default='')
+    drive_date = models.DateField(null=True, blank=True)
+    purpose = models.CharField(max_length=12, blank=True, default='')
+    action = models.CharField(max_length=8, choices=ACTIONS)
+    readings_removed = models.IntegerField(default=0)
+    squares_reduced = models.IntegerField(default=0)
+    approved_by_name = models.CharField(max_length=150, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_dt_prune_record'
+        ordering = ['-created_at']
+
+
 class DtPlotSquare(models.Model):
     """One 50 m square of one drive-test session (2026-10-14,
     core/dt_plot_squares.py): how many readings fell in it and the weakest,
@@ -1571,6 +1651,9 @@ class DtPlotSquare(models.Model):
     # The weakest reading in the square (by RSRP, RSCP on 3G): its time,
     # cell and serving site are shown for the square.
     rep_id = models.BigIntegerField()
+    # Retention removed this session's readings here (2026-10-14,
+    # core/dt_retention.py); the square is now its only record of them.
+    detail_removed = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'v2_dt_plot_squares'
