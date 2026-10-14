@@ -50,6 +50,9 @@ object Registration {
                 DeviceKeys.ensureKey()
                 TraceApi.register(msisdn, TraceApi.challenge(), APP_VERSION, HardwareInfo.hardwareId(app))
                 prefs(app).edit().putBoolean(TraceRequestsPanel.KEY_REGISTERED, true).apply()
+                // A new key: link it again so the SDK's uploads are signed with it.
+                SdkLink.setLinked(app, false)
+                SdkLink.ensure(app)
                 FcmToken.fetchAndUpload(app)
                 // Best effort: a failed identity upload never fails registration.
                 val userType = if (StaffMode.isEmployee(app)) "employee" else "general"

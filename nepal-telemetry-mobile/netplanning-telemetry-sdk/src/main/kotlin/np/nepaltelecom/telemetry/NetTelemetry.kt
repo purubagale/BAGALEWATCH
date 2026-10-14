@@ -21,10 +21,12 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
-import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import np.nepaltelecom.telemetry.collector.CallListener
 import np.nepaltelecom.telemetry.collector.CellSampleCollector
+import np.nepaltelecom.telemetry.storage.CallQueue
+import np.nepaltelecom.telemetry.upload.CallUploadWorker
 import np.nepaltelecom.telemetry.collector.DriveHistoryStore
 import np.nepaltelecom.telemetry.collector.DriveTestService
 import np.nepaltelecom.telemetry.collector.RouteTrail
@@ -66,6 +68,7 @@ object NetTelemetry {
 
     private lateinit var appContext: Context
     private var handoverListener: HandoverListener? = null
+    private var callListener: CallListener? = null
     private val scope = CoroutineScope(Dispatchers.Default)
     private val lastHandoverSampleAtMs = AtomicLong(0)
     private val lastOnDemandSampleAtMs = AtomicLong(0)
@@ -79,6 +82,7 @@ object NetTelemetry {
     private const val UPLOAD_WORK_NAME = "netplanning_telemetry_upload"
     private const val RESCUE_ENROLL_WORK_NAME = "netplanning_telemetry_rescue_enroll"
     private const val DRIVE_TEST_CONSENT_WORK_NAME = "netplanning_telemetry_dt_consent"
+    private const val CALL_UPLOAD_WORK_NAME = "netplanning_call_upload"
 
     fun init(context: Context, config: TelemetryConfig) {
         appContext = context.applicationContext
@@ -106,6 +110,7 @@ object NetTelemetry {
         if (identity.optedIn) {
             scheduleBackgroundWork()
             startHandoverListener()
+            startCallListener()
         }
     }
 
@@ -114,6 +119,7 @@ object NetTelemetry {
         DeviceIdentity(appContext).optedIn = true
         scheduleBackgroundWork()
         startHandoverListener()
+        startCallListener()
         syncPushToken(register = true)
     }
 
@@ -124,8 +130,11 @@ object NetTelemetry {
         WorkManager.getInstance(appContext).cancelUniqueWork(UPLOAD_WORK_NAME)
         handoverListener?.stop()
         handoverListener = null
+        callListener?.stop()
+        callListener = null
         if (wipeQueuedData) {
             SampleQueue(appContext).clear()
+            CallQueue(appContext).clear()
             DriveShare.setDrainPending(appContext, false)
         }
         syncPushToken(register = false)
@@ -436,17 +445,7 @@ object NetTelemetry {
                         put("device_id", deviceId)
                         put("fcm_token", token)
                     }.toString()
-                    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                        requestMethod = "POST"
-                        setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                        apiKey?.let { setRequestProperty("Authorization", "Bearer $it") }
-                        doOutput = true
-                        connectTimeout = 10_000
-                        readTimeout = 10_000
-                    }
-                    OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body) }
-                    connection.responseCode
-                    connection.disconnect()
+                    postJson(url, body, apiKey)
                 } catch (_: Exception) {
                     // Best effort. The next opt-in or token refresh sends it again.
                 }
@@ -514,17 +513,7 @@ object NetTelemetry {
                         networkType?.let { put("network_type", it) }
                         rsrpDbm?.let { put("rsrp_dbm", it) }
                     }.toString()
-                    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                        requestMethod = "POST"
-                        setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                        apiKey?.let { setRequestProperty("Authorization", "Bearer $it") }
-                        doOutput = true
-                        connectTimeout = 10_000
-                        readTimeout = 10_000
-                    }
-                    OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body) }
-                    connection.responseCode
-                    connection.disconnect()
+                    postJson(url, body, apiKey)
                 } catch (_: Exception) {
                     // Best effort: the on-screen result already shown either way.
                 }
@@ -707,6 +696,63 @@ object NetTelemetry {
             // listener simply stays off until the permission is granted again.
             runCatching { it.start() }
         }
+    }
+
+    /**
+     * Sets how the SDK's uploads are signed (2026-10-14). The host app passes
+     * a signer backed by the phone's registered key; until it returns headers,
+     * uploads use the shared key. Safe to call before [init], e.g. from a
+     * provider that runs at process start.
+     */
+    fun setRequestSigner(signer: RequestSigner?) {
+        requestSigner = signer
+    }
+
+    /**
+     * This SDK's device id on this phone (2026-10-14). The host app sends it
+     * once, signed, so the server files signed uploads under the same identity.
+     */
+    fun sdkDeviceId(): String {
+        check(::appContext.isInitialized) { "NetTelemetry.init() must be called before sdkDeviceId()" }
+        return DeviceIdentity(appContext).deviceId
+    }
+
+    /** One small JSON POST, signed when possible. Blocking; call off the main thread. */
+    private fun postJson(url: String, body: String, apiKey: String?) {
+        val bytes = body.toByteArray(Charsets.UTF_8)
+        val target = URL(url)
+        val connection = (target.openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            doOutput = true
+            connectTimeout = 10_000
+            readTimeout = 10_000
+        }
+        try {
+            val signed = authorize(connection, target, "POST", bytes, apiKey)
+            connection.outputStream.use { it.write(bytes) }
+            noteResponse(signed, connection.responseCode)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /**
+     * Watches calls while sharing (2026-10-14), when [TelemetryConfig.callSamplesUrl]
+     * is set. Each finished call is queued and sent once a network is available.
+     */
+    private fun startCallListener() {
+        if (callListener != null) return
+        if (internalConfig?.callSamplesUrl == null) return
+        callListener = CallListener(appContext) { record ->
+            CallQueue(appContext).append(record)
+            val work = OneTimeWorkRequestBuilder<CallUploadWorker>()
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                .build()
+            WorkManager.getInstance(appContext)
+                .enqueueUniqueWork(CALL_UPLOAD_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, work)
+        }.also { runCatching { it.start() } }
     }
 }
 

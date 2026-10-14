@@ -87,6 +87,32 @@ object TraceApi {
         request("PUT", "device/fcm-token/", JSONObject().put("fcm_token", token).toString(), signed = true)
     }
 
+    /**
+     * Ties this registered phone to the SDK's device id (2026-10-14), so the
+     * server files the SDK's signed uploads under the identity its earlier
+     * shared-key uploads had.
+     */
+    fun linkSdk(sdkDeviceId: String) {
+        request("POST", "device/sdk-link/", JSONObject().put("sdk_device_id", sdkDeviceId).toString(), signed = true)
+    }
+
+    /**
+     * The headers that sign one request (2026-10-14): the same format the
+     * device endpoints use, over the exact [path] and [body] bytes the server
+     * will see. Also used to sign the SDK's uploads (see SdkLink).
+     */
+    fun signedHeaders(method: String, path: String, body: ByteArray): Map<String, String> {
+        val ts = (System.currentTimeMillis() / 1000).toString()
+        val nonce = newNonce()
+        val canonical = "${method.uppercase()}|$path|$ts|$nonce|${DeviceKeys.sha256Hex(body)}"
+        return mapOf(
+            "X-Device-Id" to DeviceKeys.deviceId(),
+            "X-Timestamp" to ts,
+            "X-Nonce" to nonce,
+            "X-Signature" to DeviceKeys.sign(canonical.toByteArray(Charsets.UTF_8)),
+        )
+    }
+
     /** Accept or reject a pending request. The server refuses any other move. */
     fun respond(id: String, action: String) {
         request("POST", "device/trace-requests/$id/respond/", JSONObject().put("action", action).toString(), signed = true)
@@ -183,13 +209,7 @@ object TraceApi {
         }
         try {
             if (signed) {
-                val ts = (System.currentTimeMillis() / 1000).toString()
-                val nonce = newNonce()
-                val canonical = "${method.uppercase()}|${url.path}|$ts|$nonce|${DeviceKeys.sha256Hex(payload)}"
-                conn.setRequestProperty("X-Device-Id", DeviceKeys.deviceId())
-                conn.setRequestProperty("X-Timestamp", ts)
-                conn.setRequestProperty("X-Nonce", nonce)
-                conn.setRequestProperty("X-Signature", DeviceKeys.sign(canonical.toByteArray(Charsets.UTF_8)))
+                signedHeaders(method, url.path, payload).forEach { (name, value) -> conn.setRequestProperty(name, value) }
             }
             if (body != null) {
                 conn.doOutput = true

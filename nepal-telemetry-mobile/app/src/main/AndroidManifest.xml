@@ -23,7 +23,9 @@
 
     <application
         android:name=".DemoApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="@string/app_name"
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.NetTelemetryDemo">
@@ -67,6 +69,12 @@
 
         <activity
             android:name=".LiveParamsActivity"
+            android:exported="false" />
+
+        <!-- Signs the SDK's uploads with this phone's key once registered (2026-10-14). -->
+        <provider
+            android:name=".SdkSignerProvider"
+            android:authorities="${applicationId}.sdksigner"
             android:exported="false" />
 
     </application>

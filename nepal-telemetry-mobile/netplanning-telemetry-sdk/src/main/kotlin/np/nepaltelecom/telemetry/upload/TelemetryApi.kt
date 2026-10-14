@@ -1,10 +1,11 @@
 package np.nepaltelecom.telemetry.upload
 
 import android.util.Log
+import np.nepaltelecom.telemetry.authorize
 import np.nepaltelecom.telemetry.model.Sample
+import np.nepaltelecom.telemetry.noteResponse
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
@@ -28,17 +29,20 @@ internal class TelemetryApi(
     fun uploadBatch(samples: List<Sample>): UploadResult {
         if (samples.isEmpty()) return UploadResult(accepted = true, remoteOptOutRequested = false)
         return try {
-            val body = JSONArray(samples.map { it.toJson() }).toString()
-            val connection = (URL(endpointUrl).openConnection() as HttpURLConnection).apply {
+            val body = JSONArray(samples.map { it.toJson() }).toString().toByteArray(StandardCharsets.UTF_8)
+            val url = URL(endpointUrl)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                apiKey?.let { setRequestProperty("Authorization", "Bearer $it") }
                 doOutput = true
                 connectTimeout = 15_000
                 readTimeout = 15_000
             }
-            OutputStreamWriter(connection.outputStream, StandardCharsets.UTF_8).use { it.write(body) }
+            // Signed by the phone's key when the host app can (2026-10-14), else the shared key.
+            val signed = authorize(connection, url, "POST", body, apiKey)
+            connection.outputStream.use { it.write(body) }
             val code = connection.responseCode
+            noteResponse(signed, code)
             val ok = code in 200..299
             var remoteOptOut = false
             if (ok) {

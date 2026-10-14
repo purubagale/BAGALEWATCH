@@ -7,4 +7,8 @@ local.properties
 *.log
 hs_err_pid*.log
 .claude/
+# Release signing (2026-10-14): the keystore and its passwords never go to git.
+keystore.properties
+*.jks
+*.keystore
 

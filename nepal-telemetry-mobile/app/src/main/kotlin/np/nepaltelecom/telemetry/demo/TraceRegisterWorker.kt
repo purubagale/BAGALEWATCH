@@ -40,6 +40,8 @@ internal class TraceRegisterWorker(context: Context, params: WorkerParameters) :
             applicationContext
                 .getSharedPreferences(TraceRequestsPanel.PREFS, Context.MODE_PRIVATE)
                 .edit().putBoolean(TraceRequestsPanel.KEY_REGISTERED, true).apply()
+            SdkLink.setLinked(applicationContext, false)
+            SdkLink.ensure(applicationContext)
             FcmToken.fetchAndUpload(applicationContext)
             // Best effort, same as the inline attempt -- identity upload
             // failing never fails registration itself.

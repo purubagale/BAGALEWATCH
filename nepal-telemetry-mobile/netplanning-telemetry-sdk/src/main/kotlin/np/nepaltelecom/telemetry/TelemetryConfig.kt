@@ -98,6 +98,15 @@ data class TelemetryConfig(
     val pushTokenUrl: String? = null,
 
     /**
+     * Endpoint for finished calls (2026-10-14) -- `POST .../call-samples/`.
+     * When set, each call made while sharing is recorded: the voice network
+     * it used (VoLTE or 2G/3G), the data network before it, its length, and
+     * the cell and level at its start and end. No number, no direction, no
+     * quality figures. Left null, calls are not watched at all.
+     */
+    val callSamplesUrl: String? = null,
+
+    /**
      * Whether a device with NO prior explicit opt-in choice starts opted
      * IN (true) or opted OUT (false, the historical default and still the
      * default here). Only affects the very first [NetTelemetry.init] call

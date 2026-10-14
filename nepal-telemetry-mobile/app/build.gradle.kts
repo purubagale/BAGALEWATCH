@@ -3,9 +3,20 @@
 // so netplanning-telemetry-sdk is something a real Android Studio build
 // can compile, install, and exercise with actual button presses, on a
 // real device, before it goes anywhere near Nepal Telecom's own app.
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// Release signing (2026-10-14). The keystore and its passwords stay on the
+// build PC in keystore.properties at this project's root (never in git):
+// storeFile, storePassword, keyAlias, keyPassword. Without that file a
+// release build is produced unsigned and cannot be installed.
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -42,9 +53,26 @@ android {
         }
     }
 
+    signingConfigs {
+        if (keystoreProps.getProperty("storeFile") != null) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
+        // Release (2026-10-14, after the MobSF scan): not debuggable, code
+        // shrunk and obfuscated by R8, debug logs stripped (proguard-rules.pro),
+        // no cleartext exception (that lives in src/debug only).
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfigs.findByName("release")?.let { signingConfig = it }
         }
     }
 

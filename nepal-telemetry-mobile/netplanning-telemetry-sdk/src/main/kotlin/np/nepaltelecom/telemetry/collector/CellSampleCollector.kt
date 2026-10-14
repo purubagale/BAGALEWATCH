@@ -222,16 +222,16 @@ internal class CellSampleCollector(
             networkType = "UMTS",
             rsrpDbm = null,
             rsrqDb = null,
-            rssiDbm = info.cellSignalStrength.dbm.toIntOrNull(),
+            rssiDbm = info.cellSignalStrength.dbm.wcdmaLevelOrNull(),
             sinrDb = null,
             rxQual = null,
-            rscpDbm = info.cellSignalStrength.dbm.toIntOrNull(),
+            rscpDbm = info.cellSignalStrength.dbm.wcdmaLevelOrNull(),
             // Android's public method is named getEcNo() -- the same
             // chip-energy-to-interference metric RAN engineers call Ec/Io
             // for WCDMA pilot quality; stored here as ecioDb/ecio_db to
             // match how this project's own drive-test tooling names it.
             ecioDb = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                info.cellSignalStrength.ecNo.toIntOrNull()
+                info.cellSignalStrength.ecNo.wcdmaEcNoOrNull(info.cellSignalStrength.dbm.wcdmaLevelOrNull())
             } else {
                 null
             },
@@ -450,10 +450,10 @@ internal class CellSampleCollector(
                 rsrpDbm = null,
                 rsrqDb = null,
                 sinrDb = null,
-                rssiDbm = sig.dbm.toIntOrNull(),
-                rscpDbm = sig.dbm.toIntOrNull(),
+                rssiDbm = sig.dbm.wcdmaLevelOrNull(),
+                rscpDbm = sig.dbm.wcdmaLevelOrNull(),
                 ecioDb = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    sig.ecNo.toIntOrNull()
+                    sig.ecNo.wcdmaEcNoOrNull(sig.dbm.wcdmaLevelOrNull())
                 } else {
                     null
                 },
@@ -530,6 +530,16 @@ internal class CellSampleCollector(
 // null wherever such a field is read above.
 private fun Int.toIntOrNull(): Int? = if (this == Int.MAX_VALUE || this == CellInfo.UNAVAILABLE) null else this
 private fun Int.cellIdToLongOrNull(): Long? = this.toIntOrNull()?.toLong()
+
+// 3G level outside -125..-25 dBm is the modem's "no value" code (2026-10-14):
+// 3GPP reports RSCP as an index 0..96 for -120..-24 dBm, and many modems put
+// the top of the range (-24 dBm, with Ec/No 0) when they have no measurement,
+// typically just after a call falls back to 3G. The server applies the same rule.
+private fun Int.wcdmaLevelOrNull(): Int? = this.toIntOrNull()?.takeIf { it in -125..-25 }
+
+// Ec/No outside -30..0 dB, or 0 with no usable level, is the same no-value code.
+private fun Int.wcdmaEcNoOrNull(level: Int?): Int? =
+    this.toIntOrNull()?.takeIf { it in -30..0 && !(it == 0 && level == null) }
 
 // getMccString()/getMncString() only exist from API 28 (P); calling them on
 // an API 26-27 device throws NoSuchMethodError. Below P the only source is

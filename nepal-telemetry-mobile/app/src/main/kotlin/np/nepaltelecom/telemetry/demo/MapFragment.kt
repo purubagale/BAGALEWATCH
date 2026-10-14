@@ -103,6 +103,10 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         super.onViewCreated(view, savedInstanceState)
         // OpenStreetMap asks apps to identify themselves in the tile request.
         Configuration.getInstance().userAgentValue = requireContext().packageName
+        // Map tiles cached in the app's own storage, not shared storage that
+        // other apps can read (2026-10-14, after the MobSF scan).
+        Configuration.getInstance().osmdroidBasePath = java.io.File(requireContext().filesDir, "osmdroid")
+        Configuration.getInstance().osmdroidTileCache = java.io.File(requireContext().cacheDir, "osmdroid-tiles")
 
         map = view.findViewById(R.id.mapView)
         map.setTileSource(TileSourceFactory.MAPNIK)
