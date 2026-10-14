@@ -861,6 +861,7 @@ export default function TelemetryDriveTestSessionsPage() {
                   <th>Time</th>
                   <th>Ping (ms)</th>
                   <th>Jitter (ms)</th>
+                  <th>Loss (%)</th>
                   <th>Download (Mbps)</th>
                   <th>Upload (Mbps)</th>
                   <th>Radio</th>
@@ -873,6 +874,7 @@ export default function TelemetryDriveTestSessionsPage() {
                     <td>{new Date(r.ts).toLocaleTimeString()}</td>
                     <td>{r.ping_median_ms ?? '-'}</td>
                     <td>{r.jitter_ms ?? '-'}</td>
+                    <td>{r.packet_loss_pct ?? '-'}</td>
                     <td>{r.download_mbps ?? '-'}</td>
                     <td>{r.upload_mbps ?? '-'}</td>
                     <td>{[r.network_type, r.rsrp_dbm != null ? `${r.rsrp_dbm} dBm` : ''].filter(Boolean).join(' ') || '-'}</td>

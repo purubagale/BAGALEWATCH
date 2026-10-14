@@ -2020,6 +2020,7 @@ export interface TelemetryDriveTestSpeedResult {
   ts: string
   ping_median_ms: number | null
   jitter_ms: number | null
+  packet_loss_pct?: number | null
   download_mbps: number | null
   upload_mbps: number | null
   network_type: string
@@ -2648,4 +2649,79 @@ export interface TelemetryNearResponse {
   sessions: TelemetryNearSession[]
   points: TelemetryNearPoint[]
   truncated: boolean
+}
+
+// ── Problem reports (2026-10-14, core/problem_report.py) ─────────────────
+
+export type ProblemCategory = 'no_signal' | 'slow_data' | 'call_drop' | 'stuck_2g3g' | 'other'
+export type ProblemStatus = 'new' | 'checked' | 'closed'
+
+export interface ProblemFinding {
+  kind: string
+  title: string
+  cause: string
+  action: string
+  evidence: string[]
+}
+
+export interface ProblemAreaSummary {
+  readings: number
+  share_4g_pct: number | null
+  rsrp_4g_mean: number | null
+  rsrq_4g_mean: number | null
+  readings_4g: number
+}
+
+export interface ProblemCheck {
+  radius_m: number
+  baseline_days: number
+  phones_at_time: ProblemAreaSummary
+  phones_before: ProblemAreaSummary
+  drive_tests: {
+    readings: number
+    readings_4g: number
+    rsrp_4g_mean: number | null
+    rsrq_4g_mean: number | null
+    dl_4g_mean: number | null
+    sessions: { id: number; name: string; date: string | null; tech: string }[]
+  }
+  serving: { site_id: string; name: string; cell_name: string; km: number | null; matched_by: string } | null
+  nearest_sites: { site_id: string; name: string; km: number }[]
+  findings: ProblemFinding[]
+  customer_reply: string
+}
+
+export interface ProblemReport {
+  id: number
+  source: 'app' | 'staff'
+  category: ProblemCategory
+  category_label: string
+  note: string
+  happened_at: string
+  created_at: string
+  lat: number
+  lng: number
+  network_type: string
+  band: string
+  pci: number | null
+  cell_id: number | null
+  level_dbm: number | null
+  rsrq_db: number | null
+  sinr_db: number | null
+  download_mbps: number | null
+  upload_mbps: number | null
+  ping_ms: number | null
+  jitter_ms: number | null
+  packet_loss_pct: number | null
+  phone_model: string
+  android_version: string
+  app_version: string
+  status: ProblemStatus
+  engineer_note: string
+  entered_by: string | null
+  checked_by: string | null
+  checked_at: string | null
+  // Superadmin only.
+  phone_number?: string | null
+  check?: ProblemCheck
 }

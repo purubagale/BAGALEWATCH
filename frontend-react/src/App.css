@@ -3908,3 +3908,26 @@ textarea:focus {
 .site-photo-popup .site-photo-image { border-radius: 6px; }
 .site-photo-view-toggle { display: flex; gap: 6px; margin: 0 0 12px; }
 .site-photo-map { height: 520px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+
+/* Problem Reports (2026-10-14) -- ProblemReportsPage: the list, one report
+   with its check, and the complaint form. */
+.problem-toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+.problem-layout { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 16px; align-items: start; }
+@media (max-width: 800px) { .problem-layout { grid-template-columns: 1fr; } }
+.problem-list { display: flex; flex-direction: column; gap: 6px; max-height: 75vh; overflow-y: auto; }
+.problem-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg, transparent);
+  color: inherit; cursor: pointer; font-size: 12px; }
+.problem-row-active { border-color: #2563eb; box-shadow: 0 0 0 1px #2563eb inset; }
+.problem-row-title { font-weight: 600; font-size: 13px; }
+.problem-detail { border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-height: 200px; }
+.problem-map { height: 300px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 10px 0; }
+.problem-facts { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; }
+.problem-facts th { text-align: left; white-space: nowrap; padding: 4px 10px 4px 0; vertical-align: top; width: 1%; }
+.problem-facts td { padding: 4px 0; }
+.problem-finding { border-left: 3px solid #f59e0b; padding: 4px 10px; margin: 8px 0; font-size: 13px; }
+.problem-finding p { margin: 4px 0; }
+.problem-note { font-style: italic; }
+.problem-reply { background: rgba(37, 99, 235, 0.07); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+.problem-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.problem-form { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }

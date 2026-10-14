@@ -3108,6 +3108,8 @@ class TelemetrySpeedResult(models.Model):
     ts = models.DateTimeField()
     ping_median_ms = models.FloatField(null=True, blank=True)
     jitter_ms = models.FloatField(null=True, blank=True)
+    # Share of the test's pings that got no answer in time (2026-10-14).
+    packet_loss_pct = models.FloatField(null=True, blank=True)
     download_mbps = models.FloatField(null=True, blank=True)
     upload_mbps = models.FloatField(null=True, blank=True)
     network_type = models.CharField(max_length=8, blank=True, default='')
@@ -3118,6 +3120,66 @@ class TelemetrySpeedResult(models.Model):
         db_table = 'v2_telemetry_speed_result'
         ordering = ['-ts']
         indexes = [models.Index(fields=['device_id', 'ts'], name='v2_tel_speed_dev_ts_idx')]
+
+
+class ProblemReport(models.Model):
+    """A network problem reported from the app's "Report a problem" button,
+    or entered by an engineer from a customer's complaint (2026-10-14,
+    core/problem_report.py). A report from the app carries the phone's own
+    reading and a speed test taken when it was sent; the check compares
+    them with what other phones and drive tests measured around the spot."""
+
+    SOURCE_APP = 'app'
+    SOURCE_STAFF = 'staff'
+    SOURCES = [(SOURCE_APP, 'Mobile app'), (SOURCE_STAFF, 'Entered by staff')]
+    CATEGORIES = [
+        ('no_signal', 'No signal'),
+        ('slow_data', 'Slow data'),
+        ('call_drop', 'Call drops'),
+        ('stuck_2g3g', 'Stuck on 2G/3G'),
+        ('other', 'Other'),
+    ]
+    STATUS_NEW = 'new'
+    STATUSES = [(STATUS_NEW, 'New'), ('checked', 'Checked'), ('closed', 'Closed')]
+
+    source = models.CharField(max_length=8, choices=SOURCES)
+    device = models.ForeignKey('DeviceCredential', null=True, blank=True, on_delete=models.SET_NULL,
+                               related_name='problem_reports')
+    entered_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name='problem_reports_entered')
+    category = models.CharField(max_length=12, choices=CATEGORIES)
+    note = models.TextField(blank=True, default='')
+    happened_at = models.DateTimeField()
+    lat = models.FloatField()
+    lng = models.FloatField()
+    # The phone's reading when the report was sent; empty for staff entries.
+    network_type = models.CharField(max_length=12, blank=True, default='')
+    band = models.CharField(max_length=24, blank=True, default='')
+    pci = models.IntegerField(null=True, blank=True)
+    cell_id = models.BigIntegerField(null=True, blank=True)
+    level_dbm = models.SmallIntegerField(null=True, blank=True)   # RSRP on 4G/5G, RSCP on 3G, RSSI on 2G
+    rsrq_db = models.SmallIntegerField(null=True, blank=True)
+    sinr_db = models.SmallIntegerField(null=True, blank=True)
+    # The speed test taken when the report was sent, over mobile data.
+    download_mbps = models.FloatField(null=True, blank=True)
+    upload_mbps = models.FloatField(null=True, blank=True)
+    ping_ms = models.FloatField(null=True, blank=True)
+    jitter_ms = models.FloatField(null=True, blank=True)
+    packet_loss_pct = models.FloatField(null=True, blank=True)
+    phone_model = models.CharField(max_length=80, blank=True, default='')
+    android_version = models.CharField(max_length=16, blank=True, default='')
+    app_version = models.CharField(max_length=40, blank=True, default='')
+    status = models.CharField(max_length=8, choices=STATUSES, default=STATUS_NEW)
+    engineer_note = models.TextField(blank=True, default='')
+    checked_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name='problem_reports_checked')
+    checked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'v2_problem_report'
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['status', 'created_at'], name='v2_problem_status_idx')]
 
 
 class TelemetryPushToken(models.Model):

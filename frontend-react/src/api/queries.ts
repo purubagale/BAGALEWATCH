@@ -4,6 +4,7 @@ import { ApiError, apiFetch, apiJson } from './client'
 import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
   SiteMeasuredCoverage,
 } from './types'
+import type { ProblemReport } from './types'
 import type {
   CollectionSessionRow,
   CollectionSessionSample,
@@ -1897,5 +1898,49 @@ export function useTelemetrySessionsNear(
       ),
     enabled: enabled && point != null,
     staleTime: 60_000,
+  })
+}
+
+// ── Problem reports (2026-10-14) ─────────────────────────────────────────
+
+export function useProblemReports(params: { status?: string; source?: string }) {
+  const qs = new URLSearchParams()
+  if (params.status) qs.set('status', params.status)
+  if (params.source) qs.set('source', params.source)
+  return useQuery({
+    queryKey: ['problem-reports', params.status ?? '', params.source ?? ''],
+    queryFn: () => apiJson<{ results: ProblemReport[] }>(`/api/v2/problem-reports/?${qs.toString()}`),
+  })
+}
+
+export function useProblemReport(id: number | null) {
+  return useQuery({
+    queryKey: ['problem-report', id],
+    queryFn: () => apiJson<ProblemReport>(`/api/v2/problem-reports/${id}/`),
+    enabled: id != null,
+  })
+}
+
+export function useCreateProblemReport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { category: string; note: string; lat: number; lng: number; happened_at: string }) =>
+      apiJson<ProblemReport>('/api/v2/problem-reports/', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['problem-reports'] }),
+  })
+}
+
+export function useUpdateProblemReport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: number; status?: string; engineer_note?: string }) =>
+      apiJson<{ id: number; status: string }>(`/api/v2/problem-reports/${id}/`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['problem-reports'] })
+      qc.invalidateQueries({ queryKey: ['problem-report', v.id] })
+    },
   })
 }

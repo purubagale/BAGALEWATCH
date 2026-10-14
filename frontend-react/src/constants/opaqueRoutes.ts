@@ -130,6 +130,9 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // Site photo review (2026-10-11) -- seeded server-side by migration
   // 0119_seed_site_photos_menuitem.py, same convention.
   '/site-photos': '/p6h2sv',
+  // Problem reports from the app and from complaints (2026-10-14) -- seeded
+  // server-side by migration 0129_problem_report.py, same convention.
+  '/problem-reports': '/r4q7cx',
   // Site/Sector Issue tracker's global list (2026-09-14) -- seeded
   // server-side by migration 0058_seed_issues_menuitem.py -- keep this
   // in sync with that file, same convention as every other entry.
