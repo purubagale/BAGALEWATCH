@@ -914,6 +914,9 @@ class DriveTestSession(models.Model):
     # everything-else-is-immutable design (see this viewset's own
     # docstring for why v2 deliberately has no update/partial_update).
     remarks = models.TextField(blank=True, default='')
+    # True until the session's 50 m squares (DtPlotSquare) match its
+    # readings; set again whenever readings are added (2026-10-14).
+    plot_squares_stale = models.BooleanField(default=True)
     # Which "mode" this drive was run in -- Free Mode, a specific band-lock
     # (e.g. "B3 Lock", "B20 Lock"), Idle vs an active DL/UL session, etc.
     # (2026-09-23 request: real drive tests for one site aren't one file,
@@ -1532,6 +1535,46 @@ class DriveTestSample(models.Model):
 
     def __str__(self):
         return f'{self.session_id} @ ({self.lat}, {self.lng})'
+
+
+class DtPlotSquare(models.Model):
+    """One 50 m square of one drive-test session (2026-10-14,
+    core/dt_plot_squares.py): how many readings fell in it and the weakest,
+    strongest and average of each measurement. Explore's wide searches read
+    these instead of every reading. Built from the readings, never edited by
+    hand; a session whose readings change is marked
+    `DriveTestSession.plot_squares_stale` and rebuilt when next searched."""
+    session = models.ForeignKey(DriveTestSession, on_delete=models.CASCADE, related_name='plot_squares')
+    sx = models.IntegerField()      # floor(lat * cells per degree)
+    sy = models.IntegerField()      # floor(lng * cells per degree)
+    lat = models.FloatField()       # mean position of the square's readings
+    lng = models.FloatField()
+    location = PointField(geography=True, srid=4326, spatial_index=True)
+    n = models.IntegerField()
+    rsrp_min = models.FloatField(null=True, blank=True)
+    rsrp_max = models.FloatField(null=True, blank=True)
+    rsrp_avg = models.FloatField(null=True, blank=True)
+    rsrq_min = models.FloatField(null=True, blank=True)
+    rsrq_avg = models.FloatField(null=True, blank=True)
+    sinr_min = models.FloatField(null=True, blank=True)
+    sinr_avg = models.FloatField(null=True, blank=True)
+    dl_min = models.FloatField(null=True, blank=True)
+    dl_avg = models.FloatField(null=True, blank=True)
+    cqi_min = models.FloatField(null=True, blank=True)
+    cqi_avg = models.FloatField(null=True, blank=True)
+    rscp_min = models.FloatField(null=True, blank=True)
+    rscp_avg = models.FloatField(null=True, blank=True)
+    ecno_min = models.FloatField(null=True, blank=True)
+    ecno_avg = models.FloatField(null=True, blank=True)
+    rx_qual_max = models.FloatField(null=True, blank=True)   # RxQual: higher is worse
+    rx_qual_avg = models.FloatField(null=True, blank=True)
+    # The weakest reading in the square (by RSRP, RSCP on 3G): its time,
+    # cell and serving site are shown for the square.
+    rep_id = models.BigIntegerField()
+
+    class Meta:
+        db_table = 'v2_dt_plot_squares'
+        indexes = [models.Index(fields=['session'], name='v2_dt_plotsq_session_idx')]
 
 
 class DtBand(models.Model):

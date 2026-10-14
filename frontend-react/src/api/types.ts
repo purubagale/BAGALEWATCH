@@ -761,6 +761,9 @@ export type DtTech = '4G' | '3G' | '2G'
 export type DtCellRole = 'serving' | 'neighbor'
 
 export interface DtSample {
+  // Set only on a 50 m square of Explore's wide search (2026-10-14): how many
+  // readings it stands for; its values are the weakest of each measurement.
+  square_n?: number
   ts: string
   date: string
   lat: number | null
@@ -1097,6 +1100,9 @@ export interface DtSessionAttachment {
 export interface DtSessionDetail extends DtSessionListItem {
   samples: DtSample[]
   attachments: DtSessionAttachment[]
+  // Explore's area search only (2026-10-14): above 20,000 readings the
+  // server sends 50 m squares (or larger) instead of readings; 0 = every reading.
+  plot_step_m?: number
 }
 
 // ── Vendor RNO report importer (2026-09-15, updated 2026-09-26) ─────────

@@ -1258,12 +1258,18 @@ export function useAppendDtSamples() {
 // DtSessionDetail (metadata + samples), just with `samples` trimmed
 // server-side to only the readings inside the searched radius — see
 // DriveTestSessionNearSerializer's docstring in serializers.py.
-export function useDtSessionsNear(point: { lat: number; lng: number } | null, radiusKm: number, techs: DtTech[]) {
+export function useDtSessionsNear(
+  point: { lat: number; lng: number } | null,
+  radiusKm: number,
+  techs: DtTech[],
+  outline = '',   // "lat,lng;lat,lng;…" of a district search (2026-10-14), '' for a circle
+) {
   return useQuery({
-    queryKey: ['dt-sessions-near', point?.lat, point?.lng, radiusKm, techs.join(',')],
+    queryKey: ['dt-sessions-near', point?.lat, point?.lng, radiusKm, techs.join(','), outline],
     queryFn: () =>
       apiJson<DtSessionDetail[]>(
-        `/api/v2/dt-sessions/near/?lat=${point!.lat}&lng=${point!.lng}&radius_km=${radiusKm}&tech=${techs.join(',')}`,
+        `/api/v2/dt-sessions/near/?lat=${point!.lat}&lng=${point!.lng}&radius_km=${radiusKm}&tech=${techs.join(',')}` +
+          (outline ? `&outline=${encodeURIComponent(outline)}` : ''),
       ),
     enabled: point !== null && techs.length > 0,
   })
