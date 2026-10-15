@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import CurrentLocationMarker from '../components/CurrentLocationMarker'
@@ -45,7 +46,9 @@ export default function CollectionsPage() {
   // Test page's own filter bar.
   const [statusFilter, setStatusFilter] = useState<'' | 'open' | 'ended'>('')
   const [userTypeFilter, setUserTypeFilter] = useState('')
-  const [deviceFilter, setDeviceFilter] = useState('')
+  // ?device= opens the list on one phone, e.g. from Subscriber Profile (2026-10-15).
+  const [searchParams] = useSearchParams()
+  const [deviceFilter, setDeviceFilter] = useState(searchParams.get('device') ?? '')
   const [startFrom, setStartFrom] = useState('')
   const [startTo, setStartTo] = useState('')
   const rows = useMemo(() => {

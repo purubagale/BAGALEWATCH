@@ -4,7 +4,7 @@
 the isolation decision in models.py's TelemetryIngestKey docstring."""
 from django.urls import path
 
-from . import area_sample, device_identity, device_trace, problem_report, site_photo, speed_test, trace_speed
+from . import area_sample, call_context, device_identity, device_trace, problem_report, site_photo, speed_test, trace_speed
 from .consent import DriveTestConsentMessageView, DriveTestConsentView
 from .rescue import RescueEnrollView
 from .telemetry import TelemetryHealthView, TelemetryIngestView
@@ -28,6 +28,9 @@ urlpatterns = [
     # dormant until the app has carrier-privileged status. See
     # core/volte_quality.py's module docstring.
     path('volte-samples/', VolteSampleIngestView.as_view(), name='volte-samples'),
+    # Calls as an ordinary app sees them: voice network, duration, cell and
+    # level, no quality figures (2026-10-14). See core/call_context.py.
+    path('call-samples/', call_context.CallContextIngestView.as_view(), name='call-samples'),
     # Rescue-beacon opt-in/opt-out (2026-09-01) — same ingest-key auth as
     # samples/ above, called by the device itself. See core/rescue.py.
     path('rescue-enroll/', RescueEnrollView.as_view(), name='rescue-enroll'),
@@ -43,6 +46,8 @@ urlpatterns = [
     path('device/challenge/', device_trace.DeviceChallengeView.as_view(), name='device-challenge'),
     path('device/register/', device_trace.DeviceRegisterView.as_view(), name='device-register'),
     path('device/fcm-token/', device_trace.DeviceFcmTokenView.as_view(), name='device-fcm-token'),
+    # Ties a registered phone to its SDK device id, for signed uploads (2026-10-14).
+    path('device/sdk-link/', device_trace.DeviceSdkLinkView.as_view(), name='device-sdk-link'),
     # Site photos from the app (2026-10-11) -- see core/site_photo.py.
     path('device/nearby-sites/', site_photo.DeviceNearbySitesView.as_view(), name='device-nearby-sites'),
     path('device/site-photos/', site_photo.DeviceSitePhotoUploadView.as_view(), name='device-site-photos'),

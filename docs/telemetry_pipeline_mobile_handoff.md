@@ -77,7 +77,7 @@ and prefers it: if `X-Signature` is present the key is ignored.
 ## 4. Endpoint catalogue
 
 All paths are under `/api/telemetry/v1/`. "Key" means the shared ingest key or
-a signed call. "Signed" means a registered phone only.
+a signed call (section 7.3). "Signed" means a registered phone only.
 
 | Path | Method | Auth | Purpose |
 |---|---|---|---|
@@ -89,10 +89,12 @@ a signed call. "Signed" means a registered phone only.
 | `rescue-enroll/` | POST | Key | Rescue sharing on or off, with the number (section 12) |
 | `drive-test-consent/` | POST | Key | Standing consent to be included in staff drive-test sessions |
 | `drive-test-consent-message/` | GET | none | Current consent wording |
-| `volte-samples/` | POST | Key | Call quality. Dormant (section 13) |
+| `volte-samples/` | POST | Key | Call quality. Dormant (section 13.2) |
+| `call-samples/` | POST | Key | Finished calls: voice network, cell and level, no quality figures (section 13.1) |
 | `device/challenge/` | GET | none | One-time value for registration |
 | `device/register/` | POST | none, rate limited | Registers the phone's public key with its number |
 | `device/fcm-token/` | PUT | Signed | Push address of a registered phone |
+| `device/sdk-link/` | POST | Signed | Ties the phone to its SDK device id, for signed uploads (section 7.3) |
 | `device-identity/` | POST | Signed | Model, user type and, when readable, number and IMEI |
 | `device/trace-requests/` | GET | Signed | Open location requests for this phone |
 | `device/trace-requests/<id>/respond/` | POST | Signed | Accept, reject or stop |
@@ -100,6 +102,7 @@ a signed call. "Signed" means a registered phone only.
 | `device/trace-requests/<id>/speedtest/...` | GET, POST | Signed | Speed test tied to an accepted request |
 | `device/nearby-sites/` | GET | Signed | Sites within 1 km, for the photo screen |
 | `device/site-photos/` | POST | Signed | One site or drive photo (section 11) |
+| `device/problem-reports/` | POST | Signed | "Report a problem" from the app (section 10a) |
 
 ## 5. Signal samples
 
@@ -308,6 +311,39 @@ METHOD|PATH|TIMESTAMP|NONCE|SHA256_HEX_OF_BODY
 - A repeated nonce or a timestamp outside the window returns 401.
 - Use `Signature.getInstance("SHA256withECDSA")` with the Keystore key.
 
+### 7.3 Signed uploads (14 October 2026)
+
+The shared ingest key ships inside every APK, so anyone can extract it and
+post readings. A registered phone therefore signs its regular uploads too:
+`samples/`, `speed-samples/`, `push-token/`, `call-samples/` and
+`volte-samples/` accept the signed headers above in place of the key.
+
+1. After registering, the phone sends its SDK device id once, signed:
+   `POST device/sdk-link/` with `{"sdk_device_id": "<the SDK's device_id>"}`.
+   It returns `{"linked": true}`.
+2. From then on the server files the phone's signed uploads under that SDK id,
+   the same identity its shared-key uploads had. Push tokens for Area Sample,
+   rescue positions, drive-test consent and earlier readings keep matching.
+   Without the link, signed uploads are filed under the key's own id, which
+   splits the phone in two; so sign uploads only after the link succeeded.
+   The link also ties the registered number to the SDK id, so the staff
+   Device Location Trace tool (declared emergency, case reference, every
+   search logged) can find the phone's shared readings. A phone whose owner
+   withdrew rescue consent stays hidden. Rescue Lookup is unchanged: it
+   covers only phones that turned on the rescue beacon.
+3. A `401` on a signed upload means the server no longer knows the key
+   (registration removed, or the app reinstalled with a new key). Go back to
+   the shared key and link again after registering.
+
+In the SDK the host app supplies the signing through
+`NetTelemetry.setRequestSigner(RequestSigner)`; `NetTelemetry.sdkDeviceId()`
+gives the id to link. The reference app does both in `SdkLink.kt`, from a
+content provider so the signer is set before any background upload runs.
+
+A phone that never registers keeps using the shared key. The key can be
+retired on the server (`TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL`) only once every
+sharing phone is registered; until then it still works for anyone holding it.
+
 ## 8. Push messages and readings on request
 
 The server sends Firebase **data** messages only. Each carries a type and an
@@ -371,8 +407,21 @@ A request lasts 120 minutes by default.
 
 ## 10. Speed test
 
-The test runs only when the user taps Start. It takes about 20 seconds and
-about 8 MB of mobile data.
+The test runs when the user taps a test button (and every 30 minutes in the
+Collector edition, section 14). It takes about 20 seconds and about 8 MB of data.
+
+Since 15 October 2026 the reference app offers two tests: **Test mobile
+data** and **Test Wi-Fi**. Both results are sent, tagged with `bearer`
+(`mobile` or `wifi`), so the server keeps Wi-Fi results apart from figures
+about NTC's mobile network. The Collector edition's automatic test uses
+mobile data.
+
+The mobile-data test runs every request over the mobile-data network, even
+while the phone is on Wi-Fi: it asks Android
+for a network with `TRANSPORT_CELLULAR` (`ConnectivityManager.requestNetwork`,
+needs `CHANGE_NETWORK_STATE`) and binds its sockets to it. Packet loss is the
+share of 20 pings with no answer within 2 seconds. The Wi-Fi test asks for a network with `TRANSPORT_WIFI`
+the same way.
 
 | Call | Detail |
 |---|---|
@@ -388,14 +437,38 @@ The result goes to `POST speed-samples/`, only while the user is sharing:
 ```json
 {"device_id": "<SDK id>", "ts": 1758444000000, "ping_median_ms": 38,
  "jitter_ms": 4, "download_mbps": 21.4, "upload_mbps": 6.2,
- "network_type": "LTE", "rsrp_dbm": -90}
+ "packet_loss_pct": 5, "network_type": "LTE", "rsrp_dbm": -90,
+ "bearer": "mobile"}
 ```
 
-Returns `201 {"stored": true}`. Limited to 20 a minute.
+Returns `201 {"stored": true}`. Limited to 20 a minute. `packet_loss_pct`
+(0 to 100) is optional. `bearer` is `mobile` or `wifi`; any other value, or
+none, is stored blank (results from builds before 15 October 2026).
 
 A second set under `device/trace-requests/<id>/speedtest/` is signed and works
 only while that request is accepted. Its result call takes `ran_at` (epoch ms,
 inside the consent window) in place of `ts`.
+
+## 10a. Report a problem
+
+A registered phone can send a problem with the reading and a speed test at
+that moment. `POST device/problem-reports/`, signed (section 7):
+
+```json
+{"category": "slow_data", "note": "Slow in the evening", "ts": 1758444000000,
+ "lat": 27.70, "lon": 85.32, "network_type": "LTE", "band": "B3 (1800)",
+ "pci": 120, "cell_id": 26385921, "level_dbm": -98, "rsrq_db": -12, "sinr_db": 4,
+ "download_mbps": 3.1, "upload_mbps": 1.2, "ping_ms": 62, "jitter_ms": 9,
+ "packet_loss_pct": 5, "phone_model": "...", "android_version": "14",
+ "app_version": "..."}
+```
+
+`category` is one of `no_signal`, `slow_data`, `call_drop`, `stuck_2g3g`,
+`other`; `lat` and `lon` are required, everything else is optional. Returns
+`201 {"id": N, "stored": true}`. At most 10 a day per phone; the 11th gets 429.
+The server checks the report against stored measurements; staff see the
+result on the Problem Reports page. The reference app also shows hints from
+the same rules on the phone (`ProblemHints.kt`).
 
 ## 11. Site photos
 
@@ -468,7 +541,68 @@ returns `{"message": "..."}`, the wording a superadmin maintains.
 `{"stored": [...]}` with field names only. A normal Android app cannot read the
 number or IMEI, so those stay empty until the app is carrier-privileged.
 
-## 13. Call quality (VoLTE and VoNR): built on the server, not in the app
+## 13. Calls
+
+Two lanes. The first works in any app today; the second needs carrier
+privilege and is not in the app.
+
+### 13.1 Call records without quality figures: in the SDK and on the server
+
+Since 14 October 2026 the SDK records each call made while the user shares,
+using only `READ_PHONE_STATE` and location, which it already holds
+(`collector/CallListener.kt`). It is on when `TelemetryConfig.callSamplesUrl`
+is set.
+
+- A call is the off-hook time, from dialling or answering to hang-up. A
+  missed call is not recorded.
+- The voice network (`TelephonyManager.getVoiceNetworkType()`, on the SIM
+  that places calls) is read at the start and every 3 seconds, so a call
+  that drops from 4G to 3G shows both.
+- The data network just before the call is kept, so a CSFB call shows 2G/3G
+  voice with 4G data before it.
+- The serving cell and level are read at the start and the end (level: RSRP
+  on 4G/5G, RSCP on 3G, RSSI on 2G).
+- No number, no call direction, no audio or quality figures.
+- Finished calls are queued on the phone (at most 200) and sent by
+  `CallUploadWorker` once a network is available. Opting out with the queue
+  wiped clears it.
+- It runs only while the app process is alive. Calls made while the app is
+  fully stopped are not seen; the Collector edition keeps the process alive
+  while sharing.
+
+`POST call-samples/` takes an array, at most 100 calls:
+
+```json
+[{"device_id": "...", "started_at": 1758444000000, "ended_at": 1758444060000,
+  "voice_networks": ["LTE", "UMTS"], "voice_network_start": "LTE",
+  "voice_network_end": "UMTS", "data_network_before": "LTE",
+  "start": {"lat": 27.70, "lon": 85.32, "network_type": "LTE",
+            "cell_id": 26385921, "pci": 120, "tac": 1201, "mcc": "429",
+            "mnc": "01", "level_dbm": -112},
+  "end": {"lat": 27.71, "lon": 85.33, "network_type": "UMTS",
+          "cell_id": 1234567, "level_dbm": -98}}]
+```
+
+Returns `202 {"accepted": N, "skipped": M}`. A call with no `device_id`, an
+end before its start, or longer than 6 hours is skipped, not the batch.
+Network names: `LTE`, `NR`, `IWLAN`, `UMTS`, `HSDPA`, `HSUPA`, `HSPA`,
+`HSPAP`, `TD_SCDMA`, `GSM`, `EDGE`, `GPRS`, `CDMA`, `1XRTT`, `EVDO`,
+`UNKNOWN`.
+
+The server classes each call:
+
+| Outcome | When |
+|---|---|
+| VoLTE / VoNR | Every voice reading on LTE or NR |
+| Wi-Fi calling | Voice on IWLAN, no 2G/3G |
+| Fell back to 2G/3G | 2G/3G voice while on 4G/5G just before, or a call that started on 4G |
+| 2G/3G, no 4G before | 2G/3G voice and 2G/3G before the call too |
+| Unknown | No usable voice network reading |
+
+Superadmins see the counts, the cells where calls most often fell back and
+the latest calls under "Calls from phones" on the VoLTE Quality page.
+
+### 13.2 Call quality (VoLTE and VoNR): built on the server, not in the app
 
 `POST volte-samples/` takes an array, one object per finished call:
 
@@ -521,6 +655,18 @@ ticked in Settings; until then they are not on the bar at all. The tick box
 also marks drives as staff drives. It grants nothing on the server. The app
 has no staff login.
 
+The Signal screen also has **Report a problem** (section 10a) and shows a
+hint about the likely cause of a poor reading.
+
+**Collector edition** (14 October 2026). The reference app has two build
+flavours, `standard` and `collector` (`:app:assembleCollectorDebug`), with
+the same application ID, so one replaces the other on a phone. The collector
+build is for a small group of staff gathering test data: sharing has no time
+limit until the user stops it, and a foreground service (`CollectorService`)
+takes a reading every 15 seconds, uploads every 5 minutes and runs a speed
+test over mobile data every 30 minutes, skipped below 20% battery unless the
+phone is charging. The employee tabs are on.
+
 ### 14.2 SDK entry points
 
 Call `init` from `Application.onCreate()`, not from an Activity: WorkManager
@@ -558,7 +704,7 @@ NetTelemetry.setDriveTestConsent(true)
 | `uploadIntervalMinutes` | 30 | How often the queue is sent |
 | `uploadOnlyOnUnmetered` | true | Wait for Wi-Fi |
 | `minHandoverSampleIntervalSeconds` | 120 | Gap between cell-change readings |
-| `rescueEnrollUrl`, `driveTestConsentUrl`, `driveTestConsentMessageUrl`, `speedSamplesUrl`, `pushTokenUrl` | null | Each feature is off until its URL is set |
+| `rescueEnrollUrl`, `driveTestConsentUrl`, `driveTestConsentMessageUrl`, `speedSamplesUrl`, `pushTokenUrl`, `callSamplesUrl` | null | Each feature is off until its URL is set |
 | `defaultOptIn` | false | Keep false unless the app's own terms cover collection from install |
 
 Trace requests, registration and site photos live in the reference app
@@ -570,7 +716,8 @@ Trace requests, registration and site photos live in the reference app
 - SDK: `ACCESS_FINE_LOCATION`, `READ_PHONE_STATE`, `ACCESS_NETWORK_STATE`,
   `INTERNET`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION`.
 - App: `POST_NOTIFICATIONS`, `CAMERA` (asked only when the photo screen opens),
-  `ACCESS_WIFI_STATE`, `CHANGE_WIFI_STATE`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
+  `ACCESS_WIFI_STATE`, `CHANGE_WIFI_STATE`, `CHANGE_NETWORK_STATE` (speed test
+  over mobile data), `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
 - Not requested: `ACCESS_BACKGROUND_LOCATION`.
 
 ### 14.5 Behaviour to know when testing

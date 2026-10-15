@@ -159,7 +159,8 @@ docs/                            Dated audits, server migration guides, runbook
   (branch `mobile`). Sync with the PowerShell tool (Bash mangles `/E`):
   `robocopy "<src>" "C:\mobile-push\nepal-telemetry-mobile" /E /XD build
   .gradle .idea .git nepal-telemetry-project /XF local.properties
-  DemoApplication.kt google-services.json *.apk hs_err_pid*.log`. Check
+  DemoApplication.kt google-services.json keystore.properties *.jks
+  *.keystore *.apk hs_err_pid*.log`. Check
   that `git status` shows neither secret file, then add only the intended
   files.
 
@@ -349,8 +350,8 @@ repo, not on prod):
   in its result (`core/live_sites.py`), to explain "1 created" on every
   run. The app's site lookup waits 30 s after a failure.
 - Server tested locally. The web maps and the app's Map tab changes have
-  not been seen running. After deploy, update the manuals and both decks:
-  the Viewer Manual still says viewers see site photos.
+  not been seen running. The manuals and both decks were updated for
+  this on 2026-10-12.
 - **CQI on the coverage map** (2026-10-12). The roll-ups averaged only the
   phone-reported `cqi`, which is almost always null, so the CQI map was
   grey. They now average `cqi.sample_cqi_sql()` (reported, else SINR
@@ -368,6 +369,158 @@ repo, not on prod):
   from a measured SINR, still shows. Migration 0123 recomputes the bins
   whose samples are all still stored. This removes the zeros only; the
   line itself is still uncalibrated.
+- **RSRQ estimate is now a step table, not the line** (2026-10-12, built,
+  NOT committed). Prod's phones report no SINR at all (0 of 2,099 LTE
+  samples), so `cqi_rsrq_calibration` had nothing to compare there and
+  nearly every phone CQI on prod comes from RSRQ. Checked on 31,269 local
+  drive-test readings instead: the line read 3 to 5 steps low (RSRQ -11
+  gave 6, drive tests average 11). `RSRQ_TABLE_NTC_DT` in `core/cqi.py`
+  (`rsrq_table`; `null` in `CQI_CONFIG_JSON` restores the line), Python
+  and SQL, migration 0124 recomputes the bins. The command gained
+  `--drive-tests`, which prints a fresh table from all stored 4G drive
+  tests; run it on prod, which has more of them. A user-supplied
+  RSRQ-to-SINR formula was tested and rejected: its simple form lacks
+  the factor 12 and gives CQI 0 everywhere, and the load-aware form
+  needs the cell load.
+- **RSRQ table refitted to MEASURED CQI** (2026-10-13, built, NOT
+  committed, not on prod; supersedes the bullet above). The 12 October
+  table (`805ef53`, pushed) was built from CQI worked out from SINR in
+  three `.trp` logs and read about 1.2 steps high against measured CQI
+  (miss 2.7, worse than a constant at 2.4). The user uploaded nine
+  Excel exports from the TEMS server (750,186 readings with the CQI the
+  test phone reported): `RSRQ_TABLE_NTC_MEASURED` in `core/cqi.py`, miss
+  2.2, no bias. Same data: the SINR threshold table is too steep (2-3
+  low below 0 dB, 2-3 high above 20 dB; miss 2.1, refit would be 1.7)
+  and RSRQ+RSRP would give 2.0. Both offered to the user, not built;
+  they wanted an RF engineer to look first.
+- **`DriveTestSample.cqi_estimated`** (same day, migration 0126, which
+  also recomputes the bins). A `.trp` log has no CQI; the upload page
+  fills one in from SINR and now marks it. An Excel export carries
+  measured CQI. 0126 marks existing `.trp` sessions. The CQI plot's
+  "estimated" note shows only for marked readings, and
+  `cqi_rsrq_calibration --drive-tests` uses measured CQI only. Lesson:
+  never calibrate against the `cqi` of a `.trp` session.
+- **Upload page stays open after a template/Excel save** (2026-10-13):
+  it lists what was saved with a link to Session History.
+- **Engineering-parameters import guard** (2026-10-13). The user dropped
+  the 2G/3G RF Database workbook into the "Engineering Parameters (4G)"
+  box. It was accepted (any file with a Cell Name column was): the page
+  read the first sheet (2G) and the server, matching by cell name across
+  all technologies, rewrote 13,958 2G sectors' band text ("900" to
+  "GSM900") and a few sites' tower fields. No 4G sector was touched.
+  Fix: the box refuses a file with BCCH/BSIC/PSC and no PCI, each box
+  sends its `tech`, and the server matches only that technology. The
+  import also loaded every column of 51,000 sectors and their sites; on
+  this PC's 1 GB container the worker was killed (the user saw "import
+  failed"). It now loads only the columns it uses. On prod the remedy
+  for the band text is to import the file again in the 2G RF box.
+  The same import also wrote all 25 sector columns for every changed
+  row: the real 4G file (20,190 rows) took 115 s here and got HTTP 504
+  on prod. It now writes only the columns that changed (33 s worst
+  case here). All of this is in `d1cdf9d` (committed 2026-10-13, with
+  the CQI table, `cqi_estimated` and the upload-page change).
+- **Site map: reach from tilt, and measured coverage** (2026-10-13,
+  built, NOT committed; not AI work, so it can ship without it).
+  The wedges on a site's map are a diagram: azimuth from the site list,
+  beamwidth and radius from the KML
+  (`../Nepal NTC_LTE engineering_parameter_14_June_26.kml`, imported
+  through the 4G engineering-parameters box), fixed per band (B20 40
+  degrees/200 m, B3 60/150). `SiteLocationMiniMap.tsx` now has three
+  switches: Diagram (as before, on), Reach from tilt (a dashed line to
+  height / tan(total tilt), flat ground assumed, `tiltReachM` in
+  `lib/sectorWedge.ts`), and Measured (`core/site_coverage.py`,
+  `GET /api/v2/sites/<id>/measured-coverage/`: readings matched to the
+  site's sectors, in 55 m squares, with half/nine-in-ten/farthest
+  distance per sector; drive tests for everyone, phone readings for
+  admin and superadmin). Migration 0127 adds the index on
+  `DriveTestSample.serving_site_id` (the read took 3.7 s without it,
+  0.5 s with). AI migrations moved to 0128-0132. Checked through the
+  view in-process, not in a browser. On a hill site the two disagree
+  widely (WDR521 band 20: tilt says 230-270 m, half the readings were
+  taken 3.4-3.7 km out), which is the point of showing both.
+- **Which site a reading belongs to, and the direction check**
+  (2026-10-13, built, NOT committed; not AI work). The user's rule:
+  distance is the hard constraint, direction only refines where distance
+  does not settle it. `choose_sector` in `core/dt_serving_cell.py`: only
+  sites within the cap are candidates; the nearest wins on distance
+  alone when the reading is within 300 m of it or it is clearly nearer
+  (at most 0.6 of the next one's distance); otherwise the one whose
+  sector points at the reading (within 60 degrees) wins; if none or
+  several do, the nearest is kept and the reading is "uncertain". Every
+  reading is now matched on its own position. Before, the drive-test
+  path gave all readings on an id in an upload batch (and, in the
+  backfill, in a whole session) to the site nearest their centre, so one
+  site collected readings taken beside another with the same PCI.
+  `backfill_dt_serving_cells` was rewritten to work in chunks and to
+  clear or move a match; run locally it moved about 2% of 856,000
+  readings. **After deploying this on prod, run
+  `manage.py backfill_dt_serving_cells` there once.** Uncertainty is
+  worked out when the site page is read, not stored (no new column).
+  The site map's Measured layer now draws uncertain readings hollow,
+  offers a choice of drive test, and reports per sector the share of
+  readings where it points and the direction they centre on, flagged
+  beyond 30 degrees on 100 or more readings; readings within 300 m,
+  weak ones and uncertain ones are left out of that check. It never
+  changes an azimuth. Example: WDR521 K3 went from 40% in direction to
+  80%, centred 1 degree from its azimuth, with 819 readings marked
+  uncertain (PCI 10 is also on WDR496, 6.7 km away). CDR751 2G sector A
+  is flagged: azimuth 0, readings centre on 227. Antenna-change records
+  carry no usable date, so they are shown as a caution only.
+- **Exact match by cell identity** (2026-10-13, built, NOT committed;
+  not AI work). A 4G reading that names its cell is matched to that
+  sector exactly, ahead of the PCI rule. The identity is eNodeB ID x 256
+  + local cell ID. `Sector.enodeb_id` comes from the "NodeB ID" column
+  of the LTE engineering parameter file (the 4G box now imports it);
+  `DriveTestSample.cell_id` is saved from a TEMS `.trp` (the decoder
+  already read it) and from an optional "Serving Cell Identity" column
+  of the 4G Excel template (or separate eNodeB ID and Cell ID columns);
+  phone samples already carried `cell_id`. Migration 0128; AI migrations
+  moved to 0129-0133. Checked on `../sample/0611101538.trp`: all 29,243
+  readings matched by identity, and the PCI rule agreed on 29,233 of
+  them (a flat Chitwan drive; hill drives are where PCI is ambiguous).
+  The user's TEMS-server exports
+  (`D:\WSD\data for dtwatch\drive test plot in excel\ccsi\T1..T18.xlsx`)
+  have only the template's ten columns, so they carry no identity: they
+  need a new export with that column. Sessions already stored have no
+  `cell_id` until uploaded again. 2G/3G identity (LAC + cell ID, already
+  in the site list from the RF Database) is not built.
+- **Operating band of phone readings** (2026-10-13, committed: dtwatch
+  `ba796b3` pushed, mobile `17b952b`; not on prod). The app sends `arfcn` (channel number)
+  and `band` (`getBands()` on Android 11+, else from the channel) with
+  every sample; `core/radio_band.py` resolves and labels it
+  ("B3 (1800)", "900" on 2G), stored as `arfcn`, `band`, `band_mhz` on
+  `TelemetrySample` (migration 0125, which also fills 2G rows from
+  `bcch`). A Band column is on Live Samples, Telemetry Drive Test,
+  Area Sample and Collections. SDK: `model/RadioBand.kt` holds the same
+  tables; keep the two in step. App: band on Signal, Cells, full
+  parameters and the route popup. Built, not yet run on a phone. The AI
+  migrations moved up again to 0126-0129 so 0125 can ship without them;
+  `models.py` and `api/types.ts` now hold both band and AI changes, so
+  a commit without the AI work must stage those two by hunk.
+- **App tabs and registration flow** (2026-10-13, built, NOT committed,
+  not yet run on a phone). Everyone gets Signal, Wi-Fi and Settings;
+  Cells and Map are removed from the bar (not greyed) until "I am an NTC
+  employee" is ticked. First start after install: Quick Setup asks for
+  location, phone state and notifications, then a pop-up asks for the
+  number. First start after an update (`AppLaunch`, from the package's
+  update time): asks for the number if not registered, else says
+  "already registered". Settings shows the form only while not
+  registered. `Registration.kt` holds the one registration routine.
+  Decided by the user on 2026-10-13: allowing location on the setup
+  screen shares for about one minute and then stops by itself, on every
+  visit (first install, after an update, or whenever the permission was
+  missing): `FirstRunSample.kt`, a one-minute share window; the setup
+  text says so. After an update the permission check comes before the
+  registration check.
+- **Mobile handoff document rewritten** (2026-10-13):
+  `docs/telemetry_pipeline_mobile_handoff.md` and its `.docx` (made with
+  a scratch script from the Markdown), for the NT mobile app team.
+- **Documents brought up to date on 2026-10-12** (the four manuals and
+  both decks): step table, CQI map, level by technology, telemetry in
+  Explore, site photos second round, app share question. The AI
+  assistant was left out of them on the user's instruction; they still
+  show it as "planned". The prototype has its own brief, a Claude Docs
+  artifact: `claude.ai/code/artifact/54e54623-eedd-4b2a-aa4f-a6ee3c5781f1`.
 - **Planned local AI assistant (documents only, no code).** On
   2026-10-12 the user asked for a future-plan item: an open-source model
   hosted by NTC that identifies problems, likely causes and suggested
@@ -380,8 +533,8 @@ repo, not on prod):
   Manual (overview diagram, "Future plan" section with its own flow),
   the combined manual's overview diagram, the Admin Manual ("Planned: AI
   assistant"), management deck slide 14 and technical deck slide 21,
-  always marked planned with a dashed border. Do not build it until
-  asked.
+  always marked planned with a dashed border. The documents still say
+  "planned"; the prototype below is not in them yet.
 - **Telemetry sessions in DT Explore** (2026-10-12). `core/telemetry_near.py`
   (`/api/v2/telemetry/sessions-near/`), `TelemetryNearLayer.tsx`, and an
   "Include telemetry sessions" tick box in Explore, off by default and
@@ -424,6 +577,223 @@ repo, not on prod):
   use `-Xmx128m -XX:+UseSerialGC` on the wrapper JVM and
   `-Dorg.gradle.jvmargs="-Xmx640m -XX:+UseSerialGC"` with
   `-Pkotlin.compiler.execution.strategy=in-process`.
+
+- **Collector edition of the app** (2026-10-14, built, not committed, not
+  run on a phone). Product flavours `standard` and `collector` in
+  `app/build.gradle.kts`, same application ID (Firebase needs it, so one
+  replaces the other). Collector: sharing with no time limit until the
+  user stops it, `CollectorService` takes a reading every 15 s, uploads
+  every 5 min and runs a speed test every 30 min, employee tabs on.
+  Desktop: `dtwatchTelemetry_Collector.apk` next to `dtwatchTelemetry.apk`.
+  For a small group of staff only.
+- **Speed test over mobile data** (2026-10-14). `SpeedTest.runOnMobileData`
+  asks Android for the mobile-data network and sends every request over
+  it, even on Wi-Fi; packet loss is the share of 20 pings with no answer
+  in 2 s (`TelemetrySpeedResult.packet_loss_pct`). A Wi-Fi result is not
+  sent to NTC.
+- **Problem reports** (2026-10-14, built, not committed, not on prod;
+  not AI work). `core/problem_report.py`, model `ProblemReport`,
+  migration 0129 (with the menu item, opaque route `/r4q7cx`), page
+  `ProblemReportsPage.tsx` (admin and superadmin). The app's "Report a
+  problem" button (Signal screen, registered phone, signed) sends the
+  category, note, reading and a mobile-data speed test; staff can enter
+  a complaint by clicking the map. The check is plain rules worked out on
+  read: weak signal, interference, busy cell, phone on 2G/3G where 4G is
+  measured, worse than the 7 days before, call drops (needs KPI), no
+  data; with a customer reply per cause. Other phones are shown only as
+  counts and averages; the reporter's number to superadmin only. The
+  app shows the same rules on the phone (`ProblemHints.kt`). Server
+  tested in-process with a throwaway key. Not done: AI wording of a
+  report (C), alarm/billing feeds.
+- **Explore on wide searches** (2026-10-14, built, not committed). A
+  district search (Gulmi: 318,698 readings in its covering circle) ran
+  the 1 GB server out of memory and the page showed no sessions. Now:
+  the page sends the district outline; above 20,000 readings the server
+  reads `DtPlotSquare` (`core/dt_plot_squares.py`, migration 0130): per
+  session and 50 m square the count and weakest/strongest/average of
+  each measurement, one dot showing the weakest value. Built by the
+  migration for stored sessions; a new session, or one appended to,
+  carries `plot_squares_stale` and is built on its next search. Zoomed
+  to 4 km across or less, the page loads every reading in view. Gulmi:
+  0.6 s, 4 MB; every session's weakest RSRP kept. Committed `b35cb6c`.
+- **Drive-test retention** (2026-10-14, built, NOT committed; rule agreed
+  with the user that day). `core/dt_retention.py`, migration 0131, page
+  `DtRetentionPage.tsx` (opaque route `/d5r8vt`, superadmin). Per 50 m
+  square and technology, a session keeps its full readings when it is one
+  of the 2 latest yearly (NTA) drives there (any age), one of the 2 most
+  recent drives of any purpose there and at most 24 months old, pinned
+  (Keep) or linked to an optimization activity, or the last full readings
+  of that square. Elsewhere readings are deleted and the square summary
+  stays (`DtPlotSquare.detail_removed`); a session with nothing kept,
+  older than 5 years and unprotected, is erased. Counts as "measured" with
+  3+ readings. Off by default; a superadmin runs a dry run and approves
+  it; `apply_dt_retention` (in `run_maintenance`) carries it out only if
+  a fresh plan matches. `DtPruneRecord` keeps what was removed for good.
+  Phone data does not count for pruning. Upload asks the purpose
+  (required) and where the original is kept; the file is never sent,
+  only its SHA-256, which finds a re-upload. Session History edits
+  purpose/Keep/source. Explore has Sessions / Recent / Change views from
+  the squares. Audit log default raised to 180 days (6 months): check
+  prod `.env` for `AUDIT_LOG_RETENTION_DAYS`. Tested with simulated
+  history in rolled-back transactions; local data untouched. AI
+  migrations moved to 0132-0136.
+
+- **PCI plot in Explore** (2026-10-14, built, not committed; frontend
+  only). The fixed hash (PCI mod 12) gave PCI 8, 20 ... 440 one colour and
+  the legend listed only the 24 lowest PCIs. Now `pciColorMap()` in
+  `lib/dtBands.ts` ranks the search's PCIs by reading count and hands out 20
+  distinct colours; the legend lists every PCI with its count, and a click
+  (or the Find PCI box) shows that PCI alone. "PCI mod 3" view, and PCI
+  numbers on the map at 2 km across or less (`PciLabelsLayer`). Session
+  History has no PCI plot, so only Explore changed.
+
+- **Calls from phones, no quality figures** (2026-10-14, built, NOT
+  committed in either repo, not on prod, not run on a phone; not AI work).
+  The call-quality lane (VoLTE Quality, `core/volte_quality.py`) needs a
+  carrier-privileged app and has no data. This lane needs only
+  READ_PHONE_STATE: `CallListener.kt` in the SDK records each call made
+  while sharing (voice network every 3 s, data network before, start/end
+  cell and level; no number, no direction), `CallQueue`, `CallUploadWorker`,
+  `TelemetryConfig.callSamplesUrl` (added to the private config file by a
+  non-printing sed copy of the speed-test line). Server:
+  `core/call_context.py`, model `CallContextSample`, migration 0132 (AI
+  migrations moved to 0133-0137), `POST /api/telemetry/v1/call-samples/`,
+  `GET /api/v2/telemetry/call-samples/` (superadmin), "Calls from phones"
+  section on the VoLTE Quality page. Outcome per call: VoLTE, Wi-Fi
+  calling, fell back to 2G/3G, 2G/3G with no 4G before, unknown. Tested
+  in-process in a rolled-back transaction. A 404 keeps calls queued, so the
+  app is safe against prod before the deploy.
+- **Stale nested copy:** `nepal-telemetry-project/nepal-telemetry-project/`
+  is an old copy of the app (it has a `VolteCallQualityListener` the real
+  SDK never had). It is not built or pushed; read the real SDK at
+  `nepal-telemetry-project/netplanning-telemetry-sdk/`.
+- **App hardening after a MobSF scan** (2026-10-14, built, NOT committed).
+  Release build type: R8 shrink/obfuscate, debug/info logs stripped
+  (`app/proguard-rules.pro`), signed from `keystore.properties` at the
+  project root when present (the user creates and holds the keystore; never
+  generate it, never commit it). Cleartext rule moved to
+  `app/src/debug/res/xml/`; release is HTTPS only. Backup off
+  (`allowBackup=false`, `data_extraction_rules.xml`). Map tiles cached in
+  app storage. Release APK 2.7 MB against 9.6 MB debug; release is not yet
+  signed or run on a phone. Accepted: minSdk 26 (the Huawei is API 26),
+  library and native-lib findings.
+- **Signed uploads** (same day, built, NOT committed, not on prod). The SDK
+  takes a `RequestSigner` (`NetTelemetry.setRequestSigner`); the app's
+  `SdkLink.kt` sets it from a content provider and, once registered, sends
+  `POST device/sdk-link/` (signed) with the SDK device id. The server stores
+  it as `DeviceCredential.sdk_device_hash` (migration 0132, renamed
+  `0132_calls_and_sdk_link`) and `ingest_row_device_id()` files signed
+  samples, speed results, push tokens, call and VoLTE rows under it, so a
+  phone keeps one identity. Unregistered phones keep the shared key; a 401
+  on a signed upload falls back to it. Tested in a rolled-back transaction
+  (link, identity, tampered body, replayed nonce). Retiring the shared key
+  (`TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL`) is the user's decision and would
+  stop unregistered phones from sharing.
+
+- **CQI and 3G values in the phone lists** (2026-10-14, built, NOT
+  committed). Live Samples and Telemetry Drive Test showed only the
+  SINR-based `cqi_derived`, so LTE rows without SINR had no CQI; they now
+  get `cqi_value`/`cqi_source` from `sample_cqi_fields` (reported, SINR,
+  RSRQ), the coverage map's chain. 3G readings of RSCP/RSSI -24 dBm with
+  Ec/Io 0 (seen on prod after a fallback to 3G) are the modem's no-value
+  code: `_wcdma_levels` in `core/telemetry.py` drops levels outside
+  -125..-25 dBm and Ec/Io outside -30..0 or 0 with no level; the SDK does
+  the same (`wcdmaLevelOrNull`), and migration 0132 clears stored rows.
+
+- **Registered phones in Device Location Trace** (2026-10-15, approved by
+  the user, built, NOT committed). Shared readings are stored under the SDK
+  id, registration and identity links under the key id, so the trace tool
+  found no position for a phone that registered but never turned on the
+  rescue beacon. `DeviceSdkLinkView` now also links the number to the SDK id
+  (`VIA_REGISTRATION`, the registration link's model and hardware key, so it
+  folds into one phone). Rules unchanged: emergency, case reference, log,
+  withdrawn rescue consent hides it. Rescue Lookup still covers beacon
+  opt-ins only (it passes `only_devices`). Tested in a rolled-back
+  transaction; existing subscriber-device, telemetry and serving-cell tests
+  pass. Works once a phone runs the new app against the deployed server.
+
+- **Speed tests on Live Samples** (2026-10-15, built, NOT committed). The
+  phone's speed tests (`TelemetrySpeedResult`) showed only inside a
+  Telemetry Drive Test session covering that phone and time.
+  `TelemetrySpeedResultsView` (`GET /api/v2/telemetry/speed-results/`,
+  superadmin, same window and device filter as Live Samples, operator-scoped
+  through visible samples) and a "Speed tests" table on Live Samples,
+  polled every 30 s.
+
+- **Speed test over Wi-Fi too, tagged** (2026-10-15, built, NOT committed).
+  App: "Test mobile data" and "Test Wi-Fi" buttons (`SpeedTest.runOnWifi`),
+  every result sent with `bearer` (`mobile`/`wifi`); Collector stays mobile.
+  Server: `TelemetrySpeedResult.bearer` (migration 0133), shown as "Over"
+  on Live Samples, Telemetry Drive Test and Subscriber Profile.
+- **Subscriber Profile** (2026-10-15, built, NOT committed, asked by the
+  user). `core/subscriber_profile.py`, `GET /api/v2/subscriber-profile/`,
+  page `SubscriberProfilePage.tsx`, opaque route `/s7p2nd`, superadmin,
+  seeded by migration 0133 (AI migrations moved to 0134-0138). One number
+  (any spelling) to: phones and installs (links, registration under every
+  spelling, rescue, identity, masked IMEI), readings summary, last location,
+  Collections, Telemetry Drive Test sessions, trace requests, speed tests,
+  problem reports, calls, VoLTE, site photos, and who looked it up. Stored
+  data only. Reason required, every search audit-logged
+  (`SUBSCRIBER_PROFILE.VIEWED`). Location kept to the existing rule: cell,
+  network and signal always; exact coordinates only while an emergency is
+  declared; nothing for a withdrawn rescue consent. Live Samples opens on
+  one device with `?device=`. Tested in a rolled-back transaction.
+  Redesigned the same day after the user's TelcoPulse reference (dark
+  console: `.sp-*` styles at the end of `App.css`, own tokens with a light
+  variant). The number and reason live in the page address; the profile is
+  cached 30 minutes (each server search is logged, Refresh asks again);
+  every link out carries `back=<profile address>` and `BackToProfileBar`
+  (in `Layout.tsx`, accepts only the profile path) leads back; the scroll
+  position is restored. Not yet seen in a browser.
+  Second pass (same day): cards flow in one auto-fill grid (`.sp-flow`,
+  wide tables `.sp-wide`), empty sections are left out and named in one
+  line. Links land on the records: Live Samples `?device=&minutes=129600`
+  (server allows 90 days and 5000 rows for one device, `_live_cap`,
+  `_MAX_DEVICE_LIMIT`; all devices stay at 24 h and 500), Collections
+  `?device=`, Telemetry Drive Test `?name=`, Problem Reports
+  `?status=all`, Site Photos `?status=`, VoLTE Quality `?days=90`. Each
+  page only reads these as its starting filter.
+  Third pass: compact spacing (last block of `.sp-*` in `App.css` wins),
+  every section shown, empty ones as a one-line card; tables 10 rows a page
+  (`Paged`); charts in plain SVG (signal history from `signal_series`, the
+  newest 300 readings without positions; readings-by-network ring; download
+  per speed test); the location card shows the full last reading and a
+  small map of the serving site (a mast, always shown; the customer's own
+  position only in an emergency). The location card no longer links to
+  Live Samples (same list as "Open all readings"); the phones card links to
+  Registered Devices only for a registered number, else Rescue Enrolled.
+
+- **Console design on every page** (2026-10-15, asked by the user after
+  the profile redesign; built, NOT committed, not seen in a browser).
+  `Layout.tsx` puts `ui-console` on `<main>` (signed in only); the last
+  block of `App.css` restyles the shared classes under it: page title with
+  a gradient strip, `.admin-table` as a rounded card with a quiet uppercase
+  header (replaces the solid brand-blue header bar the user approved on
+  2026-10-01), `.report-card` tiles, form fields, gradient `.btn-primary`,
+  pill `.feat-tab`, compact `.page-status`. Removing the class restores the
+  old look. Pages with their own bespoke styling are unchanged.
+  Second pass, after the user looked: menu-item cards and Dashboard
+  shortcuts keep the original gold edge that turns brand blue on hover (no
+  other card hovers); pages widen to 1680 px (forms of 640 px or less stay
+  narrow, `!important` because many pages set `maxWidth` inline). Site
+  Detail is in profile-style cards (`.site-card`, heading `data-icon`):
+  Identity and Tower side by side as label-over-value grids, Sectors under
+  them in the left column, Quick Stats and the map (fixed 320 px, sticky)
+  on the right, Drive Tests + Antenna Changes, Photos and Issues below. The
+  map went blank when the sidebar stopped stretching (its box had no
+  height); the Leaflet container is now absolutely positioned in its box.
+- **Rows per page on every table** (2026-10-15, built). `lib/tablePager.ts`,
+  installed by `Layout.tsx`, watches the page and pages any table with more
+  than 10 rows: rows outside the page are hidden (never removed, so sorting,
+  filters and exports are untouched), a bar under the table has rows per
+  page (10/20/50/100/200, default 20), previous/next and "21-40 of 135". A
+  row whose only cell spans columns stays with the row above (opened
+  details). One choice for the whole app, kept in this browser
+  (`lib/rowsPerPage.ts`). Tables that page on the server or on their own
+  carry `data-pager="off"` and use `RowsPerPageSelect`: Audit Log, the
+  Sites table, the Subscriber Profile tables. Checked in headless Edge on a
+  test page (paging, detail rows, size change, filter, removal), not on the
+  real pages.
 
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an

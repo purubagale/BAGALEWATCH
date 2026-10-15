@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
@@ -9,11 +9,12 @@ import TelemetryNearLayer from './TelemetryNearLayer'
 import { useAuth } from '../auth/AuthContext'
 import { apiErrorMessage } from '../api/client'
 import { useDtRecent, useDtServingCellsForSessions, useDtSessionsNear, useSites, useTelemetrySessionsNear } from '../api/queries'
-import type { DtRecentEntry, DtRecentSquare, DtSample, DtServingCell, DtSessionDetail, DtTech, SiteListItem } from '../api/types'
+import type { DtRecentEntry, DtRecentSquare, DtSample, DtServingCell, DtSessionDetail, DtTech, SiteListItem, TelemetryNearPoint } from '../api/types'
+import { techOf, telemetryMetricValue } from '../lib/telemetryLevel'
 import { purposeLabel } from '../lib/dtPurpose'
 import { ACTIVITY_ROLE_LABELS } from './AttachActivityModal'
 import { clusterDtSessionsByArea, type DtSessionCluster } from '../lib/dtSessionClustering'
-import { ALL_TECHS, bandCategoryColor, bandColor, pciColor, subsampleForMap, type TaggedMetric } from '../lib/dtBands'
+import { ALL_TECHS, bandCategoryColor, bandColor, PCI_DISTINCT_COLORS, pciColorMap, pciMod3Color, subsampleForMap, type TaggedMetric } from '../lib/dtBands'
 import { declusterForPlot } from '../lib/declusterPlot'
 import { useDtMetrics } from '../lib/useDtMetrics'
 import { haversineKm } from '../lib/dtTemplateParser'
@@ -590,11 +591,19 @@ function NearSamplesLayer({
 // Deliberately skips NearSamplesLayer's hover/click "show link to serving
 // site" interactivity — a real but separate enhancement, not needed to
 // answer "which cell served this spot."
-function PciSamplesLayer({ sessions }: { sessions: DtSessionDetail[] }) {
+// 2026-10-14: colours come from `colorOf` (per-search ranking or PCI mod 3,
+// see pciColorMap()/pciMod3Color()), and `isolated` fades every other PCI
+// so one cell's footprint stands out even when its colour repeats.
+function PciSamplesLayer({ sessions, colorOf, isolated }: {
+  sessions: DtSessionDetail[]
+  colorOf: (pci: number) => string
+  isolated: number | null
+}) {
   const map = useMap()
 
   useEffect(() => {
     const layer = L.layerGroup()
+    const front: L.CircleMarker[] = []
     sessions.forEach((session, si) => {
       if (session.tech !== '4G') return
       const withVal = session.samples.filter((sample) => sample.lat != null && sample.lng != null && sample.pci != null)
@@ -614,28 +623,83 @@ function PciSamplesLayer({ sessions }: { sessions: DtSessionDetail[] }) {
       }))
       for (const p of points) {
         const sample = p.item
-        const color = pciColor(sample.pci)
+        const pci = sample.pci as number
+        const faded = isolated !== null && pci !== isolated
+        const color = faded ? '#9ca3af' : colorOf(pci)
         const roleText = p.collapsedCount > 1 ? ` (2 of ${p.collapsedCount} overlapping fixes shown)` : ''
-        L.circleMarker([p.lat, p.lng], {
-          radius: 3,
+        const marker = L.circleMarker([p.lat, p.lng], {
+          radius: isolated !== null && !faded ? 4 : 3,
           color,
           fillColor: color,
-          fillOpacity: 0.85,
+          fillOpacity: faded ? 0.15 : 0.85,
           weight: 0,
-        })
-          .bindTooltip(
-            `<b>${session.name}</b> (4G)<br>${sample.ts || sample.date || ''}<br>PCI: ${sample.pci}${roleText}` +
-              (sample.serving_site_name ? `<br>${sample.serving_site_name}` : ''),
-            { sticky: true, direction: 'top', offset: [0, -4] },
-          )
-          .addTo(layer)
+        }).bindTooltip(
+          `<b>${session.name}</b> (4G)<br>${sample.ts || sample.date || ''}<br>PCI: ${pci} (mod 3 = ${pci % 3})${roleText}` +
+            (sample.serving_site_name ? `<br>${sample.serving_site_name}` : ''),
+          { sticky: true, direction: 'top', offset: [0, -4] },
+        )
+        // The isolated PCI is added last so it paints over the faded rest.
+        if (isolated !== null && !faded) front.push(marker)
+        else marker.addTo(layer)
       }
     })
+    for (const marker of front) marker.addTo(layer)
     layer.addTo(map)
     return () => {
       map.removeLayer(layer)
     }
-  }, [map, sessions])
+  }, [map, sessions, colorOf, isolated])
+
+  return null
+}
+
+// PCI labels (2026-10-14): when the map is 2 km across or less, the PCI
+// number is written at the start of each run of readings on one PCI, so no
+// colour lookup is needed. Redrawn on every pan or zoom, for the readings in
+// view only, at most PCI_LABEL_CAP labels.
+const PCI_LABEL_MAX_WIDTH_M = 2000
+const PCI_LABEL_CAP = 150
+// Readings this far apart start a new run even on the same PCI.
+const PCI_RUN_GAP_M = 150
+
+function PciLabelsLayer({ sessions, isolated }: { sessions: DtSessionDetail[]; isolated: number | null }) {
+  const map = useMap()
+
+  useEffect(() => {
+    const layer = L.layerGroup().addTo(map)
+    const draw = () => {
+      layer.clearLayers()
+      const bounds = map.getBounds()
+      const widthM = map.distance(bounds.getSouthWest(), bounds.getSouthEast())
+      if (widthM > PCI_LABEL_MAX_WIDTH_M) return
+      let count = 0
+      for (const session of sessions) {
+        if (session.tech !== '4G') continue
+        let prevPci: number | null = null
+        let prev: L.LatLng | null = null
+        for (const sample of session.samples) {
+          if (sample.lat == null || sample.lng == null || sample.pci == null) continue
+          const here = L.latLng(sample.lat, sample.lng)
+          const newRun = sample.pci !== prevPci || prev === null || map.distance(prev, here) > PCI_RUN_GAP_M
+          prevPci = sample.pci
+          prev = here
+          if (!newRun || !bounds.contains(here)) continue
+          if (isolated !== null && sample.pci !== isolated) continue
+          L.marker(here, {
+            interactive: false,
+            icon: L.divIcon({ className: 'dt-pci-label', html: String(sample.pci), iconSize: undefined }),
+          }).addTo(layer)
+          if (++count >= PCI_LABEL_CAP) return
+        }
+      }
+    }
+    draw()
+    map.on('moveend', draw)
+    return () => {
+      map.off('moveend', draw)
+      map.removeLayer(layer)
+    }
+  }, [map, sessions, isolated])
 
   return null
 }
@@ -1106,7 +1170,16 @@ export default function DtExploreTab() {
   // techs are ticked in the filter row. Falls back to the tech-filter-only
   // list while sessions are still loading or none exist yet, so the tab
   // bar isn't empty before a search has even resolved.
-  const presentTechs = useMemo(() => new Set(nearSessions.map((s) => s.tech)), [nearSessions])
+  // Telemetry readings count too (2026-10-14): with "Include telemetry
+  // sessions" ticked, a technology seen only on phones still gets its tabs.
+  const presentTechs = useMemo(() => {
+    const set = new Set<DtTech>(nearSessions.map((s) => s.tech))
+    for (const p of telemetryPoints) {
+      const tech = techOf(p.network_type)
+      if (tech) set.add(tech)
+    }
+    return set
+  }, [nearSessions, telemetryPoints])
   // Only fall back to the full tech-filter list while the query is still
   // in flight (avoids a flash of zero tabs before results arrive). Once
   // it's actually resolved, an empty `presentTechs` (genuinely zero nearby
@@ -1126,9 +1199,11 @@ export default function DtExploreTab() {
     const byFilter = allMetrics.filter((m) => techFilter.has(m.tech))
     if (sessionsLoading) return byFilter
     const byTech = byFilter.filter((m) => presentTechs.has(m.tech))
-    const withData = byTech.filter((m) => nearSessions.some((s) => s.tech === m.tech && s.samples.some((sample) => sample[m.key] != null)))
+    const withData = byTech.filter((m) =>
+      nearSessions.some((s) => s.tech === m.tech && s.samples.some((sample) => sample[m.key] != null)) ||
+      telemetryPoints.some((p) => telemetryMetricValue(p, m.tech, m.key) != null))
     return withData.length ? withData : byTech
-  }, [allMetrics, techFilter, presentTechs, sessionsLoading, nearSessions])
+  }, [allMetrics, techFilter, presentTechs, sessionsLoading, nearSessions, telemetryPoints])
   // PCI Plot tab (2026-09-23) — same tech-filter + presence gating as the
   // real metric tabs above, scoped to 4G (see PciSamplesLayer's docstring
   // for why). Kept out of visibleMetrics/TaggedMetric entirely (see
@@ -1168,15 +1243,67 @@ export default function DtExploreTab() {
   // cells/bands doesn't turn the legend into a wall of swatches; every dot
   // on the map still shows its exact value in its tooltip regardless of
   // this cap.
-  const distinctPcis = useMemo(() => {
-    if (!isPciTab) return []
-    const set = new Set<number>()
+  // PCI legend and colours (2026-10-14): every PCI in the search with its
+  // reading count, most readings first; the ranking also picks its colour
+  // (pciColorMap()), so legend and map always agree. Not capped.
+  const rankedPcis = useMemo(() => {
+    if (!isPciTab) return [] as { pci: number; n: number }[]
+    const counts = new Map<number, number>()
     for (const s of nearSessions) {
       if (s.tech !== '4G') continue
-      for (const sample of s.samples) if (sample.pci != null) set.add(sample.pci)
+      for (const sample of s.samples) {
+        if (sample.pci != null && sample.lat != null && sample.lng != null) {
+          counts.set(sample.pci, (counts.get(sample.pci) ?? 0) + 1)
+        }
+      }
     }
-    return [...set].sort((a, b) => a - b).slice(0, PCI_LEGEND_CAP)
-  }, [isPciTab, nearSessions])
+    // 4G phone readings with "Include telemetry sessions" ticked share the legend.
+    for (const p of telemetryPoints) {
+      if (p.pci != null && techOf(p.network_type) === '4G') counts.set(p.pci, (counts.get(p.pci) ?? 0) + 1)
+    }
+    return [...counts].map(([pci, n]) => ({ pci, n })).sort((a, b) => b.n - a.n || a.pci - b.pci)
+  }, [isPciTab, nearSessions, telemetryPoints])
+  const [pciMode, setPciMode] = useState<'pci' | 'mod3'>('pci')
+  const [isolatedPci, setIsolatedPci] = useState<number | null>(null)
+  const [pciFind, setPciFind] = useState('')
+  const pciColors = useMemo(() => pciColorMap(rankedPcis.map((r) => r.pci)), [rankedPcis])
+  const pciColorOf = useCallback(
+    (pci: number) => (pciMode === 'mod3' ? pciMod3Color(pci) : pciColors.get(pci) ?? '#94a3b8'),
+    [pciMode, pciColors],
+  )
+  // Telemetry dots follow the selected tab (2026-10-14): the tab's measure on
+  // its own technology, coloured on the same bands; PCI on the PCI tab (with
+  // the same isolate); nothing on the Band tab, whose drive-test band names
+  // the phone readings don't share.
+  const telemetryColorOf = useCallback(
+    (p: TelemetryNearPoint): string | null => {
+      if (isBandTab) return null
+      if (isPciTab) {
+        if (p.pci == null || techOf(p.network_type) !== '4G') return null
+        if (isolatedPci !== null && p.pci !== isolatedPci) return null
+        return pciColorOf(p.pci)
+      }
+      const value = telemetryMetricValue(p, metric.tech, metric.key)
+      return value == null ? null : bandColor(metric.bands, value)
+    },
+    [isBandTab, isPciTab, isolatedPci, pciColorOf, metric],
+  )
+  const mod3Counts = useMemo(() => {
+    const out = [0, 0, 0]
+    for (const r of rankedPcis) out[r.pci % 3] += r.n
+    return out
+  }, [rankedPcis])
+  // An isolated PCI that is not in the current search (typed, or kept from
+  // an earlier search) fades everything; the bar above the map says so and
+  // offers Show all.
+  const findPci = () => {
+    const value = Number(pciFind.trim())
+    if (pciFind.trim() === '' || !Number.isInteger(value)) {
+      setIsolatedPci(null)
+      return
+    }
+    setIsolatedPci(value)
+  }
   const distinctBands = useMemo(() => {
     if (!isBandTab) return []
     const set = new Set<string>()
@@ -1448,6 +1575,55 @@ export default function DtExploreTab() {
             </div>
           </div>
 
+          {isPciTab && exploreView === 'sessions' && (
+            <div className="report-toolbar" style={{ marginTop: 6, marginBottom: 0, gap: 6, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className={pciMode === 'pci' ? 'btn-primary btn-small' : 'btn-secondary btn-small'}
+                onClick={() => setPciMode('pci')}
+                title="One colour per PCI"
+              >
+                By PCI
+              </button>
+              <button
+                type="button"
+                className={pciMode === 'mod3' ? 'btn-primary btn-small' : 'btn-secondary btn-small'}
+                onClick={() => setPciMode('mod3')}
+                title="Colour by PCI mod 3: neighbouring cells with the same colour can interfere"
+              >
+                PCI mod 3
+              </button>
+              <input
+                type="text"
+                inputMode="numeric"
+                placeholder="Find PCI"
+                value={pciFind}
+                onChange={(e) => setPciFind(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') findPci() }}
+                style={{ width: 90, marginLeft: 8 }}
+              />
+              <button type="button" className="btn-secondary btn-small" onClick={findPci}>Show</button>
+              {isolatedPci !== null && (
+                <button
+                  type="button"
+                  className="btn-secondary btn-small"
+                  onClick={() => { setIsolatedPci(null); setPciFind('') }}
+                >
+                  Show all
+                </button>
+              )}
+              <span className="muted" style={{ fontSize: 12 }}>
+                {isolatedPci !== null && !rankedPcis.some((r) => r.pci === isolatedPci)
+                  ? `PCI ${isolatedPci} is not in this search.`
+                  : isolatedPci !== null
+                    ? `Showing PCI ${isolatedPci} only.`
+                    : pciMode === 'pci' && rankedPcis.length > PCI_DISTINCT_COLORS
+                      ? `${rankedPcis.length} PCIs here; colours repeat after ${PCI_DISTINCT_COLORS}. Click a PCI below to show it alone.`
+                      : 'Click a PCI below to show it alone. Zoom in to 2 km across to see PCI numbers on the map.'}
+              </span>
+            </div>
+          )}
+
           <div
             ref={wrapRef}
             className={isFullscreen ? 'dt-explore-map-wrap dt-explore-map-fullscreen' : 'dt-explore-map-wrap'}
@@ -1473,13 +1649,16 @@ export default function DtExploreTab() {
                   <RecentSquaresLayer squares={recent.data.squares} metric={metric} view={exploreView} names={recent.data.sessions} />
                 )
               ) : isPciTab ? (
-                <PciSamplesLayer sessions={nearSessions} />
+                <>
+                  <PciSamplesLayer sessions={nearSessions} colorOf={pciColorOf} isolated={isolatedPci} />
+                  <PciLabelsLayer sessions={nearSessions} isolated={isolatedPci} />
+                </>
               ) : isBandTab ? (
                 <BandSamplesLayer sessions={nearSessions} />
               ) : (
                 <NearSamplesLayer sessions={nearSessions} metric={metric} servingCells={servingCells} />
               )}
-              {telemetryShown && <TelemetryNearLayer points={telemetryPoints} names={telemetryNames} />}
+              {telemetryShown && <TelemetryNearLayer points={telemetryPoints} names={telemetryNames} colorOf={telemetryColorOf} />}
               <ViewWatcher onView={setViewBox} />
               <FullscreenSync isFullscreen={isFullscreen} bounds={currentBounds} />
               <InvalidateOnResize />
@@ -1505,12 +1684,27 @@ export default function DtExploreTab() {
             <span className="dt-legend-item"><span className="dt-legend-dot" style={{ background: '#7f77dd' }} />Search point / area</span>
             <span className="dt-legend-item"><span className="dt-legend-dot" style={{ background: '#1e2330', border: '1px solid #e6e9ef' }} />BTS site</span>
             {isPciTab ? (
-              distinctPcis.map((pci) => (
-                <span key={pci} className="dt-legend-item">
-                  <span className="dt-legend-dot" style={{ background: pciColor(pci) }} />
-                  PCI {pci}
-                </span>
-              ))
+              pciMode === 'mod3' ? (
+                [0, 1, 2].map((m) => (
+                  <span key={m} className="dt-legend-item">
+                    <span className="dt-legend-dot" style={{ background: pciMod3Color(m) }} />
+                    PCI mod 3 = {m} · {mod3Counts[m].toLocaleString()}
+                  </span>
+                ))
+              ) : (
+                rankedPcis.map(({ pci, n }) => (
+                  <button
+                    key={pci}
+                    type="button"
+                    className={isolatedPci === pci ? 'dt-legend-item dt-legend-pick active' : 'dt-legend-item dt-legend-pick'}
+                    title={isolatedPci === pci ? 'Show all PCIs again' : `Show only PCI ${pci}`}
+                    onClick={() => setIsolatedPci((cur) => (cur === pci ? null : pci))}
+                  >
+                    <span className="dt-legend-dot" style={{ background: pciColorOf(pci) }} />
+                    PCI {pci} · {n.toLocaleString()}
+                  </button>
+                ))
+              )
             ) : isBandTab ? (
               distinctBands.map((band) => (
                 <span key={band} className="dt-legend-item">

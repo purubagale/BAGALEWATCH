@@ -26,7 +26,11 @@ const NEPAL_CENTER: [number, number] = [28.3949, 84.124]
 
 export default function SitePhotosPage() {
   const [view, setView] = useState<'cards' | 'map'>('cards')
-  const [status, setStatus] = useState<StatusFilter>('pending')
+  // ?status= opens on that tab, e.g. from Subscriber Profile (2026-10-15).
+  const [status, setStatus] = useState<StatusFilter>(() => {
+    const s = new URLSearchParams(window.location.search).get('status')
+    return s === 'approved' || s === 'rejected' ? s : 'pending'
+  })
   const [site, setSite] = useState('')
   // One page at a time, so a long queue never loads every picture at once.
   const [offset, setOffset] = useState(0)

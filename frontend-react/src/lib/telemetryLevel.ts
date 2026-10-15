@@ -37,6 +37,33 @@ export function techOf(networkType: string): DtTech | null {
   return null
 }
 
+// A drive-test metric tab read from a phone reading (2026-10-14), so the
+// Explore tabs cover telemetry too. The tab names the technology and a
+// drive-test field; the phone keeps the same measure under its own name:
+//   4G  rsrp, rsrq, sinr, cqi   (no DL throughput from phones)
+//   3G  rsrp = RSCP -> rscp, ecno -> ecio
+//   2G  rsrp = RxLevel -> rssi, rx_qual -> rxqual
+// Null when the reading is on another technology or lacks that measure.
+export interface PhoneMetrics extends PhoneLevels {
+  rsrq: number | null | undefined
+  sinr: number | null | undefined
+  cqi: number | null | undefined
+  ecio: number | null | undefined
+  rxqual: number | null | undefined
+}
+
+export function telemetryMetricValue(p: PhoneMetrics, tech: DtTech, key: string): number | null {
+  if (techOf(p.network_type) !== tech) return null
+  const field: Record<DtTech, Record<string, keyof PhoneMetrics>> = {
+    '4G': { rsrp: 'rsrp', rsrq: 'rsrq', sinr: 'sinr', cqi: 'cqi' },
+    '3G': { rsrp: 'rscp', ecno: 'ecio' },
+    '2G': { rsrp: 'rssi', rx_qual: 'rxqual' },
+  }
+  const name = field[tech][key]
+  const value = name ? p[name] : null
+  return typeof value === 'number' ? value : null
+}
+
 export function telemetryLevel(p: PhoneLevels): TelemetryLevel {
   const tech = techOf(p.network_type)
   const [name, value, bands]: [string, number | null, Band[]] =

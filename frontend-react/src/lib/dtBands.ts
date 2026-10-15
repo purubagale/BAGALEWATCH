@@ -137,6 +137,35 @@ export function pciColor(pci: number | null | undefined): string {
   return PCI_PALETTE[Math.abs(pci) % PCI_PALETTE.length]
 }
 
+// PCI colours per search (2026-10-14). The fixed hash above gave PCI 8, 20,
+// 32 ... 440 the same colour, so a colour named no PCI. Instead the PCIs
+// found by one search are ranked by reading count and handed these 20
+// colours in turn: within one map a colour means one PCI, up to 20 PCIs
+// (beyond that the colours repeat, and the legend's isolate click is the
+// way to tell them apart). The same PCI may get another colour on another
+// search.
+const PCI_DISTINCT_PALETTE = [
+  '#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6', '#9a6324', '#000075', '#808000',
+  '#469990', '#800000', '#bfef45', '#fabed4', '#ffe119', '#dcbeff', '#aaffc3', '#ffd8b1', '#a9a9a9', '#00a86b',
+]
+export const PCI_DISTINCT_COLORS = PCI_DISTINCT_PALETTE.length
+
+/** PCI → colour for one search, from PCIs ranked most readings first. */
+export function pciColorMap(rankedPcis: number[]): Map<number, string> {
+  const out = new Map<number, string>()
+  rankedPcis.forEach((pci, i) => out.set(pci, PCI_DISTINCT_PALETTE[i % PCI_DISTINCT_PALETTE.length]))
+  return out
+}
+
+// PCI mod 3 (2026-10-14): the LTE reference-signal shift. Two neighbouring
+// cells with the same value interfere, so this view shows mod-3 clashes.
+// Blue, orange and purple differ in lightness as well as hue.
+const PCI_MOD3_PALETTE = ['#1d4ed8', '#f59e0b', '#a21caf']
+export function pciMod3Color(pci: number | null | undefined): string {
+  if (pci === null || pci === undefined) return '#94a3b8'
+  return PCI_MOD3_PALETTE[Math.abs(pci) % 3]
+}
+
 // Band Distribution (2026-09-23, "Band (Mode: ... FREE/B3 Lock/B20 Lock
 // mode)") — same categorical-hash approach as pciColor() above and for
 // the same reason: which band a sample was on is an identity ("3", "20"),

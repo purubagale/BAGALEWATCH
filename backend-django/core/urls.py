@@ -2,10 +2,10 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import (api_auth, area_sample, audit, auth_log, backup, collection, consent, dashboard, device_identity,
+from . import (api_auth, area_sample, audit, auth_log, backup, call_context, collection, consent, dashboard, device_identity,
                device_lookup, device_trace, drive_test, dt_retention, emergency,
                exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_report, reports, rescue, rf_audit,
-               rf_reports, roles, site_import, site_coverage, site_photo, sso_views, system_doc,
+               rf_reports, roles, site_import, site_coverage, site_photo, sso_views, subscriber_profile, system_doc,
                telemetry_admin, telemetry_near, views, volte_quality)
 
 router = DefaultRouter()
@@ -205,10 +205,14 @@ urlpatterns = [
     path('telemetry/stats/', telemetry_admin.TelemetryStatsView.as_view(), name='telemetry-stats'),
     path('telemetry/coverage/', telemetry_admin.TelemetryCoverageView.as_view(), name='telemetry-coverage'),
     path('telemetry/live-samples/', telemetry_admin.TelemetryLiveSamplesView.as_view(), name='telemetry-live-samples'),
+    # The phone's speed tests, beside Live Samples (2026-10-15).
+    path('telemetry/speed-results/', telemetry_admin.TelemetrySpeedResultsView.as_view(), name='telemetry-speed-results'),
     # VoLTE/VoNR call-quality dev/pilot list view (2026-10-02) -- see
     # core/volte_quality.py's VolteQualityListView docstring. Same
     # superadmin-only, no-MenuItem posture as live-samples above.
     path('telemetry/volte-samples/', volte_quality.VolteQualityListView.as_view(), name='telemetry-volte-samples'),
+    # Calls from phones without quality figures (2026-10-14) -- see core/call_context.py.
+    path('telemetry/call-samples/', call_context.CallContextListView.as_view(), name='telemetry-call-samples'),
     # Scoped drive-test sessions over the live telemetry pipeline
     # (2026-09-01) — see core/telemetry_admin.py's TelemetryDriveTestSession*
     # views for why these replace TelemetryLiveSamplesView as the
@@ -219,6 +223,8 @@ urlpatterns = [
          name='site-measured-coverage'),
     # Problem reports from the app or entered from complaints (2026-10-14) -- see core/problem_report.py.
     path('problem-reports/', problem_report.ProblemReportListView.as_view(), name='problem-reports'),
+    # Everything stored about one mobile number, superadmin (2026-10-15) -- see core/subscriber_profile.py.
+    path('subscriber-profile/', subscriber_profile.SubscriberProfileView.as_view(), name='subscriber-profile'),
     path('problem-reports/<int:pk>/', problem_report.ProblemReportDetailView.as_view(), name='problem-report-detail'),
     # Drive-test retention, superadmin (2026-10-14) -- see core/dt_retention.py.
     path('dt-retention/settings/', dt_retention.RetentionSettingsView.as_view(), name='dt-retention-settings'),

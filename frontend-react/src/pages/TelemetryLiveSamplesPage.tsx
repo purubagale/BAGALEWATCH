@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, TileLayer, useMap } from 'react-leaflet'
+import { useSearchParams } from 'react-router-dom'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { useTelemetryLiveSamples } from '../api/queries'
+import { useTelemetryLiveSamples, useTelemetrySpeedResults } from '../api/queries'
 import type { TelemetryLiveSample } from '../api/types'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
+import { CQI_COLUMN_HINT, cqiLabel } from '../lib/cqiDisplay'
 
 // Telemetry Live Samples (dev/pilot-testing tool) -- raw, ungrouped
 // points from core/telemetry_admin.py's TelemetryLiveSamplesView
@@ -117,10 +119,18 @@ function SamplePoints({ samples }: { samples: TelemetryLiveSample[] }) {
   return null
 }
 
+// Everything the server keeps for one device (raw readings are kept 90 days).
+const ALL_STORED_MINUTES = 90 * 24 * 60
+
 export default function TelemetryLiveSamplesPage() {
-  const [minutes, setMinutes] = useState(60)
-  const [deviceId, setDeviceId] = useState('')
-  const { data, isLoading, error } = useTelemetryLiveSamples({ minutes, device_id: deviceId || undefined })
+  // ?minutes= sets the window; with one device it may cover everything stored (2026-10-15).
+  const [searchParamsInit] = useSearchParams()
+  const [minutes, setMinutes] = useState(() => Number(searchParamsInit.get('minutes')) || 60)
+  // ?device= opens the page on one device, e.g. from Subscriber Profile (2026-10-15).
+  const [searchParams] = useSearchParams()
+  const [deviceId, setDeviceId] = useState(searchParams.get('device') ?? '')
+  // One device: up to 5000 readings, so a phone's whole stored history fits (2026-10-15).
+  const { data, isLoading, error } = useTelemetryLiveSamples({ minutes, device_id: deviceId || undefined, limit: deviceId ? 5000 : undefined })
   const samples = useMemo(() => data?.samples ?? [], [data])
   // 2026-10-02 perf follow-up: `samples.length` deliberately dropped from
   // this key -- it used to be `${minutes}|${deviceId}|${samples.length}`,
@@ -146,12 +156,21 @@ export default function TelemetryLiveSamplesPage() {
             <option value={60}>Last hour</option>
             <option value={360}>Last 6 hours</option>
             <option value={1440}>Last 24 hours</option>
+            {deviceId && <option value={ALL_STORED_MINUTES}>All stored readings (this device)</option>}
           </select>
         </label>
         <label>
           Device
-          <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)}>
+          <select
+            value={deviceId}
+            onChange={(e) => {
+              setDeviceId(e.target.value)
+              // "All stored" is for one device only; all devices go back to 24 hours.
+              if (!e.target.value && minutes > 1440) setMinutes(1440)
+            }}
+          >
             <option value="">All devices</option>
+            {deviceId && !(data?.devices ?? []).includes(deviceId) && <option value={deviceId}>{deviceId.slice(0, 12)}...</option>}
             {(data?.devices ?? []).map((d) => (
               <option key={d} value={d}>
                 {d.slice(0, 12)}...
@@ -187,8 +206,8 @@ export default function TelemetryLiveSamplesPage() {
                 <th title="Operating band the phone was on: band number and MHz. Empty for readings sent by an older app">Band</th>
                 <th>Operator (MCC/MNC)</th>
                 <th>Signal</th>
-                {/* CQI is derived from SINR on the server (estimate, not measured). LTE only. */}
-                <th title="Estimated from SINR, LTE only">CQI (4G, est.)</th>
+                {/* Reported by the phone, else estimated from SINR, else from RSRQ (2026-10-14). */}
+                <th title={CQI_COLUMN_HINT}>CQI (4G)</th>
                 <th>Lat</th>
                 <th>Lng</th>
                 <th>Trigger</th>
@@ -207,7 +226,7 @@ export default function TelemetryLiveSamplesPage() {
                       for GSM, RSCP+Ec/Io for WCDMA (falling back to RSSI on
                       pre-Android-10 devices where those aren't available). */}
                   <td>{formatSignal(s)}</td>
-                  <td>{s.network_type === 'LTE' && s.cqi_derived != null ? s.cqi_derived : '-'}</td>
+                  <td>{s.network_type === 'LTE' && s.cqi_value != null ? cqiLabel({ cqi_value: s.cqi_value, cqi_source: s.cqi_source ?? null }) : '-'}</td>
                   <td>{s.lat?.toFixed(5)}</td>
                   <td>{s.lng?.toFixed(5)}</td>
                   <td>{s.trigger_reason}</td>
@@ -220,7 +239,59 @@ export default function TelemetryLiveSamplesPage() {
           </p>
         </>
       )}
+      <SpeedResultsSection minutes={minutes} deviceId={deviceId} />
     </div>
+  )
+}
+
+// Speed tests from the phones in the same window (2026-10-15). Before, they
+// showed only inside a Telemetry Drive Test session covering that phone and
+// time. Only tests run over mobile data while sharing reach the server.
+function SpeedResultsSection({ minutes, deviceId }: { minutes: number; deviceId: string }) {
+  const { data, isLoading, error } = useTelemetrySpeedResults(minutes, deviceId || undefined)
+  const results = data?.results ?? []
+  return (
+    <section style={{ marginTop: 24 }}>
+      <h2>Speed tests</h2>
+      <p className="muted" style={{ fontSize: 12 }}>
+        Speed tests the phones ran in the same period while sharing. A Wi-Fi result measures the Wi-Fi, not NTC's mobile network.
+      </p>
+      {isLoading && <div className="page-status">Loading speed tests...</div>}
+      {error && <div className="page-status page-status-error">Could not load speed tests.</div>}
+      {data && results.length === 0 && <div className="page-status">No speed tests in this period.</div>}
+      {results.length > 0 && (
+        <table className="admin-table">
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Time</th>
+              <th>Over</th>
+              <th>Download (Mbps)</th>
+              <th>Upload (Mbps)</th>
+              <th>Ping (ms)</th>
+              <th>Jitter (ms)</th>
+              <th>Loss (%)</th>
+              <th>Radio</th>
+            </tr>
+          </thead>
+          <tbody>
+            {results.map((r, i) => (
+              <tr key={i}>
+                <td>{r.device_id.slice(0, 12)}...</td>
+                <td>{new Date(r.ts).toLocaleString()}</td>
+                <td>{r.bearer === 'wifi' ? 'Wi-Fi' : r.bearer === 'mobile' ? 'Mobile data' : '-'}</td>
+                <td>{r.download_mbps ?? '-'}</td>
+                <td>{r.upload_mbps ?? '-'}</td>
+                <td>{r.ping_median_ms ?? '-'}</td>
+                <td>{r.jitter_ms ?? '-'}</td>
+                <td>{r.packet_loss_pct ?? '-'}</td>
+                <td>{[r.network_type, r.rsrp_dbm != null ? `${r.rsrp_dbm} dBm` : ''].filter(Boolean).join(' ') || '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
   )
 }
 

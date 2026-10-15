@@ -2529,6 +2529,70 @@ class VolteCallSample(models.Model):
         return f'{self.device_id[:8]}… @ {self.ts:%Y-%m-%d %H:%M} (MOS≈{self.mos_estimate})'
 
 
+class CallContextSample(models.Model):
+    """One phone call as an ordinary (not carrier-privileged) app sees it
+    (2026-10-14, core/call_context.py). No quality figures: Android gives
+    those only to a carrier-privileged app (see VolteCallSample). What it can
+    see with READ_PHONE_STATE is the voice network the call used, the data
+    network just before, how long it lasted, and the serving cell and level
+    at its start and end. That answers "did the call stay on VoLTE or fall
+    back to 2G/3G", per place and cell. No number, no call direction.
+
+    `outcome` is worked out by the server from the voice networks the phone
+    saw (see call_context.call_outcome)."""
+
+    OUTCOMES = [
+        ('volte', 'VoLTE / VoNR'),
+        ('vowifi', 'Wi-Fi calling'),
+        ('fallback', 'Fell back to 2G/3G'),
+        ('legacy', '2G/3G, no 4G before the call'),
+        ('unknown', 'Unknown'),
+    ]
+
+    device_id = models.CharField(max_length=64, db_index=True)
+    started_at = models.DateTimeField(db_index=True)
+    ended_at = models.DateTimeField()
+    received_at = models.DateTimeField()
+    duration_s = models.IntegerField(null=True, blank=True)
+
+    # Voice network at start, at end, and every one seen during the call
+    # (comma separated, in order), e.g. "LTE" or "LTE,UMTS".
+    voice_network_start = models.CharField(max_length=12, blank=True, default='')
+    voice_network_end = models.CharField(max_length=12, blank=True, default='')
+    voice_networks = models.CharField(max_length=80, blank=True, default='')
+    data_network_before = models.CharField(max_length=12, blank=True, default='')
+    outcome = models.CharField(max_length=10, choices=OUTCOMES, default='unknown', db_index=True)
+
+    # Serving cell and level (RSRP on 4G/5G, RSCP on 3G, RSSI on 2G) at start and end.
+    lat = models.FloatField(null=True, blank=True)
+    lng = models.FloatField(null=True, blank=True)
+    location = PointField(geography=True, srid=4326, null=True, blank=True, spatial_index=True)
+    network_type = models.CharField(max_length=12, blank=True, default='')
+    cell_id = models.BigIntegerField(null=True, blank=True)
+    pci = models.IntegerField(null=True, blank=True)
+    tac = models.IntegerField(null=True, blank=True)
+    mcc = models.CharField(max_length=6, blank=True, default='')
+    mnc = models.CharField(max_length=6, blank=True, default='')
+    level_dbm = models.IntegerField(null=True, blank=True)
+    end_lat = models.FloatField(null=True, blank=True)
+    end_lng = models.FloatField(null=True, blank=True)
+    end_network_type = models.CharField(max_length=12, blank=True, default='')
+    end_cell_id = models.BigIntegerField(null=True, blank=True)
+    end_pci = models.IntegerField(null=True, blank=True)
+    end_level_dbm = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'v2_call_context_samples'
+        indexes = [models.Index(fields=['device_id', 'started_at'], name='v2_call_ctx_device_started_idx')]
+
+    def save(self, *args, **kwargs):
+        self.location = _point_or_none(self.lat, self.lng)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.device_id[:8]}… @ {self.started_at:%Y-%m-%d %H:%M} ({self.outcome})'
+
+
 class TelemetryCoverageBin(models.Model):
     """Aggregated coverage stats for a ~150 m geohash-7 cell, per network
     type. Written by prune_telemetry.py when a raw-sample partition
@@ -3241,6 +3305,13 @@ class TelemetrySpeedResult(models.Model):
     network_type = models.CharField(max_length=8, blank=True, default='')
     rsrp_dbm = models.IntegerField(null=True, blank=True)
     received_at = models.DateTimeField(auto_now_add=True)
+    # The connection the test used (2026-10-15): mobile data or Wi-Fi. Wi-Fi
+    # results say nothing about NTC's mobile network and are kept apart.
+    # Blank on results sent before the app tagged them.
+    BEARER_MOBILE = 'mobile'
+    BEARER_WIFI = 'wifi'
+    BEARERS = [(BEARER_MOBILE, 'Mobile data'), (BEARER_WIFI, 'Wi-Fi')]
+    bearer = models.CharField(max_length=8, choices=BEARERS, blank=True, default='')
 
     class Meta:
         db_table = 'v2_telemetry_speed_result'
@@ -3455,6 +3526,11 @@ class DeviceCredential(models.Model):
     is trusted. One MSISDN may be bound to one active device at a time;
     a conflicting claim is refused, never silently rebound."""
     device_hash = models.CharField(max_length=32, unique=True)
+    # The hashed SDK device id of the same phone (2026-10-14), sent once by the
+    # phone in a signed call (device/sdk-link/). Signed uploads are filed under
+    # it, so a phone keeps one identity across samples, push tokens, rescue
+    # and drive-test consent whether a call is signed or uses the shared key.
+    sdk_device_hash = models.CharField(max_length=32, blank=True, default='', db_index=True)
     public_key_pem = models.TextField()
     msisdn = models.CharField(max_length=24, blank=True, default='', db_index=True)
     fcm_token = models.CharField(max_length=512, blank=True, default='')

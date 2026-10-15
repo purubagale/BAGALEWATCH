@@ -25,7 +25,7 @@ from rest_framework.views import APIView
 
 from .auth_log import _client_ip
 from .models import TelemetrySpeedResult
-from .telemetry import hash_device_id, resolve_ingest_caller
+from .telemetry import hash_device_id, ingest_row_device_id, resolve_ingest_caller
 
 MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -114,6 +114,13 @@ class SpeedTestUploadView(_SpeedTestView):
 SPEED_RESULT_RATE_PER_MIN = 20
 
 
+def _bearer(raw):
+    """The connection a speed test used (2026-10-15): 'mobile', 'wifi', or ''
+    for an app build that does not say."""
+    value = str(raw or '').strip().lower()
+    return value if value in (TelemetrySpeedResult.BEARER_MOBILE, TelemetrySpeedResult.BEARER_WIFI) else ''
+
+
 def _speed_num(data, key, limit):
     value = data.get(key)
     if value is None:
@@ -157,7 +164,7 @@ class TelemetrySpeedResultIngestView(APIView):
         raw_device_id = str(data.get('device_id') or '').strip()
         if device is None and not raw_device_id:
             return Response({'detail': 'device_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        device_id = device.device_hash if device else hash_device_id(raw_device_id)
+        device_id = ingest_row_device_id(device) if device else hash_device_id(raw_device_id)
 
         try:
             ts = datetime.fromtimestamp(int(data['ts']) / 1000, tz=dt_timezone.utc)
@@ -181,5 +188,6 @@ class TelemetrySpeedResultIngestView(APIView):
             upload_mbps=_speed_num(data, 'upload_mbps', 10_000),
             network_type=str(data.get('network_type') or '').strip().upper()[:8],
             rsrp_dbm=rsrp,
+            bearer=_bearer(data.get('bearer')),
         )
         return Response({'stored': True}, status=status.HTTP_201_CREATED)

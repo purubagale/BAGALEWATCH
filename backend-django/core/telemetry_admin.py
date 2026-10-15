@@ -54,6 +54,12 @@ from .views import IsAdminOrSuperadmin, IsSuperadminOnly
 # frontend's subsampleForMap().
 _MAX_RAW_SCAN = 200_000
 _DEFAULT_COVERAGE_LIMIT = 5000
+
+
+def _cqi_shown(sample):
+    """`cqi_value` and `cqi_source` of one sample for the lists (2026-10-14)."""
+    fields = sample_cqi_fields(sample.cqi, sample.sinr_db, sample.rsrq_db, sample.network_type)
+    return {'cqi_value': fields['cqi_value'], 'cqi_source': fields['cqi_source']}
 _MAX_COVERAGE_LIMIT = 20_000
 
 
@@ -361,6 +367,15 @@ class TelemetryCoverageView(APIView):
 _MAX_LIVE_LIMIT = 500
 _DEFAULT_LIVE_LIMIT = 200
 _MAX_LIVE_MINUTES = 24 * 60
+# One device may be viewed over everything still stored (2026-10-15): the
+# Subscriber Profile links to a phone's readings, which can be weeks old.
+# Raw samples are kept TELEMETRY_RETENTION_DAYS (90), so 90 days is all there is.
+_MAX_DEVICE_MINUTES = 90 * 24 * 60
+_MAX_DEVICE_LIMIT = 5000
+
+
+def _live_cap(request):
+    return _MAX_DEVICE_MINUTES if (request.query_params.get('device_id') or '').strip() else _MAX_LIVE_MINUTES
 
 
 class TelemetryLiveSamplesView(APIView):
@@ -396,13 +411,14 @@ class TelemetryLiveSamplesView(APIView):
             minutes = int(request.query_params.get('minutes', 60))
         except (TypeError, ValueError):
             minutes = 60
-        minutes = max(1, min(_MAX_LIVE_MINUTES, minutes))
+        minutes = max(1, min(_live_cap(request), minutes))
         try:
             limit = int(request.query_params.get('limit', _DEFAULT_LIVE_LIMIT))
         except (TypeError, ValueError):
             limit = _DEFAULT_LIVE_LIMIT
-        limit = max(1, min(_MAX_LIVE_LIMIT, limit))
         device_id = (request.query_params.get('device_id') or '').strip()
+        # One device may list its whole stored history (2026-10-15).
+        limit = max(1, min(_MAX_DEVICE_LIMIT if device_id else _MAX_LIVE_LIMIT, limit))
 
         window_start = timezone.now() - timedelta(minutes=minutes)
         qs = _scope_by_operator(
@@ -475,6 +491,10 @@ class TelemetryLiveSamplesView(APIView):
                 # cqi_derived (2026-10-04) -- LTE CQI estimated from this
                 # sample's SINR (see models.py's TelemetrySample.cqi_derived).
                 'cqi_derived': s.cqi_derived,
+                # The CQI to show (2026-10-14): reported, else from SINR, else
+                # from RSRQ -- the same chain as the coverage map. Phones often
+                # report no SINR, and those rows showed no CQI at all.
+                **_cqi_shown(s),
                 # rssi_dbm (2026-09-03) -- GSM/UMTS (2G/3G) samples only
                 # ever populate this, never rsrp_dbm/rsrq_db/sinr_db (LTE/
                 # NR-only fields, see CellSampleCollector.kt's
@@ -532,6 +552,53 @@ class TelemetryLiveSamplesView(APIView):
             # client's, so there's no client/server clock-skew edge case
             # (see this view's own `since` handling above).
             'server_time': timezone.now().isoformat(),
+        })
+
+
+class TelemetrySpeedResultsView(APIView):
+    """`GET /api/v2/telemetry/speed-results/?minutes=60&device_id=` --
+    superadmin, beside Live Samples (2026-10-15). The phone's speed tests were
+    shown only inside a Telemetry Drive Test session covering that phone and
+    time, so a test run outside one could not be seen anywhere. Same window
+    and caps as TelemetryLiveSamplesView. A speed result has no operator
+    field, so an operator-scoped account sees results only from devices whose
+    samples it may see in that window."""
+    permission_classes = [IsAuthenticated, IsSuperadminOnly]
+
+    def get(self, request):
+        try:
+            minutes = int(request.query_params.get('minutes', 60))
+        except (TypeError, ValueError):
+            minutes = 60
+        minutes = max(1, min(_live_cap(request), minutes))
+        window_start = timezone.now() - timedelta(minutes=minutes)
+        qs = TelemetrySpeedResult.objects.filter(received_at__gte=window_start)
+        device_id = (request.query_params.get('device_id') or '').strip()
+        if device_id:
+            qs = qs.filter(device_id=device_id)
+        if getattr(request.user, 'operator_mncs', None):
+            visible = _scope_by_operator(
+                TelemetrySample.objects.filter(received_at__gte=window_start), request.user,
+            ).values_list('device_id', flat=True).distinct()
+            qs = qs.filter(device_id__in=list(visible))
+        return Response({
+            'window_minutes': minutes,
+            'results': [
+                {
+                    'device_id': r.device_id,
+                    'ts': r.ts,
+                    'received_at': r.received_at,
+                    'ping_median_ms': r.ping_median_ms,
+                    'jitter_ms': r.jitter_ms,
+                    'packet_loss_pct': r.packet_loss_pct,
+                    'download_mbps': r.download_mbps,
+                    'upload_mbps': r.upload_mbps,
+                    'network_type': r.network_type,
+                    'rsrp_dbm': r.rsrp_dbm,
+                    'bearer': r.bearer,
+                }
+                for r in qs.order_by('-ts')[:200]
+            ],
         })
 
 
@@ -860,6 +927,7 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 # cqi_derived (2026-10-04) -- LTE CQI estimated from SINR
                 # (see models.py's TelemetrySample.cqi_derived).
                 'cqi_derived': s.cqi_derived,
+                **_cqi_shown(s),
                 # rssi_dbm (2026-09-03, "need to collect any 2g, 3g or 4g
                 # data") -- GSM/UMTS samples only ever populate this, never
                 # rsrp_dbm/rsrq_db/sinr_db (LTE/NR-only fields -- see
@@ -933,6 +1001,7 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 'upload_mbps': r.upload_mbps,
                 'network_type': r.network_type,
                 'rsrp_dbm': r.rsrp_dbm,
+                'bearer': r.bearer,
             }
             for r in speed_qs.order_by('-ts')[:200]
         ]

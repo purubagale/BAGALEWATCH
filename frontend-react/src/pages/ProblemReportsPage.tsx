@@ -47,7 +47,11 @@ function FlyTo({ lat, lng }: { lat: number; lng: number }) {
 }
 
 export default function ProblemReportsPage() {
-  const [status, setStatus] = useState('new')
+  // ?status=all shows every report, e.g. from Subscriber Profile (2026-10-15).
+  const [status, setStatus] = useState(() => {
+    const s = new URLSearchParams(window.location.search).get('status')
+    return s === 'all' ? '' : s ?? 'new'
+  })
   const [source, setSource] = useState('')
   const [selected, setSelected] = useState<number | null>(null)
   const [entering, setEntering] = useState(false)
