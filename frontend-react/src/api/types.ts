@@ -3097,6 +3097,10 @@ export interface SubscriberProfile {
   last_location: {
     source: 'reading' | 'rescue'
     ts: string | null
+    // Why no position may show (2026-10-15): hidden outside an emergency,
+    // or not in the record; then the newest reading that has one.
+    position_withheld?: boolean
+    earlier_position?: { ts: string | null; lat: number; lng: number; gps_accuracy_m: number | null }
     network_type?: string
     band_mhz?: number | null
     cell_id?: number | null

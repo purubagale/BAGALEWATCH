@@ -170,6 +170,20 @@ class SubscriberProfileView(APIView):
             r = max(consented_rescue, key=lambda x: x.last_seen_ts)
             if last_location is None or (last_location['ts'] or '') < r.last_seen_ts.isoformat():
                 last_location = {'source': 'rescue', 'ts': _iso(r.last_seen_ts), 'lat': r.last_lat, 'lng': r.last_lng}
+        # Why the card may show no position (2026-10-15): hidden because no
+        # emergency is declared, or simply not in the record (a reading taken
+        # without a GPS fix, a rescue beacon that has not reported one). In an
+        # emergency the newest reading that does carry a position is offered.
+        if last_location is not None:
+            last_location['position_withheld'] = not emergency
+            if emergency and last_location.get('lat') is None:
+                fix = (TelemetrySample.objects.filter(device_id__in=[i for i in ids if i not in withdrawn],
+                                                      lat__isnull=False, lng__isnull=False)
+                       .order_by('-ts').values('ts', 'lat', 'lng', 'gps_accuracy_m').first())
+                if fix:
+                    last_location['earlier_position'] = {
+                        'ts': _iso(fix['ts']), 'lat': fix['lat'], 'lng': fix['lng'],
+                        'gps_accuracy_m': fix['gps_accuracy_m']}
 
         # Signal history for the chart (2026-10-15): level and quality over
         # time from the newest readings, without positions.

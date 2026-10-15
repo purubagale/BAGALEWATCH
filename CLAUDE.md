@@ -882,6 +882,21 @@ repo, not on prod):
     `.github/workflows/security-scan.yml` (pip-audit, npm audit high,
     gitleaks fail the run; bandit reports only). pip-audit run here found
     nothing. Not yet run on GitHub.
+- **Linking earlier readings by hand** (2026-10-15, built, NOT committed).
+  A reinstall (e.g. debug to signed release) gives a phone a new SDK id,
+  and apps before 14 October never sent `sdk-link`, so old readings belong
+  to no number. `core/subscriber_link.py`: candidates = device ids linked
+  to no number whose last-90-day readings share 500 m squares with this
+  number's phones (most overlap first); superadmin links one with the case
+  reference (`SubscriberDevice` via `manual_link`, self-declared, audit
+  log), or removes it. Profile Phones card: "Find this phone's earlier
+  readings…" (`LinkEarlierReadings.tsx`). Also: Registered Devices and
+  Rescue Enrolled filter by `?msisdn=` from the profile
+  (`lib/msisdnMatch.ts`); dashboard shortcut cards got the gold edge;
+  Collections route fits all points (`FitToPoints.tsx`). Desktop now holds
+  only the signed release APKs `dtwatchTelemetry.apk` and
+  `dtwatchTelemetry_Collector.apk` (older ones in `Desktop\old-apks`).
+  Release builds need the llama-server (11 GB) stopped for memory.
 - **Rows per page on every table** (2026-10-15, built). `lib/tablePager.ts`,
   installed by `Layout.tsx`, watches the page and pages any table with more
   than 10 rows: rows outside the page are hidden (never removed, so sorting,

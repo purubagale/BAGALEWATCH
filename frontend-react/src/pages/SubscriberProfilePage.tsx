@@ -7,6 +7,7 @@ import { useSubscriberProfile } from '../api/queries'
 import type { SubscriberProfile } from '../api/types'
 import { OPAQUE_PATHS } from '../constants/opaqueRoutes'
 import RowsPerPageSelect from '../components/RowsPerPageSelect'
+import LinkEarlierReadings from '../components/LinkEarlierReadings'
 import { useRowsPerPage } from '../lib/rowsPerPage'
 
 // Subscriber Profile (2026-10-15, core/subscriber_profile.py). Superadmin:
@@ -200,7 +201,9 @@ function SiteMap({ loc }: { loc: NonNullable<SubscriberProfile['last_location']>
   )
 }
 
-function Profile({ p, out }: { p: SubscriberProfile; out: (key: string, extra?: Record<string, string>) => string }) {
+function Profile({ p, out, reason, onChanged }: {
+  p: SubscriberProfile; out: (key: string, extra?: Record<string, string>) => string; reason: string; onChanged: () => void
+}) {
   const s = p.summary
   const loc = p.last_location
   const mobileTests = p.speed_tests.filter((t) => t.bearer !== 'wifi' && t.download_mbps != null)
@@ -214,8 +217,9 @@ function Profile({ p, out }: { p: SubscriberProfile; out: (key: string, extra?: 
   const readings = (device: string) => out('/telemetry-live-samples', { device, minutes: String(ALL_STORED_MINUTES) })
   // Each phone's own list page: Registered Devices only for a registered
   // number, Rescue Enrolled for a rescue beacon; nothing when neither applies.
-  const phonesLink = s.registered ? { to: out('/registered-devices'), label: 'Registered Devices' }
-    : s.rescue_beacon ? { to: out('/rescue-enrolled'), label: 'Rescue Enrolled Devices' } : null
+  // Opened with ?msisdn=, those pages show this number's phones only (2026-10-15).
+  const phonesLink = s.registered ? { to: out('/registered-devices', { msisdn: p.msisdn }), label: 'Registered Devices' }
+    : s.rescue_beacon ? { to: out('/rescue-enrolled', { msisdn: p.msisdn }), label: 'Rescue Enrolled Devices' } : null
 
   const nav: [string, string, number | null][] = [
     ['sp-location', 'Location', null], ['sp-signal', 'Signal', s.readings], ['sp-devices', 'Phones', p.devices.length],
@@ -262,7 +266,15 @@ function Profile({ p, out }: { p: SubscriberProfile; out: (key: string, extra?: 
                 <dt>Position</dt>
                 <dd>{loc.lat != null && loc.lng != null
                   ? <span className="sp-mono">{loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}{loc.gps_accuracy_m != null ? ` · ±${Math.round(loc.gps_accuracy_m)} m` : ''}</span>
-                  : <span className="sp-locked">🔒 Only while an emergency is declared</span>}</dd>
+                  : loc.position_withheld
+                    ? <span className="sp-locked">🔒 Only while an emergency is declared</span>
+                    : loc.earlier_position
+                      ? <span className="sp-mono">
+                          {loc.earlier_position.lat.toFixed(5)}, {loc.earlier_position.lng.toFixed(5)}
+                          {loc.earlier_position.gps_accuracy_m != null ? ` · ±${Math.round(loc.earlier_position.gps_accuracy_m)} m` : ''}
+                          <span className="sp-muted"> · not in this record; from the reading of {fmt(loc.earlier_position.ts)}</span>
+                        </span>
+                      : <span className="sp-muted">Not recorded: this {loc.source === 'rescue' ? 'rescue beacon report' : 'reading'} has no GPS position, and no stored reading has one</span>}</dd>
                 {loc.device_id && <><dt>Phone</dt><dd className="sp-mono" title={loc.device_id}>{short(loc.device_id)}</dd></>}
               </dl>
             </div>
@@ -305,12 +317,14 @@ function Profile({ p, out }: { p: SubscriberProfile; out: (key: string, extra?: 
                   {d.app_version && <div><span>App</span>{d.app_version}</div>}
                   {d.imei && <div><span>IMEI</span><b className="sp-mono">{d.imei}</b></div>}
                   {d.registered_at && <div><span>Registered</span>{fmt(d.registered_at)}</div>}
-                  {d.linked_via.length > 0 && <div><span>Linked by</span>{d.linked_via.join(', ').replace(/_/g, ' ')}</div>}
+                  {d.linked_via.length > 0 && <div><span>Linked by</span>{d.linked_via.map((v) => v === 'manual_link' ? 'superadmin, by hand' : v.replace(/_/g, ' ')).join(', ')}</div>}
                 </div>
                 {d.readings > 0 && <Link className="sp-device-link" to={readings(d.device_id)}>Open all {d.readings.toLocaleString()} readings →</Link>}
               </div>
             ))}
           </div>
+          <LinkEarlierReadings msisdn={p.msisdn} reason={reason} onChanged={onChanged}
+            manualIds={p.devices.filter((d) => d.linked_via.includes('manual_link')).map((d) => d.device_id)} />
         </Card>
 
         <Card id="sp-speed" icon="⚡" title="Speed tests" count={speedCount} empty={speedCount === 0}
@@ -513,7 +527,7 @@ export default function SubscriberProfilePage() {
               {isFetching ? 'Refreshing…' : '↻ Refresh'}
             </button>
           </div>
-          <Profile p={data} out={out} />
+          <Profile p={data} out={out} reason={reason} onChanged={() => void refetch()} />
         </>
       )}
     </div>

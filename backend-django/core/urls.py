@@ -5,7 +5,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from . import (api_auth, area_sample, audit, auth_log, backup, call_context, collection, consent, dashboard, device_identity,
                device_lookup, device_trace, drive_test, dt_retention, emergency,
                exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_notify, problem_report, reports, rescue, rf_audit,
-               rf_reports, roles, site_import, site_coverage, site_photo, sso_views, subscriber_profile, system_doc,
+               rf_reports, roles, site_import, site_coverage, site_photo, sso_views, subscriber_link, subscriber_profile, system_doc,
                telemetry_admin, telemetry_near, views, volte_quality)
 
 router = DefaultRouter()
@@ -237,6 +237,9 @@ urlpatterns = [
          name='problem-notification-retry'),
     # Everything stored about one mobile number, superadmin (2026-10-15) -- see core/subscriber_profile.py.
     path('subscriber-profile/', subscriber_profile.SubscriberProfileView.as_view(), name='subscriber-profile'),
+    # Linking a phone's earlier readings by hand (2026-10-15) -- see core/subscriber_link.py.
+    path('subscriber-profile/link-candidates/', subscriber_link.LinkCandidatesView.as_view(), name='subscriber-link-candidates'),
+    path('subscriber-profile/link-device/', subscriber_link.LinkDeviceView.as_view(), name='subscriber-link-device'),
     path('problem-reports/<int:pk>/', problem_report.ProblemReportDetailView.as_view(), name='problem-report-detail'),
     # Drive-test retention, superadmin (2026-10-14) -- see core/dt_retention.py.
     path('dt-retention/settings/', dt_retention.RetentionSettingsView.as_view(), name='dt-retention-settings'),
