@@ -43,10 +43,12 @@ object RegisterPrompt {
                 }
                 dialog.dismiss()
                 Toast.makeText(activity, R.string.req_registering, Toast.LENGTH_SHORT).show()
-                Registration.register(activity, msisdn) { _, message ->
+                Registration.register(activity, msisdn) { ok, message ->
                     if (!activity.isFinishing && !activity.isDestroyed) {
                         Toast.makeText(activity, message, Toast.LENGTH_LONG).show()
                         (activity as? MainActivity)?.onRegistrationChanged()
+                        // Prove the number by SMS code, when the server can send one.
+                        if (ok) NumberVerify.askIfNeeded(activity)
                     }
                 }
             }

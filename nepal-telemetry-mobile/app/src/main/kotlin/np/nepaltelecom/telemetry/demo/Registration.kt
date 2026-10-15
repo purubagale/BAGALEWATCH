@@ -48,8 +48,10 @@ object Registration {
         Thread {
             val (ok, message) = try {
                 DeviceKeys.ensureKey()
-                TraceApi.register(msisdn, TraceApi.challenge(), APP_VERSION, HardwareInfo.hardwareId(app))
+                val answer = TraceApi.register(msisdn, TraceApi.challenge(), APP_VERSION, HardwareInfo.hardwareId(app))
                 prefs(app).edit().putBoolean(TraceRequestsPanel.KEY_REGISTERED, true).apply()
+                // Whether the number still needs proving by SMS code (2026-10-15).
+                NumberVerify.save(app, answer)
                 // A new key: link it again so the SDK's uploads are signed with it.
                 SdkLink.setLinked(app, false)
                 SdkLink.ensure(app)

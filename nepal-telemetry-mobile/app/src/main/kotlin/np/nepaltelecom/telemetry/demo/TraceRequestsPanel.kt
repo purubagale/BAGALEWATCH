@@ -64,6 +64,8 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
     fun start() {
         refreshRegistrationUi()
         if (prefs.getBoolean(KEY_REGISTERED, false)) updateDeviceDetails()
+        // Is the number verified, and can it be? (2026-10-15)
+        NumberVerify.refresh(context) { if (fragment.isAdded) refreshRegistrationUi() }
         handler.removeCallbacks(poll)
         handler.post(poll)
     }
@@ -78,7 +80,19 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
         val registered = prefs.getBoolean(KEY_REGISTERED, false)
         registrationForm.visibility = if (registered) View.GONE else View.VISIBLE
         if (registered) {
-            registeredAsText.text = context.getString(R.string.req_registered_as, prefs.getString(KEY_MSISDN, "") ?: "")
+            val number = prefs.getString(KEY_MSISDN, "") ?: ""
+            // Verified, waiting to be verified (tap to do it), or no verification on this server.
+            registeredAsText.text = when {
+                NumberVerify.isVerified(context) -> context.getString(R.string.req_registered_verified, number)
+                NumberVerify.needed(context) -> context.getString(R.string.req_registered_unverified, number)
+                else -> context.getString(R.string.req_registered_as, number)
+            }
+            registeredAsText.setOnClickListener {
+                val activity = fragment.activity
+                if (activity != null && NumberVerify.needed(context)) {
+                    NumberVerify.ask(activity) { if (fragment.isAdded) refreshRegistrationUi() }
+                }
+            }
             registeredAsText.visibility = View.VISIBLE
         } else {
             registeredAsText.visibility = View.GONE
@@ -116,6 +130,9 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
                 setStatus(if (ok) "" else message)
                 refreshRegistrationUi()
                 Thread { refreshRequests() }.start()
+                if (ok) fragment.activity?.let { activity ->
+                    NumberVerify.askIfNeeded(activity)
+                }
             }
         }
     }

@@ -39,7 +39,7 @@ object TraceApi {
      * The make, model and [hardwareId] (2026-10-09) let the server show which
      * phone a number is on and recognise this phone after a reinstall.
      */
-    fun register(msisdn: String, challenge: String, appVersion: String, hardwareId: String) {
+    fun register(msisdn: String, challenge: String, appVersion: String, hardwareId: String): JSONObject {
         val body = JSONObject()
             .put("public_key", DeviceKeys.publicKeyPem())
             .put("challenge", challenge)
@@ -49,8 +49,19 @@ object TraceApi {
             .put("manufacturer", Build.MANUFACTURER.orEmpty())
             .put("phone_model", Build.MODEL.orEmpty())
             .put("hardware_id", hardwareId)
-        request("POST", "device/register/", body.toString(), signed = false)
+        // The answer says whether the number still needs proving by SMS code (2026-10-15).
+        return JSONObject(request("POST", "device/register/", body.toString(), signed = false))
     }
+
+    /** Whether this phone's number is verified and whether it can be (2026-10-15). */
+    fun numberStatus(): JSONObject = JSONObject(request("GET", "device/verify-number/", null, signed = true))
+
+    /** Asks the server to send a code by SMS to the registered number. */
+    fun sendNumberCode(): JSONObject = JSONObject(request("POST", "device/verify-number/start/", "{}", signed = true))
+
+    /** Sends back the code from the SMS. Throws [ApiException] with the server's reason when wrong. */
+    fun confirmNumberCode(code: String): JSONObject =
+        JSONObject(request("POST", "device/verify-number/confirm/", JSONObject().put("code", code).toString(), signed = true))
 
     /** Sends this phone's model and declared user type. Needs a registered device. */
     fun uploadIdentity(phoneModel: String, manufacturer: String, userType: String, hardwareId: String = "") {

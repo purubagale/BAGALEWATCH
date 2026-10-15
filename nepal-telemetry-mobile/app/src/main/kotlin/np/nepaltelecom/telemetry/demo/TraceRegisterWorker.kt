@@ -36,7 +36,8 @@ internal class TraceRegisterWorker(context: Context, params: WorkerParameters) :
         val appVersion = inputData.getString(KEY_APP_VERSION) ?: "unknown"
         return try {
             DeviceKeys.ensureKey()
-            TraceApi.register(msisdn, TraceApi.challenge(), appVersion, HardwareInfo.hardwareId(applicationContext))
+            val answer = TraceApi.register(msisdn, TraceApi.challenge(), appVersion, HardwareInfo.hardwareId(applicationContext))
+            NumberVerify.save(applicationContext, answer)
             applicationContext
                 .getSharedPreferences(TraceRequestsPanel.PREFS, Context.MODE_PRIVATE)
                 .edit().putBoolean(TraceRequestsPanel.KEY_REGISTERED, true).apply()

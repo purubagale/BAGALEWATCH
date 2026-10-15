@@ -86,6 +86,19 @@
     <string name="req_failed">Failed: %1$s</string>
     <string name="req_failed_retrying">%1$s Will keep trying in the background.</string>
     <string name="req_registered_as">This phone is registered as %1$s.</string>
+    <!-- Proving the registered number by SMS code (2026-10-15). -->
+    <string name="req_registered_verified">This phone is registered as %1$s (number verified).</string>
+    <string name="req_registered_unverified">This phone is registered as %1$s. The number is not verified yet: tap here to verify it.</string>
+    <string name="verify_title">Verify your number</string>
+    <string name="verify_body">We sent a 6-digit code by SMS to %1$s. Type it here to prove this phone has that number.</string>
+    <string name="verify_hint">6-digit code</string>
+    <string name="verify_confirm">Verify</string>
+    <string name="verify_resend">Send again</string>
+    <string name="verify_need_code">Type the 6-digit code from the SMS.</string>
+    <string name="verify_wrong">That code is not right.</string>
+    <string name="verify_sending">Sending a code by SMS…</string>
+    <string name="verify_send_failed">The code could not be sent: %1$s</string>
+    <string name="verify_done">Your number is verified.</string>
     <string name="req_offline">Could not reach the server. Try again shortly.</string>
     <string name="req_none">No requests right now.</string>
     <string name="req_status">Request status: %1$s</string>
