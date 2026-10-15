@@ -2221,6 +2221,11 @@ class ApiKey(models.Model):
         # roll_telemetry_bins.py), never something an external partner
         # uploads directly, unlike Sites or DT sessions.
         ('coverage:read', 'Telemetry Coverage — read'),
+        # Added 2026-10-15 — another NTC system (complaint desk, CRM, call
+        # centre) sends customer problem reports and reads back their
+        # status and likely cause (core/external_problem.py).
+        ('problems:write', 'Problem reports — send'),
+        ('problems:read', 'Problem reports — read status'),
     ]
 
     name = models.CharField(max_length=100)
@@ -3328,7 +3333,9 @@ class ProblemReport(models.Model):
 
     SOURCE_APP = 'app'
     SOURCE_STAFF = 'staff'
-    SOURCES = [(SOURCE_APP, 'Mobile app'), (SOURCE_STAFF, 'Entered by staff')]
+    SOURCE_EXTERNAL = 'external'
+    SOURCES = [(SOURCE_APP, 'Mobile app'), (SOURCE_STAFF, 'Entered by staff'),
+               (SOURCE_EXTERNAL, 'Other system')]
     CATEGORIES = [
         ('no_signal', 'No signal'),
         ('slow_data', 'Slow data'),
@@ -3371,12 +3378,107 @@ class ProblemReport(models.Model):
     checked_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name='problem_reports_checked')
     checked_at = models.DateTimeField(null=True, blank=True)
+    # The check's result, kept for the Problem Dashboard (2026-10-15): the
+    # first finding's kind, and the site it points at (the serving site when
+    # the reading names the cell, else the nearest). Worked out with every
+    # phone's readings, whoever looks, and again once after the readings
+    # around the time have arrived (core/problem_report.py classify_report).
+    cause = models.CharField(max_length=24, blank=True, default='')
+    site = models.ForeignKey(Site, null=True, blank=True, on_delete=models.SET_NULL, related_name='problem_reports')
+    site_by = models.CharField(max_length=8, blank=True, default='')   # 'serving' or 'nearest'
+    sector = models.CharField(max_length=64, blank=True, default='')
+    classified_at = models.DateTimeField(null=True, blank=True)
+    # A report sent by another NTC system through the external API
+    # (2026-10-15, core/external_problem.py). `external_system` is the API
+    # key's name, so a replacement key with the same name carries on;
+    # `external_ref` is that system's own ticket number, which makes a
+    # re-send update the same report instead of adding a second one.
+    external_system = models.CharField(max_length=100, blank=True, default='')
+    external_ref = models.CharField(max_length=80, blank=True, default='')
+    api_key = models.ForeignKey('ApiKey', null=True, blank=True, on_delete=models.SET_NULL,
+                                related_name='problem_reports')
+    # Where the position came from: 'point' (a real spot), 'site' or 'cell'
+    # (the other system only named the site or cell; the spot is the mast).
+    located_by = models.CharField(max_length=8, blank=True, default='point')
+    # The customer's number, when a linked NTC system sends it (2026-10-15:
+    # the linked systems are NTC's own, so the user allowed it). Stored in
+    # the canonical form (rescue._clean_msisdn), so the report appears on
+    # that number's Subscriber Profile. Shown to a superadmin only.
+    msisdn = models.CharField(max_length=20, blank=True, default='', db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'v2_problem_report'
         ordering = ['-created_at']
-        indexes = [models.Index(fields=['status', 'created_at'], name='v2_problem_status_idx')]
+        indexes = [models.Index(fields=['status', 'created_at'], name='v2_problem_status_idx'),
+                   models.Index(fields=['happened_at'], name='v2_problem_happened_idx'),
+                   models.Index(fields=['external_system', 'updated_at'], name='v2_problem_ext_updated_idx')]
+        constraints = [models.UniqueConstraint(
+            fields=['external_system', 'external_ref'], condition=models.Q(source='external'),
+            name='v2_problem_external_ref_uniq')]
+
+
+class LinkedSystem(models.Model):
+    """Another NTC system that sends problem reports, and where to tell it
+    about them (2026-10-15, core/problem_notify.py). `name` matches the API
+    key's name, which is what its reports are filed under
+    (ProblemReport.external_system). Several systems can each have their
+    own address. `notify_mode`: 'auto' sends an update whenever a report's
+    status or likely cause changes; 'manual' only when an engineer presses
+    "Send update"; 'off' never. Each update is signed with `notify_secret`
+    (HMAC-SHA256), so the receiver can tell it came from DT-WATCH."""
+    MODE_AUTO = 'auto'
+    MODE_MANUAL = 'manual'
+    MODE_OFF = 'off'
+    MODES = [(MODE_AUTO, 'Automatic'), (MODE_MANUAL, 'Manual'), (MODE_OFF, 'Off')]
+
+    name = models.CharField(max_length=100, unique=True)
+    notify_url = models.URLField(max_length=500, blank=True, default='')
+    notify_secret = models.CharField(max_length=64)
+    notify_mode = models.CharField(max_length=8, choices=MODES, default=MODE_MANUAL)
+    is_active = models.BooleanField(default=True)
+    note = models.CharField(max_length=200, blank=True, default='')
+    last_sent_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=300, blank=True, default='')
+    created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name='linked_systems_created')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_linked_system'
+        ordering = ['name']
+
+
+class ProblemNotification(models.Model):
+    """One status update for a report, to the linked system that sent it
+    (2026-10-15). Waiting updates for the same report are merged, and the
+    body is built from the report as it is when sent. A failed send is
+    tried again later (core/problem_notify.py RETRY_MINUTES) until it
+    succeeds or MAX_ATTEMPTS is reached."""
+    STATUS_PENDING = 'pending'
+    STATUS_SENT = 'sent'
+    STATUS_FAILED = 'failed'
+    STATUSES = [(STATUS_PENDING, 'Waiting'), (STATUS_SENT, 'Sent'), (STATUS_FAILED, 'Failed')]
+
+    report = models.ForeignKey(ProblemReport, on_delete=models.CASCADE, related_name='notifications')
+    system = models.CharField(max_length=100)
+    event = models.CharField(max_length=16)          # status, cause, manual, test
+    status = models.CharField(max_length=8, choices=STATUSES, default=STATUS_PENDING)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_try_at = models.DateTimeField(null=True, blank=True)
+    response_code = models.SmallIntegerField(null=True, blank=True)
+    last_error = models.CharField(max_length=300, blank=True, default='')
+    requested_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL,
+                                     related_name='problem_notifications')
+    created_at = models.DateTimeField(auto_now_add=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'v2_problem_notification'
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['status', 'next_try_at'], name='v2_problem_notify_due_idx')]
 
 
 class TelemetryPushToken(models.Model):

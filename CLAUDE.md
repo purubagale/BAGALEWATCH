@@ -782,6 +782,48 @@ repo, not on prod):
   on the right, Drive Tests + Antenna Changes, Photos and Issues below. The
   map went blank when the sidebar stopped stretching (its box had no
   height); the Leaflet container is now absolutely positioned in its box.
+- **Problem Dashboard, phase 1** (2026-10-15, built, NOT committed, not
+  on prod; not AI work). The Problem Reports page became a dashboard with
+  Overview (tiles, reports per day, causes, sources, districts, network),
+  Reports (the old list and check, filterable by cause, site or 500 m
+  area), Map (dots by cause) and Hotspots (by serving or nearest site, else
+  500 m area). Tab, period and filters live in the page address.
+  `ProblemReport` keeps the check's main `cause`, `site`, `site_by`,
+  `sector`, `classified_at` (migration 0134, which also renames the menu
+  item); `classify_problem_reports` in `run_maintenance` works them out
+  every 2 min and again once the readings around the time have arrived;
+  the dashboard spends at most 3 s on any still waiting. The stored check
+  ignores the viewer's operator filter so counts are the same for all.
+  The check's drive-test lookup used `distance_lte` (no spatial index,
+  2 s a check); it is `dwithin` now (0.02 s).
+  **Reports from other NTC systems** (asked by the user the same day):
+  `core/external_problem.py`, `POST/GET /api/external/v1/problem-reports/`
+  with API keys holding the new `problems:write` / `problems:read` scopes
+  (API Access page). The key's name is the system's name
+  (`external_system`); its ticket number (`external_ref`) is unique per
+  system, so a re-send updates the report while it is new and changes
+  nothing once checked. Place: lat/lng, or `site_id`, or 4G `cell_id`
+  (`located_by` site/cell: the check looks around the mast, and the
+  report says so). The read-back carries status, likely cause and the
+  customer reply, but no engineer's note and no number. Up to 200
+  per request, 5000 new a day per system. Tested in a rolled-back
+  transaction.
+  **Linked systems, same day** (user's decisions): linked systems are
+  NTC's own, so they may send the customer's number (`msisdn`, canonical
+  977..., superadmin-only like an app reporter's number; the report shows
+  on that number's Subscriber Profile; notes are no longer stripped of
+  numbers). `core/problem_notify.py`: `LinkedSystem` (name = API key
+  name, address, signing secret shown once, mode Automatic / Manual / Off,
+  pause) and `ProblemNotification` (delivery log; waiting updates for a
+  report are merged; body built at send time; HMAC-SHA256 of
+  "timestamp.body" in `X-DTWatch-Signature`; retries 1 min to 12 h, 8
+  tries, then failed; Retry now). Automatic sends on a status or cause
+  change; Manual only from the report's "Send update"; the job
+  `send_problem_updates` (every minute, in `run_maintenance`). Managed on
+  API Access ("Linked systems"). Migration 0135; AI migrations moved to
+  0136-0140 (local history renamed). Tested with a local receiver in a
+  rolled-back transaction. Prod needs outbound HTTP from the django
+  container to each system's address.
 - **Rows per page on every table** (2026-10-15, built). `lib/tablePager.ts`,
   installed by `Layout.tsx`, watches the page and pages any table with more
   than 10 rows: rows outside the page are hidden (never removed, so sorting,

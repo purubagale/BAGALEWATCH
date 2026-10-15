@@ -364,11 +364,16 @@ function Profile({ p, out }: { p: SubscriberProfile; out: (key: string, extra?: 
         </Card>
 
         <Card id="sp-reports" icon="🧭" title="Problem reports" count={p.problem_reports.length} empty={p.problem_reports.length === 0}
-          link={{ to: out('/problem-reports', { status: 'all' }), label: 'Problem Reports' }}>
+          link={{ to: out('/problem-reports', { status: 'all' }), label: 'Problem Dashboard' }}>
           <Paged rows={p.problem_reports}
-            head={<tr><th>When</th><th>Problem</th><th>Status</th><th>Signal</th><th>Download</th></tr>}
+            head={<tr><th>When</th><th>Problem</th><th>From</th><th>Status</th><th>Signal</th><th>Download</th></tr>}
             row={(r) => (
-              <tr key={r.id}><td>{fmt(r.happened_at)}{r.note && <div className="muted">{r.note}</div>}</td><td>{r.category.replace(/_/g, ' ')}</td><td><span className="sp-chip plain">{r.status}</span></td><td className="mono">{r.network_type} {num(r.level_dbm, ' dBm')}</td><td className="mono">{num(r.download_mbps, ' Mbps')}</td></tr>
+              <tr key={r.id}>
+                <td><Link to={out('/problem-reports', { tab: 'reports', status: 'all', report: String(r.id) })}>{fmt(r.happened_at)}</Link>{r.note && <div className="muted">{r.note}</div>}</td>
+                <td>{r.category.replace(/_/g, ' ')}</td>
+                <td>{r.source === 'external' ? `${r.external_system} #${r.external_ref}` : r.source === 'app' ? 'Mobile app' : 'Staff'}</td>
+                <td><span className="sp-chip plain">{r.status}</span></td><td className="mono">{r.network_type} {num(r.level_dbm, ' dBm')}</td><td className="mono">{num(r.download_mbps, ' Mbps')}</td>
+              </tr>
             )} />
         </Card>
 

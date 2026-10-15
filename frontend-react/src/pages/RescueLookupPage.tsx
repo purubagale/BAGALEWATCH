@@ -462,6 +462,7 @@ export default function RescueLookupPage() {
                     attribution={mapLayer === 'street' ? '&copy; OpenStreetMap contributors' : '&copy; Google'}
                     url={mapLayer === 'street' ? STREET_URL : SATELLITE_URL}
                     subdomains={mapLayer === 'street' ? 'abc' : '0123'}
+                    maxNativeZoom={mapLayer === 'street' ? 19 : 20}
                     maxZoom={20}
                   />
                   <ResultMarker
@@ -626,6 +627,7 @@ export default function RescueLookupPage() {
                         attribution={bulkMapLayer === 'street' ? '&copy; OpenStreetMap contributors' : '&copy; Google'}
                         url={bulkMapLayer === 'street' ? STREET_URL : SATELLITE_URL}
                         subdomains={bulkMapLayer === 'street' ? 'abc' : '0123'}
+                        maxNativeZoom={bulkMapLayer === 'street' ? 19 : 20}
                         maxZoom={20}
                       />
                       <BulkResultMarkers points={bulkPoints} />

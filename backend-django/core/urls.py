@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import (api_auth, area_sample, audit, auth_log, backup, call_context, collection, consent, dashboard, device_identity,
                device_lookup, device_trace, drive_test, dt_retention, emergency,
-               exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_report, reports, rescue, rf_audit,
+               exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_notify, problem_report, reports, rescue, rf_audit,
                rf_reports, roles, site_import, site_coverage, site_photo, sso_views, subscriber_profile, system_doc,
                telemetry_admin, telemetry_near, views, volte_quality)
 
@@ -223,6 +223,16 @@ urlpatterns = [
          name='site-measured-coverage'),
     # Problem reports from the app or entered from complaints (2026-10-14) -- see core/problem_report.py.
     path('problem-reports/', problem_report.ProblemReportListView.as_view(), name='problem-reports'),
+    path('problem-reports/dashboard/', problem_report.ProblemDashboardView.as_view(), name='problem-dashboard'),
+    path('problem-reports/<int:pk>/notify/', problem_notify.ProblemReportNotifyView.as_view(), name='problem-report-notify'),
+    # Linked systems and their status updates (2026-10-15) -- see core/problem_notify.py.
+    path('linked-systems/', problem_notify.LinkedSystemListView.as_view(), name='linked-systems'),
+    path('linked-systems/<int:pk>/', problem_notify.LinkedSystemDetailView.as_view(), name='linked-system-detail'),
+    path('linked-systems/<int:pk>/secret/', problem_notify.LinkedSystemSecretView.as_view(), name='linked-system-secret'),
+    path('linked-systems/<int:pk>/test/', problem_notify.LinkedSystemTestView.as_view(), name='linked-system-test'),
+    path('problem-notifications/', problem_notify.ProblemNotificationListView.as_view(), name='problem-notifications'),
+    path('problem-notifications/<int:pk>/retry/', problem_notify.ProblemNotificationRetryView.as_view(),
+         name='problem-notification-retry'),
     # Everything stored about one mobile number, superadmin (2026-10-15) -- see core/subscriber_profile.py.
     path('subscriber-profile/', subscriber_profile.SubscriberProfileView.as_view(), name='subscriber-profile'),
     path('problem-reports/<int:pk>/', problem_report.ProblemReportDetailView.as_view(), name='problem-report-detail'),

@@ -462,6 +462,7 @@ export default function MapView({
         attribution={mapLayer === 'street' ? '&copy; OpenStreetMap contributors' : '&copy; Google'}
         url={mapLayer === 'street' ? STREET_URL : SATELLITE_URL}
         subdomains={mapLayer === 'street' ? 'abc' : '0123'}
+        maxNativeZoom={mapLayer === 'street' ? 19 : 20}
         maxZoom={20}
       />
       <ClusteredMarkers sites={sites} onSelect={onSelect} canRelocate={canRelocate} onRelocateRequest={onRelocateRequest} showNames={showNames} />

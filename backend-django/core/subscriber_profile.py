@@ -250,7 +250,11 @@ class SubscriberProfileView(APIView):
             'id': p.id, 'category': p.category, 'status': p.status, 'happened_at': _iso(p.happened_at),
             'network_type': p.network_type, 'level_dbm': p.level_dbm, 'download_mbps': p.download_mbps,
             'note': p.note[:200],
-        } for p in ProblemReport.objects.filter(device__in=credentials).order_by('-happened_at')[:LIST_CAP]]
+            # From the app, or from a linked NTC system that sent the number (2026-10-15).
+            'source': p.source, 'external_system': p.external_system, 'external_ref': p.external_ref,
+            'cause': p.cause,
+        } for p in ProblemReport.objects.filter(Q(device__in=credentials) | Q(msisdn__in=variants))
+            .order_by('-happened_at')[:LIST_CAP]]
         call_qs = CallContextSample.objects.filter(device_id__in=ids)
         calls = {
             'by_outcome': dict(Counter(call_qs.values_list('outcome', flat=True))),
