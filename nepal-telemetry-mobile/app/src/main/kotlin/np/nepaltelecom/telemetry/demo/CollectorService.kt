@@ -74,6 +74,7 @@ class CollectorService : Service() {
                         downloadMbps = r.downloadMbps, uploadMbps = r.uploadMbps,
                         networkType = s?.networkType, rsrpDbm = s?.rsrpDbm ?: s?.rscpDbm ?: s?.rssiDbm,
                         packetLossPct = r.packetLossPct,
+                        bearer = r.bearer,
                     )
                 }
             } finally {

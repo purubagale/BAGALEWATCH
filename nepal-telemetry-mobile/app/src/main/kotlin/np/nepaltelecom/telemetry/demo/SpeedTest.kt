@@ -46,7 +46,16 @@ object SpeedTest {
         val error: String?,
         /** True when the test went over mobile data, false when over Wi-Fi or another network. */
         val onMobileData: Boolean = false,
-    )
+        /** True when the test went over Wi-Fi (2026-10-15). */
+        val onWifi: Boolean = false,
+    ) {
+        /** The connection the test used, as sent to NTC: "mobile", "wifi" or "" when unknown. */
+        val bearer: String get() = when {
+            onMobileData -> "mobile"
+            onWifi -> "wifi"
+            else -> ""
+        }
+    }
 
     /**
      * Runs the test over mobile data. When mobile data cannot be reached
@@ -59,8 +68,12 @@ object SpeedTest {
         val alreadyMobile = active?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true &&
             !active.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
         if (alreadyMobile) return run(null).copy(onMobileData = true)
-        val mobile = cm?.let { requestMobile(it) }
-        if (mobile == null) return if (fallback) run(null) else null
+        val mobile = cm?.let { requestTransport(it, NetworkCapabilities.TRANSPORT_CELLULAR) }
+        if (mobile == null) {
+            if (!fallback) return null
+            val onWifi = active?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+            return run(null).copy(onWifi = onWifi)
+        }
         return try {
             run(mobile.first).copy(onMobileData = true)
         } finally {
@@ -68,8 +81,24 @@ object SpeedTest {
         }
     }
 
-    /** Asks Android for the mobile-data connection; waits up to [MOBILE_WAIT_S]. */
-    private fun requestMobile(cm: ConnectivityManager): Pair<Network, ConnectivityManager.NetworkCallback>? {
+    /**
+     * Runs the test over Wi-Fi (2026-10-15), even while mobile data is the
+     * active connection. Returns null when the phone is not on Wi-Fi.
+     */
+    fun runOnWifi(context: Context): Result? {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
+        val active = cm.getNetworkCapabilities(cm.activeNetwork)
+        if (active?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) return run(null).copy(onWifi = true)
+        val wifi = requestTransport(cm, NetworkCapabilities.TRANSPORT_WIFI) ?: return null
+        return try {
+            run(wifi.first).copy(onWifi = true)
+        } finally {
+            runCatching { cm.unregisterNetworkCallback(wifi.second) }
+        }
+    }
+
+    /** Asks Android for a connection of one kind; waits up to [MOBILE_WAIT_S]. */
+    private fun requestTransport(cm: ConnectivityManager, transport: Int): Pair<Network, ConnectivityManager.NetworkCallback>? {
         val latch = CountDownLatch(1)
         var network: Network? = null
         val callback = object : ConnectivityManager.NetworkCallback() {
@@ -79,7 +108,7 @@ object SpeedTest {
             }
         }
         val request = NetworkRequest.Builder()
-            .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+            .addTransportType(transport)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
         try {

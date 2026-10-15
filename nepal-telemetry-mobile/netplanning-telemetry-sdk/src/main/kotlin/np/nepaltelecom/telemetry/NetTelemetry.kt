@@ -492,6 +492,8 @@ object NetTelemetry {
         networkType: String?,
         rsrpDbm: Int?,
         packetLossPct: Double? = null,
+        // The connection the test used (2026-10-15): "mobile" or "wifi".
+        bearer: String? = null,
     ) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before reportSpeedTest()" }
         val config = internalConfig ?: return
@@ -512,6 +514,7 @@ object NetTelemetry {
                         uploadMbps?.let { put("upload_mbps", it) }
                         networkType?.let { put("network_type", it) }
                         rsrpDbm?.let { put("rsrp_dbm", it) }
+                        bearer?.takeIf { it.isNotEmpty() }?.let { put("bearer", it) }
                     }.toString()
                     postJson(url, body, apiKey)
                 } catch (_: Exception) {

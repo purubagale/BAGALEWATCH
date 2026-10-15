@@ -180,6 +180,15 @@
                 android:layout_marginTop="12dp"
                 android:text="@string/speed_start" />
 
+            <!-- Wi-Fi test (2026-10-15): sent to NTC too, tagged as Wi-Fi. -->
+            <Button
+                android:id="@+id/speedWifiButton"
+                style="@style/Widget.App.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/speed_start_wifi" />
+
             <TextView
                 android:id="@+id/speedResult"
                 android:layout_width="match_parent"

@@ -80,7 +80,9 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
 
         speedButton = view.findViewById(R.id.speedStartButton)
         speedResult = view.findViewById(R.id.speedResult)
-        speedButton.setOnClickListener { runSpeedTest() }
+        speedButton.setOnClickListener { runSpeedTest(wifi = false) }
+        speedWifiButton = view.findViewById(R.id.speedWifiButton)
+        speedWifiButton.setOnClickListener { runSpeedTest(wifi = true) }
         speedHint = view.findViewById(R.id.speedHint)
         view.findViewById<Button>(R.id.reportProblemButton).setOnClickListener {
             (activity as? AppCompatActivity)?.let { ReportProblem.start(it) }
@@ -88,26 +90,41 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
     }
 
     private lateinit var speedHint: TextView
+    private lateinit var speedWifiButton: Button
 
     /**
      * Runs on the user's tap only. The test is blocking, so it goes on a
      * background thread. It goes over mobile data even while on Wi-Fi
      * (2026-10-14); with mobile data off it falls back to Wi-Fi and says so.
      */
-    private fun runSpeedTest() {
+    private fun runSpeedTest(wifi: Boolean) {
         speedButton.isEnabled = false
+        speedWifiButton.isEnabled = false
         speedResult.text = getString(R.string.speed_running)
         val context = requireContext().applicationContext
         Thread {
-            val result = SpeedTest.runOnMobileData(context, fallback = true) ?: SpeedTest.run()
+            // Wi-Fi test (2026-10-15): null when the phone is not on Wi-Fi.
+            val result = if (wifi) {
+                SpeedTest.runOnWifi(context)
+            } else {
+                SpeedTest.runOnMobileData(context, fallback = true) ?: SpeedTest.run()
+            }
             activity?.runOnUiThread {
-                if (isAdded) showSpeedResult(result)
+                if (!isAdded) return@runOnUiThread
+                if (result == null) {
+                    speedButton.isEnabled = true
+                    speedWifiButton.isEnabled = true
+                    speedResult.text = getString(R.string.speed_no_wifi)
+                } else {
+                    showSpeedResult(result)
+                }
             }
         }.start()
     }
 
     private fun showSpeedResult(r: SpeedTest.Result) {
         speedButton.isEnabled = true
+        speedWifiButton.isEnabled = true
         if (r.error != null) {
             speedResult.text = getString(R.string.speed_error, r.error)
             speedHint.visibility = View.GONE
@@ -120,18 +137,20 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
         speedResult.text = getString(
             R.string.speed_result,
             fmt(r.pingMedianMs), fmt(r.jitterMs), fmt(r.packetLossPct), fmt(r.downloadMbps), fmt(r.uploadMbps), radio,
+            getString(if (r.onWifi) R.string.speed_over_wifi else R.string.speed_over_mobile),
         )
         speedHint.text = ProblemHints.explain(lastSample, r)
         speedHint.visibility = View.VISIBLE
-        // Shared with NTC only while sharing is on (2026-10-07), and only a
-        // mobile-data result: a Wi-Fi one says nothing about NTC's network.
-        if (!r.onMobileData) return
+        // Shared with NTC only while sharing is on (2026-10-07). Since
+        // 2026-10-15 a Wi-Fi result is sent too, tagged, so the server keeps
+        // it apart from mobile-network figures.
         val s = lastSample
         NetTelemetry.reportSpeedTest(
             pingMedianMs = r.pingMedianMs, jitterMs = r.jitterMs,
             downloadMbps = r.downloadMbps, uploadMbps = r.uploadMbps,
             networkType = s?.networkType, rsrpDbm = s?.rsrpDbm ?: s?.rscpDbm ?: s?.rssiDbm,
             packetLossPct = r.packetLossPct,
+            bearer = r.bearer,
         )
     }
 
