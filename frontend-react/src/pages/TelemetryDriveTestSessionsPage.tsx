@@ -596,7 +596,8 @@ export default function TelemetryDriveTestSessionsPage() {
   // the list endpoint already caps, same as CollectionsPage's own source
   // filter; no new backend query needed for a list this small.
   const [statusFilter, setStatusFilter] = useState<'' | 'active' | 'ended'>('')
-  const [nameFilter, setNameFilter] = useState('')
+  // ?name= opens the list on one session, e.g. from Subscriber Profile (2026-10-15).
+  const [nameFilter, setNameFilter] = useState(() => new URLSearchParams(window.location.search).get('name') ?? '')
   const [consentFilter, setConsentFilter] = useState<'' | 'required' | 'not_required'>('')
   // Started-between filters (2026-10-07) -- plain <input type="date">,
   // compared against each session's own started_at; a bound is ignored
@@ -862,6 +863,7 @@ export default function TelemetryDriveTestSessionsPage() {
                 <tr>
                   <th>Device</th>
                   <th>Time</th>
+                  <th>Over</th>
                   <th>Ping (ms)</th>
                   <th>Jitter (ms)</th>
                   <th>Loss (%)</th>
@@ -875,6 +877,7 @@ export default function TelemetryDriveTestSessionsPage() {
                   <tr key={i}>
                     <td>{r.device_id.slice(0, 12)}...</td>
                     <td>{new Date(r.ts).toLocaleTimeString()}</td>
+                    <td>{r.bearer === 'wifi' ? 'Wi-Fi' : r.bearer === 'mobile' ? 'Mobile data' : '-'}</td>
                     <td>{r.ping_median_ms ?? '-'}</td>
                     <td>{r.jitter_ms ?? '-'}</td>
                     <td>{r.packet_loss_pct ?? '-'}</td>

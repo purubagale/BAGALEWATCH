@@ -10,6 +10,8 @@ import MapView from '../components/MapView'
 import SearchableSelect from '../components/SearchableSelect'
 import AddSiteModal from '../components/AddSiteModal'
 import RelocateConfirmModal from '../components/RelocateConfirmModal'
+import RowsPerPageSelect from '../components/RowsPerPageSelect'
+import { useRowsPerPage } from '../lib/rowsPerPage'
 
 // ── 2026-09-07 rebuild ──────────────────────────────────────────────────
 // Replaces the always-visible left sidebar tree (region -> district ->
@@ -361,10 +363,17 @@ export default function SitesPage() {
 
   // ── Table view: real server-side paging/filtering ───────────────────
   const [tablePage, setTablePage] = useState(1)
+  // Rows per page: the user's choice, shared with every table (2026-10-15).
+  const [pageSize] = useRowsPerPage()
+  const [lastPageSize, setLastPageSize] = useState(pageSize)
+  if (lastPageSize !== pageSize) {
+    setLastPageSize(pageSize)
+    setTablePage(1)
+  }
   const tableParams: SitesPageParams = useMemo(
     () => ({
       page: tablePage,
-      page_size: 20,
+      page_size: pageSize,
       region: filters.region || undefined,
       district: filters.district || undefined,
       status: filters.status || undefined,
@@ -374,10 +383,10 @@ export default function SitesPage() {
       technologyOnly: filters.technologyOnly.length ? filters.technologyOnly : undefined,
       q: filters.search || undefined,
     }),
-    [tablePage, filters],
+    [tablePage, filters, pageSize],
   )
   const { data: tablePageData, isLoading: tableLoading } = useSitesPage(tableParams, view === 'table')
-  const tableTotalPages = tablePageData ? Math.max(1, Math.ceil(tablePageData.count / 20)) : 1
+  const tableTotalPages = tablePageData ? Math.max(1, Math.ceil(tablePageData.count / pageSize)) : 1
 
   // Drag-to-resize sidebar removed with the sidebar itself (2026-09-07) —
   // nothing left in this page owns a resizable width.
@@ -436,15 +445,16 @@ export default function SitesPage() {
   // of the entries-count + numbered page links (2026-09-08 request) -- one
   // function so the two never drift out of sync with each other.
   function renderTablePagination(position: 'top' | 'bottom') {
-    if (!tablePageData || tablePageData.count <= 20) return null
-    const rangeStart = (tablePage - 1) * 20 + 1
-    const rangeEnd = Math.min(tablePage * 20, tablePageData.count)
+    if (!tablePageData || tablePageData.count <= 10) return null
+    const rangeStart = (tablePage - 1) * pageSize + 1
+    const rangeEnd = Math.min(tablePage * pageSize, tablePageData.count)
     return (
       <div className={`sites-table-pagination sites-table-pagination-${position}`}>
         <span>
           Showing {rangeStart.toLocaleString()} to {rangeEnd.toLocaleString()} of{' '}
           {tablePageData.count.toLocaleString()} entries
         </span>
+        <RowsPerPageSelect />
         <div className="sites-table-pagination-pages">
           <button
             type="button"
@@ -581,7 +591,7 @@ export default function SitesPage() {
           ) : (
             <>
               {renderTablePagination('top')}
-              <table className="admin-table">
+              <table className="admin-table" data-pager="off">
                 <thead>
                   <tr>
                     <th>S.N.</th>
@@ -597,7 +607,7 @@ export default function SitesPage() {
                 <tbody>
                   {(tablePageData?.results ?? []).map((s, i) => (
                     <tr key={s.id}>
-                      <td className="sites-table-sn">{(tablePage - 1) * 20 + i + 1}</td>
+                      <td className="sites-table-sn">{(tablePage - 1) * pageSize + i + 1}</td>
                       <td>
                         <div className="sites-table-name">{s.name || '—'}</div>
                         <div className="sites-table-id">{s.id}</div>

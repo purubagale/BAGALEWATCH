@@ -601,7 +601,9 @@ export default function SiteDetailPage() {
       <div className="site-detail-main">
 
       {/* ── Site Identity ──────────────────────────────────────────── */}
-      <div className="site-form-section">Site Identity</div>
+      <div className="site-card-row">
+      <section className="site-card site-card-fields">
+      <div className="site-form-section" data-icon="🆔">Site Identity</div>
       <div className="site-form-row cols-2">
         <FieldCard label="Site ID" editing={editing} readOnly value={site.id} />
         <FieldCard
@@ -690,6 +692,7 @@ export default function SiteDetailPage() {
           onChange={(v) => setNumberField('lng', v)}
         />
       </div>
+      </section>
 
       {/* ── Tower / Antenna Info (2026-09-27) — from the vendor
           LTE_Engineering_Parameter/WSD RNO engineering-parameter import
@@ -698,7 +701,8 @@ export default function SiteDetailPage() {
           City/Site Type, not read-only like Region/District/Lat/Lng
           above. Blank until that import has actually run for this
           site. */}
-      <div className="site-form-section">Tower / Antenna Info</div>
+      <section className="site-card site-card-fields">
+      <div className="site-form-section" data-icon="🗼">Tower / Antenna Info</div>
       <div className="site-form-row cols-3">
         <FieldCard label="Tower Type" editing={editing} value={identitySource.tower_type ?? ''} onChange={(v) => setField('tower_type', v)} />
         <FieldCard label="Tower Height (m)" editing={editing} value={identitySource.tower_height_m ?? ''} onChange={(v) => setField('tower_height_m', v)} />
@@ -709,45 +713,12 @@ export default function SiteDetailPage() {
         <FieldCard label="Antenna Device" editing={editing} value={identitySource.antenna_device ?? ''} onChange={(v) => setField('antenna_device', v)} />
         <FieldCard label="Tower Remark" editing={editing} value={identitySource.tower_remark ?? ''} onChange={(v) => setField('tower_remark', v)} />
       </div>
-
-      </div>
-
-      <aside className="site-detail-sidebar">
-        <div className="site-sidebar-card">
-          <div className="site-sidebar-card-title">Quick Stats</div>
-          {/* Status badge + KPI Coverage row removed (2026-09-30, "for now
-              donot use kpi related search or display... in dashboard and
-              site details also donot display... if needed in future will
-              again use") — `site.status` is this app's own KPI-health
-              traffic light (ok/warn/crit/nodata); `kpi_entered`/
-              `kpi_entered_3g`/`kpi_entered_2g` are the per-tech flags the
-              "KPI Values" section below also gates on. Neither is deleted
-              from SiteDetail/the API, only these two display rows —
-              restore from git history if needed. */}
-          <div className="site-stat-row">
-            <span className="site-stat-label">Sectors</span>
-            <span className="site-stat-value">
-              {site.sectors.length}
-              {site.sectors.length > 0 ? ` (${summarizeSectorTechs(site.sectors)})` : ''}
-            </span>
-          </div>
-          <div className="site-stat-row">
-            <span className="site-stat-label">Last Updated</span>
-            <span className="site-stat-value">{site.updated_at ? new Date(site.updated_at).toLocaleDateString() : '—'}</span>
-          </div>
-        </div>
-
-        <div className="site-sidebar-card site-sidebar-card-grow">
-          <div className="site-sidebar-card-title">Location</div>
-          <SiteLocationMiniMap siteId={site.id} lat={site.lat} lng={site.lng} status={site.status} sectors={site.sectors} />
-        </div>
-      </aside>
-
+      </section>
       </div>
 
       {/* ── Sectors ──────────────────────────────────────────────────── */}
-      <section ref={sectorsSectionRef}>
-        <div className="site-form-section">
+      <section ref={sectorsSectionRef} className="site-card">
+        <div className="site-form-section" data-icon="📡">
           Sectors ({realSectors.length})
           {editing && (
             <button className="btn-secondary btn-small" onClick={addSector} style={{ marginLeft: 12 }}>
@@ -886,18 +857,42 @@ export default function SiteDetailPage() {
         )}
       </section>
 
-      {/* KPI Values section removed (2026-09-30, "for now donot use kpi
-          related search or display... in dashboard and site details also
-          donot display... if needed in future will again use") — was a
-          tabbed 4G LTE/3G UMTS/2G GSM editor for KPI_FIELDS, KPI_3G_FIELDS
-          and KPI_2G_FIELDS (site.kpi_entered flags, kpi_3g_json,
-          kpi_2g_json), full-width below Sector Azimuth Layout. Those
-          fields/constants and normalizeForSave's kpi_entered computation
-          are untouched -- KPI data already saved is preserved and still
-          round-trips through Save, just has no editing UI here for now.
-          Restore the full section (kpiTech state, setTechKpiField, this
-          JSX) from git history if that changes. */}
+      </div>
 
+      <aside className="site-detail-sidebar">
+        <div className="site-sidebar-card">
+          <div className="site-sidebar-card-title" data-icon="📊">Quick Stats</div>
+          {/* Status badge + KPI Coverage row removed (2026-09-30, "for now
+              donot use kpi related search or display... in dashboard and
+              site details also donot display... if needed in future will
+              again use") — `site.status` is this app's own KPI-health
+              traffic light (ok/warn/crit/nodata); `kpi_entered`/
+              `kpi_entered_3g`/`kpi_entered_2g` are the per-tech flags the
+              "KPI Values" section below also gates on. Neither is deleted
+              from SiteDetail/the API, only these two display rows —
+              restore from git history if needed. */}
+          <div className="site-stat-row">
+            <span className="site-stat-label">Sectors</span>
+            <span className="site-stat-value">
+              {site.sectors.length}
+              {site.sectors.length > 0 ? ` (${summarizeSectorTechs(site.sectors)})` : ''}
+            </span>
+          </div>
+          <div className="site-stat-row">
+            <span className="site-stat-label">Last Updated</span>
+            <span className="site-stat-value">{site.updated_at ? new Date(site.updated_at).toLocaleDateString() : '—'}</span>
+          </div>
+        </div>
+
+        <div className="site-sidebar-card site-sidebar-card-grow">
+          <div className="site-sidebar-card-title" data-icon="📍">Location</div>
+          <SiteLocationMiniMap siteId={site.id} lat={site.lat} lng={site.lng} status={site.status} sectors={site.sectors} />
+        </div>
+      </aside>
+
+      </div>
+
+      <div className="site-card-pair">
       {/* -- Drive Tests Near This Site --------------------------------
           2026-09-12 request: surface which DT sessions were driven near
           this site right on the site page, instead of RF engineers
@@ -909,8 +904,8 @@ export default function SiteDetailPage() {
           tagged with THIS site's id -- no new schema needed. Shown even
           when empty (a muted one-liner, not hidden) so the feature is
           discoverable. */}
-      <section>
-        <div className="site-form-section">Drive Tests Near This Site</div>
+      <section className="site-card">
+        <div className="site-form-section" data-icon="🚗">Drive Tests Near This Site</div>
 
         {nearbyDtSessions && nearbyDtSessions.length > 0 ? (
           <div className="sectors-table-wrap">
@@ -968,8 +963,8 @@ export default function SiteDetailPage() {
           verifying_activities lookup -- not added yet since this section
           is already useful without it and that reverse lookup needs its
           own small serializer addition. */}
-      <section>
-        <div className="site-form-section">Antenna Change History</div>
+      <section className="site-card">
+        <div className="site-form-section" data-icon="🔧">Antenna Change History</div>
 
         {antennaChangeRows.length > 0 ? (
           <div className="sectors-table-wrap">
@@ -1004,14 +999,28 @@ export default function SiteDetailPage() {
           <div className="kpi-pane-empty">No vendor-imported antenna changes recorded for this site's sectors yet.</div>
         )}
       </section>
+      </div>
+
+      {/* KPI Values section removed (2026-09-30, "for now donot use kpi
+          related search or display... in dashboard and site details also
+          donot display... if needed in future will again use") — was a
+          tabbed 4G LTE/3G UMTS/2G GSM editor for KPI_FIELDS, KPI_3G_FIELDS
+          and KPI_2G_FIELDS (site.kpi_entered flags, kpi_3g_json,
+          kpi_2g_json), full-width below Sector Azimuth Layout. Those
+          fields/constants and normalizeForSave's kpi_entered computation
+          are untouched -- KPI data already saved is preserved and still
+          round-trips through Save, just has no editing UI here for now.
+          Restore the full section (kpiTech state, setTechKpiField, this
+          JSX) from git history if that changes. */}
+
 
       {/* -- Site Photos -----------------------------------------------
           2026-10-11: photos taken at this site with the mobile app, each
           with the direction the phone pointed. Shown to admins and
           superadmins only (2026-10-12), who can also review them here. */}
       {canSeePhotos && (
-      <section>
-        <div className="site-form-section">Site Photos</div>
+      <section className="site-card">
+        <div className="site-form-section" data-icon="📷">Site Photos</div>
         {sitePhotos && sitePhotos.photos.length > 0 ? (
           <div className="site-photo-grid">
             {sitePhotos.photos.map((photo) => (
@@ -1038,8 +1047,8 @@ export default function SiteDetailPage() {
           docstring in the backend's core/models.py). Same "shown even
           when empty, discoverable rather than hidden" convention already
           used for the Drive Tests section just above. */}
-      <section>
-        <div className="site-form-section">
+      <section className="site-card">
+        <div className="site-form-section" data-icon="⚠️">
           Site Issues
           {canManageIssues && !showAddIssue && (
             <button

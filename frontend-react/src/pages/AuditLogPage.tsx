@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react'
 import { exportAuditLogCsv, useAuditLog, useBlockedIps } from '../api/queries'
 import type { AuditLogEntry, AuditLogSource } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
+import RowsPerPageSelect from '../components/RowsPerPageSelect'
+import { useRowsPerPage } from '../lib/rowsPerPage'
 
 // Unified Audit Log (2026-10-01, "add feature of audit log with All
 // system activity, data changes, and access events") -- replaces the
@@ -41,7 +43,13 @@ export default function AuditLogPage() {
   const [source, setSource] = useState<AuditLogSource | ''>('')
   const [exportError, setExportError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
-  const pageSize = 50
+  // Rows per page: the user's choice, shared with every table (2026-10-15).
+  const [pageSize] = useRowsPerPage()
+  const [lastSize, setLastSize] = useState(pageSize)
+  if (lastSize !== pageSize) {
+    setLastSize(pageSize)
+    setPage(1)
+  }
 
   const { data, isLoading, error } = useAuditLog({
     page, page_size: pageSize,
@@ -171,7 +179,7 @@ export default function AuditLogPage() {
       {data && (
         <>
           <div className="report-table-wrap">
-            <table className="admin-table">
+            <table className="admin-table" data-pager="off">
               <thead>
                 <tr>
                   <th>Time</th>
@@ -222,6 +230,7 @@ export default function AuditLogPage() {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, fontSize: 12 }}>
             <span className="muted">{data.count} total entries</span>
+            <RowsPerPageSelect />
             <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
               <button type="button" disabled={!data.previous} onClick={() => setPage((p) => Math.max(1, p - 1))}>
                 ← Previous

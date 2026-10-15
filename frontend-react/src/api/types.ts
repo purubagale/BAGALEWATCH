@@ -2078,6 +2078,8 @@ export interface TelemetryDriveTestConsentSummary {
 export interface TelemetryDriveTestSpeedResult {
   device_id: string
   ts: string
+  // 'mobile' or 'wifi' (2026-10-15); '' on results sent before the app tagged them.
+  bearer?: string
   ping_median_ms: number | null
   jitter_ms: number | null
   packet_loss_pct?: number | null
@@ -2085,6 +2087,12 @@ export interface TelemetryDriveTestSpeedResult {
   upload_mbps: number | null
   network_type: string
   rsrp_dbm: number | null
+}
+
+// The phone's speed tests beside Live Samples (2026-10-15).
+export interface TelemetrySpeedResultsResponse {
+  window_minutes: number
+  results: (TelemetryDriveTestSpeedResult & { received_at: string })[]
 }
 
 export interface TelemetryDriveTestSessionSamplesResponse {
@@ -2867,4 +2875,96 @@ export interface DtPruneRun {
   plan?: DtPrunePlanItem[]
   plan_total?: number
   records?: DtPruneRecordItem[]
+}
+
+// Subscriber profile (2026-10-15, core/subscriber_profile.py): everything the
+// server holds about one mobile number. Superadmin only.
+export interface SubscriberProfileDevice {
+  device_id: string
+  kind: string
+  manufacturer: string | null
+  phone_model: string | null
+  app_version: string | null
+  user_type: string | null
+  imei: string | null
+  linked_via: string[]
+  link_ended: string | null
+  first_linked_at: string | null
+  last_seen_at: string | null
+  registered_at: string | null
+  registration_last_seen_at: string | null
+  registration_revoked_at: string | null
+  registered_as: string | null
+  signed_uploads_linked: boolean
+  push_token: boolean
+  rescue_beacon: 'on' | 'withdrawn' | null
+  rescue_since: string | null
+  drive_test_consent: 'yes' | 'no' | null
+  readings: number
+  first_reading: string | null
+  last_reading: string | null
+}
+
+export interface SubscriberProfile {
+  msisdn: string
+  found: boolean
+  emergency_declared: boolean
+  summary: {
+    devices: number
+    registered: boolean
+    first_registered_at: string | null
+    rescue_beacon: 'on' | 'withdrawn' | null
+    readings: number
+    first_reading: string | null
+    last_reading: string | null
+    readings_by_network: Record<string, number>
+    on_demand_readings: number
+    location_hidden: boolean
+  }
+  last_location: {
+    source: 'reading' | 'rescue'
+    ts: string | null
+    network_type?: string
+    band_mhz?: number | null
+    cell_id?: number | null
+    pci?: number | null
+    tac?: number | null
+    mnc?: string
+    level_dbm?: number | null
+    serving_site_id?: string | null
+    serving_cell_name?: string | null
+    serving_dist_km?: number | null
+    serving_sector?: string | null
+    device_id?: string
+    rsrq_db?: number | null
+    sinr_db?: number | null
+    cqi?: number | null
+    rscp_dbm?: number | null
+    ecio_db?: number | null
+    rssi_dbm?: number | null
+    arfcn?: number | null
+    band?: number | null
+    mcc?: string
+    gps_accuracy_m?: number | null
+    trigger_reason?: string
+    site_name?: string | null
+    site_district?: string | null
+    site_lat?: number | null
+    site_lng?: number | null
+    lat: number | null
+    lng: number | null
+  } | null
+  // Newest readings, oldest first, for the signal chart (no positions).
+  signal_series: { ts: string | null; network_type: string; level_dbm: number | null; rsrq_db: number | null; sinr_db: number | null }[]
+  devices: SubscriberProfileDevice[]
+  collections: { id: string; source: string; device_id: string; samples: number; started_at: string | null; last_sample_at: string | null; ended_at: string | null }[]
+  drive_test_sessions: { id: number; name: string; status: string; started_at: string | null; ended_at: string | null; devices: number }[]
+  trace_requests: { id: string; kind: string; status: string; case_reference: string; requested_by: string | null; created_at: string | null; ended_at: string | null; positions: number }[]
+  speed_tests: { ts: string | null; device_id: string; bearer: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; jitter_ms: number | null; packet_loss_pct: number | null; network_type: string; rsrp_dbm: number | null }[]
+  trace_speed_tests: { ts: string | null; trace_id: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; network_type: string }[]
+  problem_reports: { id: number; category: string; status: string; happened_at: string | null; network_type: string; level_dbm: number | null; download_mbps: number | null; note: string }[]
+  calls: { by_outcome: Record<string, number>; latest: { started_at: string | null; duration_s: number | null; outcome: string; voice_networks: string; cell_id: number | null; level_dbm: number | null }[] }
+  volte: { ts: string | null; codec: string; mos_estimate: number | null; packet_loss_pct: number | null }[]
+  site_photos: { id: number; site_id: string | null; status: string; taken_at: string | null }[]
+  lookups: { tool: string; by: string | null; at: string | null; reference: string; found: boolean | null }[]
 }

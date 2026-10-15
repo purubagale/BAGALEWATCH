@@ -1428,6 +1428,8 @@ import type {
   TelemetryLiveSamplesResponse,
   VolteQualityListResponse,
   CallContextResponse,
+  TelemetrySpeedResultsResponse,
+  SubscriberProfile,
 } from '../api/types'
 
 // Delta-fetch accumulator (2026-10-02 perf follow-up, "suggest me the
@@ -1510,6 +1512,37 @@ export function useCallContext(days: number) {
 // area is actually searched, so the enrollment list starts empty instead
 // of silently showing every device active system-wide with no area
 // filter applied.
+// Subscriber profile (2026-10-15). The number and reason live in the page
+// address, so coming back to the page shows the same profile. It is kept for
+// 30 minutes without asking the server again, since each server search is
+// logged with its reason; "Refresh" asks again on purpose.
+export function useSubscriberProfile(msisdn: string, reason: string) {
+  return useQuery({
+    queryKey: ['subscriber-profile', msisdn, reason],
+    queryFn: () => {
+      const qs = new URLSearchParams({ msisdn, reason })
+      return apiJson<SubscriberProfile>(`/api/v2/subscriber-profile/?${qs}`)
+    },
+    enabled: !!msisdn && !!reason,
+    staleTime: Infinity,
+    gcTime: 30 * 60_000,
+    retry: false,
+  })
+}
+
+// The phone's speed tests for the Live Samples window (2026-10-15).
+export function useTelemetrySpeedResults(minutes: number, deviceId?: string) {
+  return useQuery({
+    queryKey: ['telemetry-speed-results', minutes, deviceId ?? ''],
+    queryFn: () => {
+      const qs = new URLSearchParams({ minutes: String(minutes) })
+      if (deviceId) qs.set('device_id', deviceId)
+      return apiJson<TelemetrySpeedResultsResponse>(`/api/v2/telemetry/speed-results/?${qs}`)
+    },
+    refetchInterval: 30_000,
+  })
+}
+
 export function useTelemetryLiveSamples(params: TelemetryLiveSamplesParams, enabled: boolean = true) {
   const filterKey = JSON.stringify(params)
   return useDeltaSamples(

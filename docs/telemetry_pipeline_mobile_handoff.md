@@ -407,15 +407,21 @@ A request lasts 120 minutes by default.
 
 ## 10. Speed test
 
-The test runs when the user taps Start (and every 30 minutes in the Collector
-edition, section 14). It takes about 20 seconds and about 8 MB of mobile data.
+The test runs when the user taps a test button (and every 30 minutes in the
+Collector edition, section 14). It takes about 20 seconds and about 8 MB of data.
 
-Since 14 October 2026 the reference app runs every request of the test over
-the mobile-data network, even while the phone is on Wi-Fi: it asks Android
+Since 15 October 2026 the reference app offers two tests: **Test mobile
+data** and **Test Wi-Fi**. Both results are sent, tagged with `bearer`
+(`mobile` or `wifi`), so the server keeps Wi-Fi results apart from figures
+about NTC's mobile network. The Collector edition's automatic test uses
+mobile data.
+
+The mobile-data test runs every request over the mobile-data network, even
+while the phone is on Wi-Fi: it asks Android
 for a network with `TRANSPORT_CELLULAR` (`ConnectivityManager.requestNetwork`,
-needs `CHANGE_NETWORK_STATE`) and binds its sockets to it. A result measured
-over Wi-Fi is not sent. Packet loss is the share of 20 pings with no answer
-within 2 seconds.
+needs `CHANGE_NETWORK_STATE`) and binds its sockets to it. Packet loss is the
+share of 20 pings with no answer within 2 seconds. The Wi-Fi test asks for a network with `TRANSPORT_WIFI`
+the same way.
 
 | Call | Detail |
 |---|---|
@@ -431,11 +437,13 @@ The result goes to `POST speed-samples/`, only while the user is sharing:
 ```json
 {"device_id": "<SDK id>", "ts": 1758444000000, "ping_median_ms": 38,
  "jitter_ms": 4, "download_mbps": 21.4, "upload_mbps": 6.2,
- "packet_loss_pct": 5, "network_type": "LTE", "rsrp_dbm": -90}
+ "packet_loss_pct": 5, "network_type": "LTE", "rsrp_dbm": -90,
+ "bearer": "mobile"}
 ```
 
 Returns `201 {"stored": true}`. Limited to 20 a minute. `packet_loss_pct`
-(0 to 100) is optional.
+(0 to 100) is optional. `bearer` is `mobile` or `wifi`; any other value, or
+none, is stored blank (results from builds before 15 October 2026).
 
 A second set under `device/trace-requests/<id>/speedtest/` is signed and works
 only while that request is accepted. Its result call takes `ran_at` (epoch ms,

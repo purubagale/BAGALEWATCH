@@ -114,6 +114,13 @@ class SpeedTestUploadView(_SpeedTestView):
 SPEED_RESULT_RATE_PER_MIN = 20
 
 
+def _bearer(raw):
+    """The connection a speed test used (2026-10-15): 'mobile', 'wifi', or ''
+    for an app build that does not say."""
+    value = str(raw or '').strip().lower()
+    return value if value in (TelemetrySpeedResult.BEARER_MOBILE, TelemetrySpeedResult.BEARER_WIFI) else ''
+
+
 def _speed_num(data, key, limit):
     value = data.get(key)
     if value is None:
@@ -181,5 +188,6 @@ class TelemetrySpeedResultIngestView(APIView):
             upload_mbps=_speed_num(data, 'upload_mbps', 10_000),
             network_type=str(data.get('network_type') or '').strip().upper()[:8],
             rsrp_dbm=rsrp,
+            bearer=_bearer(data.get('bearer')),
         )
         return Response({'stored': True}, status=status.HTTP_201_CREATED)

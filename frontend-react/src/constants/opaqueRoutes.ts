@@ -136,6 +136,9 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // Drive-test retention, superadmin (2026-10-14) -- seeded server-side by
   // migration 0131_dt_retention.py, same convention.
   '/dt-retention': '/d5r8vt',
+  // Everything stored about one mobile number, superadmin (2026-10-15) --
+  // seeded server-side by migration 0133_speed_bearer_subscriber_profile.py.
+  '/subscriber-profile': '/s7p2nd',
   // Site/Sector Issue tracker's global list (2026-09-14) -- seeded
   // server-side by migration 0058_seed_issues_menuitem.py -- keep this
   // in sync with that file, same convention as every other entry.

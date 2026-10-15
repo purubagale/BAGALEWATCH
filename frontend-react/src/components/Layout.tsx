@@ -9,6 +9,8 @@ import { canonicalSection } from '../constants/opaqueRoutes'
 import { DtExploreStateProvider } from '../contexts/DtExploreStateContext'
 import FooterLine from './FooterLine'
 import ChangePasswordModal from './ChangePasswordModal'
+import BackToProfileBar from './BackToProfileBar'
+import { installTablePager } from '../lib/tablePager'
 import { SearchModalContext } from '../contexts/SearchModalContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { useTreeStore } from '../store/treeStore'
@@ -205,6 +207,9 @@ export default function Layout({ children }: { children: ReactNode }) {
   const { user } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+
+  // Rows per page on every table (2026-10-15), see lib/tablePager.ts.
+  useEffect(() => (user ? installTablePager() : undefined), [user])
 
   // Sidebar shell (2026-08-08 rewrite: "left panel for menu and submenu
   // (icon display with detail on hover) with collapse/expand on hover
@@ -481,7 +486,9 @@ export default function Layout({ children }: { children: ReactNode }) {
             </div>
           </header>
         )}
-        <main className="app-main">
+        {/* `ui-console`: the profile-style design on every page (2026-10-15, App.css). */}
+        <main className={user ? "app-main ui-console" : "app-main"}>
+          {user && <BackToProfileBar />}
           <DtExploreStateProvider>{children}</DtExploreStateProvider>
         </main>
         {/* Docked OUTSIDE `.app-main`'s scroll area (2026-09-30, "i cant

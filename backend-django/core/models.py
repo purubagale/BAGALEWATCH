@@ -3305,6 +3305,13 @@ class TelemetrySpeedResult(models.Model):
     network_type = models.CharField(max_length=8, blank=True, default='')
     rsrp_dbm = models.IntegerField(null=True, blank=True)
     received_at = models.DateTimeField(auto_now_add=True)
+    # The connection the test used (2026-10-15): mobile data or Wi-Fi. Wi-Fi
+    # results say nothing about NTC's mobile network and are kept apart.
+    # Blank on results sent before the app tagged them.
+    BEARER_MOBILE = 'mobile'
+    BEARER_WIFI = 'wifi'
+    BEARERS = [(BEARER_MOBILE, 'Mobile data'), (BEARER_WIFI, 'Wi-Fi')]
+    bearer = models.CharField(max_length=8, choices=BEARERS, blank=True, default='')
 
     class Meta:
         db_table = 'v2_telemetry_speed_result'

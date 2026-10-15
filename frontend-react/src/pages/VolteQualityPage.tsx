@@ -14,7 +14,8 @@ const OUTCOME_LABEL: Record<CallOutcome, string> = {
 const OUTCOME_ORDER: CallOutcome[] = ['volte', 'fallback', 'legacy', 'vowifi', 'unknown']
 
 function CallsSection() {
-  const [days, setDays] = useState(7)
+  // ?days= sets the period, e.g. from Subscriber Profile (2026-10-15).
+  const [days, setDays] = useState(() => Number(new URLSearchParams(window.location.search).get('days')) || 7)
   const { data, isLoading, error } = useCallContext(days)
   const total = data?.total ?? 0
   const pct = (n: number) => (total ? `${Math.round((100 * n) / total)}%` : '-')
