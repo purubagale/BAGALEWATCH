@@ -326,6 +326,11 @@ post readings. A registered phone therefore signs its regular uploads too:
    rescue positions, drive-test consent and earlier readings keep matching.
    Without the link, signed uploads are filed under the key's own id, which
    splits the phone in two; so sign uploads only after the link succeeded.
+   The link also ties the registered number to the SDK id, so the staff
+   Device Location Trace tool (declared emergency, case reference, every
+   search logged) can find the phone's shared readings. A phone whose owner
+   withdrew rescue consent stays hidden. Rescue Lookup is unchanged: it
+   covers only phones that turned on the rescue beacon.
 3. A `401` on a signed upload means the server no longer knows the key
    (registration removed, or the app reinstalled with a new key). Go back to
    the shared key and link again after registering.

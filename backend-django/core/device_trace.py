@@ -244,7 +244,28 @@ class DeviceSdkLinkView(APIView):
         raw = str(request.data.get('sdk_device_id') or '').strip()
         if not raw or len(raw) > 128:
             return Response({'detail': 'sdk_device_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        DeviceCredential.objects.filter(pk=request.user.pk).update(sdk_device_hash=hash_device_id(raw))
+        sdk_hash = hash_device_id(raw)
+        device = request.user
+        DeviceCredential.objects.filter(pk=device.pk).update(sdk_device_hash=sdk_hash)
+        # The number also goes with the SDK id (2026-10-15, agreed with the
+        # user): shared readings are stored under it, so without this link
+        # Device Location Trace finds no position for a phone that registered
+        # but never turned on the rescue beacon. Same phone, so it takes the
+        # registration link's details and hardware key and shows as one phone.
+        # The lookup rules are unchanged: emergency only, case reference, every
+        # search logged, a withdrawn rescue consent still hides the phone.
+        msisdn = _clean_msisdn(device.msisdn)
+        if msisdn:
+            registered = SubscriberDevice.objects.filter(msisdn=msisdn, device_hash=device.device_hash).first()
+            link = link_device(
+                msisdn, sdk_hash, SubscriberDevice.VIA_REGISTRATION,
+                manufacturer=registered.manufacturer if registered else '',
+                phone_model=registered.phone_model if registered else '',
+                app_version=device.app_version,
+            )
+            if link and registered and registered.hardware_hash and not link.hardware_hash:
+                link.hardware_hash = registered.hardware_hash
+                link.save(update_fields=['hardware_hash'])
         return Response({'linked': True})
 
 
