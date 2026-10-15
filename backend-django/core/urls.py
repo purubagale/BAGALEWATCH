@@ -160,6 +160,8 @@ urlpatterns = [
     # Superadmin-controlled MFA-mandatory toggle (2026-10-02, Phase C) --
     # see SecuritySettingsView's docstring.
     path('security-settings/', views.SecuritySettingsView.as_view(), name='security-settings'),
+    path('security-settings/sms-test/', views.SmsTestView.as_view(), name='security-sms-test'),
+    path('security-settings/alert-test/', views.AlertTestView.as_view(), name='security-alert-test'),
     # Customizable Dashboard home page (2026-08-08, v2-only) — see
     # core/dashboard.py's module docstring.
     path('dashboard/', dashboard.DashboardView.as_view(), name='dashboard'),

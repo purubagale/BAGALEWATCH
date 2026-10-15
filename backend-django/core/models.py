@@ -147,6 +147,9 @@ class User(AbstractUser):
     # single account should ever legitimately span more than one operator
     # (e.g. a shared infrastructure company); the common case is one code.
     operator_mncs = models.JSONField(default=list, blank=True)
+    # The user's mobile number (2026-10-15), canonical 977..., used to send a
+    # superadmin attack alerts by SMS (core/alerts.py). Optional.
+    mobile_number = models.CharField(max_length=20, blank=True, default='')
 
     # ── Keycloak SSO (2026-08-23) ───────────────────────────────────────
     # `auth_source` exists so the UI can tell an admin that this user's role
@@ -1942,6 +1945,23 @@ class SecuritySettings(models.Model):
     that's already outside DT-WATCH's reach."""
     id = models.PositiveSmallIntegerField(primary_key=True, default=1)
     mfa_required = models.BooleanField(default=False)
+    # 2026-10-15 security audit: two-factor login forced only for the
+    # superadmin and admin roles (mfa_required forces it for everyone).
+    mfa_required_admins = models.BooleanField(default=False)
+    # Only numbers a phone proved by SMS code (core/number_verify.py) link
+    # that phone to the number in the lookups (Subscriber Profile, Device
+    # Location Trace, rescue). Off: a typed number counts, as before.
+    phone_verification_required = models.BooleanField(default=False)
+    # Attack alerts (2026-10-15, core/alerts.py): when the system blocks an
+    # address or locks an account after failed logins, tell the superadmins
+    # by email, SMS or both. Every superadmin is told by their account's
+    # email / mobile number; the extra lists (comma or line separated) add
+    # people or shared mailboxes.
+    attack_alerts_enabled = models.BooleanField(default=False)
+    alert_by_email = models.BooleanField(default=True)
+    alert_by_sms = models.BooleanField(default=False)
+    alert_extra_emails = models.TextField(blank=True, default='')
+    alert_extra_numbers = models.TextField(blank=True, default='')
 
     class Meta:
         db_table = 'v2_security_settings'
@@ -3635,6 +3655,9 @@ class DeviceCredential(models.Model):
     sdk_device_hash = models.CharField(max_length=32, blank=True, default='', db_index=True)
     public_key_pem = models.TextField()
     msisdn = models.CharField(max_length=24, blank=True, default='', db_index=True)
+    # When the phone proved it receives SMS on `msisdn` (2026-10-15,
+    # core/number_verify.py). Cleared when the number changes.
+    msisdn_verified_at = models.DateTimeField(null=True, blank=True)
     fcm_token = models.CharField(max_length=512, blank=True, default='')
     app_version = models.CharField(max_length=40, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)

@@ -32,7 +32,7 @@ from .collection import decrypted_identity, msisdn_lookup_key
 from .emergency import active_emergency
 from .models import (
     AuditEvent, CallContextSample, CollectionSession, DeviceCredential, DeviceIdentity, DeviceLocationTraceLog,
-    ProblemReport, RescueLocationAccessLog, SitePhoto, SubscriberDevice, SubscriberLastLocation,
+    ProblemReport, RescueLocationAccessLog, SecuritySettings, SitePhoto, SubscriberDevice, SubscriberLastLocation,
     TelemetryDriveTestConsent, TelemetryDriveTestSession, TelemetryPushToken, TelemetrySample,
     Site, TelemetrySpeedResult, TraceLocationSample, TraceRequest, TraceSpeedResult, VolteCallSample,
 )
@@ -81,6 +81,16 @@ class SubscriberProfileView(APIView):
         # ── Devices of this number ────────────────────────────────────────
         links = list(SubscriberDevice.objects.filter(msisdn=canonical).order_by('-last_seen_at', '-last_linked_at'))
         credentials = list(DeviceCredential.objects.filter(msisdn__in=variants).order_by('-created_at'))
+        # "Verified numbers only" (2026-10-15): a phone that only typed this
+        # number is left out and counted, not shown.
+        unproven_claims = 0
+        if SecuritySettings.objects.filter(pk=1, phone_verification_required=True).exists():
+            proven = (SubscriberDevice.VERIFIED_SMS, SubscriberDevice.VERIFIED_SIM)
+            kept_links = [link for link in links if link.number_verified_by in proven]
+            kept_creds = [c for c in credentials if c.msisdn_verified_at]
+            unproven_claims = len({link.device_hash for link in links} - {link.device_hash for link in kept_links}) \
+                + len(credentials) - len(kept_creds)
+            links, credentials = kept_links, kept_creds
         rescue_rows = list(SubscriberLastLocation.objects.filter(msisdn__in=variants))
         identities = list(DeviceIdentity.objects.filter(
             Q(msisdn_lookup=msisdn_lookup_key(canonical))
@@ -203,6 +213,9 @@ class SubscriberProfileView(APIView):
                 'registration_last_seen_at': _iso(cred.last_seen_at) if cred else None,
                 'registration_revoked_at': _iso(cred.revoked_at) if cred else None,
                 'registered_as': cred.msisdn if cred else None,
+                # Proved by SMS code (or read from the SIM), 2026-10-15.
+                'number_verified': bool((cred and cred.msisdn_verified_at) or (link and link.number_verified_by in (
+                    SubscriberDevice.VERIFIED_SMS, SubscriberDevice.VERIFIED_SIM))),
                 'signed_uploads_linked': bool(cred and cred.sdk_device_hash),
                 'push_token': device_id in push or bool(cred and cred.fcm_token),
                 'rescue_beacon': (None if not rescue else 'on' if rescue.rescue_consent else 'withdrawn'),
@@ -294,6 +307,8 @@ class SubscriberProfileView(APIView):
             'summary': {
                 'devices': len({d['device_id'] for d in devices}),
                 'registered': bool(credentials),
+                # Phones left out because they only typed this number (verified-only mode).
+                'unproven_claims': unproven_claims,
                 'first_registered_at': _iso(min((c.created_at for c in credentials), default=None)),
                 'rescue_beacon': ('on' if any(r.rescue_consent for r in rescue_rows)
                                   else 'withdrawn' if rescue_rows else None),

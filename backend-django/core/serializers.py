@@ -479,7 +479,7 @@ class UserSerializer(serializers.ModelSerializer):
         # person's next login, and the edit looks like a bug in this app.
         # `sso_subject` is deliberately NOT exposed: it is an internal
         # identity-provider identifier with no use in the UI.
-        fields = ['id', 'username', 'role', 'roles', 'name', 'dept', 'email', 'is_active',
+        fields = ['id', 'username', 'role', 'roles', 'name', 'dept', 'email', 'mobile_number', 'is_active',
                   'last_login', 'date_joined', 'auth_source', 'operator_mncs']
         read_only_fields = ['auth_source']
 
@@ -536,7 +536,8 @@ class UserWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'password', 'role', 'name', 'dept', 'email', 'is_active', 'operator_mncs']
+        fields = ['id', 'username', 'password', 'role', 'name', 'dept', 'email', 'mobile_number', 'is_active',
+                  'operator_mncs']
 
     def validate(self, attrs):
         # Matches v1: username/password/role are required on create, but
@@ -555,6 +556,19 @@ class UserWriteSerializer(serializers.ModelSerializer):
         # check only matters going forward, for the password-reset-by-
         # email lookup (PasswordResetRequestView) to resolve unambiguously
         # -- skipped entirely for a blank email (still optional).
+        # Mobile number (2026-10-15): for security alerts by SMS. Stored in
+        # the canonical 977... form; blank clears it.
+        if 'mobile_number' in attrs:
+            raw = (attrs.get('mobile_number') or '').strip()
+            if raw:
+                from .rescue import _clean_msisdn
+                clean = _clean_msisdn(raw)
+                if not clean:
+                    raise serializers.ValidationError({'mobile_number': 'Not a valid mobile number.'})
+                attrs['mobile_number'] = clean
+            else:
+                attrs['mobile_number'] = ''
+
         email = attrs.get('email')
         if email:
             existing = User.objects.filter(email__iexact=email)
@@ -813,7 +827,6 @@ class DriveTestSampleSerializer(serializers.ModelSerializer):
             'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band', 'cqi', 'cqi_estimated', 'cell_id',
             'serving_site_id', 'serving_site_name', 'serving_sector', 'serving_cell_name',
             'serving_local_cell_id', 'serving_dist_km', 'cell_role', 'rx_qual',
-            'bcch', 'bsic', 'rscp', 'ecno', 'scrambling_code',
         ]
 
 

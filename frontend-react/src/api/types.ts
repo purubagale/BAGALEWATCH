@@ -54,6 +54,8 @@ export interface Me {
   // follow-up) -- optional, application-level-unique when set (see
   // UserWriteSerializer.validate() in core/serializers.py).
   email: string
+  // For security alerts by SMS (2026-10-15), canonical 977...; '' when none.
+  mobile_number?: string
   is_active: boolean
   last_login: string | null
   date_joined: string
@@ -434,6 +436,8 @@ export interface AdminUser {
   // follow-up) -- optional, application-level-unique when set (see
   // UserWriteSerializer.validate() in core/serializers.py).
   email: string
+  // For security alerts by SMS (2026-10-15), canonical 977...; '' when none.
+  mobile_number?: string
   is_active: boolean
   last_login: string | null
   date_joined: string
@@ -453,6 +457,7 @@ export interface UserWrite {
   name: string
   dept: string
   email?: string
+  mobile_number?: string
   is_active?: boolean
   operator_mncs?: string[]
 }
@@ -2310,6 +2315,8 @@ export interface AreaSampleResults {
 // joined to DeviceIdentity for phone model/manufacturer where available.
 // Separate from RescueEnrolledRow below (a different table/consent lane).
 export interface RegisteredDeviceRow {
+  // When the phone proved its number by SMS code (2026-10-15); null when not.
+  msisdn_verified_at?: string | null
   device_hash: string
   msisdn: string | null
   app_version: string | null
@@ -2817,6 +2824,46 @@ export interface ProblemReport {
   } | null
 }
 
+// Security settings page (2026-10-15, core/views.py SecuritySettingsView).
+export interface SecuritySettings {
+  mfa_required: boolean
+  mfa_required_admins: boolean
+  phone_verification_required: boolean
+  // Attack alerts (2026-10-15, core/alerts.py): on/off and the channels.
+  attack_alerts_enabled: boolean
+  alert_by_email: boolean
+  alert_by_sms: boolean
+  // Superadmin only: extra recipients, comma separated.
+  alert_extra_emails?: string
+  alert_extra_numbers?: string
+  // Superadmin only: what .env has set (no secret values).
+  status?: {
+    alerts: {
+      email_configured: boolean
+      superadmins: number
+      superadmins_without_email: string[]
+      superadmins_without_mobile: string[]
+    }
+    sms: {
+      backend: string
+      configured: boolean
+      sends_real_sms: boolean
+      address_host: string | null
+      sender_id: string
+      encoding: string
+      method: string
+      verification_available: boolean
+    }
+    session_login: boolean
+    rate_limits: { signed_in: string | null; before_sign_in: string | null; linked_systems: string | null }
+    linked_system_hosts: string[]
+    linked_system_https_only: boolean
+    debug: boolean
+    https_redirect: boolean
+    shared_upload_key_until: string | null
+  }
+}
+
 // Linked systems and their status updates (2026-10-15, core/problem_notify.py).
 export type LinkedSystemMode = 'auto' | 'manual' | 'off'
 
@@ -3018,6 +3065,8 @@ export interface SubscriberProfileDevice {
   registration_last_seen_at: string | null
   registration_revoked_at: string | null
   registered_as: string | null
+  // Proved by SMS code or read from the SIM (2026-10-15).
+  number_verified?: boolean
   signed_uploads_linked: boolean
   push_token: boolean
   rescue_beacon: 'on' | 'withdrawn' | null
@@ -3035,6 +3084,7 @@ export interface SubscriberProfile {
   summary: {
     devices: number
     registered: boolean
+    unproven_claims?: number
     first_registered_at: string | null
     rescue_beacon: 'on' | 'withdrawn' | null
     readings: number

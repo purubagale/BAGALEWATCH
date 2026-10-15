@@ -9,6 +9,7 @@ import { canonicalSection } from '../constants/opaqueRoutes'
 import { DtExploreStateProvider } from '../contexts/DtExploreStateContext'
 import FooterLine from './FooterLine'
 import ChangePasswordModal from './ChangePasswordModal'
+import TwoFactorModal from './TwoFactorModal'
 import BackToProfileBar from './BackToProfileBar'
 import { installTablePager } from '../lib/tablePager'
 import { SearchModalContext } from '../contexts/SearchModalContext'
@@ -25,7 +26,7 @@ import { DEFAULT_ROW_LIMIT } from './RowLimitSelect'
 // rejects it server-side too, this just avoids showing a control that would
 // only ever 400). Closes on outside click and on Escape, same UX contract
 // as AdvancedSiteSearchModal's overlay click-to-dismiss.
-function UserMenu({ onChangePassword }: { onChangePassword: () => void }) {
+function UserMenu({ onChangePassword, onTwoFactor }: { onChangePassword: () => void; onTwoFactor: () => void }) {
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -67,6 +68,17 @@ function UserMenu({ onChangePassword }: { onChangePassword: () => void }) {
               }}
             >
               Change Password
+            </button>
+          )}
+          {!ssoManaged && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                onTwoFactor()
+              }}
+            >
+              Two-factor login
             </button>
           )}
           <button type="button" onClick={logout}>Sign out</button>
@@ -204,9 +216,10 @@ function SidebarNode({
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
-  const { user } = useAuth()
+  const { user, mfaSetupRequired, clearMfaSetupRequired } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+  const [twoFactorOpen, setTwoFactorOpen] = useState(false)
 
   // Rows per page on every table (2026-10-15), see lib/tablePager.ts.
   useEffect(() => (user ? installTablePager() : undefined), [user])
@@ -482,7 +495,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               >
                 {theme === 'dark' ? '☀️' : '🌙'}
               </button>
-              <UserMenu onChangePassword={() => setChangePasswordOpen(true)} />
+              <UserMenu onChangePassword={() => setChangePasswordOpen(true)} onTwoFactor={() => setTwoFactorOpen(true)} />
             </div>
           </header>
         )}
@@ -528,6 +541,14 @@ export default function Layout({ children }: { children: ReactNode }) {
       )}
 
       {changePasswordOpen && <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />}
+      {/* Two-factor login (2026-10-15): from the user menu, or forced when the
+          security settings require it and the account has not set it up. */}
+      {user && (twoFactorOpen || mfaSetupRequired) && (
+        <TwoFactorModal
+          forced={mfaSetupRequired}
+          onClose={() => { setTwoFactorOpen(false); if (mfaSetupRequired) clearMfaSetupRequired() }}
+        />
+      )}
     </div>
     </SearchModalContext.Provider>
   )

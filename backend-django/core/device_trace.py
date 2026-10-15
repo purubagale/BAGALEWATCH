@@ -199,9 +199,13 @@ class DeviceRegisterView(APIView):
 
         # One MSISDN, one active device. A conflicting claim is refused and
         # logged, never silently rebound -- rebinding is a superadmin act.
-        if DeviceCredential.objects.filter(msisdn=msisdn, revoked_at__isnull=True).exclude(
-            device_hash=device_hash,
-        ).exists():
+        # Since 2026-10-15 only a phone that PROVED the number by SMS code
+        # (core/number_verify.py) holds it this way: otherwise anyone who
+        # typed a number first could keep its real owner out. Two unproven
+        # claims may coexist; the first to verify wins.
+        if DeviceCredential.objects.filter(
+            msisdn=msisdn, revoked_at__isnull=True, msisdn_verified_at__isnull=False,
+        ).exclude(device_hash=device_hash).exists():
             logger.warning('device registration refused: msisdn already bound to another device (ip=%s)', ip)
             return Response({'detail': 'this number is already registered on another device'},
                             status=status.HTTP_409_CONFLICT)
@@ -209,13 +213,15 @@ class DeviceRegisterView(APIView):
         fcm_token = str(request.data.get('fcm_token') or '')[:512]
         app_version = str(request.data.get('app_version') or '')[:40]
         if existing:
+            if _clean_msisdn(existing.msisdn) != msisdn:
+                existing.msisdn_verified_at = None    # a new number must be proved again
             existing.msisdn = msisdn
             existing.fcm_token = fcm_token or existing.fcm_token
             existing.app_version = app_version or existing.app_version
-            existing.save(update_fields=['msisdn', 'fcm_token', 'app_version'])
-            created = False
+            existing.save(update_fields=['msisdn', 'msisdn_verified_at', 'fcm_token', 'app_version'])
+            credential, created = existing, False
         else:
-            DeviceCredential.objects.create(
+            credential = DeviceCredential.objects.create(
                 device_hash=device_hash, public_key_pem=pem, msisdn=msisdn,
                 fcm_token=fcm_token, app_version=app_version,
             )
@@ -227,7 +233,9 @@ class DeviceRegisterView(APIView):
             app_version=app_version,
             hardware_id=request.data.get('hardware_id'),
         )
-        return Response({'device_id': device_id, 'registered': True, 'created': created})
+        from .number_verify import info as verification_info
+        return Response({'device_id': device_id, 'registered': True, 'created': created,
+                         **verification_info(credential)})
 
 
 # ── Device: signed endpoints ───────────────────────────────────────────
@@ -262,6 +270,8 @@ class DeviceSdkLinkView(APIView):
                 manufacturer=registered.manufacturer if registered else '',
                 phone_model=registered.phone_model if registered else '',
                 app_version=device.app_version,
+                # A number this phone proved by SMS stays proved on its SDK id too.
+                verified_by=SubscriberDevice.VERIFIED_SMS if device.msisdn_verified_at else None,
             )
             if link and registered and registered.hardware_hash and not link.hardware_hash:
                 link.hardware_hash = registered.hardware_hash
@@ -668,6 +678,7 @@ class RegisteredDeviceListView(APIView):
             results.append({
                 'device_hash': r.device_hash,
                 'msisdn': r.msisdn or None,
+                'msisdn_verified_at': r.msisdn_verified_at,    # proved by SMS code (2026-10-15)
                 'app_version': r.app_version or None,
                 'has_fcm_token': bool(r.fcm_token),
                 'created_at': r.created_at,

@@ -5,6 +5,7 @@ import { isAllowed } from '../api/types'
 import type { RfAuditFinding } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { renderMarkdown } from '../lib/markdown'
+import { safeHtml } from '../lib/safeHtml'
 
 // Ports v1's RF Site Audit tool (bts_monitor.html's openAuditModal() and
 // friends, ~line 11655-12167) as a full page instead of a modal, same
@@ -565,7 +566,7 @@ export default function RfAuditPage() {
           </div>
           {savedMsg && <div className="form-success">{savedMsg}</div>}
           {saveErr && <div className="form-error">{saveErr}</div>}
-          <div className="md-report" dangerouslySetInnerHTML={{ __html: renderMarkdown(reportMarkdown) }} />
+          <div className="md-report" dangerouslySetInnerHTML={{ __html: safeHtml(renderMarkdown(reportMarkdown)) }} />
 
           {canManageAudit && (
             <div style={{ marginTop: 20 }}>
@@ -591,7 +592,7 @@ export default function RfAuditPage() {
                         {expandedHistoryId === h.id && (
                           <tr>
                             <td colSpan={4}>
-                              <div className="md-report" dangerouslySetInnerHTML={{ __html: renderMarkdown(h.content) }} />
+                              <div className="md-report" dangerouslySetInnerHTML={{ __html: safeHtml(renderMarkdown(h.content)) }} />
                             </td>
                           </tr>
                         )}

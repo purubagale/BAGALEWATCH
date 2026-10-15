@@ -1,0 +1,76 @@
+# Security scan (2026-10-15 security audit). Runs on every push and pull
+# request to the working branches, every Monday, and by hand (Actions tab,
+# "Run workflow").
+#
+#   python-packages  pip-audit: known vulnerabilities in backend-django/requirements.txt
+#   npm-packages     npm audit: known vulnerabilities in the web app's production packages
+#   secrets          gitleaks: passwords, keys or tokens committed by mistake
+#   python-code      bandit: risky code patterns in the backend (report only)
+#
+# The first three fail the run when they find something; fix or upgrade
+# before merging. bandit only reports, because some of what it flags is
+# deliberate (for example the fixed column lists in raw SQL).
+name: Security scan
+
+on:
+  push:
+    branches: [main, telemetry]
+  pull_request:
+    branches: [main, telemetry]
+  schedule:
+    - cron: '30 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: pip-audit
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip-audit --requirement backend-django/requirements.txt --progress-spinner off
+
+  npm-packages:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-react
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: npm audit (production packages, high and critical)
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm audit --omit=dev --audit-level=high
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  python-code:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: bandit (report only)
+        run: |
+          python -m pip install --upgrade pip bandit
+          bandit -r backend-django/core -x backend-django/core/migrations,backend-django/core/tests.py,backend-django/core/tests_sso.py -ll || true

@@ -83,6 +83,13 @@ def maybe_auto_block(request, ip):
         from .auth_log import log_auth_event
         log_auth_event(request, AuthEventLog.EVENT_LOGIN_IP_BLOCKED, detail=reason)
         log_audit_event(request, 'IP.AUTO_BLOCKED', resource='blocked_ip', resource_id=ip, detail=reason)
+        # Tell the superadmins (2026-10-15, core/alerts.py), with the account
+        # names that were tried from this address.
+        tried = sorted({u for u in AuthEventLog.objects.filter(
+            ip_address=ip, created_at__gte=window_start).values_list('username', flat=True) if u})[:10]
+        from .alerts import attack_alert
+        attack_alert('ip_blocked', ip, f'address {ip} blocked after failed logins',
+                     f'{reason}.\nAccount names tried: {", ".join(tried) or "none given"}.')
     except Exception:
         import logging
         logging.getLogger(__name__).exception('maybe_auto_block failed for ip=%s', ip)

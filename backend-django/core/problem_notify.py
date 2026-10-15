@@ -34,11 +34,14 @@ body is built from the report as it is at sending time.
     POST       /api/v2/problem-reports/<id>/notify/      "Send update", admin
 """
 import hashlib
+import ipaddress
 import hmac
 import json
 import secrets
+import socket
 import time
 from datetime import timedelta
+from urllib.parse import urlparse
 
 import requests
 from django.db import IntegrityError
@@ -62,6 +65,41 @@ def new_secret():
     return secrets.token_hex(24)
 
 
+# This stack's own services: an update must never be aimed at them.
+_INTERNAL_NAMES = {'localhost', 'db', 'redis', 'django', 'frontend'}
+
+
+def check_address(url):
+    """Why an update address is refused, or None (2026-10-15 security audit).
+    Checked when it is saved and again before every send, because a name can
+    later point somewhere else. Rules: http(s) only, https only unless
+    LINKED_SYSTEM_HTTPS_ONLY=0, the host must match LINKED_SYSTEM_ALLOWED_HOSTS
+    when that is set ("*.ntc.net.np" matches every name under it), and never
+    this server, its internal services, or a loopback, link-local (cloud
+    metadata), multicast or unspecified address."""
+    from django.conf import settings as s
+    parsed = urlparse(url or '')
+    if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+        return 'The address must start with http:// or https:// and name a host.'
+    if s.LINKED_SYSTEM_HTTPS_ONLY and parsed.scheme != 'https':
+        return 'Only https:// addresses are allowed (LINKED_SYSTEM_HTTPS_ONLY).'
+    host = parsed.hostname.lower().rstrip('.')
+    if host in _INTERNAL_NAMES:
+        return 'That address is this server itself.'
+    allowed = s.LINKED_SYSTEM_ALLOWED_HOSTS
+    if allowed and not any(host == a or (a.startswith('*.') and host.endswith(a[1:])) for a in allowed):
+        return f'{host} is not in the allowed hosts (LINKED_SYSTEM_ALLOWED_HOSTS).'
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == 'https' else 80))
+    except OSError:
+        return f'{host} cannot be found.'
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
+            return f'{host} points at an address updates may not go to ({ip}).'
+    return None
+
+
 def _payload(report, event, system):
     from .external_problem import _status_row
     return {'event': event, 'system': system, 'sent_at': timezone.now().isoformat(),
@@ -70,11 +108,14 @@ def _payload(report, event, system):
 
 def _post(system, body):
     """(response code or None, error text) for one signed POST."""
+    refused = check_address(system.notify_url)
+    if refused:
+        return None, refused
     stamp = str(int(time.time()))
     raw = json.dumps(body, separators=(',', ':')).encode('utf-8')
     signature = hmac.new(system.notify_secret.encode(), stamp.encode() + b'.' + raw, hashlib.sha256).hexdigest()
     try:
-        resp = requests.post(system.notify_url, data=raw, timeout=SEND_TIMEOUT_SECONDS, headers={
+        resp = requests.post(system.notify_url, data=raw, timeout=SEND_TIMEOUT_SECONDS, allow_redirects=False, headers={
             'Content-Type': 'application/json',
             'User-Agent': 'DT-WATCH problem updates',
             'X-DTWatch-Timestamp': stamp,
@@ -177,8 +218,9 @@ def _clean(data, partial):
         out['name'] = name
     if 'notify_url' in data:
         url = str(data.get('notify_url') or '').strip()
-        if url and not url.lower().startswith(('http://', 'https://')):
-            return None, 'The address must start with http:// or https://.'
+        refused = check_address(url) if url else None
+        if refused:
+            return None, refused
         out['notify_url'] = url[:500]
     if 'notify_mode' in data:
         mode = data.get('notify_mode')

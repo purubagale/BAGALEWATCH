@@ -631,109 +631,116 @@ class ProblemDashboardView(APIView):
 
     def get(self, request):
         days = _int(request.query_params.get('days'), 1, 3650) or 30
-        now = timezone.now()
-        since = now - timedelta(days=days)
-        window = ProblemReport.objects.filter(happened_at__gte=since)
+        return Response(dashboard_data(days))
 
+
+def dashboard_data(days, classify=True):
+    """The dashboard's figures for the last `days` days. Also read by the
+    summaries that need the same figures, with classify=False."""
+    now = timezone.now()
+    since = now - timedelta(days=days)
+    window = ProblemReport.objects.filter(happened_at__gte=since)
+
+    if classify:
         classify_pending(DASHBOARD_CLASSIFY_SECONDS, since=since)
-        pending = window.filter(classified_at__isnull=True).count()
+    pending = window.filter(classified_at__isnull=True).count()
 
-        reports = list(window.select_related('site').order_by('-happened_at'))
-        categories = dict(ProblemReport.CATEGORIES)
-        statuses = {'new': 0, 'checked': 0, 'closed': 0}
-        sources, causes, cats, techs, bands, districts = {}, {}, {}, {}, {}, {}
-        per_day = {}
-        hours_to_check, overdue, oldest_open = [], 0, None
-        spots = {}
-        for r in reports:
-            statuses[r.status] = statuses.get(r.status, 0) + 1
-            _count(sources, r.external_system or r.get_source_display())
-            _count(causes, r.cause or 'unchecked')
-            _count(cats, r.category)
-            _count(techs, _TECH.get(r.network_type) or ('Not known' if r.source == 'staff' else r.network_type or 'Not known'))
-            if r.band:
-                _count(bands, r.band)
-            _count(districts, (r.site.district if r.site_id and r.site.district else 'Not known'))
-            day = r.happened_at.astimezone(NEPAL_TZ).date().isoformat()
-            per_day.setdefault(day, {})
-            _count(per_day[day], r.category)
-            if r.status == 'new':
-                if oldest_open is None or r.created_at < oldest_open:
-                    oldest_open = r.created_at
-                if now - r.created_at > timedelta(hours=OVERDUE_HOURS):
-                    overdue += 1
-            elif r.checked_at:
-                hours_to_check.append((r.checked_at - r.created_at).total_seconds() / 3600)
+    reports = list(window.select_related('site').order_by('-happened_at'))
+    categories = dict(ProblemReport.CATEGORIES)
+    statuses = {'new': 0, 'checked': 0, 'closed': 0}
+    sources, causes, cats, techs, bands, districts = {}, {}, {}, {}, {}, {}
+    per_day = {}
+    hours_to_check, overdue, oldest_open = [], 0, None
+    spots = {}
+    for r in reports:
+        statuses[r.status] = statuses.get(r.status, 0) + 1
+        _count(sources, r.external_system or r.get_source_display())
+        _count(causes, r.cause or 'unchecked')
+        _count(cats, r.category)
+        _count(techs, _TECH.get(r.network_type) or ('Not known' if r.source == 'staff' else r.network_type or 'Not known'))
+        if r.band:
+            _count(bands, r.band)
+        _count(districts, (r.site.district if r.site_id and r.site.district else 'Not known'))
+        day = r.happened_at.astimezone(NEPAL_TZ).date().isoformat()
+        per_day.setdefault(day, {})
+        _count(per_day[day], r.category)
+        if r.status == 'new':
+            if oldest_open is None or r.created_at < oldest_open:
+                oldest_open = r.created_at
+            if now - r.created_at > timedelta(hours=OVERDUE_HOURS):
+                overdue += 1
+        elif r.checked_at:
+            hours_to_check.append((r.checked_at - r.created_at).total_seconds() / 3600)
 
-            if r.site_id:
-                key = f'site:{r.site_id}'
-                spot = spots.get(key) or spots.setdefault(key, {
-                    'key': key, 'kind': 'site', 'site_id': r.site_id, 'name': r.site.name,
-                    'district': r.site.district or '', 'lat': r.site.lat, 'lng': r.site.lng,
-                })
-            else:
-                lat0 = math.floor(r.lat / AREA_DEG) * AREA_DEG
-                lng0 = math.floor(r.lng / AREA_DEG) * AREA_DEG
-                key = f'area:{lat0:.3f},{lng0:.3f}'
-                spot = spots.get(key) or spots.setdefault(key, {
-                    'key': key, 'kind': 'area', 'site_id': None, 'name': f'Area near {lat0:.3f}, {lng0:.3f}',
-                    'district': '', 'lat': lat0 + AREA_DEG / 2, 'lng': lng0 + AREA_DEG / 2,
-                    'area': f'{lat0:.3f},{lng0:.3f}',
-                })
-            spot['count'] = spot.get('count', 0) + 1
-            spot['open'] = spot.get('open', 0) + (r.status == 'new')
-            spot.setdefault('causes', {})
-            _count(spot['causes'], r.cause or 'unchecked')
-            spot.setdefault('sectors', {})
-            if r.sector:
-                _count(spot['sectors'], r.sector)
-            spot.setdefault('levels', []).append(r.level_dbm)
-            if 'latest_at' not in spot:
-                spot['latest_at'] = r.happened_at.isoformat()   # newest first
-
-        cause_labels = dict(CAUSE_LABELS, unchecked='Not checked yet')
-        hotspots = []
-        for spot in sorted(spots.values(), key=lambda s: (-s['count'], -s['open'], s['key']))[:25]:
-            top = max(spot['causes'].items(), key=lambda kv: kv[1])[0]
-            hotspots.append({
-                **{k: v for k, v in spot.items() if k not in ('causes', 'sectors', 'levels')},
-                'top_cause': top, 'top_cause_label': cause_labels.get(top, top),
-                'causes': _ranked(spot['causes'], cause_labels),
-                'sectors': _ranked(spot['sectors'], top=5),
-                'level_mean': _mean(spot['levels']),
+        if r.site_id:
+            key = f'site:{r.site_id}'
+            spot = spots.get(key) or spots.setdefault(key, {
+                'key': key, 'kind': 'site', 'site_id': r.site_id, 'name': r.site.name,
+                'district': r.site.district or '', 'lat': r.site.lat, 'lng': r.site.lng,
             })
+        else:
+            lat0 = math.floor(r.lat / AREA_DEG) * AREA_DEG
+            lng0 = math.floor(r.lng / AREA_DEG) * AREA_DEG
+            key = f'area:{lat0:.3f},{lng0:.3f}'
+            spot = spots.get(key) or spots.setdefault(key, {
+                'key': key, 'kind': 'area', 'site_id': None, 'name': f'Area near {lat0:.3f}, {lng0:.3f}',
+                'district': '', 'lat': lat0 + AREA_DEG / 2, 'lng': lng0 + AREA_DEG / 2,
+                'area': f'{lat0:.3f},{lng0:.3f}',
+            })
+        spot['count'] = spot.get('count', 0) + 1
+        spot['open'] = spot.get('open', 0) + (r.status == 'new')
+        spot.setdefault('causes', {})
+        _count(spot['causes'], r.cause or 'unchecked')
+        spot.setdefault('sectors', {})
+        if r.sector:
+            _count(spot['sectors'], r.sector)
+        spot.setdefault('levels', []).append(r.level_dbm)
+        if 'latest_at' not in spot:
+            spot['latest_at'] = r.happened_at.isoformat()   # newest first
 
-        start_day = since.astimezone(NEPAL_TZ).date()
-        series = []
-        for i in range(days + 1):
-            day = (start_day + timedelta(days=i)).isoformat()
-            series.append({'date': day, **{k: per_day.get(day, {}).get(k, 0) for k in categories}})
-
-        hours_to_check.sort()
-        return Response({
-            'days': days,
-            'generated_at': now.isoformat(),
-            'pending': pending,
-            'totals': {
-                'all': len(reports), **statuses,
-                'app': sum(r.source == 'app' for r in reports), 'staff': sum(r.source == 'staff' for r in reports),
-                'external': sum(r.source == 'external' for r in reports),
-                'overdue': overdue, 'overdue_hours': OVERDUE_HOURS,
-                'oldest_open_at': oldest_open.isoformat() if oldest_open else None,
-                'median_hours_to_check': round(hours_to_check[len(hours_to_check) // 2], 1) if hours_to_check else None,
-            },
-            'categories': [{'key': k, 'label': v} for k, v in ProblemReport.CATEGORIES],
-            'per_day': series,
-            # Where reports came from: the app, staff, or each linked system by name.
-            'by_source': _ranked(sources),
-            'by_cause': _ranked(causes, cause_labels),
-            'by_category': _ranked(cats, categories),
-            'by_tech': _ranked(techs),
-            'by_band': _ranked(bands, top=8),
-            'by_district': _ranked(districts, top=10),
-            'hotspots': hotspots,
-            'points': [{
-                'id': r.id, 'lat': r.lat, 'lng': r.lng, 'cause': r.cause, 'category': r.category,
-                'status': r.status, 'happened_at': r.happened_at.isoformat(), 'site_id': r.site_id,
-            } for r in reports[:3000]],
+    cause_labels = dict(CAUSE_LABELS, unchecked='Not checked yet')
+    hotspots = []
+    for spot in sorted(spots.values(), key=lambda s: (-s['count'], -s['open'], s['key']))[:25]:
+        top = max(spot['causes'].items(), key=lambda kv: kv[1])[0]
+        hotspots.append({
+            **{k: v for k, v in spot.items() if k not in ('causes', 'sectors', 'levels')},
+            'top_cause': top, 'top_cause_label': cause_labels.get(top, top),
+            'causes': _ranked(spot['causes'], cause_labels),
+            'sectors': _ranked(spot['sectors'], top=5),
+            'level_mean': _mean(spot['levels']),
         })
+
+    start_day = since.astimezone(NEPAL_TZ).date()
+    series = []
+    for i in range(days + 1):
+        day = (start_day + timedelta(days=i)).isoformat()
+        series.append({'date': day, **{k: per_day.get(day, {}).get(k, 0) for k in categories}})
+
+    hours_to_check.sort()
+    return {
+        'days': days,
+        'generated_at': now.isoformat(),
+        'pending': pending,
+        'totals': {
+            'all': len(reports), **statuses,
+            'app': sum(r.source == 'app' for r in reports), 'staff': sum(r.source == 'staff' for r in reports),
+            'external': sum(r.source == 'external' for r in reports),
+            'overdue': overdue, 'overdue_hours': OVERDUE_HOURS,
+            'oldest_open_at': oldest_open.isoformat() if oldest_open else None,
+            'median_hours_to_check': round(hours_to_check[len(hours_to_check) // 2], 1) if hours_to_check else None,
+        },
+        'categories': [{'key': k, 'label': v} for k, v in ProblemReport.CATEGORIES],
+        'per_day': series,
+        # Where reports came from: the app, staff, or each linked system by name.
+        'by_source': _ranked(sources),
+        'by_cause': _ranked(causes, cause_labels),
+        'by_category': _ranked(cats, categories),
+        'by_tech': _ranked(techs),
+        'by_band': _ranked(bands, top=8),
+        'by_district': _ranked(districts, top=10),
+        'hotspots': hotspots,
+        'points': [{
+            'id': r.id, 'lat': r.lat, 'lng': r.lng, 'cause': r.cause, 'category': r.category,
+            'status': r.status, 'happened_at': r.happened_at.isoformat(), 'site_id': r.site_id,
+        } for r in reports[:3000]],
+    }

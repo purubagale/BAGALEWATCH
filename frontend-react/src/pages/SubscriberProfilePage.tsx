@@ -292,6 +292,7 @@ function Profile({ p, out }: { p: SubscriberProfile; out: (key: string, extra?: 
                 <div className="sp-device-id" title={d.device_id}>{d.device_id}</div>
                 <div className="sp-device-chips">
                   <span className={`sp-chip ${d.registered_at ? (d.registration_revoked_at ? 'bad' : 'ok') : ''}`}>{d.registered_at ? (d.registration_revoked_at ? 'Registration revoked' : 'Registered') : 'Not registered'}</span>
+                  <span className={`sp-chip ${d.number_verified ? 'ok' : ''}`} title="Proved by a code sent by SMS to this number">{d.number_verified ? 'Number verified' : 'Number not verified'}</span>
                   {d.rescue_beacon && <span className={`sp-chip ${d.rescue_beacon === 'on' ? 'ok' : 'bad'}`}>Rescue {d.rescue_beacon}</span>}
                   {d.push_token && <span className="sp-chip info">Push</span>}
                   {d.signed_uploads_linked && <span className="sp-chip info">Signed uploads</span>}
@@ -501,6 +502,7 @@ export default function SubscriberProfilePage() {
           <div className="sp-ident">
             <span className="sp-msisdn">{data.msisdn}</span>
             <span className={`sp-chip ${s.registered ? 'ok' : ''}`}>{s.registered ? `Registered ${fmtDate(s.first_registered_at)}` : 'Not registered'}</span>
+            {!!s.unproven_claims && <span className="sp-chip bad" title="Only verified numbers count (Security settings)">{s.unproven_claims} unverified phone{s.unproven_claims === 1 ? '' : 's'} left out</span>}
             <span className={`sp-chip ${s.rescue_beacon === 'on' ? 'ok' : s.rescue_beacon === 'withdrawn' ? 'bad' : ''}`}>
               Rescue beacon {s.rescue_beacon === 'on' ? 'on' : s.rescue_beacon === 'withdrawn' ? 'withdrawn' : 'never'}
             </span>

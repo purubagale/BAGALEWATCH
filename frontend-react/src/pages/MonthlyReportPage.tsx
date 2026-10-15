@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { apiErrorMessage } from '../api/client'
 import { useMonthlyReport, useSites } from '../api/queries'
 import { renderMarkdown } from '../lib/markdown'
+import { safeHtml } from '../lib/safeHtml'
 
 function monthOptions(): { value: string; label: string }[] {
   const now = new Date()
@@ -78,7 +79,7 @@ export default function MonthlyReportPage() {
           <p className="muted">
             {report.meta.site_count} sites · {report.meta.region === 'all' ? 'All regions' : report.meta.region} · {report.meta.month_name}
           </p>
-          <div className="md-report" dangerouslySetInnerHTML={{ __html: renderMarkdown(report.markdown) }} />
+          <div className="md-report" dangerouslySetInnerHTML={{ __html: safeHtml(renderMarkdown(report.markdown)) }} />
         </>
       )}
     </div>

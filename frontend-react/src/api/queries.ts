@@ -4,7 +4,7 @@ import { ApiError, apiFetch, apiJson } from './client'
 import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
   SiteMeasuredCoverage,
 } from './types'
-import type { LinkedSystem, ProblemDashboard, ProblemNotificationRow, ProblemReport } from './types'
+import type { LinkedSystem, ProblemDashboard, ProblemNotificationRow, ProblemReport, SecuritySettings } from './types'
 import type { DtPruneRun, DtPurpose, DtRecentResponse, DtRetentionSettings } from './types'
 import type {
   CollectionSessionRow,
@@ -1967,6 +1967,40 @@ export function useProblemReports(params: {
   return useQuery({
     queryKey: ['problem-reports', qs.toString()],
     queryFn: () => apiJson<{ results: ProblemReport[] }>(`/api/v2/problem-reports/?${qs.toString()}`),
+  })
+}
+
+// Security settings (2026-10-15): the switches and, for a superadmin, what is in effect.
+export function useSecuritySettings() {
+  return useQuery({
+    queryKey: ['security-settings'],
+    queryFn: () => apiJson<SecuritySettings>('/api/v2/security-settings/'),
+  })
+}
+
+export function useSaveSecuritySettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Partial<Omit<SecuritySettings, 'status'>>) =>
+      apiJson<SecuritySettings>('/api/v2/security-settings/', { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: (data) => qc.setQueryData(['security-settings'], data),
+  })
+}
+
+export function useAlertTest() {
+  return useMutation({
+    mutationFn: () =>
+      apiJson<{ emails: number; numbers: number; email: string | null; sms: string | null }>(
+        '/api/v2/security-settings/alert-test/', { method: 'POST', body: '{}' }),
+  })
+}
+
+export function useSmsTest() {
+  return useMutation({
+    mutationFn: (msisdn: string) =>
+      apiJson<{ sent: boolean; message: string }>('/api/v2/security-settings/sms-test/', {
+        method: 'POST', body: JSON.stringify({ msisdn }),
+      }),
   })
 }
 

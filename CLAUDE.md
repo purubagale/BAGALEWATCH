@@ -824,6 +824,64 @@ repo, not on prod):
   0136-0140 (local history renamed). Tested with a local receiver in a
   rolled-back transaction. Prod needs outbound HTTP from the django
   container to each system's address.
+- **Security audit follow-up** (2026-10-15, built, NOT committed in either
+  repo, not on prod). Asked by the user after a public-exposure audit.
+  - SECRET_KEY: with DEBUG off the server refuses to start on the default,
+    a key under 50 characters or a repetitive one. Note `.env` here has
+    `DEBUG=True`, which settings read as off (only `1` is on).
+  - Rate limits: `core/throttles.py` (per user `API_USER_RATE` 1200/min,
+    per address `API_ANON_RATE` 120/min; `/api/telemetry/` and
+    `/api/external/` exempt), keyed on X-Real-IP. nginx `limit_req` 30/min
+    burst 30 on `/api/v2/auth/`. nginx now sets the real client address
+    from X-Forwarded-For when the peer is a private address (Traefik,
+    Docker): before, behind Traefik every user had Traefik's address, so
+    three failed logins by anyone could IP-block the whole site.
+  - Browser session login off unless DEBUG or `API_SESSION_AUTH=1`.
+  - Linked-system update addresses: `check_address` (https only unless
+    `LINKED_SYSTEM_HTTPS_ONLY=0`, `LINKED_SYSTEM_ALLOWED_HOSTS` with
+    `*.domain`, never loopback/link-local/internal service names; checked
+    on save and every send; no redirects). A local http test receiver is
+    therefore refused now.
+  - SheetJS from `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`,
+    DOMPurify 3.4 (`lib/safeHtml.ts`) on every `dangerouslySetInnerHTML`;
+    `npm audit --omit=dev` reports 0.
+  - Two-factor login: the backend existed (Phase C) but the web app had
+    no screens, and a TOTP-enrolled account could not sign in. Now: code
+    step on the login page, `TwoFactorModal` (user menu, and forced when
+    required), `SecuritySettings.mfa_required_admins`.
+  - Phone number verification by SMS (Phase G seam): `core/sms.py`
+    (`SMS_BACKEND` off/console/http/ntc, every gateway detail in `.env`,
+    see settings.py), `core/number_verify.py` (signed device endpoints,
+    6-digit code, 10 min, 5 tries, hashed in Redis), registration answer
+    carries the flags, `DeviceCredential.msisdn_verified_at`, only a
+    verified owner blocks a number, `SecuritySettings
+    .phone_verification_required` filters `devices_for_msisdn` and the
+    Subscriber Profile to SMS/SIM-proved links. Local `.env` has
+    `SMS_BACKEND=console` for testing. App: `NumberVerify.kt`, built, APK
+    on the Desktop, not run on a phone.
+  - Security page (superadmin, `/s9k4tq`, migration 0136 with the menu
+    seed): the three switches, SMS gateway status and test SMS, and what
+    .env has in effect. AI migrations are now 0137-0142.
+  - `log_audit_event` no longer fails when a phone (DeviceCredential) is
+    the caller.
+  - Tested in a rolled-back transaction with a throwaway signed phone:
+    every check passed.
+  - **Attack alerts** (same day, asked by the user): `core/alerts.py`.
+    An address newly auto-blocked (`ip_block.maybe_auto_block`) or a real
+    account reaching the 5-failure lockout (`LoginView`) alerts every
+    active superadmin by the email and the new `User.mobile_number` on
+    their account (Users page), plus extra recipients; one alert per
+    address/account an hour; sent in a background thread; written to the
+    Audit Log (`ATTACK_ALERT.SENT`). Security page "Attack alerts": on/off,
+    channels Email / SMS / both, extra emails and numbers, "Send a test
+    alert", warnings for no EMAIL_HOST, no SMS gateway, superadmins with
+    no email or mobile. Migration 0137 (AI migrations now 0138-0143).
+    Tested in a rolled-back transaction (alerts sent in place).
+  - **CI**: `.github/dependabot.yml` (pip, npm except xlsx, both
+    Dockerfiles, Actions; against `telemetry`) and
+    `.github/workflows/security-scan.yml` (pip-audit, npm audit high,
+    gitleaks fail the run; bandit reports only). pip-audit run here found
+    nothing. Not yet run on GitHub.
 - **Rows per page on every table** (2026-10-15, built). `lib/tablePager.ts`,
   installed by `Layout.tsx`, watches the page and pages any table with more
   than 10 rows: rows outside the page are hidden (never removed, so sorting,
