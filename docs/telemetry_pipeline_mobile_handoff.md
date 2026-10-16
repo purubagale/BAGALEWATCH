@@ -736,10 +736,13 @@ NetTelemetry.setDriveTestConsent(true)
 | `minHandoverSampleIntervalSeconds` | 120 | Gap between cell-change readings |
 | `rescueEnrollUrl`, `driveTestConsentUrl`, `driveTestConsentMessageUrl`, `speedSamplesUrl`, `pushTokenUrl`, `callSamplesUrl` | null | Each feature is off until its URL is set |
 | `defaultOptIn` | false | Keep false unless the app's own terms cover collection from install |
+| `deviceApiUrl` | null | Base of the device endpoints; null takes it from `endpointUrl` |
 
-Trace requests, registration and site photos live in the reference app
-(`TraceApi`, `DeviceKeys`, `TraceRegisterWorker`, `TracePush`,
-`TraceSharingService`, `SitePhotoActivity`), not in the SDK.
+Registration, signing, number verification, speed test and problem report
+are in the SDK (`device` package, section 14.6). The trace request screens
+and service and the site photo screen stay in the reference app
+(`TracePush`, `TraceSharingService`, `SitePhotoActivity`) and call the SDK's
+`DeviceApi`.
 
 ### 14.4 Permissions
 
@@ -760,6 +763,94 @@ Trace requests, registration and site photos live in the reference app
 - iOS does not expose cell or signal figures to apps, so there is no iOS
   equivalent of the signal collection.
 
+### 14.6 Using the SDK from the Nepal Telecom app (Flutter)
+
+The Nepal Telecom customer app (`shirantech.android.nepaltelecom`, 4.0.49
+checked on 16 October 2026) is a Flutter app: its APK carries
+`libflutter.so`, `libapp.so` and `assets/flutter_assets`. The proposal is to
+add NTC telemetry to that app as a **Flutter plugin**, not to rewrite either
+side. On Android the plugin calls the Kotlin SDK as it is; on iOS it offers
+only what Apple allows.
+
+**What each platform can do**
+
+| Feature | Android | iOS |
+|---|---|---|
+| Signal level, quality, serving and neighbour cells, band | Yes | No: iOS has no API for these |
+| Network type (4G, 5G, 3G) | Yes | Yes, coarse |
+| Shared readings with position | Yes | Position and network type only, while the app is open or with "Always" location |
+| Drive test | Yes | Route and speed only |
+| Collector (a reading every 15 s all day) | Yes | No: iOS suspends background work |
+| Speed test over mobile data, also while on Wi-Fi | Yes | Yes |
+| Report a problem | Yes, with the reading | Yes, without signal figures |
+| Register the phone and sign requests (EC P-256 key) | Android Keystore | Secure Enclave, same key type and signature |
+| Prove the number by SMS code | Yes | Yes. iOS cannot read the number from the SIM, so the user always types it |
+| Device check at registration | Play Integrity | App Attest |
+| Push: reading requests, location requests | FCM | FCM through Apple's push service |
+| Rescue position during a declared emergency | Yes | Yes |
+| Calls (voice network during a call) | Yes | Start and end only |
+
+The server needs no change for iOS. A reading with no radio fields is
+already accepted, and the signing scheme (section 7.2) is the same.
+
+**Device features are in the SDK (16 October 2026).** Registration,
+signing, number verification, speed test and problem report used to live in
+the reference app. They are now in the SDK's `np.nepaltelecom.telemetry.device`
+package, without any screen, and the reference app calls them:
+
+```kotlin
+NetDevice.register(context, msisdn, userType = "general") { ok, error -> }  // key, registration, retry, sdk-link
+NetDevice.isRegistered(context); NetDevice.number(context)
+NetDevice.sendNumberCode(context); NetDevice.confirmNumberCode(context, code)  // blocking
+NetDevice.setOnRegistered { ctx -> /* e.g. upload the push token */ }
+SpeedTest.runOnMobileData(context, fallback = false); SpeedTest.runOnWifi(context)  // blocking
+NetProblem.send(context, category, note)   // blocking; reading + speed test + report
+ProblemHints.explain(sample, speed)        // the on-phone likely cause
+DeviceApi.*                                // the raw device endpoints
+```
+
+The server address comes from `TelemetryConfig.deviceApiUrl`, or from
+`endpointUrl` when that is null. The SDK signs its own uploads once the phone
+is registered (a provider in its manifest installs the signer), so a host
+app needs no setup for that. The stored state and the key alias are the ones
+the reference app used, so phones registered with an older build stay
+registered.
+
+**Plugin layout** (one Flutter package, e.g. `ntc_telemetry`)
+
+- `lib/ntc_telemetry.dart`: the Dart calls below, over a method channel and
+  an event channel for live readings.
+- `android/`: Kotlin, depends on the SDK `.aar`, forwards each call.
+- `ios/`: Swift. Location (Core Location), network type (Core Telephony),
+  speed test (`URLSession` limited to cellular), key and signing (Secure
+  Enclave, CryptoKit), App Attest, upload queue. Same endpoints and request
+  body as Android.
+- `example/`: a small app to test the plugin by itself.
+
+```dart
+await NtcTelemetry.init(endpoint: '...', apiKey: null);  // key-less once signed uploads are required
+await NtcTelemetry.register(msisdn: '98XXXXXXXX');
+await NtcTelemetry.sendNumberCode(); await NtcTelemetry.confirmNumberCode('123456');
+await NtcTelemetry.startShare(minutes: 60); await NtcTelemetry.stopShare();
+await NtcTelemetry.startDriveTest(share: true); await NtcTelemetry.stopDriveTest();
+final r = await NtcTelemetry.speedTest(bearer: Bearer.mobile);
+final p = await NtcTelemetry.reportProblem(category: 'slow_data', note: '...');
+NtcTelemetry.liveReadings.listen((s) { /* null signal fields on iOS */ });
+final caps = await NtcTelemetry.capabilities();  // what this platform supports
+```
+
+`capabilities()` lets the app hide what a platform cannot do, rather than
+the app checking for iOS itself.
+
+**Where it fits in the customer app.** The app already has a complaint
+screen; "Report a problem" can sit there and send the reading and a speed
+test with the complaint. The app's own login knows the customer's number,
+which can feed `register` (SMS verification still proves it on the phone).
+
+**Building.** The Android side builds on any PC with the Flutter SDK. The
+iOS side needs a Mac with Xcode (or a hosted macOS build service) and NTC's
+Apple developer account for signing, App Attest and push.
+
 ## 15. What is open
 
 | Item | Who | Why it matters |
@@ -773,6 +864,8 @@ Trace requests, registration and site photos live in the reference app
 | Public route to the device API | NTC network team | The live server is reachable only inside NTC or over VPN |
 | Push end to end on the live server | Puru | A reading request was not delivered on 12 October 2026 |
 | Publishing | App team | The app is installed on a few test phones only |
+| Flutter plugin for the Nepal Telecom app (section 14.6) | App team, Puru | Brings telemetry to the customer app on both platforms without a rewrite |
+| Mac, Xcode and NTC's Apple developer account | NTC | Needed to build, sign and test the iOS side |
 
 ## 16. Who to ask
 
