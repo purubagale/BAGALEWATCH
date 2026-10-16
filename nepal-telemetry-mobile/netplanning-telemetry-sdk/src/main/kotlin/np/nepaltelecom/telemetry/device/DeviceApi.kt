@@ -1,4 +1,4 @@
-package np.nepaltelecom.telemetry.demo
+package np.nepaltelecom.telemetry.device
 
 import android.os.Build
 import android.util.Base64
@@ -11,13 +11,32 @@ import java.net.URL
 import java.security.SecureRandom
 
 /**
- * Calls to the dtwatch device endpoints (2026-10-05): registration, identity,
- * the trace request inbox, trace samples, and the trace speed test. Blocking.
+ * Calls to the dtwatch device endpoints (2026-10-05; in the SDK since
+ * 2026-10-16): registration, number check, identity, the trace request inbox,
+ * trace samples and speed test, site photos and problem reports. Blocking.
  * Call it from a background thread.
+ *
+ * The address comes from [np.nepaltelecom.telemetry.TelemetryConfig]: its
+ * `deviceApiUrl`, or else the part of `endpointUrl` up to and including
+ * `/api/telemetry/v1/`. [np.nepaltelecom.telemetry.NetTelemetry.init] sets it.
  */
-object TraceApi {
-    private const val HOST = "https://dtwatch.ntc.net.np"
-    private const val BASE = "/api/telemetry/v1/"
+object DeviceApi {
+    private const val API_ROOT = "/api/telemetry/v1/"
+
+    @Volatile
+    private var base: String? = null
+
+    /** Sets the base address of the device endpoints, ending in "/". */
+    fun configure(deviceApiUrl: String?, endpointUrl: String) {
+        base = deviceApiUrl?.let { if (it.endsWith("/")) it else "$it/" } ?: run {
+            val i = endpointUrl.indexOf(API_ROOT)
+            if (i >= 0) endpointUrl.substring(0, i + API_ROOT.length)
+            else endpointUrl.trimEnd('/').substringBeforeLast('/') + "/"
+        }
+    }
+
+    /** The base address, e.g. https://dtwatch.ntc.net.np/api/telemetry/v1/. */
+    fun baseUrl(): String = base ?: throw IllegalStateException("NetTelemetry.init() must be called first")
 
     data class TraceRequestItem(
         val id: String,
@@ -26,6 +45,7 @@ object TraceApi {
         val expiresAt: String?,
     )
 
+    /** A non-2xx answer. For a 4xx, [message] is the server's short reason, written to be shown. */
     class ApiException(message: String, val code: Int) : IOException(message)
 
     /** A one-time challenge the server checks at registration. */
@@ -37,7 +57,8 @@ object TraceApi {
      * build, so the server must have PLAY_INTEGRITY_REQUIRED=false.
      *
      * The make, model and [hardwareId] (2026-10-09) let the server show which
-     * phone a number is on and recognise this phone after a reinstall.
+     * phone a number is on and recognise this phone after a reinstall. The
+     * answer says whether the number still needs proving by SMS code.
      */
     fun register(msisdn: String, challenge: String, appVersion: String, hardwareId: String): JSONObject {
         val body = JSONObject()
@@ -49,7 +70,6 @@ object TraceApi {
             .put("manufacturer", Build.MANUFACTURER.orEmpty())
             .put("phone_model", Build.MODEL.orEmpty())
             .put("hardware_id", hardwareId)
-        // The answer says whether the number still needs proving by SMS code (2026-10-15).
         return JSONObject(request("POST", "device/register/", body.toString(), signed = false))
     }
 
@@ -110,7 +130,7 @@ object TraceApi {
     /**
      * The headers that sign one request (2026-10-14): the same format the
      * device endpoints use, over the exact [path] and [body] bytes the server
-     * will see. Also used to sign the SDK's uploads (see SdkLink).
+     * will see. Also used to sign the SDK's uploads (see [NetDevice]).
      */
     fun signedHeaders(method: String, path: String, body: ByteArray): Map<String, String> {
         val ts = (System.currentTimeMillis() / 1000).toString()
@@ -209,7 +229,7 @@ object TraceApi {
         signed: Boolean,
         read: (InputStream) -> T,
     ): T {
-        val url = URL(HOST + BASE + path)
+        val url = URL(baseUrl() + path)
         val payload = body ?: ByteArray(0)
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = method
@@ -248,3 +268,22 @@ object TraceApi {
 
     private const val CHUNK = 64 * 1024
 }
+
+/**
+ * A short message safe to show a user for any failure (2026-10-08). Never the
+ * raw exception text, which can hold host names, addresses and ports. A 4xx
+ * [DeviceApi.ApiException] carries the server's own short reason, written to
+ * be shown; a 5xx gets the general message.
+ */
+fun friendlyErrorMessage(e: Throwable): String {
+    val apiException = e as? DeviceApi.ApiException
+    if (apiException != null && apiException.code in 400..499) {
+        return apiException.message?.takeIf { it.isNotBlank() } ?: GENERIC_MESSAGE
+    }
+    return when (e) {
+        is IOException -> "Could not reach the server. Check your connection and try again."
+        else -> GENERIC_MESSAGE
+    }
+}
+
+private const val GENERIC_MESSAGE = "Something went wrong. Please try again."

@@ -39,6 +39,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import np.nepaltelecom.telemetry.NetTelemetry
+import np.nepaltelecom.telemetry.device.DeviceApi
 import np.nepaltelecom.telemetry.model.Sample
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -87,7 +88,7 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
 
     private var location: Location? = null
     private var sitesFetchedAt: Location? = null
-    private var sites: List<TraceApi.NearbySite> = emptyList()
+    private var sites: List<DeviceApi.NearbySite> = emptyList()
 
     /** Smoothed bearing kept as a unit vector, so 359 and 1 average to 0, not 180. */
     private var bearingSin = 0.0
@@ -255,7 +256,7 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
         sitesFetchedAt = at
         if (sites.isEmpty()) statusText.setText(R.string.site_photo_finding_sites)
         Thread {
-            val result = runCatching { TraceApi.nearbySites(at.latitude, at.longitude) }
+            val result = runCatching { DeviceApi.nearbySites(at.latitude, at.longitude) }
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 result.onSuccess { found ->
@@ -281,7 +282,7 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
         }.start()
     }
 
-    private fun selectedSite(): TraceApi.NearbySite? = sites.getOrNull(siteSpinner.selectedItemPosition)
+    private fun selectedSite(): DeviceApi.NearbySite? = sites.getOrNull(siteSpinner.selectedItemPosition)
 
     private fun fillDirections() {
         val site = selectedSite()
@@ -291,7 +292,7 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
     }
 
     /** The direction chosen in the list, or the planned one nearest to [bearing] when left on automatic. */
-    private fun chosenDirection(bearing: Double): TraceApi.SiteDirection? {
+    private fun chosenDirection(bearing: Double): DeviceApi.SiteDirection? {
         val directions = selectedSite()?.directions.orEmpty()
         val picked = directionSpinner.selectedItemPosition
         if (picked > 0) return directions.getOrNull(picked - 1)
@@ -380,9 +381,9 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
     }
 
     private fun buildBody(
-        site: TraceApi.NearbySite?,
+        site: DeviceApi.NearbySite?,
         driveSessionId: String?,
-        direction: TraceApi.SiteDirection?,
+        direction: DeviceApi.SiteDirection?,
         heading: Double,
         fix: Location,
         takenAt: Date,
@@ -422,12 +423,12 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
     /** Sends on a background thread. A photo that can't reach the server is kept for later. */
     private fun send(body: String) {
         Thread {
-            val result = runCatching { TraceApi.uploadSitePhoto(body) }
+            val result = runCatching { DeviceApi.uploadSitePhoto(body) }
             val message = result.fold(
                 onSuccess = { getString(R.string.site_photo_sent) },
                 onFailure = { error ->
                     // A reply from the server is final. Only a photo the server never saw is kept.
-                    if (error is TraceApi.ApiException) {
+                    if (error is DeviceApi.ApiException) {
                         messageFor(error)
                     } else {
                         runCatching { File(queueDir(), "${System.currentTimeMillis()}.json").writeText(body) }
@@ -456,9 +457,9 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
         Thread {
             var sent = 0
             for (file in files) {
-                val outcome = runCatching { TraceApi.uploadSitePhoto(file.readText()) }
+                val outcome = runCatching { DeviceApi.uploadSitePhoto(file.readText()) }
                 if (outcome.isSuccess) sent++
-                if (outcome.isSuccess || outcome.exceptionOrNull() is TraceApi.ApiException) file.delete() else break
+                if (outcome.isSuccess || outcome.exceptionOrNull() is DeviceApi.ApiException) file.delete() else break
             }
             if (sent > 0) runOnUiThread {
                 if (!isFinishing && !isDestroyed) statusText.text = getString(R.string.site_photo_queue_sent, sent)
@@ -469,7 +470,7 @@ class SitePhotoActivity : AppCompatActivity(), SensorEventListener, LocationList
     private fun queueDir(): File = File(filesDir, "site_photo_queue").apply { mkdirs() }
 
     private fun messageFor(error: Throwable): String {
-        val code = (error as? TraceApi.ApiException)?.code
+        val code = (error as? DeviceApi.ApiException)?.code
         return if (code == 401 || code == 403) getString(R.string.site_photo_need_registration)
         else friendlyErrorMessage(error)
     }

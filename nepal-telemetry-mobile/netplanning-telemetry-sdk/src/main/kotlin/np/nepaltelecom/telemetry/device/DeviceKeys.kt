@@ -1,4 +1,4 @@
-package np.nepaltelecom.telemetry.demo
+package np.nepaltelecom.telemetry.device
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -11,10 +11,14 @@ import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 
 /**
- * This phone's device identity (2026-10-05). An EC P-256 key pair lives in the
- * Android Keystore, and its private half never leaves the Keystore. The server
- * stores only the public key. Each signed request carries a signature over
- * METHOD|PATH|TS|NONCE|sha256(body), which core/device_auth.py checks.
+ * This phone's device identity (2026-10-05; in the SDK since 2026-10-16). An
+ * EC P-256 key pair lives in the Android Keystore, and its private half never
+ * leaves the Keystore. The server stores only the public key. Each signed
+ * request carries a signature over METHOD|PATH|TS|NONCE|sha256(body), which
+ * the server's core/device_auth.py checks.
+ *
+ * The alias is the one the reference app used before the move, so a phone
+ * that registered with an older build keeps its key.
  */
 object DeviceKeys {
     private const val ALIAS = "dtwatch_device_key"

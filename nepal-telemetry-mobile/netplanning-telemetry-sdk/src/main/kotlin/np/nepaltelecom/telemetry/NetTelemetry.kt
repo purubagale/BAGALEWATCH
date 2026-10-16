@@ -87,6 +87,7 @@ object NetTelemetry {
     fun init(context: Context, config: TelemetryConfig) {
         appContext = context.applicationContext
         internalConfig = config
+        np.nepaltelecom.telemetry.device.DeviceApi.configure(config.deviceApiUrl, config.endpointUrl)
         val identity = DeviceIdentity(appContext)
         // First-run seeding (2026-09-02): only when this device has NEVER
         // stored an opt-in choice, and only when the host app opted into

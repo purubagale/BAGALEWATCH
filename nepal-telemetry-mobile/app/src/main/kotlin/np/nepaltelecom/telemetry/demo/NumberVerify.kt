@@ -9,7 +9,8 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
-import org.json.JSONObject
+import np.nepaltelecom.telemetry.device.DeviceApi
+import np.nepaltelecom.telemetry.device.NetDevice
 
 /**
  * Proving the registered number by SMS code (2026-10-15). The number is
@@ -19,37 +20,22 @@ import org.json.JSONObject
  * that number. Until NTC's SMS gateway is set up the server says it cannot,
  * and nothing is asked.
  *
- * What this phone knows is kept with the registration flag, and refreshed
- * from the server each time Settings opens.
+ * The state and the server calls are in the SDK ([NetDevice], since
+ * 2026-10-16); the pop-ups are here.
  */
 object NumberVerify {
 
-    private const val KEY_VERIFIED = "number_verified"
-    private const val KEY_AVAILABLE = "number_verify_available"
-
-    private fun prefs(context: Context) =
-        context.getSharedPreferences(TraceRequestsPanel.PREFS, Context.MODE_PRIVATE)
-
-    fun isVerified(context: Context): Boolean = prefs(context).getBoolean(KEY_VERIFIED, false)
+    fun isVerified(context: Context): Boolean = NetDevice.isNumberVerified(context)
 
     /** True when the server can send a code and this phone has not proved its number yet. */
-    fun needed(context: Context): Boolean =
-        Registration.isRegistered(context) && prefs(context).getBoolean(KEY_AVAILABLE, false) && !isVerified(context)
-
-    /** Keeps what the server said (registration answer or status check). */
-    fun save(context: Context, answer: JSONObject) {
-        prefs(context).edit()
-            .putBoolean(KEY_VERIFIED, answer.optBoolean("number_verified", false))
-            .putBoolean(KEY_AVAILABLE, answer.optBoolean("verification_available", false))
-            .apply()
-    }
+    fun needed(context: Context): Boolean = NetDevice.numberVerificationNeeded(context)
 
     /** Background check, e.g. when Settings opens. Errors are ignored. */
     fun refresh(context: Context, then: (() -> Unit)? = null) {
         val app = context.applicationContext
         if (!Registration.isRegistered(app)) return
         Thread {
-            runCatching { save(app, TraceApi.numberStatus()) }
+            NetDevice.refreshNumberStatus(app)
             then?.let { Handler(Looper.getMainLooper()).post(it) }
         }.start()
     }
@@ -65,7 +51,7 @@ object NumberVerify {
         Toast.makeText(activity, R.string.verify_sending, Toast.LENGTH_SHORT).show()
         Thread {
             val error = try {
-                TraceApi.sendNumberCode().let { answer -> if (answer.optBoolean("number_verified")) save(app, answer) }
+                NetDevice.sendNumberCode(app)
                 null
             } catch (e: Exception) {
                 friendlyErrorMessage(e)
@@ -111,9 +97,9 @@ object NumberVerify {
                 }
                 Thread {
                     val error = try {
-                        save(app, TraceApi.confirmNumberCode(code))
+                        NetDevice.confirmNumberCode(app, code)
                         null
-                    } catch (e: TraceApi.ApiException) {
+                    } catch (e: DeviceApi.ApiException) {
                         e.message ?: activity.getString(R.string.verify_wrong)
                     } catch (e: Exception) {
                         friendlyErrorMessage(e)

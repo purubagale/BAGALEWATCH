@@ -107,6 +107,14 @@ data class TelemetryConfig(
     val callSamplesUrl: String? = null,
 
     /**
+     * Base address of the device endpoints (2026-10-16): registration,
+     * number check, speed test, problem reports, site photos, trace requests
+     * (`np.nepaltelecom.telemetry.device`). Null: the part of [endpointUrl]
+     * up to and including `/api/telemetry/v1/`.
+     */
+    val deviceApiUrl: String? = null,
+
+    /**
      * Whether a device with NO prior explicit opt-in choice starts opted
      * IN (true) or opted OUT (false, the historical default and still the
      * default here). Only affects the very first [NetTelemetry.init] call

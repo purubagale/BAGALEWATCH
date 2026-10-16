@@ -41,6 +41,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         statusText = view.findViewById(R.id.statusText)
+        view.findViewById<TextView>(R.id.appVersionText).text =
+            getString(R.string.app_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
 
         view.findViewById<Button>(R.id.optInButton).setOnClickListener {
             if (hasLocationPermission()) {

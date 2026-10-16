@@ -14,6 +14,7 @@ import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import np.nepaltelecom.telemetry.NetTelemetry
+import np.nepaltelecom.telemetry.device.SpeedTest
 
 /**
  * Collector edition only (2026-10-14). While sharing is on, takes one reading

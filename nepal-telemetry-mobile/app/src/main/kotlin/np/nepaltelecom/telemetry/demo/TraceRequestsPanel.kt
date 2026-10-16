@@ -15,6 +15,8 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.fragment.app.Fragment
+import np.nepaltelecom.telemetry.device.DeviceApi
+import np.nepaltelecom.telemetry.device.NetDevice
 import np.nepaltelecom.telemetry.storage.HardwareInfo
 import com.google.android.material.button.MaterialButton
 
@@ -108,7 +110,7 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
         Thread {
             FcmToken.fetchAndUpload(context)
             val userType = if (StaffMode.isEmployee(context)) "employee" else "general"
-            runCatching { TraceApi.uploadIdentity(Build.MODEL, Build.MANUFACTURER, userType, HardwareInfo.hardwareId(context)) }
+            runCatching { DeviceApi.uploadIdentity(Build.MODEL, Build.MANUFACTURER, userType, HardwareInfo.hardwareId(context)) }
         }.start()
     }
 
@@ -147,7 +149,7 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
         if (!prefs.getBoolean(KEY_REGISTERED, false)) return
         Thread {
             val items = try {
-                TraceApi.openRequests()
+                DeviceApi.openRequests()
             } catch (e: Exception) {
                 null
             }
@@ -155,7 +157,7 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
         }.start()
     }
 
-    private fun showRequests(items: List<TraceApi.TraceRequestItem>?) {
+    private fun showRequests(items: List<DeviceApi.TraceRequestItem>?) {
         list.removeAllViews()
         addBatteryControls()
         if (items == null) {
@@ -192,7 +194,7 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
     private fun respond(id: String, action: String) {
         Thread {
             val message = try {
-                TraceApi.respond(id, action)
+                DeviceApi.respond(id, action)
                 context.getString(R.string.req_done)
             } catch (e: Exception) {
                 context.getString(R.string.req_failed, friendlyErrorMessage(e))
@@ -271,14 +273,12 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
     private fun dp(value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
 
     companion object {
-        // PREFS/KEY_REGISTERED (2026-10-08): package-visible, not private --
-        // TraceRegisterWorker writes KEY_REGISTERED=true on the SAME
-        // SharedPreferences file once a background retry finally succeeds,
-        // so this panel's own poll loop (gated on that same flag) picks it
-        // up on its next tick without needing a separate observer.
-        internal const val PREFS = "dtwatch_device"
-        internal const val KEY_MSISDN = "msisdn"
-        internal const val KEY_REGISTERED = "registered"
+        // The SDK's registration state (NetDevice, 2026-10-16). Its
+        // background retry writes KEY_REGISTERED=true on the same file once
+        // it succeeds, so this panel's poll loop picks it up on its next tick.
+        internal const val PREFS = NetDevice.PREFS
+        internal const val KEY_MSISDN = NetDevice.KEY_MSISDN
+        internal const val KEY_REGISTERED = NetDevice.KEY_REGISTERED
         private const val STATUS_PENDING = "PENDING"
         private const val STATUS_ACCEPTED = "ACCEPTED"
         private const val POLL_MS = 30_000L

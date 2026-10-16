@@ -11,6 +11,7 @@ import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import np.nepaltelecom.telemetry.NetTelemetry
+import np.nepaltelecom.telemetry.device.DeviceApi
 
 /**
  * Push for trace requests (2026-10-06). The server sends a data-only, high-priority
@@ -44,7 +45,7 @@ object FcmToken {
     fun uploadIfRegistered(context: Context, token: String) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(KEY_REGISTERED, false)) return
-        Thread { runCatching { TraceApi.putFcmToken(token) } }.start()
+        Thread { runCatching { DeviceApi.putFcmToken(token) } }.start()
     }
 }
 
@@ -129,10 +130,10 @@ class TraceActionReceiver : BroadcastReceiver() {
         Thread {
             try {
                 val wanted = if (action == TraceMessagingService.ACTION_ACCEPT) "accept" else "reject"
-                TraceApi.respond(requestId, wanted)
+                DeviceApi.respond(requestId, wanted)
                 if (wanted == "accept") {
                     BatteryAccess.markPromptPending(context)
-                    val item = TraceApi.openRequests().firstOrNull { it.id == requestId }
+                    val item = DeviceApi.openRequests().firstOrNull { it.id == requestId }
                     val expiresMs = item?.expiresAt?.let { parseIsoMillis(it) } ?: 0L
                     if (expiresMs > System.currentTimeMillis()) {
                         TraceSharingService.start(context, requestId, expiresMs)

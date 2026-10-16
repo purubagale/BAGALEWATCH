@@ -1,4 +1,4 @@
-package np.nepaltelecom.telemetry.demo
+package np.nepaltelecom.telemetry.device
 
 import android.content.Context
 import android.net.ConnectivityManager
@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 /**
- * Active speed test (2026-10-05): ping, download and upload against the
+ * Active speed test (2026-10-05; in the SDK since 2026-10-16): ping, download and upload against the
  * dtwatch speedtest endpoints (core/speed_test.py). It sends nothing about
  * the device.
  *
@@ -27,8 +27,8 @@ import kotlin.math.abs
  */
 object SpeedTest {
 
-    /** Same host as the telemetry endpoint in DemoApplication. */
-    private const val BASE_URL = "https://dtwatch.ntc.net.np/api/telemetry/v1/speedtest/"
+    /** The speed test endpoints, next to the other device endpoints. */
+    private fun baseUrl(): String = DeviceApi.baseUrl() + "speedtest/"
 
     private const val PING_COUNT = 20
     private const val PING_TIMEOUT_MS = 2_000
@@ -213,7 +213,7 @@ object SpeedTest {
     }
 
     private fun open(path: String, network: Network?): HttpURLConnection {
-        val url = URL(BASE_URL + path)
+        val url = URL(baseUrl() + path)
         val conn = (network?.openConnection(url) ?: url.openConnection()) as HttpURLConnection
         return conn.apply {
             connectTimeout = 10_000

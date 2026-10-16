@@ -1,4 +1,4 @@
-package np.nepaltelecom.telemetry.demo
+package np.nepaltelecom.telemetry.device
 
 import np.nepaltelecom.telemetry.model.Sample
 

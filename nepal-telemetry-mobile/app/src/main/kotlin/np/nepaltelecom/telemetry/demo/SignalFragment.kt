@@ -13,6 +13,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import np.nepaltelecom.telemetry.NetTelemetry
+import np.nepaltelecom.telemetry.device.ProblemHints
+import np.nepaltelecom.telemetry.device.SpeedTest
 import np.nepaltelecom.telemetry.model.Sample
 import np.nepaltelecom.telemetry.model.RadioBand
 import java.text.SimpleDateFormat

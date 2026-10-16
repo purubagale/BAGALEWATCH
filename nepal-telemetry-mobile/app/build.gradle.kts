@@ -19,6 +19,9 @@ val keystoreProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 
+// See defaultConfig: major.minor.patch.
+val appVersionName = "1.1.0"
+
 android {
     namespace = "np.nepaltelecom.telemetry.demo"
     compileSdk = 34
@@ -27,8 +30,13 @@ android {
         applicationId = "np.nepaltelecom.telemetry.demo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
+        // The app's version (2026-10-16), the one place to change it. Raise it
+        // for every APK given out: the name is shown in Settings and sent with
+        // registration and problem reports, and Android installs an update only
+        // over a lower code. The code follows the name: 1.1.0 -> 10100.
+        versionName = appVersionName
+        versionCode = appVersionName.split(".").map { it.toInt() }
+            .let { (major, minor, patch) -> major * 10000 + minor * 100 + patch }
     }
 
     buildFeatures {

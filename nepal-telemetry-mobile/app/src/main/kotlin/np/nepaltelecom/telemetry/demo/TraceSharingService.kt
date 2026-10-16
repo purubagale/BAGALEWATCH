@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import np.nepaltelecom.telemetry.NetTelemetry
+import np.nepaltelecom.telemetry.device.DeviceApi
 import np.nepaltelecom.telemetry.model.Sample
 import org.json.JSONArray
 import org.json.JSONObject
@@ -109,18 +110,18 @@ class TraceSharingService : Service() {
             val rtts = ArrayList<Double>()
             repeat(PING_COUNT + 1) {
                 val t0 = System.nanoTime()
-                TraceApi.speedPing(id)
+                DeviceApi.speedPing(id)
                 rtts.add((System.nanoTime() - t0) / 1_000_000.0)
             }
             val pings = rtts.drop(1)  // the first ping warms the connection
 
             val downStart = System.nanoTime()
-            val received = TraceApi.speedDownloadBytes(id, DOWNLOAD_BYTES)
+            val received = DeviceApi.speedDownloadBytes(id, DOWNLOAD_BYTES)
             val downMbps = mbps(received, System.nanoTime() - downStart)
 
             val payload = ByteArray(UPLOAD_BYTES).also { Random().nextBytes(it) }
             val upStart = System.nanoTime()
-            TraceApi.speedUpload(id, payload)
+            DeviceApi.speedUpload(id, payload)
             val upMbps = mbps(payload.size.toLong(), System.nanoTime() - upStart)
 
             val radio = readSample()
@@ -132,8 +133,8 @@ class TraceSharingService : Service() {
                 .put("upload_mbps", upMbps)
                 .put("network_type", radio?.networkType ?: "")
             radio?.rsrpDbm?.let { body.put("rsrp_dbm", it) }
-            TraceApi.postSpeedResult(id, body)
-        } catch (e: TraceApi.ApiException) {
+            DeviceApi.postSpeedResult(id, body)
+        } catch (e: DeviceApi.ApiException) {
             if (e.code == 404 || e.code == 409) stopSharing(tellServer = false)
         } catch (_: Exception) {
             // Network failure: the next interval tries again.
@@ -180,8 +181,8 @@ class TraceSharingService : Service() {
         s.cqi?.let { item.put("cqi", it) }
 
         try {
-            TraceApi.postSamples(id, JSONArray().put(item))
-        } catch (e: TraceApi.ApiException) {
+            DeviceApi.postSamples(id, JSONArray().put(item))
+        } catch (e: DeviceApi.ApiException) {
             // 404 or 409: the server no longer takes fixes for this trace (cancelled, expired, or ended).
             if (e.code == 404 || e.code == 409) stopSharing(tellServer = false)
         } catch (_: Exception) {
@@ -193,7 +194,7 @@ class TraceSharingService : Service() {
         running = false
         val id = traceId
         if (tellServer && id != null) {
-            runCatching { TraceApi.respond(id, "stop") }
+            runCatching { DeviceApi.respond(id, "stop") }
         }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

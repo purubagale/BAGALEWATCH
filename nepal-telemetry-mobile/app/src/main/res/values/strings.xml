@@ -186,4 +186,5 @@
     <string name="map_drive_stopped_shared">Drive test stopped. Sending it now, or as soon as the server can be reached.</string>
     <string name="map_drive_stopped_local">Drive test stopped. Saved on this phone only.</string>
     <string name="map_drive_needs_location">Location permission is needed to record a drive test.</string>
+    <string name="app_version">App version %1$s (build %2$d)</string>
 </resources>

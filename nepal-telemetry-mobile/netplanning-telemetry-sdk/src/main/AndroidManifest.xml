@@ -36,6 +36,13 @@
             android:name="np.nepaltelecom.telemetry.collector.DriveTestService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!-- Signs the SDK's uploads with the registered phone's key from
+             process start (2026-10-16). -->
+        <provider
+            android:name="np.nepaltelecom.telemetry.device.DeviceSignerProvider"
+            android:authorities="${applicationId}.ntcdevicesigner"
+            android:exported="false" />
     </application>
 
 </manifest>
