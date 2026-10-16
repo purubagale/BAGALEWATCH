@@ -4,7 +4,7 @@
 the isolation decision in models.py's TelemetryIngestKey docstring."""
 from django.urls import path
 
-from . import area_sample, call_context, device_identity, device_trace, problem_report, site_photo, speed_test, trace_speed
+from . import area_sample, call_context, device_identity, device_trace, number_verify, problem_report, site_photo, speed_test, trace_speed
 from .consent import DriveTestConsentMessageView, DriveTestConsentView
 from .rescue import RescueEnrollView
 from .telemetry import TelemetryHealthView, TelemetryIngestView
@@ -48,6 +48,10 @@ urlpatterns = [
     path('device/fcm-token/', device_trace.DeviceFcmTokenView.as_view(), name='device-fcm-token'),
     # Ties a registered phone to its SDK device id, for signed uploads (2026-10-14).
     path('device/sdk-link/', device_trace.DeviceSdkLinkView.as_view(), name='device-sdk-link'),
+    # Proving the registered number by SMS code (2026-10-15) -- see core/number_verify.py.
+    path('device/verify-number/', number_verify.NumberVerifyStatusView.as_view(), name='device-verify-number'),
+    path('device/verify-number/start/', number_verify.NumberVerifyStartView.as_view(), name='device-verify-number-start'),
+    path('device/verify-number/confirm/', number_verify.NumberVerifyConfirmView.as_view(), name='device-verify-number-confirm'),
     # Site photos from the app (2026-10-11) -- see core/site_photo.py.
     path('device/nearby-sites/', site_photo.DeviceNearbySitesView.as_view(), name='device-nearby-sites'),
     path('device/site-photos/', site_photo.DeviceSitePhotoUploadView.as_view(), name='device-site-photos'),

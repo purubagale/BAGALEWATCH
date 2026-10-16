@@ -46,9 +46,12 @@ def log_audit_event(request, action, resource='', resource_id='', detail='', pay
     never break the real action it's recording."""
     try:
         user = getattr(request, 'user', None)
+        # A signed phone request carries a DeviceCredential, not a User
+        # (2026-10-15): it is recorded without an actor rather than failing.
+        is_person = bool(user) and getattr(user, 'is_authenticated', False) is True and hasattr(user, 'username')
         AuditEvent.objects.create(
-            actor=user if user and user.is_authenticated else None,
-            actor_username=(user.username if user and user.is_authenticated else '')[:150],
+            actor=user if is_person else None,
+            actor_username=(user.username if is_person else '')[:150],
             action=action[:60],
             resource=resource[:40],
             resource_id=str(resource_id)[:40] if resource_id else '',

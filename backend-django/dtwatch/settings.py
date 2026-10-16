@@ -16,8 +16,19 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-only-insecure-key-override-in-.env')
+_DEV_SECRET_KEY = 'dev-only-insecure-key-override-in-.env'
+SECRET_KEY = os.environ.get('SECRET_KEY', _DEV_SECRET_KEY)
 DEBUG = os.environ.get('DEBUG', '0') == '1'
+# Security audit (2026-10-15): outside DEBUG, refuse to start on the
+# published default key or a short or repetitive one. SECRET_KEY signs the
+# login tokens, password-reset links and encrypts the two-factor secrets; a
+# known key would let anyone forge a superadmin login. Make one with
+#   python -c "import secrets; print(secrets.token_urlsafe(64))"
+if not DEBUG and (SECRET_KEY == _DEV_SECRET_KEY or len(SECRET_KEY) < 50 or len(set(SECRET_KEY)) < 5):
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        'SECRET_KEY is missing, the published default, or too weak. Set a random value of at least 50 '
+        'characters in .env (python -c "import secrets; print(secrets.token_urlsafe(64))").')
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
 
 # Django's own default (2.5MB) is well under a single DT-session sample
@@ -352,6 +363,8 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # ── CORS ──────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS = [o.strip() for o in os.environ.get('CORS_ALLOWED_ORIGINS', 'http://localhost:5180').split(',') if o.strip()]
 
+API_SESSION_AUTH = DEBUG or os.environ.get('API_SESSION_AUTH', '0') == '1'
+
 # ── DRF / API schema ──────────────────────────────────────────────────
 # Auth transport: JWT, not session cookies — the decision the migration
 # plan (§9) flagged as "make at the start of Phase 1." Chosen over
@@ -366,9 +379,21 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    # Browser session (cookie) login is for development only (2026-10-15
+    # security audit): the app signs in with tokens, and Django admin is
+    # closed, so in production a cookie login is only an extra surface for
+    # cross-site request forgery. On with DEBUG, or with API_SESSION_AUTH=1.
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
-        'rest_framework.authentication.SessionAuthentication',
+    ] + (['rest_framework.authentication.SessionAuthentication'] if API_SESSION_AUTH else []),
+    # Rate limits on every endpoint (2026-10-15 security audit), per signed-
+    # in user and, before sign-in, per client address. Phones and linked
+    # systems are left to their own key limits (core/throttles.py), because
+    # many phones share one carrier address. 0 or "off" in .env turns a
+    # limit off.
+    'DEFAULT_THROTTLE_CLASSES': [
+        'core.throttles.UserRateLimit',
+        'core.throttles.AnonRateLimit',
     ],
     # 'external_api' is only ever used by core/api_auth.py's
     # ApiKeyRateThrottle, opted into per-view by core/external_api.py
@@ -381,6 +406,9 @@ REST_FRAMEWORK = {
     # thousands of sites on a tight interval).
     'DEFAULT_THROTTLE_RATES': {
         'external_api': os.environ.get('EXTERNAL_API_RATE', '300/min'),
+        'user': os.environ.get('API_USER_RATE', '1200/min'),
+        'anon': os.environ.get('API_ANON_RATE', '120/min'),
+        'sms_test': '10/hour',
     },
 }
 
@@ -719,3 +747,52 @@ TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL = _parse_datetime(os.environ.get('TELEMETRY_
 # Per-device batches/min for signed calls. Shared-key calls keep their
 # per-key limit (TelemetryIngestKey.rate_limit_per_min).
 TELEMETRY_DEVICE_RATE_PER_MIN = int(os.environ.get('TELEMETRY_DEVICE_RATE_PER_MIN', '60'))
+
+# ── SMS gateway (2026-10-15, core/sms.py) ────────────────────────────────
+# Sends the code that proves a phone owns the number it registered with
+# (core/number_verify.py). Everything here can be filled in later, when
+# NTC's SMS gateway details are known. SMS_BACKEND=off (the default)
+# sends nothing and the app does not ask for a code; console only writes
+# the message to the server log (for testing on a development machine). SMS_BACKEND=http works with most HTTP SMS gateways:
+#   SMS_HTTP_URL            the gateway's send address
+#   SMS_HTTP_METHOD         POST (default) or GET
+#   SMS_HTTP_ENCODING       json (default), form, or query (parameters in the address)
+#   SMS_HTTP_FIELDS         JSON object of the fields to send; {to}, {to_local},
+#                           {to_plus}, {text} and {sender} are filled in, e.g.
+#                           {"username":"dtwatch","to":"{to_local}","message":"{text}","from":"{sender}"}
+#   SMS_HTTP_HEADERS        JSON object of extra headers, e.g. {"X-Api-Key":"..."}
+#   SMS_HTTP_TOKEN          sent as "Authorization: Bearer <token>"
+#   SMS_HTTP_USERNAME / SMS_HTTP_PASSWORD   HTTP basic authentication
+#   SMS_HTTP_SUCCESS_TEXT   text the answer must contain to count as sent (optional;
+#                           otherwise any 2xx answer counts)
+#   SMS_HTTP_TIMEOUT        seconds (default 10)
+#   SMS_HTTP_VERIFY_TLS     1 (default) or 0 for a gateway with a self-signed certificate
+#   SMS_SENDER_ID           sender name or short code
+# SMS_BACKEND=ntc is the same as http, kept as the name to switch to once
+# NTC's gateway is set up, so its details can be told apart in the logs.
+SMS_BACKEND = os.environ.get('SMS_BACKEND', 'off').strip().lower()
+SMS_HTTP_URL = os.environ.get('SMS_HTTP_URL', '')
+SMS_HTTP_METHOD = os.environ.get('SMS_HTTP_METHOD', 'POST').upper()
+SMS_HTTP_ENCODING = os.environ.get('SMS_HTTP_ENCODING', 'json').lower()
+SMS_HTTP_FIELDS = os.environ.get('SMS_HTTP_FIELDS', '{"to": "{to}", "text": "{text}", "sender": "{sender}"}')
+SMS_HTTP_HEADERS = os.environ.get('SMS_HTTP_HEADERS', '{}')
+SMS_HTTP_TOKEN = os.environ.get('SMS_HTTP_TOKEN', '')
+SMS_HTTP_USERNAME = os.environ.get('SMS_HTTP_USERNAME', '')
+SMS_HTTP_PASSWORD = os.environ.get('SMS_HTTP_PASSWORD', '')
+SMS_HTTP_SUCCESS_TEXT = os.environ.get('SMS_HTTP_SUCCESS_TEXT', '')
+SMS_HTTP_TIMEOUT = float(os.environ.get('SMS_HTTP_TIMEOUT', '10'))
+SMS_HTTP_VERIFY_TLS = os.environ.get('SMS_HTTP_VERIFY_TLS', '1') != '0'
+SMS_SENDER_ID = os.environ.get('SMS_SENDER_ID', 'NTC')
+# The verification message; {code} and {minutes} are filled in.
+SMS_VERIFY_TEXT = os.environ.get(
+    'SMS_VERIFY_TEXT', 'Your DT-WATCH code is {code}. It is valid for {minutes} minutes. Do not share it.')
+
+# ── Linked systems' update addresses (2026-10-15, core/problem_notify.py) ──
+# LINKED_SYSTEM_ALLOWED_HOSTS: comma-separated host names the update
+# addresses may point at; "*.ntc.net.np" allows every name under it. Empty
+# allows any host. LINKED_SYSTEM_HTTPS_ONLY=1 (the default) refuses http://.
+# Addresses on this server itself, its internal services and link-local
+# (cloud metadata) addresses are always refused.
+LINKED_SYSTEM_ALLOWED_HOSTS = [h.strip().lower() for h in os.environ.get('LINKED_SYSTEM_ALLOWED_HOSTS', '').split(',')
+                               if h.strip()]
+LINKED_SYSTEM_HTTPS_ONLY = os.environ.get('LINKED_SYSTEM_HTTPS_ONLY', '1') != '0'

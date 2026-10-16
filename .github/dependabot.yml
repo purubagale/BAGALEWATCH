@@ -1,0 +1,49 @@
+# Dependency updates (2026-10-15 security audit). Once a week GitHub opens a
+# pull request for each outdated Python package, npm package, base Docker
+# image and GitHub Action, against the working branch. A security fix is
+# proposed as soon as GitHub learns of it, not only on the weekly run.
+# Merge only after the security scan below has passed on the pull request.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend-django
+    target-branch: telemetry
+    schedule:
+      interval: weekly
+      day: sunday
+    open-pull-requests-limit: 5
+    labels: [dependencies, backend]
+
+  - package-ecosystem: npm
+    directory: /frontend-react
+    target-branch: telemetry
+    schedule:
+      interval: weekly
+      day: sunday
+    open-pull-requests-limit: 5
+    labels: [dependencies, frontend]
+    ignore:
+      # SheetJS is installed from cdn.sheetjs.com (the npm package stopped at
+      # 0.18.5, which has known flaws); update it by hand there.
+      - dependency-name: xlsx
+
+  - package-ecosystem: docker
+    directory: /backend-django
+    target-branch: telemetry
+    schedule:
+      interval: weekly
+    labels: [dependencies, docker]
+
+  - package-ecosystem: docker
+    directory: /frontend-react
+    target-branch: telemetry
+    schedule:
+      interval: weekly
+    labels: [dependencies, docker]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: telemetry
+    schedule:
+      interval: monthly
+    labels: [dependencies, ci]

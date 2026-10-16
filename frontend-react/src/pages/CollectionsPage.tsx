@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import CurrentLocationMarker from '../components/CurrentLocationMarker'
+import FitToPoints from '../components/FitToPoints'
 import SitePhotoLayer from '../components/SitePhotoLayer'
 import { telemetryLevel } from '../lib/telemetryLevel'
 import { declusterForPlot } from '../lib/declusterPlot'
@@ -212,6 +213,11 @@ export default function CollectionsPage() {
                   zoom={14}
                   style={{ height: '100%', width: '100%' }}
                 >
+                  {/* Whole route in view when it opens (2026-10-15). */}
+                  <FitToPoints
+                    points={samples.data.results.map((s) => [s.lat, s.lng] as [number, number])}
+                    fitKey={selected.id}
+                  />
                   <CurrentLocationMarker />
                   {/* A phone drive shows the photos taken during it; any other
                       session shows the photos in the area on screen. */}

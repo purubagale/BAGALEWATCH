@@ -4,7 +4,7 @@ import { ApiError, apiFetch, apiJson } from './client'
 import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
   SiteMeasuredCoverage,
 } from './types'
-import type { ProblemReport } from './types'
+import type { LinkedSystem, ProblemDashboard, ProblemNotificationRow, ProblemReport, SecuritySettings } from './types'
 import type { DtPruneRun, DtPurpose, DtRecentResponse, DtRetentionSettings } from './types'
 import type {
   CollectionSessionRow,
@@ -1953,13 +1953,138 @@ export function useTelemetrySessionsNear(
 
 // ── Problem reports (2026-10-14) ─────────────────────────────────────────
 
-export function useProblemReports(params: { status?: string; source?: string }) {
+export function useProblemReports(params: {
+  status?: string; source?: string; cause?: string; site?: string; area?: string; days?: number
+}) {
   const qs = new URLSearchParams()
   if (params.status) qs.set('status', params.status)
   if (params.source) qs.set('source', params.source)
+  // From the dashboard (2026-10-15): one cause, or one hotspot's reports.
+  if (params.cause) qs.set('cause', params.cause)
+  if (params.site) qs.set('site', params.site)
+  if (params.area) qs.set('area', params.area)
+  if (params.days) qs.set('days', String(params.days))
   return useQuery({
-    queryKey: ['problem-reports', params.status ?? '', params.source ?? ''],
+    queryKey: ['problem-reports', qs.toString()],
     queryFn: () => apiJson<{ results: ProblemReport[] }>(`/api/v2/problem-reports/?${qs.toString()}`),
+  })
+}
+
+// Security settings (2026-10-15): the switches and, for a superadmin, what is in effect.
+export function useSecuritySettings() {
+  return useQuery({
+    queryKey: ['security-settings'],
+    queryFn: () => apiJson<SecuritySettings>('/api/v2/security-settings/'),
+  })
+}
+
+export function useSaveSecuritySettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Partial<Omit<SecuritySettings, 'status'>>) =>
+      apiJson<SecuritySettings>('/api/v2/security-settings/', { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: (data) => qc.setQueryData(['security-settings'], data),
+  })
+}
+
+export function useAlertTest() {
+  return useMutation({
+    mutationFn: () =>
+      apiJson<{ emails: number; numbers: number; email: string | null; sms: string | null }>(
+        '/api/v2/security-settings/alert-test/', { method: 'POST', body: '{}' }),
+  })
+}
+
+export function useSmsTest() {
+  return useMutation({
+    mutationFn: (msisdn: string) =>
+      apiJson<{ sent: boolean; message: string }>('/api/v2/security-settings/sms-test/', {
+        method: 'POST', body: JSON.stringify({ msisdn }),
+      }),
+  })
+}
+
+// Linked systems and their status updates (2026-10-15, superadmin).
+export function useLinkedSystems() {
+  return useQuery({
+    queryKey: ['linked-systems'],
+    queryFn: () => apiJson<{ results: LinkedSystem[]; key_names: string[] }>('/api/v2/linked-systems/'),
+  })
+}
+
+export function useSaveLinkedSystem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<LinkedSystem> & { id?: number }) =>
+      apiJson<LinkedSystem>(id ? `/api/v2/linked-systems/${id}/` : '/api/v2/linked-systems/', {
+        method: id ? 'PATCH' : 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['linked-systems'] }),
+  })
+}
+
+export function useDeleteLinkedSystem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => apiFetch(`/api/v2/linked-systems/${id}/`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['linked-systems'] }),
+  })
+}
+
+export function useNewLinkedSystemSecret() {
+  return useMutation({
+    mutationFn: (id: number) => apiJson<LinkedSystem>(`/api/v2/linked-systems/${id}/secret/`, { method: 'POST' }),
+  })
+}
+
+export function useTestLinkedSystem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiJson<{ ok: boolean; response_code: number | null; error: string }>(`/api/v2/linked-systems/${id}/test/`, {
+        method: 'POST',
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['linked-systems'] }),
+  })
+}
+
+export function useProblemNotifications(system: string) {
+  return useQuery({
+    queryKey: ['problem-notifications', system],
+    queryFn: () => apiJson<{ results: ProblemNotificationRow[] }>(
+      `/api/v2/problem-notifications/${system ? `?system=${encodeURIComponent(system)}` : ''}`),
+    refetchInterval: 30_000,
+  })
+}
+
+export function useRetryProblemNotification() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiJson<ProblemNotificationRow>(`/api/v2/problem-notifications/${id}/retry/`, { method: 'POST' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['problem-notifications'] })
+      qc.invalidateQueries({ queryKey: ['linked-systems'] })
+    },
+  })
+}
+
+export function useNotifyProblemReport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiJson<ProblemNotificationRow>(`/api/v2/problem-reports/${id}/notify/`, { method: 'POST' }),
+    onSettled: (_d, _e, id) => qc.invalidateQueries({ queryKey: ['problem-report', id] }),
+  })
+}
+
+// Problem Dashboard (2026-10-15): totals, causes, map points and hotspots.
+export function useProblemDashboard(days: number) {
+  return useQuery({
+    queryKey: ['problem-dashboard', days],
+    queryFn: () => apiJson<ProblemDashboard>(`/api/v2/problem-reports/dashboard/?days=${days}`),
+    refetchInterval: 120_000,
   })
 }
 
@@ -1976,7 +2101,10 @@ export function useCreateProblemReport() {
   return useMutation({
     mutationFn: (body: { category: string; note: string; lat: number; lng: number; happened_at: string }) =>
       apiJson<ProblemReport>('/api/v2/problem-reports/', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['problem-reports'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['problem-reports'] })
+      qc.invalidateQueries({ queryKey: ['problem-dashboard'] })
+    },
   })
 }
 
@@ -1990,6 +2118,7 @@ export function useUpdateProblemReport() {
       }),
     onSuccess: (_d, v) => {
       qc.invalidateQueries({ queryKey: ['problem-reports'] })
+      qc.invalidateQueries({ queryKey: ['problem-dashboard'] })
       qc.invalidateQueries({ queryKey: ['problem-report', v.id] })
     },
   })

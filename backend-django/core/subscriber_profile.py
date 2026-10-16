@@ -32,7 +32,7 @@ from .collection import decrypted_identity, msisdn_lookup_key
 from .emergency import active_emergency
 from .models import (
     AuditEvent, CallContextSample, CollectionSession, DeviceCredential, DeviceIdentity, DeviceLocationTraceLog,
-    ProblemReport, RescueLocationAccessLog, SitePhoto, SubscriberDevice, SubscriberLastLocation,
+    ProblemReport, RescueLocationAccessLog, SecuritySettings, SitePhoto, SubscriberDevice, SubscriberLastLocation,
     TelemetryDriveTestConsent, TelemetryDriveTestSession, TelemetryPushToken, TelemetrySample,
     Site, TelemetrySpeedResult, TraceLocationSample, TraceRequest, TraceSpeedResult, VolteCallSample,
 )
@@ -81,6 +81,16 @@ class SubscriberProfileView(APIView):
         # ── Devices of this number ────────────────────────────────────────
         links = list(SubscriberDevice.objects.filter(msisdn=canonical).order_by('-last_seen_at', '-last_linked_at'))
         credentials = list(DeviceCredential.objects.filter(msisdn__in=variants).order_by('-created_at'))
+        # "Verified numbers only" (2026-10-15): a phone that only typed this
+        # number is left out and counted, not shown.
+        unproven_claims = 0
+        if SecuritySettings.objects.filter(pk=1, phone_verification_required=True).exists():
+            proven = (SubscriberDevice.VERIFIED_SMS, SubscriberDevice.VERIFIED_SIM)
+            kept_links = [link for link in links if link.number_verified_by in proven]
+            kept_creds = [c for c in credentials if c.msisdn_verified_at]
+            unproven_claims = len({link.device_hash for link in links} - {link.device_hash for link in kept_links}) \
+                + len(credentials) - len(kept_creds)
+            links, credentials = kept_links, kept_creds
         rescue_rows = list(SubscriberLastLocation.objects.filter(msisdn__in=variants))
         identities = list(DeviceIdentity.objects.filter(
             Q(msisdn_lookup=msisdn_lookup_key(canonical))
@@ -160,6 +170,20 @@ class SubscriberProfileView(APIView):
             r = max(consented_rescue, key=lambda x: x.last_seen_ts)
             if last_location is None or (last_location['ts'] or '') < r.last_seen_ts.isoformat():
                 last_location = {'source': 'rescue', 'ts': _iso(r.last_seen_ts), 'lat': r.last_lat, 'lng': r.last_lng}
+        # Why the card may show no position (2026-10-15): hidden because no
+        # emergency is declared, or simply not in the record (a reading taken
+        # without a GPS fix, a rescue beacon that has not reported one). In an
+        # emergency the newest reading that does carry a position is offered.
+        if last_location is not None:
+            last_location['position_withheld'] = not emergency
+            if emergency and last_location.get('lat') is None:
+                fix = (TelemetrySample.objects.filter(device_id__in=[i for i in ids if i not in withdrawn],
+                                                      lat__isnull=False, lng__isnull=False)
+                       .order_by('-ts').values('ts', 'lat', 'lng', 'gps_accuracy_m').first())
+                if fix:
+                    last_location['earlier_position'] = {
+                        'ts': _iso(fix['ts']), 'lat': fix['lat'], 'lng': fix['lng'],
+                        'gps_accuracy_m': fix['gps_accuracy_m']}
 
         # Signal history for the chart (2026-10-15): level and quality over
         # time from the newest readings, without positions.
@@ -203,6 +227,9 @@ class SubscriberProfileView(APIView):
                 'registration_last_seen_at': _iso(cred.last_seen_at) if cred else None,
                 'registration_revoked_at': _iso(cred.revoked_at) if cred else None,
                 'registered_as': cred.msisdn if cred else None,
+                # Proved by SMS code (or read from the SIM), 2026-10-15.
+                'number_verified': bool((cred and cred.msisdn_verified_at) or (link and link.number_verified_by in (
+                    SubscriberDevice.VERIFIED_SMS, SubscriberDevice.VERIFIED_SIM))),
                 'signed_uploads_linked': bool(cred and cred.sdk_device_hash),
                 'push_token': device_id in push or bool(cred and cred.fcm_token),
                 'rescue_beacon': (None if not rescue else 'on' if rescue.rescue_consent else 'withdrawn'),
@@ -250,7 +277,11 @@ class SubscriberProfileView(APIView):
             'id': p.id, 'category': p.category, 'status': p.status, 'happened_at': _iso(p.happened_at),
             'network_type': p.network_type, 'level_dbm': p.level_dbm, 'download_mbps': p.download_mbps,
             'note': p.note[:200],
-        } for p in ProblemReport.objects.filter(device__in=credentials).order_by('-happened_at')[:LIST_CAP]]
+            # From the app, or from a linked NTC system that sent the number (2026-10-15).
+            'source': p.source, 'external_system': p.external_system, 'external_ref': p.external_ref,
+            'cause': p.cause,
+        } for p in ProblemReport.objects.filter(Q(device__in=credentials) | Q(msisdn__in=variants))
+            .order_by('-happened_at')[:LIST_CAP]]
         call_qs = CallContextSample.objects.filter(device_id__in=ids)
         calls = {
             'by_outcome': dict(Counter(call_qs.values_list('outcome', flat=True))),
@@ -290,6 +321,8 @@ class SubscriberProfileView(APIView):
             'summary': {
                 'devices': len({d['device_id'] for d in devices}),
                 'registered': bool(credentials),
+                # Phones left out because they only typed this number (verified-only mode).
+                'unproven_claims': unproven_claims,
                 'first_registered_at': _iso(min((c.created_at for c in credentials), default=None)),
                 'rescue_beacon': ('on' if any(r.rescue_consent for r in rescue_rows)
                                   else 'withdrawn' if rescue_rows else None),

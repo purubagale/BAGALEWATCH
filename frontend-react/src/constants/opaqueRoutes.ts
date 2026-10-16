@@ -164,6 +164,8 @@ export const OPAQUE_PATHS: Record<string, string> = {
   // migration 0091_seed_blocked_ips_menuitem.py -- keep in sync with that
   // file and MenuAdminPage.tsx's KNOWN_ROUTES list.
   '/blocked-ips': '/b3n7qz',
+  // Security settings (2026-10-15) -- seeded server-side by migration 0136_security_phase_g.py.
+  '/security': '/s9k4tq',
   // Device-bound tracing operator console (2026-10-04). Seeded server-side by
   // core/migrations/0093_seed_trace_requests_menuitem.py.
   '/trace-requests': '/t7ak2m',

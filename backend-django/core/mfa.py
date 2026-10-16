@@ -118,9 +118,14 @@ class MFAStatusView(APIView):
 
     def get(self, request):
         security, _ = SecuritySettings.objects.get_or_create(pk=1)
+        admins = security.mfa_required_admins and getattr(request.user, 'role', '') in ('superadmin', 'admin')
         return Response({
             'totp_enabled': request.user.totp_enabled,
             'mfa_required': security.mfa_required,
+            # Required for this account: for everyone, or for its role (2026-10-15).
+            'required_for_me': bool(security.mfa_required or admins),
+            # SSO accounts sign in through Keycloak, which owns their second factor.
+            'sso_account': getattr(request.user, 'auth_source', 'local') != 'local',
         })
 
 

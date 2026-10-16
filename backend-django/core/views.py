@@ -308,7 +308,17 @@ class LoginView(APIView):
         user = authenticate(request, username=username, password=password)
         if user is None:
             if username:
-                cache.set(cache_key, cache.get(cache_key, 0) + 1, self.LOCKOUT_SECONDS)
+                fails = cache.get(cache_key, 0) + 1
+                cache.set(cache_key, fails, self.LOCKOUT_SECONDS)
+                # The attempt that locks a real account tells the superadmins
+                # (2026-10-15, core/alerts.py). Unknown names are not alerted:
+                # they lock nothing anyone uses.
+                if fails == self.MAX_ATTEMPTS and User.objects.filter(username__iexact=username).exists():
+                    from .alerts import attack_alert
+                    attack_alert('account_locked', username.strip().lower(),
+                                 f'account "{username}" locked after {fails} failed logins',
+                                 f'The last attempt came from address {ip}. The account unlocks by itself after '
+                                 f'{self.LOCKOUT_SECONDS // 60} minutes.')
             log_auth_event(request, 'login_failed', username=username)
             maybe_auto_block(request, ip)
             return Response({'detail': 'Invalid username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
@@ -340,7 +350,10 @@ class LoginView(APIView):
         # response so the frontend can force an immediate enrollment
         # prompt before showing the rest of the app. See SecuritySettings'
         # own docstring for the full reasoning.
-        if SecuritySettings.objects.filter(pk=1, mfa_required=True).exists():
+        # mfa_required_admins (2026-10-15): the same, for superadmin and admin only.
+        security = SecuritySettings.objects.filter(pk=1).first()
+        if security and (security.mfa_required
+                         or (security.mfa_required_admins and getattr(user, 'role', '') in ('superadmin', 'admin'))):
             response.data['mfa_setup_required'] = True
         return response
 
@@ -1650,21 +1663,130 @@ class SecuritySettingsView(APIView):
         obj, _ = SecuritySettings.objects.get_or_create(pk=1)
         return obj
 
+    # The switches a superadmin flips on the Security page (2026-10-15 adds
+    # the last two).
+    TOGGLES = ('mfa_required', 'mfa_required_admins', 'phone_verification_required',
+               'attack_alerts_enabled', 'alert_by_email', 'alert_by_sms')
+    # Extra alert recipients (2026-10-15), superadmin only.
+    LISTS = ('alert_extra_emails', 'alert_extra_numbers')
+
+    def _out(self, request, obj):
+        out = {name: getattr(obj, name) for name in self.TOGGLES}
+        if getattr(request.user, 'role', '') == 'superadmin':
+            out.update({name: getattr(obj, name) for name in self.LISTS})
+            out['status'] = security_status()
+        return out
+
     def get(self, request):
-        obj = self.get_object()
-        return Response({'mfa_required': obj.mfa_required})
+        return Response(self._out(request, self.get_object()))
 
     def put(self, request):
+        import re
+        from .rescue import _clean_msisdn
         obj = self.get_object()
-        if 'mfa_required' in request.data:
-            obj.mfa_required = bool(request.data['mfa_required'])
+        changed = [name for name in self.TOGGLES if name in request.data]
+        for name in changed:
+            setattr(obj, name, bool(request.data[name]))
+        if 'alert_extra_emails' in request.data:
+            emails = [e for e in re.split(r'[\s,;]+', str(request.data['alert_extra_emails'] or '')) if e]
+            bad = [e for e in emails if not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', e)]
+            if bad:
+                return Response({'detail': f'Not an email address: {", ".join(bad)}'}, status=status.HTTP_400_BAD_REQUEST)
+            obj.alert_extra_emails = ', '.join(emails)[:2000]
+            changed.append('alert_extra_emails')
+        if 'alert_extra_numbers' in request.data:
+            raw = [n for n in re.split(r'[,;\n]+', str(request.data['alert_extra_numbers'] or '')) if n.strip()]
+            bad = [n.strip() for n in raw if not _clean_msisdn(n.strip())]
+            if bad:
+                return Response({'detail': f'Not a mobile number: {", ".join(bad)}'}, status=status.HTTP_400_BAD_REQUEST)
+            obj.alert_extra_numbers = ', '.join(_clean_msisdn(n.strip()) for n in raw)[:2000]
+            changed.append('alert_extra_numbers')
+        if changed:
             obj.save()
         from .audit import log_audit_event
         log_audit_event(
             request, 'SECURITY_SETTINGS.UPDATED', resource='security_settings',
-            detail=f'mfa_required={obj.mfa_required}',
+            detail=', '.join(f'{name}={getattr(obj, name)}' for name in self.TOGGLES),
         )
-        return Response({'mfa_required': obj.mfa_required})
+        return Response(self._out(request, obj))
+
+
+def security_status():
+    """Read-only facts for the superadmin Security page: what .env has set
+    (never a secret's value)."""
+    from django.conf import settings as s
+    from .number_verify import verification_available
+    from .sms import status as sms_status
+    rates = s.REST_FRAMEWORK.get('DEFAULT_THROTTLE_RATES', {})
+    from .alerts import email_configured
+    supers = list(User.objects.filter(role='superadmin', is_active=True).values_list('username', 'email', 'mobile_number'))
+    return {
+        'alerts': {
+            'email_configured': email_configured(),
+            'superadmins': len(supers),
+            'superadmins_without_email': [u for u, e, _ in supers if not e],
+            'superadmins_without_mobile': [u for u, _, m in supers if not m],
+        },
+        'sms': {**sms_status(), 'verification_available': verification_available()},
+        'session_login': s.API_SESSION_AUTH,
+        'rate_limits': {'signed_in': rates.get('user'), 'before_sign_in': rates.get('anon'),
+                        'linked_systems': rates.get('external_api')},
+        'linked_system_hosts': s.LINKED_SYSTEM_ALLOWED_HOSTS,
+        'linked_system_https_only': s.LINKED_SYSTEM_HTTPS_ONLY,
+        'debug': s.DEBUG,
+        'https_redirect': bool(getattr(s, 'SECURE_SSL_REDIRECT', False)),
+        'shared_upload_key_until': s.TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL.isoformat()
+        if getattr(s, 'TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL', None) else None,
+    }
+
+
+class AlertTestView(APIView):
+    """POST /api/v2/security-settings/alert-test/ -- sends a test attack
+    alert now, by the channels chosen, to every recipient (2026-10-15)."""
+    permission_classes = [IsAuthenticated, IsSuperadminOnly]
+    throttle_scope = 'sms_test'
+
+    def get_throttles(self):
+        from rest_framework.throttling import ScopedRateThrottle
+        return [*super().get_throttles(), ScopedRateThrottle()]
+
+    def post(self, request):
+        from .alerts import deliver, recipients
+        from .audit import log_audit_event
+        security = SecuritySettings.objects.filter(pk=1).first() or SecuritySettings()
+        emails, numbers = recipients(security)
+        if not emails and not numbers:
+            return Response({'detail': 'No one to send to: choose email or SMS, and give the superadmins an email '
+                                       'or mobile number, or add extra recipients.'}, status=status.HTTP_400_BAD_REQUEST)
+        result = deliver('DT-WATCH security alert: test',
+                         'This is a test of DT-WATCH security alerts, sent from the Security page.',
+                         'DT-WATCH: test of security alerts.', emails, numbers)
+        log_audit_event(request, 'ATTACK_ALERT.TEST', resource='security_settings',
+                        detail=f'email {result["email"] or "-"}, sms {result["sms"] or "-"}'[:200])
+        return Response({'emails': len(emails), 'numbers': len(numbers), **result})
+
+
+class SmsTestView(APIView):
+    """POST /api/v2/security-settings/sms-test/ {msisdn} -- a superadmin
+    checks the SMS gateway with a short test message (2026-10-15)."""
+    permission_classes = [IsAuthenticated, IsSuperadminOnly]
+    throttle_scope = 'sms_test'
+
+    def get_throttles(self):
+        from rest_framework.throttling import ScopedRateThrottle
+        return [*super().get_throttles(), ScopedRateThrottle()]
+
+    def post(self, request):
+        from .audit import log_audit_event
+        from .rescue import _clean_msisdn
+        from .sms import send_sms
+        msisdn = _clean_msisdn(str(request.data.get('msisdn') or ''))
+        if not msisdn:
+            return Response({'detail': 'Give a valid mobile number.'}, status=status.HTTP_400_BAD_REQUEST)
+        sent, message = send_sms(msisdn, 'DT-WATCH test message: the SMS gateway works.')
+        log_audit_event(request, 'SMS_TEST', resource='security_settings',
+                        detail=f'{msisdn[:5]}…{msisdn[-2:]}: {message}'[:200])
+        return Response({'sent': sent, 'message': message})
 
 
 class UserViewSet(viewsets.ModelViewSet):

@@ -60,6 +60,7 @@ const KNOWN_ROUTES: { path: string; label: string }[] = [
   { path: '/p6h2sv', label: 'Site Photos' },
   { path: '/r4q7cx', label: 'Problem Reports' },
   { path: '/s7p2nd', label: 'Subscriber Profile' },
+  { path: '/s9k4tq', label: 'Security' },
   { path: '/d5r8vt', label: 'Drive-Test Retention' },
   { path: '/i8s4kw', label: 'Issues' },
   { path: '/g3q7nx', label: 'RF Reports' },

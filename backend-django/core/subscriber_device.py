@@ -32,7 +32,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.utils import timezone
 
-from .models import DeviceIdentity, SubscriberDevice, SubscriberLastLocation
+from .models import DeviceIdentity, SecuritySettings, SubscriberDevice, SubscriberLastLocation
 
 
 def stale_after():
@@ -108,6 +108,12 @@ def devices_for_msisdn(msisdn, include_withdrawn=False):
     applied, kept even during an emergency.
     """
     links = list(SubscriberDevice.objects.filter(msisdn=msisdn, ended_at__isnull=True))
+    # With "verified numbers only" on (SecuritySettings, 2026-10-15), a
+    # number typed in the app no longer links a phone to it: only one proved
+    # by SMS code or read from the SIM does (core/number_verify.py).
+    if links and SecuritySettings.objects.filter(pk=1, phone_verification_required=True).exists():
+        links = [link for link in links if link.number_verified_by in (
+            SubscriberDevice.VERIFIED_SMS, SubscriberDevice.VERIFIED_SIM)]
     if links and not include_withdrawn:
         withdrawn = set(SubscriberLastLocation.objects.filter(
             device_id__in=[link.device_hash for link in links], rescue_consent=False,

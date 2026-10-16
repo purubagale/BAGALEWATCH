@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { apiErrorMessage } from '../api/client'
 import { fetchSystemDoc } from '../api/queries'
 import { useAuth } from '../auth/AuthContext'
+import { safeHtml } from '../lib/safeHtml'
 
 // In-app Documentation (2026-10-01, "idea and plan" follow-up to the UTS
 // reference screenshots; narrowed 2026-10-02, "do not include history or
@@ -137,7 +138,7 @@ export default function DocumentationPage() {
         </div>
         <div className="doc-detail-layout">
           <div className="md-report doc-detail-main">
-            <div dangerouslySetInnerHTML={{ __html: renderedHtml }} />
+            <div dangerouslySetInnerHTML={{ __html: safeHtml(renderedHtml) }} />
           </div>
           <nav className="doc-toc">
             <div className="doc-toc-title">On this page</div>

@@ -16,6 +16,7 @@
     "@tanstack/react-virtual": "^3.11.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dompurify": "^3.4.17",
     "framer-motion": "^13.4.5",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
@@ -26,7 +27,7 @@
     "react-leaflet": "^5.0.0",
     "react-router-dom": "^7.1.1",
     "tailwind-merge": "^3.7.0",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zustand": "^5.0.2"
   },
   "devDependencies": {

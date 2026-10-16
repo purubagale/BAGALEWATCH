@@ -32,10 +32,18 @@ interface AuthState {
   user: Me | null
   loading: boolean
   restoring: boolean
-  login: (username: string, password: string) => Promise<void>
-  loginWithSsoCode: (code: string) => Promise<void>
+  // Resolves with a ticket when the account asks for its two-factor code
+  // (2026-10-15); the login page then calls verifyMfa with the code.
+  login: (username: string, password: string) => Promise<{ mfaTicket?: string }>
+  verifyMfa: (ticket: string, code: string) => Promise<{ mfaTicket?: string }>
+  loginWithSsoCode: (code: string) => Promise<{ mfaTicket?: string }>
+  // The server asked this account to set up two-factor login before going on.
+  mfaSetupRequired: boolean
+  clearMfaSetupRequired: () => void
   logout: () => void
 }
+
+const MFA_SETUP_KEY = 'dtwatch_mfa_setup_required'
 
 const AuthContext = createContext<AuthState | null>(null)
 
@@ -122,6 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     clearTokens()
+    try { sessionStorage.removeItem(MFA_SETUP_KEY) } catch { /* storage blocked */ }
     // Hard navigation instead of just clearing React state in place
     // (2026-08-05 fix, user report: "when i logged out and logged in,
     // should be in refreshed state, not in previously closed state").
@@ -218,24 +227,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // returns the same payload shape /auth/login/ does, so establishing the
   // session is byte-for-byte identical once the response is in hand — which
   // is what keeps SSO from needing any session plumbing of its own.
-  const establishSession = useCallback(async (path: string, body: unknown) => {
+  const establishSession = useCallback(async (path: string, body: unknown): Promise<{ mfaTicket?: string }> => {
     setLoading(true)
     try {
-      const data = await apiJson<Me & { access: string; refresh: string }>(path, {
+      const data = await apiJson<Me & {
+        access?: string; refresh?: string; mfa_required?: boolean; mfa_ticket?: string; mfa_setup_required?: boolean
+      }>(path, {
         method: 'POST',
         body: JSON.stringify(body),
       })
-      setTokens(data.access, data.refresh)
-      const { access: _a, refresh: _r, ...me } = data
-      setUser(me)
+      // Two-factor login (2026-10-15): the password was right, the code is
+      // still to come. No tokens yet.
+      if (data.mfa_required && data.mfa_ticket) return { mfaTicket: data.mfa_ticket }
+      setTokens(data.access as string, data.refresh as string)
+      const { access: _a, refresh: _r, mfa_setup_required: setup, ...me } = data
+      if (setup) {
+        try { sessionStorage.setItem(MFA_SETUP_KEY, '1') } catch { /* storage blocked */ }
+        setMfaSetupRequired(true)
+      }
+      setUser(me as Me)
+      return {}
     } finally {
       setLoading(false)
     }
   }, [])
 
+  const [mfaSetupRequired, setMfaSetupRequired] = useState(() => {
+    try { return sessionStorage.getItem(MFA_SETUP_KEY) === '1' } catch { return false }
+  })
+  const clearMfaSetupRequired = useCallback(() => {
+    try { sessionStorage.removeItem(MFA_SETUP_KEY) } catch { /* storage blocked */ }
+    setMfaSetupRequired(false)
+  }, [])
+
   const login = useCallback(
     (username: string, password: string) =>
       establishSession('/api/v2/auth/login/', { username, password }),
+    [establishSession],
+  )
+
+  const verifyMfa = useCallback(
+    (ticket: string, code: string) => establishSession('/api/v2/auth/mfa/verify/', { mfa_ticket: ticket, code }),
     [establishSession],
   )
 
@@ -248,7 +280,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   return (
-    <AuthContext.Provider value={{ user, loading, restoring, login, loginWithSsoCode, logout }}>
+    <AuthContext.Provider value={{
+      user, loading, restoring, login, verifyMfa, loginWithSsoCode, mfaSetupRequired, clearMfaSetupRequired, logout,
+    }}>
       {children}
     </AuthContext.Provider>
   )

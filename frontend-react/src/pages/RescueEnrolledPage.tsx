@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { apiErrorMessage } from '../api/client'
 import { useRescueEnrolledList } from '../api/queries'
+import { sameNumber } from '../lib/msisdnMatch'
 
 // Rescue Enrolled Devices (2026-10-07) -- superadmin-only, PROVISIONAL
 // list of everyone currently opted in to the Rescue Location beacon (see
@@ -25,6 +27,10 @@ export default function RescueEnrolledPage() {
   }
 
   const rows = list.data?.results ?? []
+  // ?msisdn= (from a Subscriber Profile): that number's devices only, any spelling (2026-10-15).
+  const [params, setParams] = useSearchParams()
+  const only = params.get('msisdn')
+  const shown = only ? rows.filter((r) => sameNumber(r.msisdn, only)) : rows
 
   return (
     <div className="admin-page">
@@ -50,8 +56,15 @@ export default function RescueEnrolledPage() {
       )}
 
       {list.data && rows.length === 0 && <p className="page-status">No devices are currently enrolled.</p>}
+      {only && list.data && (
+        <div className="pd-chip" style={{ marginBottom: 10 }}>
+          Showing only {only}: {shown.length} of {rows.length}
+          <button type="button" onClick={() => { const q = new URLSearchParams(params); q.delete('msisdn'); setParams(q, { replace: true }) }}
+            title="Show every number">Show all</button>
+        </div>
+      )}
 
-      {rows.length > 0 && (
+      {shown.length > 0 && (
         <table className="admin-table">
           <thead>
             <tr>
@@ -65,7 +78,7 @@ export default function RescueEnrolledPage() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {shown.map((r) => (
               <tr key={r.device_hash}>
                 <td>{r.msisdn ?? '—'}</td>
                 <td>{r.device_hash.slice(0, 16)}...</td>

@@ -111,6 +111,7 @@ const SitePhotosPage = lazy(() => import('./pages/SitePhotosPage'))
 const ProblemReportsPage = lazy(() => import('./pages/ProblemReportsPage'))
 const DtRetentionPage = lazy(() => import('./pages/DtRetentionPage'))
 const SubscriberProfilePage = lazy(() => import('./pages/SubscriberProfilePage'))
+const SecurityPage = lazy(() => import('./pages/SecurityPage'))
 const IssuesPage = lazy(() => import('./pages/IssuesPage'))
 const RfReportsPage = lazy(() => import('./pages/RfReportsPage'))
 const DtPlotCatalogPage = lazy(() => import('./pages/DtPlotCatalogPage'))
@@ -316,6 +317,7 @@ function App() {
         {withOpaqueSection('/problem-reports', <ProblemReportsPage />)}
         {withOpaqueSection('/dt-retention', <DtRetentionPage />)}
         {withOpaqueSection('/subscriber-profile', <SubscriberProfilePage />)}
+        {withOpaqueSection('/security', <SecurityPage />)}
         {withOpaqueSection('/issues', <IssuesPage />)}
         {withOpaqueSection('/rf-reports', <RfReportsPage />)}
         {withOpaqueSection('/dt-plot-catalog', <DtPlotCatalogPage />)}

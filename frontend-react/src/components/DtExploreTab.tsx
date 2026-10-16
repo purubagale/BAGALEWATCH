@@ -1640,6 +1640,7 @@ export default function DtExploreTab() {
                 attribution={mapLayer === 'street' ? '&copy; OpenStreetMap contributors' : '&copy; Google'}
                 url={mapLayer === 'street' ? STREET_URL : SATELLITE_URL}
                 subdomains={mapLayer === 'street' ? 'abc' : '0123'}
+                maxNativeZoom={mapLayer === 'street' ? 19 : 20}
                 maxZoom={20}
               />
               <SearchAreaLayer point={pointTuple as LatLng} radiusKm={radiusKm} shape={shape} label={pointLabel} />

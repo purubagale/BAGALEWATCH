@@ -18,12 +18,14 @@ Only counts and averages of other phones' readings are shown, never a
 device. The reporter's phone number is shown to a superadmin only.
 """
 import math
+import time
 from datetime import datetime, timedelta, timezone as dt_timezone
 
 from django.contrib.gis.db.models.functions import Distance
 from django.contrib.gis.geos import Point
 from django.contrib.gis.measure import D
 from django.core.cache import cache
+from django.db.models import F, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -34,6 +36,7 @@ from .audit import log_audit_event
 from .device_auth import DeviceSignatureAuthentication, IsDevice
 from .dt_serving_cell import _candidate_sectors, choose_sector, sectors_by_cell_identity
 from .models import DriveTestSample, ProblemReport, Site, TelemetrySample
+from .problem_notify import queue_update, report_notify_info
 from .telemetry import TELEMETRY_MATCH_MAX_KM, _scope_by_operator
 from .telemetry_level import sample_level
 from .views import IsAdminOrSuperadmin
@@ -126,8 +129,10 @@ def _summary(readings):
 def _drive_tests(report):
     """Drive-test readings within RADIUS_M, any date."""
     point = Point(report.lng, report.lat, srid=4326)
+    # dwithin (ST_DWithin) uses the spatial index; distance_lte (ST_Distance)
+    # read every drive-test reading and took about 2 s (2026-10-15).
     rows = list(
-        DriveTestSample.objects.filter(location__distance_lte=(point, D(m=RADIUS_M)))
+        DriveTestSample.objects.filter(location__dwithin=(point, D(m=RADIUS_M)))
         .values_list('session__tech', 'rsrp', 'rscp', 'rsrq', 'dl', 'session_id', 'session__name', 'session__date')[:20000]
     )
     four_g = [r for r in rows if (r[0] or '4G') == '4G']
@@ -338,6 +343,87 @@ CUSTOMER_REPLY = {
 }
 
 
+# ── Saved cause and site, for the dashboard (2026-10-15) ───────────────────
+
+# The finding kinds above, as the dashboard names them.
+CAUSE_LABELS = {
+    'weak_coverage': 'Weak signal',
+    'interference': 'Good signal, poor quality',
+    'busy_cell': 'Good signal, slow (busy cell)',
+    'lower_tech': 'Phone on 2G/3G where 4G is usable',
+    'lower_tech_weak_4g': 'Little 4G here',
+    'worse_than_usual': 'Worse than usual',
+    'call_drop': 'Call drops (needs KPI)',
+    'no_data': 'No measurements nearby',
+    'no_fault_found': 'No fault found',
+}
+# Phones upload their readings a few minutes late, and the check looks up to
+# AT_TIME_HOURS after the problem; a report is worked out again once after this.
+SETTLE_HOURS = AT_TIME_HOURS + 1
+# Reports are classified in the background (classify_problem_reports, every
+# few minutes); the dashboard spends at most this long on new ones itself.
+CLASSIFY_PER_REQUEST = 60
+DASHBOARD_CLASSIFY_SECONDS = 3
+OVERDUE_HOURS = 48                  # a new report older than this is flagged
+AREA_DEG = 0.005                    # about 500 m: reports with no site are grouped by this square
+
+
+def classify_report(report, check=None):
+    """Saves the check's main cause and the site it points at on the report.
+    The check is worked out with every phone's readings (no operator filter),
+    so the dashboard counts the same for everyone; a check made for an
+    unrestricted user can be passed in to save working it out twice."""
+    if check is None:
+        check = check_report(report, None)
+    serving, nearest = check.get('serving'), check.get('nearest_sites') or []
+    if serving:
+        site_id, site_by, sector = serving['site_id'], 'serving', serving.get('cell_name') or ''
+    elif nearest:
+        site_id, site_by, sector = nearest[0]['site_id'], 'nearest', ''
+    else:
+        site_id, site_by, sector = None, '', ''
+    cause = check['findings'][0]['kind'] if check.get('findings') else ''
+    # A new cause or site counts as a change for a linked system's "since" query.
+    changed = (cause, site_id) != (report.cause, report.site_id)
+    report.cause = cause
+    report.site_id, report.site_by, report.sector = site_id, site_by, sector[:64]
+    report.classified_at = timezone.now()
+    report.save(update_fields=['cause', 'site', 'site_by', 'sector', 'classified_at']
+                + (['updated_at'] if changed else []))
+    if changed and cause:
+        queue_update(report, 'cause')       # a linked system on Automatic hears of it
+
+
+def _unsettled(now):
+    """Reports not yet classified, or classified before their readings settled."""
+    settle = timedelta(hours=SETTLE_HOURS)
+    return Q(classified_at__isnull=True) | Q(
+        classified_at__lt=F('happened_at') + settle, happened_at__lte=now - settle)
+
+
+def classify_pending(seconds, since=None):
+    """Classifies unsettled reports, newest first, for at most `seconds`
+    (a check takes one to a few seconds). Returns how many were done. Run
+    every few minutes by classify_problem_reports, and briefly by the
+    dashboard so a new report shows up without waiting for the job."""
+    now = timezone.now()
+    qs = ProblemReport.objects.filter(_unsettled(now))
+    if since is not None:
+        qs = qs.filter(happened_at__gte=since)
+    deadline = time.monotonic() + seconds
+    done = 0
+    for report in qs.order_by('-happened_at')[:CLASSIFY_PER_REQUEST]:
+        if time.monotonic() >= deadline:
+            break
+        classify_report(report)
+        done += 1
+    return done
+
+
+def _unrestricted(user):
+    return not getattr(user, 'operator_mncs', None)
+
+
 # ── Views ──────────────────────────────────────────────────────────────────
 
 
@@ -362,11 +448,24 @@ def _row(report, user, with_check=False):
         'entered_by': report.entered_by.username if report.entered_by_id else None,
         'checked_by': report.checked_by.username if report.checked_by_id else None,
         'checked_at': report.checked_at.isoformat() if report.checked_at else None,
+        'cause': report.cause,
+        'cause_label': CAUSE_LABELS.get(report.cause, ''),
+        'site_id': report.site_id,
+        'site_by': report.site_by,
+        'sector': report.sector,
+        'external_system': report.external_system,
+        'external_ref': report.external_ref,
+        'located_by': report.located_by,
     }
     if user.role == 'superadmin':
-        out['phone_number'] = report.device.msisdn if report.device_id else None
+        out['phone_number'] = (report.device.msisdn if report.device_id else None) or report.msisdn or None
     if with_check:
+        out['notify'] = report_notify_info(report)
         out['check'] = check_report(report, user)
+        # Opening a report also brings its saved cause and site up to date.
+        classify_report(report, out['check'] if _unrestricted(user) else None)
+        out.update(cause=report.cause, cause_label=CAUSE_LABELS.get(report.cause, ''),
+                   site_id=report.site_id, site_by=report.site_by, sector=report.sector)
     return out
 
 
@@ -431,10 +530,25 @@ class ProblemReportListView(APIView):
 
     def get(self, request):
         qs = ProblemReport.objects.select_related('device', 'entered_by', 'checked_by')
-        for field in ('status', 'category', 'source'):
+        # cause, site and days come from the dashboard: one hotspot's reports (2026-10-15).
+        for field in ('status', 'category', 'source', 'cause'):
             value = request.query_params.get(field)
             if value:
                 qs = qs.filter(**{field: value})
+        site = request.query_params.get('site')
+        if site:
+            qs = qs.filter(site_id=site)
+        area = request.query_params.get('area')
+        if area:
+            try:
+                lat0, lng0 = (float(v) for v in area.split(','))
+            except ValueError:
+                return Response({'detail': 'Unknown area.'}, status=400)
+            qs = qs.filter(site__isnull=True, lat__gte=lat0, lat__lt=lat0 + AREA_DEG,
+                           lng__gte=lng0, lng__lt=lng0 + AREA_DEG)
+        days = _int(request.query_params.get('days'), 1, 3650)
+        if days:
+            qs = qs.filter(happened_at__gte=timezone.now() - timedelta(days=days))
         return Response({'results': [_row(r, request.user) for r in qs[:500]]})
 
     def post(self, request):
@@ -482,7 +596,151 @@ class ProblemReportDetailView(APIView):
             report.engineer_note = str(data.get('engineer_note') or '')[:2000]
             fields.append('engineer_note')
         if fields:
-            report.save(update_fields=fields)
+            report.save(update_fields=fields + ['updated_at'])
+            if status_value is not None:
+                queue_update(report, 'status')   # a linked system on Automatic hears of it
             log_audit_event(request, 'problem_report_update', resource='problem_report', resource_id=str(pk),
                             detail=f'status {report.status}')
         return Response({'id': report.pk, 'status': report.status})
+
+
+# Days on the dashboard are Nepal's (UTC+5:45), not the server's UTC.
+NEPAL_TZ = dt_timezone(timedelta(hours=5, minutes=45))
+
+
+def _count(counter, key):
+    counter[key] = counter.get(key, 0) + 1
+
+
+def _ranked(counter, labels=None, top=None):
+    rows = sorted(counter.items(), key=lambda kv: (-kv[1], str(kv[0])))
+    if top:
+        rows = rows[:top]
+    return [{'key': k, 'label': (labels or {}).get(k, k), 'count': n} for k, n in rows]
+
+
+class ProblemDashboardView(APIView):
+    """Totals, causes, a map and the sites with the most reports (2026-10-15).
+
+        GET /api/v2/problem-reports/dashboard/?days=30
+
+    Reports are classified in the background; this spends at most
+    DASHBOARD_CLASSIFY_SECONDS on any still waiting, and counts the rest in
+    `pending`. No phone number is returned."""
+    permission_classes = [IsAdminOrSuperadmin]
+
+    def get(self, request):
+        days = _int(request.query_params.get('days'), 1, 3650) or 30
+        return Response(dashboard_data(days))
+
+
+def dashboard_data(days, classify=True):
+    """The dashboard's figures for the last `days` days. Also read by the
+    summaries that need the same figures, with classify=False."""
+    now = timezone.now()
+    since = now - timedelta(days=days)
+    window = ProblemReport.objects.filter(happened_at__gte=since)
+
+    if classify:
+        classify_pending(DASHBOARD_CLASSIFY_SECONDS, since=since)
+    pending = window.filter(classified_at__isnull=True).count()
+
+    reports = list(window.select_related('site').order_by('-happened_at'))
+    categories = dict(ProblemReport.CATEGORIES)
+    statuses = {'new': 0, 'checked': 0, 'closed': 0}
+    sources, causes, cats, techs, bands, districts = {}, {}, {}, {}, {}, {}
+    per_day = {}
+    hours_to_check, overdue, oldest_open = [], 0, None
+    spots = {}
+    for r in reports:
+        statuses[r.status] = statuses.get(r.status, 0) + 1
+        _count(sources, r.external_system or r.get_source_display())
+        _count(causes, r.cause or 'unchecked')
+        _count(cats, r.category)
+        _count(techs, _TECH.get(r.network_type) or ('Not known' if r.source == 'staff' else r.network_type or 'Not known'))
+        if r.band:
+            _count(bands, r.band)
+        _count(districts, (r.site.district if r.site_id and r.site.district else 'Not known'))
+        day = r.happened_at.astimezone(NEPAL_TZ).date().isoformat()
+        per_day.setdefault(day, {})
+        _count(per_day[day], r.category)
+        if r.status == 'new':
+            if oldest_open is None or r.created_at < oldest_open:
+                oldest_open = r.created_at
+            if now - r.created_at > timedelta(hours=OVERDUE_HOURS):
+                overdue += 1
+        elif r.checked_at:
+            hours_to_check.append((r.checked_at - r.created_at).total_seconds() / 3600)
+
+        if r.site_id:
+            key = f'site:{r.site_id}'
+            spot = spots.get(key) or spots.setdefault(key, {
+                'key': key, 'kind': 'site', 'site_id': r.site_id, 'name': r.site.name,
+                'district': r.site.district or '', 'lat': r.site.lat, 'lng': r.site.lng,
+            })
+        else:
+            lat0 = math.floor(r.lat / AREA_DEG) * AREA_DEG
+            lng0 = math.floor(r.lng / AREA_DEG) * AREA_DEG
+            key = f'area:{lat0:.3f},{lng0:.3f}'
+            spot = spots.get(key) or spots.setdefault(key, {
+                'key': key, 'kind': 'area', 'site_id': None, 'name': f'Area near {lat0:.3f}, {lng0:.3f}',
+                'district': '', 'lat': lat0 + AREA_DEG / 2, 'lng': lng0 + AREA_DEG / 2,
+                'area': f'{lat0:.3f},{lng0:.3f}',
+            })
+        spot['count'] = spot.get('count', 0) + 1
+        spot['open'] = spot.get('open', 0) + (r.status == 'new')
+        spot.setdefault('causes', {})
+        _count(spot['causes'], r.cause or 'unchecked')
+        spot.setdefault('sectors', {})
+        if r.sector:
+            _count(spot['sectors'], r.sector)
+        spot.setdefault('levels', []).append(r.level_dbm)
+        if 'latest_at' not in spot:
+            spot['latest_at'] = r.happened_at.isoformat()   # newest first
+
+    cause_labels = dict(CAUSE_LABELS, unchecked='Not checked yet')
+    hotspots = []
+    for spot in sorted(spots.values(), key=lambda s: (-s['count'], -s['open'], s['key']))[:25]:
+        top = max(spot['causes'].items(), key=lambda kv: kv[1])[0]
+        hotspots.append({
+            **{k: v for k, v in spot.items() if k not in ('causes', 'sectors', 'levels')},
+            'top_cause': top, 'top_cause_label': cause_labels.get(top, top),
+            'causes': _ranked(spot['causes'], cause_labels),
+            'sectors': _ranked(spot['sectors'], top=5),
+            'level_mean': _mean(spot['levels']),
+        })
+
+    start_day = since.astimezone(NEPAL_TZ).date()
+    series = []
+    for i in range(days + 1):
+        day = (start_day + timedelta(days=i)).isoformat()
+        series.append({'date': day, **{k: per_day.get(day, {}).get(k, 0) for k in categories}})
+
+    hours_to_check.sort()
+    return {
+        'days': days,
+        'generated_at': now.isoformat(),
+        'pending': pending,
+        'totals': {
+            'all': len(reports), **statuses,
+            'app': sum(r.source == 'app' for r in reports), 'staff': sum(r.source == 'staff' for r in reports),
+            'external': sum(r.source == 'external' for r in reports),
+            'overdue': overdue, 'overdue_hours': OVERDUE_HOURS,
+            'oldest_open_at': oldest_open.isoformat() if oldest_open else None,
+            'median_hours_to_check': round(hours_to_check[len(hours_to_check) // 2], 1) if hours_to_check else None,
+        },
+        'categories': [{'key': k, 'label': v} for k, v in ProblemReport.CATEGORIES],
+        'per_day': series,
+        # Where reports came from: the app, staff, or each linked system by name.
+        'by_source': _ranked(sources),
+        'by_cause': _ranked(causes, cause_labels),
+        'by_category': _ranked(cats, categories),
+        'by_tech': _ranked(techs),
+        'by_band': _ranked(bands, top=8),
+        'by_district': _ranked(districts, top=10),
+        'hotspots': hotspots,
+        'points': [{
+            'id': r.id, 'lat': r.lat, 'lng': r.lng, 'cause': r.cause, 'category': r.category,
+            'status': r.status, 'happened_at': r.happened_at.isoformat(), 'site_id': r.site_id,
+        } for r in reports[:3000]],
+    }

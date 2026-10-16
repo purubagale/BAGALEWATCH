@@ -95,6 +95,7 @@ a signed call (section 7.3). "Signed" means a registered phone only.
 | `device/register/` | POST | none, rate limited | Registers the phone's public key with its number |
 | `device/fcm-token/` | PUT | Signed | Push address of a registered phone |
 | `device/sdk-link/` | POST | Signed | Ties the phone to its SDK device id, for signed uploads (section 7.3) |
+| `device/verify-number/` (`start/`, `confirm/`) | GET, POST | Signed | Proves the registered number by SMS code (section 7.4) |
 | `device-identity/` | POST | Signed | Model, user type and, when readable, number and IMEI |
 | `device/trace-requests/` | GET | Signed | Open location requests for this phone |
 | `device/trace-requests/<id>/respond/` | POST | Signed | Accept, reject or stop |
@@ -343,6 +344,35 @@ content provider so the signer is set before any background upload runs.
 A phone that never registers keeps using the shared key. The key can be
 retired on the server (`TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL`) only once every
 sharing phone is registered; until then it still works for anyone holding it.
+
+### 7.4 Proving the number by SMS code (15 October 2026)
+
+The number sent at registration is typed by the user, so on its own it
+proves nothing. When the server can send SMS, the registration answer says
+so:
+
+```json
+{"device_id": "...", "registered": true, "created": true,
+ "number_verified": false, "verification_available": true, "verification_required": false}
+```
+
+With `verification_available` true and `number_verified` false, the app
+asks the server to send a code and lets the user type it. All three calls
+are signed (section 7.2):
+
+| Path | Method | Body | Answer |
+|---|---|---|---|
+| `device/verify-number/` | GET | none | the three flags above |
+| `device/verify-number/start/` | POST | `{}` | `{"sent": true, "expires_in": 600, "resend_after": 60}`; 429 when asked again within a minute or more than 5 times a day; 503 when no SMS can be sent |
+| `device/verify-number/confirm/` | POST | `{"code": "123456"}` | the flags, with `number_verified: true`; 400 with `detail` ("Wrong code. 4 tries left.", "The code has expired. Ask for a new one.") |
+
+A code lives 10 minutes and takes 5 tries. A verified phone keeps the
+number: another phone typing the same number is then refused (409), and an
+unverified phone that had typed it loses it. Changing the number at
+registration clears the verified flag. Until NTC's SMS gateway is set up
+the server answers `verification_available: false` and the app asks
+nothing. The reference app does this in `NumberVerify.kt`: after
+registering, and from the "registered as" line in Settings.
 
 ## 8. Push messages and readings on request
 

@@ -782,6 +782,121 @@ repo, not on prod):
   on the right, Drive Tests + Antenna Changes, Photos and Issues below. The
   map went blank when the sidebar stopped stretching (its box had no
   height); the Leaflet container is now absolutely positioned in its box.
+- **Problem Dashboard, phase 1** (2026-10-15, built, NOT committed, not
+  on prod; not AI work). The Problem Reports page became a dashboard with
+  Overview (tiles, reports per day, causes, sources, districts, network),
+  Reports (the old list and check, filterable by cause, site or 500 m
+  area), Map (dots by cause) and Hotspots (by serving or nearest site, else
+  500 m area). Tab, period and filters live in the page address.
+  `ProblemReport` keeps the check's main `cause`, `site`, `site_by`,
+  `sector`, `classified_at` (migration 0134, which also renames the menu
+  item); `classify_problem_reports` in `run_maintenance` works them out
+  every 2 min and again once the readings around the time have arrived;
+  the dashboard spends at most 3 s on any still waiting. The stored check
+  ignores the viewer's operator filter so counts are the same for all.
+  The check's drive-test lookup used `distance_lte` (no spatial index,
+  2 s a check); it is `dwithin` now (0.02 s).
+  **Reports from other NTC systems** (asked by the user the same day):
+  `core/external_problem.py`, `POST/GET /api/external/v1/problem-reports/`
+  with API keys holding the new `problems:write` / `problems:read` scopes
+  (API Access page). The key's name is the system's name
+  (`external_system`); its ticket number (`external_ref`) is unique per
+  system, so a re-send updates the report while it is new and changes
+  nothing once checked. Place: lat/lng, or `site_id`, or 4G `cell_id`
+  (`located_by` site/cell: the check looks around the mast, and the
+  report says so). The read-back carries status, likely cause and the
+  customer reply, but no engineer's note and no number. Up to 200
+  per request, 5000 new a day per system. Tested in a rolled-back
+  transaction.
+  **Linked systems, same day** (user's decisions): linked systems are
+  NTC's own, so they may send the customer's number (`msisdn`, canonical
+  977..., superadmin-only like an app reporter's number; the report shows
+  on that number's Subscriber Profile; notes are no longer stripped of
+  numbers). `core/problem_notify.py`: `LinkedSystem` (name = API key
+  name, address, signing secret shown once, mode Automatic / Manual / Off,
+  pause) and `ProblemNotification` (delivery log; waiting updates for a
+  report are merged; body built at send time; HMAC-SHA256 of
+  "timestamp.body" in `X-DTWatch-Signature`; retries 1 min to 12 h, 8
+  tries, then failed; Retry now). Automatic sends on a status or cause
+  change; Manual only from the report's "Send update"; the job
+  `send_problem_updates` (every minute, in `run_maintenance`). Managed on
+  API Access ("Linked systems"). Migration 0135; AI migrations moved to
+  0136-0140 (local history renamed). Tested with a local receiver in a
+  rolled-back transaction. Prod needs outbound HTTP from the django
+  container to each system's address.
+- **Security audit follow-up** (2026-10-15, built, NOT committed in either
+  repo, not on prod). Asked by the user after a public-exposure audit.
+  - SECRET_KEY: with DEBUG off the server refuses to start on the default,
+    a key under 50 characters or a repetitive one. Note `.env` here has
+    `DEBUG=True`, which settings read as off (only `1` is on).
+  - Rate limits: `core/throttles.py` (per user `API_USER_RATE` 1200/min,
+    per address `API_ANON_RATE` 120/min; `/api/telemetry/` and
+    `/api/external/` exempt), keyed on X-Real-IP. nginx `limit_req` 30/min
+    burst 30 on `/api/v2/auth/`. nginx now sets the real client address
+    from X-Forwarded-For when the peer is a private address (Traefik,
+    Docker): before, behind Traefik every user had Traefik's address, so
+    three failed logins by anyone could IP-block the whole site.
+  - Browser session login off unless DEBUG or `API_SESSION_AUTH=1`.
+  - Linked-system update addresses: `check_address` (https only unless
+    `LINKED_SYSTEM_HTTPS_ONLY=0`, `LINKED_SYSTEM_ALLOWED_HOSTS` with
+    `*.domain`, never loopback/link-local/internal service names; checked
+    on save and every send; no redirects). A local http test receiver is
+    therefore refused now.
+  - SheetJS from `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`,
+    DOMPurify 3.4 (`lib/safeHtml.ts`) on every `dangerouslySetInnerHTML`;
+    `npm audit --omit=dev` reports 0.
+  - Two-factor login: the backend existed (Phase C) but the web app had
+    no screens, and a TOTP-enrolled account could not sign in. Now: code
+    step on the login page, `TwoFactorModal` (user menu, and forced when
+    required), `SecuritySettings.mfa_required_admins`.
+  - Phone number verification by SMS (Phase G seam): `core/sms.py`
+    (`SMS_BACKEND` off/console/http/ntc, every gateway detail in `.env`,
+    see settings.py), `core/number_verify.py` (signed device endpoints,
+    6-digit code, 10 min, 5 tries, hashed in Redis), registration answer
+    carries the flags, `DeviceCredential.msisdn_verified_at`, only a
+    verified owner blocks a number, `SecuritySettings
+    .phone_verification_required` filters `devices_for_msisdn` and the
+    Subscriber Profile to SMS/SIM-proved links. Local `.env` has
+    `SMS_BACKEND=console` for testing. App: `NumberVerify.kt`, built, APK
+    on the Desktop, not run on a phone.
+  - Security page (superadmin, `/s9k4tq`, migration 0136 with the menu
+    seed): the three switches, SMS gateway status and test SMS, and what
+    .env has in effect. AI migrations are now 0137-0142.
+  - `log_audit_event` no longer fails when a phone (DeviceCredential) is
+    the caller.
+  - Tested in a rolled-back transaction with a throwaway signed phone:
+    every check passed.
+  - **Attack alerts** (same day, asked by the user): `core/alerts.py`.
+    An address newly auto-blocked (`ip_block.maybe_auto_block`) or a real
+    account reaching the 5-failure lockout (`LoginView`) alerts every
+    active superadmin by the email and the new `User.mobile_number` on
+    their account (Users page), plus extra recipients; one alert per
+    address/account an hour; sent in a background thread; written to the
+    Audit Log (`ATTACK_ALERT.SENT`). Security page "Attack alerts": on/off,
+    channels Email / SMS / both, extra emails and numbers, "Send a test
+    alert", warnings for no EMAIL_HOST, no SMS gateway, superadmins with
+    no email or mobile. Migration 0137 (AI migrations now 0138-0143).
+    Tested in a rolled-back transaction (alerts sent in place).
+  - **CI**: `.github/dependabot.yml` (pip, npm except xlsx, both
+    Dockerfiles, Actions; against `telemetry`) and
+    `.github/workflows/security-scan.yml` (pip-audit, npm audit high,
+    gitleaks fail the run; bandit reports only). pip-audit run here found
+    nothing. Not yet run on GitHub.
+- **Linking earlier readings by hand** (2026-10-15, built, NOT committed).
+  A reinstall (e.g. debug to signed release) gives a phone a new SDK id,
+  and apps before 14 October never sent `sdk-link`, so old readings belong
+  to no number. `core/subscriber_link.py`: candidates = device ids linked
+  to no number whose last-90-day readings share 500 m squares with this
+  number's phones (most overlap first); superadmin links one with the case
+  reference (`SubscriberDevice` via `manual_link`, self-declared, audit
+  log), or removes it. Profile Phones card: "Find this phone's earlier
+  readings…" (`LinkEarlierReadings.tsx`). Also: Registered Devices and
+  Rescue Enrolled filter by `?msisdn=` from the profile
+  (`lib/msisdnMatch.ts`); dashboard shortcut cards got the gold edge;
+  Collections route fits all points (`FitToPoints.tsx`). Desktop now holds
+  only the signed release APKs `dtwatchTelemetry.apk` and
+  `dtwatchTelemetry_Collector.apk` (older ones in `Desktop\old-apks`).
+  Release builds need the llama-server (11 GB) stopped for memory.
 - **Rows per page on every table** (2026-10-15, built). `lib/tablePager.ts`,
   installed by `Layout.tsx`, watches the page and pages any table with more
   than 10 rows: rows outside the page are hidden (never removed, so sorting,

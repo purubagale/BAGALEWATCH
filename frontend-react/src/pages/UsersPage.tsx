@@ -47,6 +47,7 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
   const [name, setName] = useState(u.name)
   const [dept, setDept] = useState(u.dept)
   const [email, setEmail] = useState(u.email)
+  const [mobile, setMobile] = useState(u.mobile_number ?? '')
   const [isActive, setIsActive] = useState(u.is_active)
   const [password, setPassword] = useState('')
   const [mncsText, setMncsText] = useState(mncsToText(u.operator_mncs))
@@ -68,7 +69,9 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
       // `role` is deliberately NOT sent here any more (2026-10-01) —
       // this row no longer edits it at all; Assign Roles (linked from the
       // Role column below) is the one place that edits a user's roles.
-      const patch: Partial<UserWrite> = { name, dept, email, is_active: isActive, operator_mncs: textToMncs(mncsText) }
+      const patch: Partial<UserWrite> = {
+        name, dept, email, mobile_number: mobile, is_active: isActive, operator_mncs: textToMncs(mncsText),
+      }
       if (!ssoManaged && password) patch.password = password
       await updateUser.mutateAsync(patch)
       setPassword('')
@@ -99,6 +102,7 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
         <td>{u.name}</td>
         <td>{u.dept}</td>
         <td>{u.email || <span className="muted">—</span>}</td>
+        <td>{u.mobile_number || <span className="muted">—</span>}</td>
         <td>{u.operator_mncs?.length ? u.operator_mncs.join(', ') : <span className="muted">Unrestricted</span>}</td>
         <td>{u.is_active ? 'Active' : 'Disabled'}</td>
         <td>{u.last_login ? new Date(u.last_login).toLocaleString() : '—'}</td>
@@ -131,6 +135,14 @@ function EditableUserRow({ u, canWrite }: { u: AdminUser; canWrite: boolean }) {
           onChange={(e) => setEmail(e.target.value)}
           placeholder="For password reset"
           style={{ width: 140 }}
+        />
+      </td>
+      <td>
+        <input
+          value={mobile}
+          onChange={(e) => setMobile(e.target.value)}
+          placeholder="For security alerts"
+          style={{ width: 120 }}
         />
       </td>
       <td>
@@ -210,6 +222,7 @@ export default function UsersPage() {
             <th>Name</th>
             <th>Dept</th>
             <th>Email</th>
+            <th>Mobile</th>
             <th>Operator scope</th>
             <th>Status</th>
             <th>Last login</th>
@@ -264,6 +277,14 @@ export default function UsersPage() {
                 value={newUser.email ?? ''}
                 onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
                 placeholder="For password reset"
+              />
+            </label>
+            <label>
+              Mobile
+              <input
+                value={newUser.mobile_number ?? ''}
+                onChange={(e) => setNewUser({ ...newUser, mobile_number: e.target.value })}
+                placeholder="For security alerts by SMS"
               />
             </label>
             <label>

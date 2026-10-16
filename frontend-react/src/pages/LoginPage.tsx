@@ -29,7 +29,12 @@ const SSO_ERRORS: Record<string, string> = {
 }
 
 export default function LoginPage() {
-  const { user, login, loading } = useAuth()
+  const { user, login, verifyMfa, loading } = useAuth()
+  // Two-factor login (2026-10-15): after a right password, an account with
+  // two-factor on is asked for the 6-digit code from its authenticator app.
+  // The ticket is good for one try; a wrong code starts sign-in again.
+  const [mfaTicket, setMfaTicket] = useState<string | null>(null)
+  const [mfaCode, setMfaCode] = useState('')
   const [params] = useSearchParams()
   const { theme, toggleTheme } = useTheme()
   const [username, setUsername] = useState('')
@@ -93,7 +98,11 @@ export default function LoginPage() {
     e.preventDefault()
     setError(null)
     try {
-      await login(username, password)
+      const { mfaTicket: ticket } = await login(username, password)
+      if (ticket) {
+        setMfaTicket(ticket)
+        setMfaCode('')
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setError('Invalid username or password.')
@@ -119,6 +128,22 @@ export default function LoginPage() {
       } else {
         setError('Could not reach the server. Check your network connection and try again.')
       }
+    }
+  }
+
+  async function handleMfaSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!mfaTicket) return
+    setError(null)
+    try {
+      await verifyMfa(mfaTicket, mfaCode.trim())
+    } catch (err) {
+      // The ticket is used up either way; the password must be entered again.
+      setMfaTicket(null)
+      setPassword('')
+      setError(err instanceof ApiError && err.status === 400
+        ? 'Wrong or expired code. Sign in again and enter the newest code.'
+        : apiErrorMessage(err))
     }
   }
 
@@ -218,7 +243,30 @@ export default function LoginPage() {
           )
         )}
 
-        {localLoginEnabled && !forgotMode && (
+        {localLoginEnabled && !forgotMode && mfaTicket && (
+          <form className="login-form" onSubmit={handleMfaSubmit}>
+            <p className="login-note">Enter the 6-digit code from your authenticator app.</p>
+            <input
+              className="login-input"
+              value={mfaCode}
+              onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              autoFocus
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="123456"
+              aria-label="Two-factor code"
+            />
+            {error && <div className="login-error">{error}</div>}
+            <button type="submit" disabled={loading || mfaCode.length !== 6} className="login-submit">
+              {loading ? 'Checking…' : 'Verify'}
+            </button>
+            <button type="button" className="login-link-btn" onClick={() => { setMfaTicket(null); setPassword('') }}>
+              Back to login
+            </button>
+          </form>
+        )}
+
+        {localLoginEnabled && !forgotMode && !mfaTicket && (
           <form className="login-form" onSubmit={handleSubmit}>
             <input
               className="login-input"
@@ -275,7 +323,7 @@ export default function LoginPage() {
           </form>
         )}
 
-        {ssoEnabled && !forgotMode && (
+        {ssoEnabled && !forgotMode && !mfaTicket && (
           <>
             {localLoginEnabled && <div className="login-or">or</div>}
             {/* A real link, not a fetch: this must be a top-level browser

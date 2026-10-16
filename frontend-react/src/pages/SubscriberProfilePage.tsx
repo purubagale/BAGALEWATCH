@@ -7,6 +7,7 @@ import { useSubscriberProfile } from '../api/queries'
 import type { SubscriberProfile } from '../api/types'
 import { OPAQUE_PATHS } from '../constants/opaqueRoutes'
 import RowsPerPageSelect from '../components/RowsPerPageSelect'
+import LinkEarlierReadings from '../components/LinkEarlierReadings'
 import { useRowsPerPage } from '../lib/rowsPerPage'
 
 // Subscriber Profile (2026-10-15, core/subscriber_profile.py). Superadmin:
@@ -200,7 +201,9 @@ function SiteMap({ loc }: { loc: NonNullable<SubscriberProfile['last_location']>
   )
 }
 
-function Profile({ p, out }: { p: SubscriberProfile; out: (key: string, extra?: Record<string, string>) => string }) {
+function Profile({ p, out, reason, onChanged }: {
+  p: SubscriberProfile; out: (key: string, extra?: Record<string, string>) => string; reason: string; onChanged: () => void
+}) {
   const s = p.summary
   const loc = p.last_location
   const mobileTests = p.speed_tests.filter((t) => t.bearer !== 'wifi' && t.download_mbps != null)
@@ -214,8 +217,9 @@ function Profile({ p, out }: { p: SubscriberProfile; out: (key: string, extra?: 
   const readings = (device: string) => out('/telemetry-live-samples', { device, minutes: String(ALL_STORED_MINUTES) })
   // Each phone's own list page: Registered Devices only for a registered
   // number, Rescue Enrolled for a rescue beacon; nothing when neither applies.
-  const phonesLink = s.registered ? { to: out('/registered-devices'), label: 'Registered Devices' }
-    : s.rescue_beacon ? { to: out('/rescue-enrolled'), label: 'Rescue Enrolled Devices' } : null
+  // Opened with ?msisdn=, those pages show this number's phones only (2026-10-15).
+  const phonesLink = s.registered ? { to: out('/registered-devices', { msisdn: p.msisdn }), label: 'Registered Devices' }
+    : s.rescue_beacon ? { to: out('/rescue-enrolled', { msisdn: p.msisdn }), label: 'Rescue Enrolled Devices' } : null
 
   const nav: [string, string, number | null][] = [
     ['sp-location', 'Location', null], ['sp-signal', 'Signal', s.readings], ['sp-devices', 'Phones', p.devices.length],
@@ -262,7 +266,15 @@ function Profile({ p, out }: { p: SubscriberProfile; out: (key: string, extra?: 
                 <dt>Position</dt>
                 <dd>{loc.lat != null && loc.lng != null
                   ? <span className="sp-mono">{loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}{loc.gps_accuracy_m != null ? ` · ±${Math.round(loc.gps_accuracy_m)} m` : ''}</span>
-                  : <span className="sp-locked">🔒 Only while an emergency is declared</span>}</dd>
+                  : loc.position_withheld
+                    ? <span className="sp-locked">🔒 Only while an emergency is declared</span>
+                    : loc.earlier_position
+                      ? <span className="sp-mono">
+                          {loc.earlier_position.lat.toFixed(5)}, {loc.earlier_position.lng.toFixed(5)}
+                          {loc.earlier_position.gps_accuracy_m != null ? ` · ±${Math.round(loc.earlier_position.gps_accuracy_m)} m` : ''}
+                          <span className="sp-muted"> · not in this record; from the reading of {fmt(loc.earlier_position.ts)}</span>
+                        </span>
+                      : <span className="sp-muted">Not recorded: this {loc.source === 'rescue' ? 'rescue beacon report' : 'reading'} has no GPS position, and no stored reading has one</span>}</dd>
                 {loc.device_id && <><dt>Phone</dt><dd className="sp-mono" title={loc.device_id}>{short(loc.device_id)}</dd></>}
               </dl>
             </div>
@@ -292,6 +304,7 @@ function Profile({ p, out }: { p: SubscriberProfile; out: (key: string, extra?: 
                 <div className="sp-device-id" title={d.device_id}>{d.device_id}</div>
                 <div className="sp-device-chips">
                   <span className={`sp-chip ${d.registered_at ? (d.registration_revoked_at ? 'bad' : 'ok') : ''}`}>{d.registered_at ? (d.registration_revoked_at ? 'Registration revoked' : 'Registered') : 'Not registered'}</span>
+                  <span className={`sp-chip ${d.number_verified ? 'ok' : ''}`} title="Proved by a code sent by SMS to this number">{d.number_verified ? 'Number verified' : 'Number not verified'}</span>
                   {d.rescue_beacon && <span className={`sp-chip ${d.rescue_beacon === 'on' ? 'ok' : 'bad'}`}>Rescue {d.rescue_beacon}</span>}
                   {d.push_token && <span className="sp-chip info">Push</span>}
                   {d.signed_uploads_linked && <span className="sp-chip info">Signed uploads</span>}
@@ -304,12 +317,14 @@ function Profile({ p, out }: { p: SubscriberProfile; out: (key: string, extra?: 
                   {d.app_version && <div><span>App</span>{d.app_version}</div>}
                   {d.imei && <div><span>IMEI</span><b className="sp-mono">{d.imei}</b></div>}
                   {d.registered_at && <div><span>Registered</span>{fmt(d.registered_at)}</div>}
-                  {d.linked_via.length > 0 && <div><span>Linked by</span>{d.linked_via.join(', ').replace(/_/g, ' ')}</div>}
+                  {d.linked_via.length > 0 && <div><span>Linked by</span>{d.linked_via.map((v) => v === 'manual_link' ? 'superadmin, by hand' : v.replace(/_/g, ' ')).join(', ')}</div>}
                 </div>
                 {d.readings > 0 && <Link className="sp-device-link" to={readings(d.device_id)}>Open all {d.readings.toLocaleString()} readings →</Link>}
               </div>
             ))}
           </div>
+          <LinkEarlierReadings msisdn={p.msisdn} reason={reason} onChanged={onChanged}
+            manualIds={p.devices.filter((d) => d.linked_via.includes('manual_link')).map((d) => d.device_id)} />
         </Card>
 
         <Card id="sp-speed" icon="⚡" title="Speed tests" count={speedCount} empty={speedCount === 0}
@@ -364,11 +379,16 @@ function Profile({ p, out }: { p: SubscriberProfile; out: (key: string, extra?: 
         </Card>
 
         <Card id="sp-reports" icon="🧭" title="Problem reports" count={p.problem_reports.length} empty={p.problem_reports.length === 0}
-          link={{ to: out('/problem-reports', { status: 'all' }), label: 'Problem Reports' }}>
+          link={{ to: out('/problem-reports', { status: 'all' }), label: 'Problem Dashboard' }}>
           <Paged rows={p.problem_reports}
-            head={<tr><th>When</th><th>Problem</th><th>Status</th><th>Signal</th><th>Download</th></tr>}
+            head={<tr><th>When</th><th>Problem</th><th>From</th><th>Status</th><th>Signal</th><th>Download</th></tr>}
             row={(r) => (
-              <tr key={r.id}><td>{fmt(r.happened_at)}{r.note && <div className="muted">{r.note}</div>}</td><td>{r.category.replace(/_/g, ' ')}</td><td><span className="sp-chip plain">{r.status}</span></td><td className="mono">{r.network_type} {num(r.level_dbm, ' dBm')}</td><td className="mono">{num(r.download_mbps, ' Mbps')}</td></tr>
+              <tr key={r.id}>
+                <td><Link to={out('/problem-reports', { tab: 'reports', status: 'all', report: String(r.id) })}>{fmt(r.happened_at)}</Link>{r.note && <div className="muted">{r.note}</div>}</td>
+                <td>{r.category.replace(/_/g, ' ')}</td>
+                <td>{r.source === 'external' ? `${r.external_system} #${r.external_ref}` : r.source === 'app' ? 'Mobile app' : 'Staff'}</td>
+                <td><span className="sp-chip plain">{r.status}</span></td><td className="mono">{r.network_type} {num(r.level_dbm, ' dBm')}</td><td className="mono">{num(r.download_mbps, ' Mbps')}</td>
+              </tr>
             )} />
         </Card>
 
@@ -496,6 +516,7 @@ export default function SubscriberProfilePage() {
           <div className="sp-ident">
             <span className="sp-msisdn">{data.msisdn}</span>
             <span className={`sp-chip ${s.registered ? 'ok' : ''}`}>{s.registered ? `Registered ${fmtDate(s.first_registered_at)}` : 'Not registered'}</span>
+            {!!s.unproven_claims && <span className="sp-chip bad" title="Only verified numbers count (Security settings)">{s.unproven_claims} unverified phone{s.unproven_claims === 1 ? '' : 's'} left out</span>}
             <span className={`sp-chip ${s.rescue_beacon === 'on' ? 'ok' : s.rescue_beacon === 'withdrawn' ? 'bad' : ''}`}>
               Rescue beacon {s.rescue_beacon === 'on' ? 'on' : s.rescue_beacon === 'withdrawn' ? 'withdrawn' : 'never'}
             </span>
@@ -506,7 +527,7 @@ export default function SubscriberProfilePage() {
               {isFetching ? 'Refreshing…' : '↻ Refresh'}
             </button>
           </div>
-          <Profile p={data} out={out} />
+          <Profile p={data} out={out} reason={reason} onChanged={() => void refetch()} />
         </>
       )}
     </div>

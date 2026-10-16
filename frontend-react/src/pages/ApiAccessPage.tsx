@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { apiErrorMessage } from '../api/client'
 import { useApiKeys, useCreateApiKey, useDeleteApiKey, useUpdateApiKey } from '../api/queries'
 import { API_KEY_SCOPES, type ApiKeyCreate, type ApiKeyCreateResponse, type ApiKeyRow, type ApiKeyScope } from '../api/types'
+import LinkedSystemsPanel from '../components/LinkedSystemsPanel'
 
 // API Access (2026-08-12, "add feature to create api to share certain
 // data of system to other and to receive certain data from other
@@ -254,7 +255,29 @@ curl -X POST -H "X-API-Key: bw_..." -H "Content-Type: application/json" \\
   -d '{"id":"CDR0123","call_drop":1.2,"cell_avail":99.8}' \\
   ${origin}/api/external/v1/sites/`}
         </pre>
+
+        <h3>Problem reports from another system</h3>
+        <p className="muted">
+          A complaint desk, CRM or call centre system sends customer problems with a key that has "Problem reports —
+          send", and reads back their status and likely cause with "Problem reports — read status". Name the key after
+          the system: its reports are filed and shown under that name, and it reads back only its own. Each report
+          needs the system's ticket number (<code>external_ref</code>), a <code>category</code> (no_signal, slow_data,
+          call_drop, stuck_2g3g, other) and a place: <code>lat</code>/<code>lng</code>, a <code>site_id</code>, or a 4G
+          <code> cell_id</code>. Optional: <code>msisdn</code>, the customer's number in any spelling, which puts the
+          report on that number's Subscriber Profile (shown to superadmins only). Sending the same ticket again updates
+          it until an engineer has checked it. Status updates can also be sent to the system: see Linked systems below.
+        </p>
+        <pre className="code-block">
+{`curl -X POST -H "X-API-Key: bw_..." -H "Content-Type: application/json" \\
+  -d '[{"external_ref":"CC-10293","category":"slow_data","lat":27.6881,"lng":85.3346,
+        "happened_at":"2026-10-15T18:30:00+05:45","msisdn":"9841234567","note":"Slow every evening"}]' \\
+  ${origin}/api/external/v1/problem-reports/
+
+curl -H "X-API-Key: bw_..." "${origin}/api/external/v1/problem-reports/?since=2026-10-15T00:00:00Z"`}
+        </pre>
       </section>
+
+      <LinkedSystemsPanel />
     </div>
   )
 }

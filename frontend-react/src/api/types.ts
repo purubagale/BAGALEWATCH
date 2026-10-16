@@ -54,6 +54,8 @@ export interface Me {
   // follow-up) -- optional, application-level-unique when set (see
   // UserWriteSerializer.validate() in core/serializers.py).
   email: string
+  // For security alerts by SMS (2026-10-15), canonical 977...; '' when none.
+  mobile_number?: string
   is_active: boolean
   last_login: string | null
   date_joined: string
@@ -434,6 +436,8 @@ export interface AdminUser {
   // follow-up) -- optional, application-level-unique when set (see
   // UserWriteSerializer.validate() in core/serializers.py).
   email: string
+  // For security alerts by SMS (2026-10-15), canonical 977...; '' when none.
+  mobile_number?: string
   is_active: boolean
   last_login: string | null
   date_joined: string
@@ -453,6 +457,7 @@ export interface UserWrite {
   name: string
   dept: string
   email?: string
+  mobile_number?: string
   is_active?: boolean
   operator_mncs?: string[]
 }
@@ -1704,6 +1709,7 @@ export interface BrandingSettingsWrite {
 // login, managed here only as plain superadmin CRUD over the ApiKey
 // model (same shape as UsersPage/MenuAdminPage's own hooks).
 export type ApiKeyScope = 'sites:read' | 'sites:write' | 'dt:read' | 'dt:write' | 'coverage:read'
+  | 'problems:write' | 'problems:read'
 
 export const API_KEY_SCOPES: { value: ApiKeyScope; label: string }[] = [
   { value: 'sites:read', label: 'Sites & Sectors — read' },
@@ -1711,6 +1717,9 @@ export const API_KEY_SCOPES: { value: ApiKeyScope; label: string }[] = [
   { value: 'dt:read', label: 'Drive Test sessions — read' },
   { value: 'dt:write', label: 'Drive Test sessions — write' },
   { value: 'coverage:read', label: 'Telemetry Coverage — read' },
+  // Another NTC system's customer complaints (2026-10-15, core/external_problem.py).
+  { value: 'problems:write', label: 'Problem reports — send' },
+  { value: 'problems:read', label: 'Problem reports — read status' },
 ]
 
 export interface ApiKeyRow {
@@ -2306,6 +2315,8 @@ export interface AreaSampleResults {
 // joined to DeviceIdentity for phone model/manufacturer where available.
 // Separate from RescueEnrolledRow below (a different table/consent lane).
 export interface RegisteredDeviceRow {
+  // When the phone proved its number by SMS code (2026-10-15); null when not.
+  msisdn_verified_at?: string | null
   device_hash: string
   msisdn: string | null
   app_version: string | null
@@ -2761,7 +2772,7 @@ export interface ProblemCheck {
 
 export interface ProblemReport {
   id: number
-  source: 'app' | 'staff'
+  source: 'app' | 'staff' | 'external'
   category: ProblemCategory
   category_label: string
   note: string
@@ -2789,9 +2800,168 @@ export interface ProblemReport {
   entered_by: string | null
   checked_by: string | null
   checked_at: string | null
+  // The check's saved result (2026-10-15): main cause and the site it points at.
+  cause: string
+  cause_label: string
+  site_id: string | null
+  site_by: '' | 'serving' | 'nearest'
+  sector: string
+  // From another NTC system: its name and its own ticket number.
+  external_system: string
+  external_ref: string
+  // 'site' or 'cell': the other system named only the site or cell.
+  located_by: '' | 'point' | 'site' | 'cell'
   // Superadmin only.
   phone_number?: string | null
   check?: ProblemCheck
+  // Detail only, reports from a linked system: how its updates go.
+  notify?: {
+    system: string
+    linked: boolean
+    mode: LinkedSystemMode | null
+    has_address: boolean
+    recent: ProblemNotificationRow[]
+  } | null
+}
+
+// Security settings page (2026-10-15, core/views.py SecuritySettingsView).
+export interface SecuritySettings {
+  mfa_required: boolean
+  mfa_required_admins: boolean
+  phone_verification_required: boolean
+  // Attack alerts (2026-10-15, core/alerts.py): on/off and the channels.
+  attack_alerts_enabled: boolean
+  alert_by_email: boolean
+  alert_by_sms: boolean
+  // Superadmin only: extra recipients, comma separated.
+  alert_extra_emails?: string
+  alert_extra_numbers?: string
+  // Superadmin only: what .env has set (no secret values).
+  status?: {
+    alerts: {
+      email_configured: boolean
+      superadmins: number
+      superadmins_without_email: string[]
+      superadmins_without_mobile: string[]
+    }
+    sms: {
+      backend: string
+      configured: boolean
+      sends_real_sms: boolean
+      address_host: string | null
+      sender_id: string
+      encoding: string
+      method: string
+      verification_available: boolean
+    }
+    session_login: boolean
+    rate_limits: { signed_in: string | null; before_sign_in: string | null; linked_systems: string | null }
+    linked_system_hosts: string[]
+    linked_system_https_only: boolean
+    debug: boolean
+    https_redirect: boolean
+    shared_upload_key_until: string | null
+  }
+}
+
+// Linked systems and their status updates (2026-10-15, core/problem_notify.py).
+export type LinkedSystemMode = 'auto' | 'manual' | 'off'
+
+export interface LinkedSystem {
+  id: number
+  name: string
+  notify_url: string
+  notify_mode: LinkedSystemMode
+  is_active: boolean
+  note: string
+  last_sent_at: string | null
+  last_error: string
+  reports: number
+  waiting: number
+  failed: number
+  created_at: string
+  // Only right after creating it or asking for a new one.
+  secret?: string
+}
+
+export interface ProblemNotificationRow {
+  id: number
+  report_id: number
+  external_ref: string
+  system: string
+  event: string
+  status: 'pending' | 'sent' | 'failed'
+  attempts: number
+  response_code: number | null
+  last_error: string
+  next_try_at: string | null
+  created_at: string
+  sent_at: string | null
+  requested_by: string | null
+}
+
+// Problem Dashboard (2026-10-15, core/problem_report.py ProblemDashboardView).
+export interface ProblemCount {
+  key: string
+  label: string
+  count: number
+}
+
+export interface ProblemHotspot {
+  key: string
+  kind: 'site' | 'area'
+  site_id: string | null
+  name: string
+  district: string
+  lat: number | null
+  lng: number | null
+  area?: string
+  count: number
+  open: number
+  latest_at: string
+  top_cause: string
+  top_cause_label: string
+  causes: ProblemCount[]
+  sectors: ProblemCount[]
+  level_mean: number | null
+}
+
+export interface ProblemDashboard {
+  days: number
+  generated_at: string
+  pending: number
+  totals: {
+    all: number
+    new: number
+    checked: number
+    closed: number
+    app: number
+    staff: number
+    external: number
+    overdue: number
+    overdue_hours: number
+    oldest_open_at: string | null
+    median_hours_to_check: number | null
+  }
+  categories: { key: ProblemCategory; label: string }[]
+  per_day: ({ date: string } & Record<ProblemCategory, number>)[]
+  by_source: ProblemCount[]
+  by_cause: ProblemCount[]
+  by_category: ProblemCount[]
+  by_tech: ProblemCount[]
+  by_band: ProblemCount[]
+  by_district: ProblemCount[]
+  hotspots: ProblemHotspot[]
+  points: {
+    id: number
+    lat: number
+    lng: number
+    cause: string
+    category: ProblemCategory
+    status: ProblemStatus
+    happened_at: string
+    site_id: string | null
+  }[]
 }
 
 // ── Drive-test retention and the Recent layer (2026-10-14) ───────────────
@@ -2895,6 +3065,8 @@ export interface SubscriberProfileDevice {
   registration_last_seen_at: string | null
   registration_revoked_at: string | null
   registered_as: string | null
+  // Proved by SMS code or read from the SIM (2026-10-15).
+  number_verified?: boolean
   signed_uploads_linked: boolean
   push_token: boolean
   rescue_beacon: 'on' | 'withdrawn' | null
@@ -2912,6 +3084,7 @@ export interface SubscriberProfile {
   summary: {
     devices: number
     registered: boolean
+    unproven_claims?: number
     first_registered_at: string | null
     rescue_beacon: 'on' | 'withdrawn' | null
     readings: number
@@ -2924,6 +3097,10 @@ export interface SubscriberProfile {
   last_location: {
     source: 'reading' | 'rescue'
     ts: string | null
+    // Why no position may show (2026-10-15): hidden outside an emergency,
+    // or not in the record; then the newest reading that has one.
+    position_withheld?: boolean
+    earlier_position?: { ts: string | null; lat: number; lng: number; gps_accuracy_m: number | null }
     network_type?: string
     band_mhz?: number | null
     cell_id?: number | null
@@ -2962,7 +3139,7 @@ export interface SubscriberProfile {
   trace_requests: { id: string; kind: string; status: string; case_reference: string; requested_by: string | null; created_at: string | null; ended_at: string | null; positions: number }[]
   speed_tests: { ts: string | null; device_id: string; bearer: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; jitter_ms: number | null; packet_loss_pct: number | null; network_type: string; rsrp_dbm: number | null }[]
   trace_speed_tests: { ts: string | null; trace_id: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; network_type: string }[]
-  problem_reports: { id: number; category: string; status: string; happened_at: string | null; network_type: string; level_dbm: number | null; download_mbps: number | null; note: string }[]
+  problem_reports: { id: number; category: string; status: string; happened_at: string | null; network_type: string; level_dbm: number | null; download_mbps: number | null; note: string; source: string; external_system: string; external_ref: string; cause: string }[]
   calls: { by_outcome: Record<string, number>; latest: { started_at: string | null; duration_s: number | null; outcome: string; voice_networks: string; cell_id: number | null; level_dbm: number | null }[] }
   volte: { ts: string | null; codec: string; mos_estimate: number | null; packet_loss_pct: number | null }[]
   site_photos: { id: number; site_id: string | null; status: string; taken_at: string | null }[]
