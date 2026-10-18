@@ -48,6 +48,7 @@ object NetProblem {
 
     fun send(context: Context, category: String, note: String, withSpeedTest: Boolean = true): Outcome {
         val app = context.applicationContext
+        if (!NetTelemetry.isSupported()) return Outcome(sent = false, error = NetDevice.UNSUPPORTED_MESSAGE)
         if (!NetDevice.isRegistered(app)) return Outcome(sent = false, notRegistered = true)
         require(CATEGORIES.any { it.first == category }) { "unknown category $category" }
         val latch = CountDownLatch(1)

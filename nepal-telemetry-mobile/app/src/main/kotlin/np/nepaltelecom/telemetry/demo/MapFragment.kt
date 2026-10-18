@@ -83,15 +83,16 @@ class MapFragment : Fragment(R.layout.fragment_map) {
     private var myLocation: MyLocationNewOverlay? = null
     private var askedForLocation = false
 
+    // Precise and approximate location in one request: Android 12+ needs both.
     private val locationPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) showMyLocation()
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true) showMyLocation()
         }
 
     /** Asked from Start. Granted: carry on with the drive. Refused: a drive cannot be recorded. */
     private val drivePermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) {
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true) {
                 showMyLocation()
                 startDrive()
             } else {
@@ -187,7 +188,7 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         val problems = PhoneChecks.problems(requireContext())
         when {
             PhoneChecks.Problem.PERMISSION_MISSING in problems ->
-                locationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                locationPermission.launch(LOCATION_PERMISSIONS)
             PhoneChecks.Problem.LOCATION_SERVICES_OFF in problems ->
                 AlertDialog.Builder(requireContext())
                     .setTitle(R.string.map_location_off_title)
@@ -240,7 +241,7 @@ class MapFragment : Fragment(R.layout.fragment_map) {
             requireContext(), Manifest.permission.ACCESS_FINE_LOCATION,
         ) == PackageManager.PERMISSION_GRANTED
         if (!granted) {
-            drivePermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+            drivePermission.launch(LOCATION_PERMISSIONS)
             return
         }
         val remembered = StaffMode.rememberedDriveShare(requireContext())
@@ -445,6 +446,10 @@ class MapFragment : Fragment(R.layout.fragment_map) {
     }
 
     companion object {
+        private val LOCATION_PERMISSIONS = arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        )
         private const val REDRAW_MS = 2_000L
         private const val KATHMANDU_LAT = 27.7172
         private const val KATHMANDU_LNG = 85.3240

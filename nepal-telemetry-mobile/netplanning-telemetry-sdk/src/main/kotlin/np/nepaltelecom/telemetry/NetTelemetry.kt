@@ -2,6 +2,7 @@ package np.nepaltelecom.telemetry
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
@@ -84,10 +85,21 @@ object NetTelemetry {
     private const val DRIVE_TEST_CONSENT_WORK_NAME = "netplanning_telemetry_dt_consent"
     private const val CALL_UPLOAD_WORK_NAME = "netplanning_call_upload"
 
+    /**
+     * Whether this phone can run the SDK (2026-10-16). The SDK installs on
+     * Android 7.0 so an app that supports it can include it, but the signal
+     * readings need Android 8.0. Below that every feature is off: [init]
+     * schedules nothing, and each call that would collect or send does
+     * nothing (reads pass back null or an empty list). A host app should hide
+     * its telemetry screens when this is false.
+     */
+    fun isSupported(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+
     fun init(context: Context, config: TelemetryConfig) {
         appContext = context.applicationContext
         internalConfig = config
         np.nepaltelecom.telemetry.device.DeviceApi.configure(config.deviceApiUrl, config.endpointUrl)
+        if (!isSupported()) return
         val identity = DeviceIdentity(appContext)
         // First-run seeding (2026-09-02): only when this device has NEVER
         // stored an opt-in choice, and only when the host app opted into
@@ -117,6 +129,7 @@ object NetTelemetry {
 
     fun optIn() {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before optIn()" }
+        if (!isSupported()) return
         DeviceIdentity(appContext).optedIn = true
         scheduleBackgroundWork()
         startHandoverListener()
@@ -186,6 +199,7 @@ object NetTelemetry {
      */
     fun startShare(capMinutes: Int = DEFAULT_SHARE_CAP_MINUTES): Long {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before startShare()" }
+        if (!isSupported()) return 0L
         val expiresAt = System.currentTimeMillis() + capMinutes * 60_000L
         ShareWindow.start(appContext, java.util.UUID.randomUUID().toString(), expiresAt)
         optIn()
@@ -258,7 +272,7 @@ object NetTelemetry {
 
     fun isOptedIn(): Boolean {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before isOptedIn()" }
-        return DeviceIdentity(appContext).optedIn
+        return isSupported() && DeviceIdentity(appContext).optedIn
     }
 
     fun getStatus(): TelemetryStatus {
@@ -298,6 +312,7 @@ object NetTelemetry {
      */
     fun readLiveSample(onResult: (Sample?) -> Unit) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before readLiveSample()" }
+        if (!isSupported()) return onResult(null)
         scope.launch {
             val sample = CellSampleCollector(appContext, DeviceIdentity(appContext)).collectLive(triggerReason = "manual")
             onResult(sample)
@@ -312,6 +327,7 @@ object NetTelemetry {
      */
     fun readLiveCell(onResult: (Sample?) -> Unit) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before readLiveCell()" }
+        if (!isSupported()) return onResult(null)
         scope.launch {
             onResult(
                 CellSampleCollector(appContext, DeviceIdentity(appContext))
@@ -327,6 +343,7 @@ object NetTelemetry {
      */
     fun readCellsNow(onResult: (List<CellReading>) -> Unit) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before readCellsNow()" }
+        if (!isSupported()) return onResult(emptyList())
         scope.launch {
             onResult(CellSampleCollector(appContext, DeviceIdentity(appContext)).readAllCells())
         }
@@ -369,6 +386,7 @@ object NetTelemetry {
      */
     fun startDriveTest(context: Context, share: Boolean) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before startDriveTest()" }
+        if (!isSupported()) return
         if (share && !isOptedIn()) {
             DriveShare.setAutoOptIn(appContext, true)
             optIn()
@@ -405,6 +423,7 @@ object NetTelemetry {
      * automatic background schedule is unaffected either way.
      */
     fun uploadNow() {
+        if (!isSupported()) return
         if (!isOptedIn() && !DriveShare.drainPending(appContext)) return
         WorkManager.getInstance(appContext).enqueue(OneTimeWorkRequestBuilder<UploadWorker>().build())
     }
@@ -497,6 +516,7 @@ object NetTelemetry {
         bearer: String? = null,
     ) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before reportSpeedTest()" }
+        if (!isSupported()) return
         val config = internalConfig ?: return
         val url = config.speedSamplesUrl ?: return
         if (!isOptedIn()) return
@@ -553,6 +573,7 @@ object NetTelemetry {
      */
     fun enrollForRescue(msisdn: String) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before enrollForRescue()" }
+        if (!isSupported()) return
         checkNotNull(internalConfig?.rescueEnrollUrl) {
             "TelemetryConfig.rescueEnrollUrl must be set to use rescue enrollment"
         }
@@ -612,6 +633,7 @@ object NetTelemetry {
      */
     fun setDriveTestConsent(consent: Boolean) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before setDriveTestConsent()" }
+        if (!isSupported()) return
         checkNotNull(internalConfig?.driveTestConsentUrl) {
             "TelemetryConfig.driveTestConsentUrl must be set to use drive-test consent"
         }

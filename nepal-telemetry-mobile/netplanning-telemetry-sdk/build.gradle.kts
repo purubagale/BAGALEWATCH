@@ -16,14 +16,34 @@
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
+    `maven-publish`
 }
+
+// Published as a library package (2026-10-16), so an app that does not build
+// this module itself (the Flutter plugin in ../flutter/ntc_telemetry, Nepal
+// Telecom's app) can depend on it and get its own dependencies with it:
+//   ./gradlew :netplanning-telemetry-sdk:publish
+// writes it to ../maven-repo and into the plugin (flutter/ntc_telemetry/
+// android/sdk-repo). Raise the version with every change handed out, here
+// and in the plugin's android/build.gradle.kts.
+val sdkVersion = "1.1.0"
 
 android {
     namespace = "np.nepaltelecom.telemetry"
     compileSdk = 34
 
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
+    }
+
     defaultConfig {
-        minSdk = 26 // Android 8.0 -- covers modern getAllCellInfo()/SignalStrength behavior cleanly
+        // Installs on Android 7.0 (2026-10-16) so an app that supports it (the
+        // Nepal Telecom app) can include the SDK. Readings need Android 8.0
+        // APIs, so below 8.0 every feature is off: NetTelemetry.isSupported()
+        // is false and each entry point does nothing (see NetTelemetry).
+        minSdk = 24
         targetSdk = 34
         consumerProguardFiles("consumer-rules.pro")
     }
@@ -49,4 +69,26 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06") // encrypted pseudonymous-ID storage
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+}
+
+publishing {
+    publications {
+        register<MavenPublication>("release") {
+            groupId = "np.nepaltelecom"
+            artifactId = "netplanning-telemetry-sdk"
+            version = sdkVersion
+            afterEvaluate { from(components["release"]) }
+        }
+    }
+    repositories {
+        maven {
+            name = "local"
+            url = uri(rootProject.layout.projectDirectory.dir("maven-repo"))
+        }
+        // A copy inside the Flutter plugin, so the plugin builds on its own.
+        maven {
+            name = "flutterPlugin"
+            url = uri(rootProject.layout.projectDirectory.dir("flutter/ntc_telemetry/android/sdk-repo"))
+        }
+    }
 }

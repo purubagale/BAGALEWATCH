@@ -52,6 +52,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 permissionLauncher.launch(
                     arrayOf(
                         Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION,
                         Manifest.permission.READ_PHONE_STATE,
                     )
                 )

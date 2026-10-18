@@ -1,16 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- DT-WATCH brand palette (from frontend-react/src/App.css) plus the signal
-     quality bands used by the web app's RSRP colour scale. -->
+<!-- Nepal Telecom look (2026-10-19), after the Nepal Telecom app: NT blue,
+     gold accents, white cards on a light background. Signal quality bands
+     follow the web app's RSRP colour scale. -->
 <resources>
-    <color name="brand_primary">#0153A5</color>
-    <color name="brand_primary_dark">#012E5B</color>
-    <color name="brand_accent">#E4B54D</color>
+    <color name="brand_primary">#023A8E</color>
+    <color name="brand_primary_dark">#012C6E</color>
+    <color name="brand_accent">#F2C21B</color>
+    <color name="on_brand">#FFFFFF</color>
 
-    <color name="surface">#0B1626</color>
-    <color name="surface_card">#132338</color>
-    <color name="surface_card_alt">#1B2E47</color>
-    <color name="text_primary">#FFFFFF</color>
-    <color name="text_secondary">#9FB3CC</color>
+    <color name="surface">#F2F5FA</color>
+    <color name="surface_card">#FFFFFF</color>
+    <color name="surface_card_alt">#E8EEF7</color>
+    <color name="surface_gradient_end">#C5D6EE</color>
+    <color name="card_border">#DCE3EE</color>
+    <color name="text_primary">#1A2333</color>
+    <color name="text_secondary">#5A6A80</color>
+    <color name="chart_grid">#1F1A2333</color>
 
     <color name="q_poor">#DC2626</color>
     <color name="q_moderate">#F97316</color>

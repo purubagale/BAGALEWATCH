@@ -201,6 +201,38 @@ object DeviceApi {
         }
     }
 
+    /** The site and sector serving the phone, as the site list names them. */
+    data class ServingSite(val siteId: String, val siteName: String, val sector: String?, val cellName: String?)
+
+    /**
+     * The site serving this reading (2026-10-19), or null when the server
+     * cannot place it. Needs a registered device. Throws when the server
+     * cannot be reached.
+     */
+    fun servingSite(s: np.nepaltelecom.telemetry.model.Sample): ServingSite? {
+        val params = buildList {
+            add("network=${s.networkType}")
+            s.cellId?.let { add("cell_id=$it") }
+            s.pci?.let { add("pci=$it") }
+            s.tac?.let { add("tac=$it") }
+            s.scramblingCode?.let { add("psc=$it") }
+            s.bcch?.let { add("bcch=$it") }
+            s.bsic?.let { add("bsic=$it") }
+            if (s.lat != null && s.lon != null) {
+                add("lat=${s.lat}")
+                add("lon=${s.lon}")
+            }
+        }.joinToString("&")
+        val site = JSONObject(request("GET", "device/serving-site/?$params", null, signed = true)).optJSONObject("site")
+            ?: return null
+        return ServingSite(
+            siteId = site.getString("site_id"),
+            siteName = site.optString("site_name").ifBlank { site.getString("site_id") },
+            sector = site.optString("sector").takeIf { it.isNotBlank() && it != "null" },
+            cellName = site.optString("cell_name").takeIf { it.isNotBlank() && it != "null" },
+        )
+    }
+
     /** Sends one site photo. [body] is the JSON the server's site-photo endpoint expects. */
     fun uploadSitePhoto(body: String) {
         request("POST", "device/site-photos/", body, signed = true)

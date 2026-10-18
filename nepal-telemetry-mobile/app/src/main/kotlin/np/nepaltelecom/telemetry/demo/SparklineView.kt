@@ -33,7 +33,7 @@ class SparklineView @JvmOverloads constructor(
     }
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val gridPaint = Paint().apply {
-        color = Color.argb(45, 255, 255, 255)
+        color = ContextCompat.getColor(context, R.color.chart_grid)
         strokeWidth = 1f
     }
 

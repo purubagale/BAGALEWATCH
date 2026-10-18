@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Sets the NTC SDK up from the saved settings at every process
+             start, including background starts with no Flutter code. -->
+        <provider
+            android:name="np.nepaltelecom.ntc_telemetry.NtcTelemetryInitProvider"
+            android:authorities="${applicationId}.ntctelemetryinit"
+            android:exported="false" />
+    </application>
+</manifest>

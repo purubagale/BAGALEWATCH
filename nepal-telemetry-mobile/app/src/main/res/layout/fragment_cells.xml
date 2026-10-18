@@ -7,14 +7,12 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:padding="16dp"
+        android:clipToPadding="false">
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/cells_title"
-            android:textSize="24sp"
-            android:textStyle="bold" />
+            style="@style/ScreenHeader"
+            android:text="@string/cells_title" />
 
         <TextView
             android:layout_width="match_parent"

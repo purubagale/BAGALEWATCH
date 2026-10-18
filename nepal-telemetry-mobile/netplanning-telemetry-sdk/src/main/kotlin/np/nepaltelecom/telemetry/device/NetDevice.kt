@@ -50,6 +50,9 @@ object NetDevice {
     private const val KEY_AVAILABLE = "number_verify_available"
     private const val KEY_USER_TYPE = "user_type"
 
+    /** Shown when a feature is asked for on Android 7 (see NetTelemetry.isSupported). */
+    const val UNSUPPORTED_MESSAGE = "This needs Android 8.0 or newer."
+
     private const val REGISTER_WORK = "trace_register"
     private const val LINK_WORK = "sdk_link"
 
@@ -83,6 +86,7 @@ object NetDevice {
      * [userType] is "employee" or "general", as the user declared it.
      */
     fun register(context: Context, msisdn: String, userType: String = "general", onDone: (Boolean, String?) -> Unit) {
+        if (!NetTelemetry.isSupported()) return onDone(false, UNSUPPORTED_MESSAGE)
         val app = context.applicationContext
         prefs(app).edit().putString(KEY_MSISDN, msisdn).putString(KEY_USER_TYPE, userType).apply()
         Thread {

@@ -52,6 +52,7 @@
     <string name="signal_history_caption">Last 3 minutes</string>
     <string name="signal_full_parameters">Full parameters</string>
     <string name="label_operator">Operator</string>
+    <string name="label_site">Serving site</string>
     <string name="label_network">Network</string>
     <string name="label_cell">Cell (eNB:sector)</string>
     <string name="label_tac">TAC</string>

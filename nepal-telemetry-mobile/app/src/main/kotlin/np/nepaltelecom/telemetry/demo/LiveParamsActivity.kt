@@ -7,14 +7,16 @@ import androidx.appcompat.app.AppCompatActivity
 import np.nepaltelecom.telemetry.NetTelemetry
 import np.nepaltelecom.telemetry.model.Sample
 import java.util.Date
+import np.nepaltelecom.telemetry.model.Operators
 import np.nepaltelecom.telemetry.model.RadioBand
 
 /**
  * Shows this phone's live cell, signal and location readings on screen, read
  * straight from the SDK (NetTelemetry.readLiveSample). Nothing shown here is
  * uploaded or queued -- it's the same data the background sampler collects,
- * just visible on the phone for inspection. The serving site, which the
- * server works out after upload, is not shown: the phone doesn't know it.
+ * just visible on the phone for inspection. The serving site and sector come
+ * from the cell number, with the site's name once the Signal screen has
+ * looked it up (ServingSiteLookup).
  */
 class LiveParamsActivity : AppCompatActivity() {
 
@@ -55,7 +57,9 @@ class LiveParamsActivity : AppCompatActivity() {
             section("Time", Date(s.timestampMs).toString())
             section("Trigger", s.triggerReason)
             section("Serving network", s.networkType)
-            section("Operator (MCC / MNC)", "${s.mcc.orDash()} / ${s.mnc.orDash()}")
+            section("Operator", Operators.name(s.mcc, s.mnc).orDash())
+            section("MCC / MNC", "${s.mcc.orDash()} / ${s.mnc.orDash()}")
+            ServingSiteLookup.display(s)?.let { section("Serving site", it) }
             when (s.networkType) {
                 "LTE" -> {
                     section("Cell ID (ECI)", s.cellId.orDash())

@@ -1,0 +1,131 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "np.nepaltelecom",
+    "module": "netplanning-telemetry-sdk",
+    "version": "1.1.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.7"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.0.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "netplanning-telemetry-sdk-1.1.0.aar",
+          "url": "netplanning-telemetry-sdk-1.1.0.aar",
+          "size": 269427,
+          "sha512": "68e90114991f3c3fea5cf6d22468b47c08c2cfbf881dc2fb91036a7972493a95ee149e65757569756533dee2e60589a2e8fad03e2a9d591d0e4e65ef2752bf61",
+          "sha256": "d47255d62d38f6780384fb26e9adc442d4a2c1878598290b6ee6592328317c9e",
+          "sha1": "a83d40c24ae649da0a78950371476f7055c8f86d",
+          "md5": "b9eac1499a13493ee00b46eafe3fa785"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.core",
+          "module": "core-ktx",
+          "version": {
+            "requires": "1.13.1"
+          }
+        },
+        {
+          "group": "androidx.work",
+          "module": "work-runtime-ktx",
+          "version": {
+            "requires": "2.9.1"
+          }
+        },
+        {
+          "group": "androidx.security",
+          "module": "security-crypto",
+          "version": {
+            "requires": "1.1.0-alpha06"
+          }
+        },
+        {
+          "group": "com.google.android.gms",
+          "module": "play-services-location",
+          "version": {
+            "requires": "21.3.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-coroutines-android",
+          "version": {
+            "requires": "1.8.1"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.0.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "netplanning-telemetry-sdk-1.1.0.aar",
+          "url": "netplanning-telemetry-sdk-1.1.0.aar",
+          "size": 269427,
+          "sha512": "68e90114991f3c3fea5cf6d22468b47c08c2cfbf881dc2fb91036a7972493a95ee149e65757569756533dee2e60589a2e8fad03e2a9d591d0e4e65ef2752bf61",
+          "sha256": "d47255d62d38f6780384fb26e9adc442d4a2c1878598290b6ee6592328317c9e",
+          "sha1": "a83d40c24ae649da0a78950371476f7055c8f86d",
+          "md5": "b9eac1499a13493ee00b46eafe3fa785"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "netplanning-telemetry-sdk-1.1.0-sources.jar",
+          "url": "netplanning-telemetry-sdk-1.1.0-sources.jar",
+          "size": 78407,
+          "sha512": "0f156f9317b9e8d0177d8776706ef71f66f7f37d6c6eaf62c67b4f9b8c912bfaa524768f268c3f313c1d1bb846094fb6d25e324d47be706976c2138c44731436",
+          "sha256": "8ad0e167bf84c499f6ce1d373ff0f72a2fb854fea072f2b1f7dbeeb5660e9487",
+          "sha1": "0bfa71c5ba1ee5d7f49b67dfbd87d1fb4bb6e1bd",
+          "md5": "59e1772b8ba1121684ab19068c0df5f9"
+        }
+      ]
+    }
+  ]
+}

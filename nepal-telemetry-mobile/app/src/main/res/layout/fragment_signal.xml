@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -8,15 +8,12 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:padding="16dp"
+        android:clipToPadding="false">
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/signal_title"
-            android:textSize="24sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="12dp" />
+            style="@style/ScreenHeader"
+            android:text="@string/signal_title" />
 
         <!-- Setup banner: shown only when this phone's settings block cell readings (2026-10-04). -->
         <LinearLayout
@@ -35,7 +32,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:textColor="@color/brand_accent"
+                android:textColor="@color/brand_primary_dark"
                 android:textSize="14sp" />
 
             <Button
@@ -105,6 +102,10 @@
             <LinearLayout style="@style/CellRow">
                 <TextView style="@style/CellLabel" android:text="@string/label_operator" />
                 <TextView android:id="@+id/valOperator" style="@style/CellValue" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/siteRow" style="@style/CellRow" android:visibility="gone">
+                <TextView style="@style/CellLabel" android:text="@string/label_site" />
+                <TextView android:id="@+id/valSite" style="@style/CellValue" />
             </LinearLayout>
             <LinearLayout style="@style/CellRow">
                 <TextView style="@style/CellLabel" android:text="@string/label_network" />

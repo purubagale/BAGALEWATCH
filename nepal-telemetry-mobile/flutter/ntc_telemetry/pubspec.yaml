@@ -1,0 +1,25 @@
+name: ntc_telemetry
+description: "NTC network telemetry for Flutter apps (Android): signal sharing, drive tests, speed tests, problem reports and phone registration."
+version: 1.1.0
+publish_to: 'none'
+
+# Kept low so an app on an older Flutter can use it; the code needs Dart 3.
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: '>=3.10.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: np.nepaltelecom.ntc_telemetry
+        pluginClass: NtcTelemetryPlugin

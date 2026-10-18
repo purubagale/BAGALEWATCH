@@ -15,6 +15,7 @@ import androidx.fragment.app.Fragment
 import np.nepaltelecom.telemetry.NetTelemetry
 import np.nepaltelecom.telemetry.device.ProblemHints
 import np.nepaltelecom.telemetry.device.SpeedTest
+import np.nepaltelecom.telemetry.model.Operators
 import np.nepaltelecom.telemetry.model.Sample
 import np.nepaltelecom.telemetry.model.RadioBand
 import java.text.SimpleDateFormat
@@ -40,6 +41,8 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
     private lateinit var sparkline: SparklineView
     private lateinit var qualityText: TextView
     private lateinit var valOperator: TextView
+    private lateinit var siteRow: View
+    private lateinit var valSite: TextView
     private lateinit var valNetwork: TextView
     private lateinit var valCell: TextView
     private lateinit var valTac: TextView
@@ -63,6 +66,8 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
         sparkline = view.findViewById(R.id.sparkline)
         qualityText = view.findViewById(R.id.qualityText)
         valOperator = view.findViewById(R.id.valOperator)
+        siteRow = view.findViewById(R.id.siteRow)
+        valSite = view.findViewById(R.id.valSite)
         valNetwork = view.findViewById(R.id.valNetwork)
         valCell = view.findViewById(R.id.valCell)
         valTac = view.findViewById(R.id.valTac)
@@ -218,6 +223,7 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
             qualityText.setTextColor(ContextCompat.getColor(requireContext(), R.color.q_nodata))
             listOf(valOperator, valNetwork, valCell, valTac, valPci, valRsrq, valSinr, valCqi, valUpdated)
                 .forEach { it.text = DASH }
+            siteRow.visibility = View.GONE
             return
         }
 
@@ -227,7 +233,8 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
         qualityText.setTextColor(ContextCompat.getColor(requireContext(), SignalQuality.colorRes(primary)))
         primary?.let { sparkline.add(it) }
 
-        valOperator.text = if (s.mcc == null && s.mnc == null) DASH else "${s.mcc ?: "?"} / ${s.mnc ?: "?"}"
+        valOperator.text = Operators.name(s.mcc, s.mnc) ?: DASH
+        showServingSite(s)
         // The technology with the band the phone is on: "LTE · B3 · 1800".
         valNetwork.text = listOfNotNull(
             s.networkType,
@@ -240,6 +247,30 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
         valSinr.text = s.sinrDb?.let { "$it dB" } ?: DASH
         valCqi.text = if (s.networkType == "LTE") RfMath.cqiText(s.cqi, s.sinrDb) else DASH
         valUpdated.text = timeFormat.format(Date())
+    }
+
+    /**
+     * The serving site and sector (2026-10-19): read from the cell number
+     * at once (NtcCellName), with the site's name added once NTC's server
+     * answers. Hidden only when neither knows the cell.
+     */
+    private fun showServingSite(s: Sample) {
+        val text = ServingSiteLookup.display(s)
+        siteRow.visibility = if (text == null) View.GONE else View.VISIBLE
+        text?.let { valSite.text = it }
+        if (ServingSiteLookup.cached(s) == null) {
+            ServingSiteLookup.request(requireContext().applicationContext, s) { found ->
+                if (found == null) return@request
+                activity?.runOnUiThread {
+                    val now = lastSample ?: return@runOnUiThread
+                    if (!isAdded) return@runOnUiThread
+                    ServingSiteLookup.display(now)?.let {
+                        siteRow.visibility = View.VISIBLE
+                        valSite.text = it
+                    }
+                }
+            }
+        }
     }
 
     /** The reading the gauge shows: RSRP for LTE, and the closest equivalent for 3G and 2G. */

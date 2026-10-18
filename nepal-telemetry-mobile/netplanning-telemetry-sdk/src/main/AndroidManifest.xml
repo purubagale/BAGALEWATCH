@@ -2,6 +2,9 @@
 
     <!-- Needed to read GPS position for each sample. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Android 12+ asks for both together; the user may grant only the
+         approximate one, and then readings carry no exact position. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- Only required if the host app wants sampling to continue while it is
          backgrounded. Google Play policy requires a specific, user-facing
@@ -19,6 +22,9 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Speed test over mobile data while the phone is on Wi-Fi (2026-10-16,
+         with the speed test moving into the SDK). A normal permission. -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Drive-test tracking (2026-10-04): a foreground service that keeps

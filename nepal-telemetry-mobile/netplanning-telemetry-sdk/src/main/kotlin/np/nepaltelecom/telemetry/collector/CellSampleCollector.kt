@@ -167,12 +167,36 @@ internal class CellSampleCollector(
 
     @SuppressLint("MissingPermission")
     private fun readServingCell(): ParsedCell? {
-        val allCellInfo: List<CellInfo> = readTelephonyCells().ifEmpty { CellInfoCache.fresh() }
+        val (tm, cells) = readTelephonyCellsWithSim()
+        val allCellInfo: List<CellInfo> = cells.ifEmpty { CellInfoCache.fresh() }
         // Prefer the registered (serving) cell; if none is flagged registered
         // (seen on a few OEMs), fall back to the first entry rather than
         // reporting nothing.
         val serving = allCellInfo.firstOrNull { it.isRegistered } ?: allCellInfo.firstOrNull()
-        return serving?.let { parseCellInfo(it) }
+        val parsed = serving?.let { parseCellInfo(it) } ?: return null
+        return if (parsed.networkType == "LTE" && tm != null) withServingLteQuality(parsed, tm) else parsed
+    }
+
+    /**
+     * SINR and CQI of the serving LTE cell from the phone's overall signal
+     * reading (2026-10-19). Many modems (seen on an Oppo CPH2569, and on
+     * every phone on prod: 0 of 2,099 LTE readings had SINR) leave RSSNR and
+     * CQI blank in the cell list but report them in getSignalStrength(),
+     * which describes the serving cell of that SIM. Used only to fill a
+     * blank; a value from the cell list wins.
+     */
+    private fun withServingLteQuality(cell: ParsedCell, tm: TelephonyManager): ParsedCell {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return cell
+        if (cell.sinrDb != null && cell.cqi != null) return cell
+        val lte = try {
+            tm.signalStrength?.getCellSignalStrengths(android.telephony.CellSignalStrengthLte::class.java)?.firstOrNull()
+        } catch (e: Exception) {
+            null
+        } ?: return cell
+        return cell.copy(
+            sinrDb = cell.sinrDb ?: lte.rssnr.toIntOrNull()?.takeIf { it in -20..40 },
+            cqi = cell.cqi ?: lte.cqi.toIntOrNull()?.takeIf { it in 0..15 },
+        )
     }
 
     private fun parseCellInfo(info: CellInfo): ParsedCell? = when (info) {
@@ -187,13 +211,14 @@ internal class CellSampleCollector(
             mcc = info.cellIdentity.mccCompat(),
             mnc = info.cellIdentity.mncCompat(),
             networkType = "LTE",
-            rsrpDbm = info.cellSignalStrength.rsrp.toIntOrNull(),
-            rsrqDb = info.cellSignalStrength.rsrq.toIntOrNull(),
+            // Android 8.0+ getters; the SDK is off below 8.0 (NetTelemetry.isSupported).
+            rsrpDbm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) info.cellSignalStrength.rsrp.toIntOrNull() else null,
+            rsrqDb = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) info.cellSignalStrength.rsrq.toIntOrNull() else null,
             rssiDbm = null,
             // RSSNR (reference signal signal-to-noise ratio) is the closest
             // LTE equivalent exposed here and is conventionally reported as
             // the SINR field for LTE in tools like this one.
-            sinrDb = info.cellSignalStrength.rssnr.toIntOrNull(),
+            sinrDb = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) info.cellSignalStrength.rssnr.toIntOrNull() else null,
             // CQI is API 29+ on LTE; no public CQI getter on older releases.
             cqi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) info.cellSignalStrength.cqi.toIntOrNull() else null,
             rxQual = null,
@@ -333,8 +358,20 @@ internal class CellSampleCollector(
     @SuppressLint("MissingPermission") // guarded by hasLocationPermission() below
     fun readAllCells(): List<CellReading> {
         if (!hasLocationPermission()) return emptyList()
-        val infos = readTelephonyCells().ifEmpty { CellInfoCache.fresh() }
-        return dedupeCells(infos.mapNotNull { cellReadingFrom(it) })
+        val (tm, cells) = readTelephonyCellsWithSim()
+        val infos = cells.ifEmpty { CellInfoCache.fresh() }
+        val readings = dedupeCells(infos.mapNotNull { cellReadingFrom(it) })
+        if (tm == null) return readings
+        // The serving LTE row gets the same SINR/CQI fill as samples (withServingLteQuality).
+        return readings.map { r ->
+            if (!r.isServing || r.networkType != "LTE" || (r.sinrDb != null && r.cqi != null)) return@map r
+            val filled = withServingLteQuality(
+                ParsedCell(r.cellId, r.pci, r.tac, r.mcc, r.mnc, "LTE", r.rsrpDbm, r.rsrqDb, r.rssiDbm, r.sinrDb,
+                    null, null, null, cqi = r.cqi),
+                tm,
+            )
+            r.copy(sinrDb = filled.sinrDb, cqi = filled.cqi)
+        }
     }
 
     /**
@@ -377,7 +414,11 @@ internal class CellSampleCollector(
      * phones the default data SIM can have no registered cell while the other
      * SIM does, so the first SIM that reports cells wins. Empty when none does.
      */
-    private fun readTelephonyCells(): List<CellInfo> {
+    private fun readTelephonyCells(): List<CellInfo> = readTelephonyCellsWithSim().second
+
+    /** The cells and the SIM's manager that reported them; (null, empty) when none did. */
+    @SuppressLint("MissingPermission") // callers check location permission first
+    private fun readTelephonyCellsWithSim(): Pair<TelephonyManager?, List<CellInfo>> {
         val managers = activeSimTelephonyManagers()
         for ((i, tm) in managers.withIndex()) {
             val cells = try {
@@ -387,10 +428,10 @@ internal class CellSampleCollector(
                 null
             }
             android.util.Log.d(TAG, "sim $i of ${managers.size}: ${cells?.size ?: -1} cells")
-            if (!cells.isNullOrEmpty()) return cells
+            if (!cells.isNullOrEmpty()) return tm to cells
         }
         android.util.Log.d(TAG, "no SIM reported cells; cache size ${CellInfoCache.fresh().size}")
-        return emptyList()
+        return null to emptyList()
     }
 
     private fun activeSimTelephonyManagers(): List<TelephonyManager> {
@@ -422,9 +463,9 @@ internal class CellSampleCollector(
                 scramblingCode = null,
                 bcch = null,
                 bsic = null,
-                rsrpDbm = sig.rsrp.toIntOrNull(),
-                rsrqDb = sig.rsrq.toIntOrNull(),
-                sinrDb = sig.rssnr.toIntOrNull(),
+                rsrpDbm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) sig.rsrp.toIntOrNull() else null,
+                rsrqDb = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) sig.rsrq.toIntOrNull() else null,
+                sinrDb = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) sig.rssnr.toIntOrNull() else null,
                 rssiDbm = sig.dbm.toIntOrNull(),
                 rscpDbm = null,
                 ecioDb = null,

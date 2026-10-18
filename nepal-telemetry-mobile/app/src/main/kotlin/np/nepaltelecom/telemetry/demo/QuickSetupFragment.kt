@@ -42,7 +42,9 @@ class QuickSetupFragment : Fragment(R.layout.fragment_quick_setup) {
         super.onViewCreated(view, savedInstanceState)
         view.findViewById<Button>(R.id.grantPermissionsButton).setOnClickListener {
             val wanted = mutableListOf(
+                // Android 12+ needs both location permissions in one request.
                 Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
                 Manifest.permission.READ_PHONE_STATE,
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

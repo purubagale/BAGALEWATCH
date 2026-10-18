@@ -35,14 +35,14 @@ class GaugeView @JvmOverloads constructor(
     private val arcRect = RectF()
     private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val needlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = ContextCompat.getColor(context, R.color.text_primary)
         strokeCap = Paint.Cap.ROUND
     }
     private val hubPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ContextCompat.getColor(context, R.color.brand_accent)
     }
     private val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = ContextCompat.getColor(context, R.color.text_primary)
         textAlign = Paint.Align.CENTER
         isFakeBoldText = true
     }
