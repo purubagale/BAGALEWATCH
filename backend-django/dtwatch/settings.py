@@ -796,3 +796,40 @@ SMS_VERIFY_TEXT = os.environ.get(
 LINKED_SYSTEM_ALLOWED_HOSTS = [h.strip().lower() for h in os.environ.get('LINKED_SYSTEM_ALLOWED_HOSTS', '').split(',')
                                if h.strip()]
 LINKED_SYSTEM_HTTPS_ONLY = os.environ.get('LINKED_SYSTEM_HTTPS_ONLY', '1') != '0'
+# ── Subscriber provisioning from NTC's ticketing system (2026-10-16) ──
+# core/provisioning.py. What the network has provisioned for a number (4G,
+# VoLTE, SIM type, roaming, plan) and the phone's supported bands, shown on
+# the Subscriber Profile next to what the phone measured. The UTS team's API
+# details are not known yet, so every part of the call is set here:
+#   PROVISIONING_BACKEND      off (default), demo (made-up data for trying the
+#                             screens), or http
+#   PROVISIONING_HTTP_URL     address; {msisdn} (977...), {msisdn_local} (98...)
+#                             are filled in, e.g. https://uts.ntc.net.np/api/sub/{msisdn_local}
+#   PROVISIONING_HTTP_METHOD  GET (default) or POST
+#   PROVISIONING_HTTP_BODY    JSON body for POST, with the same placeholders
+#   PROVISIONING_HTTP_HEADERS JSON object of extra headers, e.g. {"X-Api-Key":"..."}
+#   PROVISIONING_HTTP_TOKEN   sent as "Authorization: Bearer <token>"
+#   PROVISIONING_FIELDS       JSON object: our name -> dotted path in UTS's
+#                             answer, e.g. {"lte_provisioned": "network.lte.active"}.
+#                             Names: subscriber_name, billing_type, status,
+#                             lte_provisioned, volte_provisioned, sim_type,
+#                             usim, roaming, plan_name, data_used_gb,
+#                             data_total_gb, device_brand, device_model,
+#                             imei, supported_bands (a list),
+#                             location_history (a list of rows, e.g. cell,
+#                             ci, lac, tech, data_mb, voice_min; shown only
+#                             while an emergency is declared)
+#   PROVISIONING_HTTP_TIMEOUT seconds (default 8)
+#   PROVISIONING_HTTP_VERIFY_TLS  1 (default) or 0
+#   PROVISIONING_CACHE_SECONDS    answers kept this long (default 300)
+PROVISIONING_BACKEND = os.environ.get('PROVISIONING_BACKEND', 'off').strip().lower()
+PROVISIONING_HTTP_URL = os.environ.get('PROVISIONING_HTTP_URL', '')
+PROVISIONING_HTTP_METHOD = os.environ.get('PROVISIONING_HTTP_METHOD', 'GET').upper()
+PROVISIONING_HTTP_BODY = os.environ.get('PROVISIONING_HTTP_BODY', '')
+PROVISIONING_HTTP_HEADERS = os.environ.get('PROVISIONING_HTTP_HEADERS', '{}')
+PROVISIONING_HTTP_TOKEN = os.environ.get('PROVISIONING_HTTP_TOKEN', '')
+PROVISIONING_FIELDS = os.environ.get('PROVISIONING_FIELDS', '{}')
+PROVISIONING_HTTP_TIMEOUT = float(os.environ.get('PROVISIONING_HTTP_TIMEOUT', '8'))
+PROVISIONING_HTTP_VERIFY_TLS = os.environ.get('PROVISIONING_HTTP_VERIFY_TLS', '1') != '0'
+PROVISIONING_CACHE_SECONDS = int(os.environ.get('PROVISIONING_CACHE_SECONDS', '300'))
+

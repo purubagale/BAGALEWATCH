@@ -1443,6 +1443,8 @@ import type {
 // whenever it changes -- a filter change means "different dataset," not
 // an incremental continuation), then only what's new on every subsequent
 // poll via `since`, prepending into a capped accumulator instead of
+  SubscriberSignal,
+  SubscriberProvisioning,
 // replacing it wholesale.
 //
 // Mutates plain refs inside `queryFn` rather than using React state --
@@ -1540,6 +1542,44 @@ export function useTelemetrySpeedResults(minutes: number, deviceId?: string) {
       return apiJson<TelemetrySpeedResultsResponse>(`/api/v2/telemetry/speed-results/?${qs}`)
     },
     refetchInterval: 30_000,
+  })
+}
+
+// The profile's signal history by range, session and technology (2026-10-16).
+// Each fetch is logged on the server; kept for the page's life.
+export function useSubscriberSignal(msisdn: string, reason: string, range: string, session: string, tech: string,
+  emergency?: boolean) {
+  return useQuery({
+    // The emergency state is in the key: declaring or ending one fetches again.
+    queryKey: ['subscriber-signal', msisdn, reason, range, session, tech, emergency],
+    queryFn: () => {
+      const qs = new URLSearchParams({ msisdn, reason, range })
+      if (range === 'session' && session) qs.set('session', session)
+      if (tech) qs.set('tech', tech)
+      return apiJson<SubscriberSignal>(`/api/v2/subscriber-profile/signal/?${qs}`)
+    },
+    enabled: !!msisdn && !!reason && (range !== 'session' || !!session),
+    // Keep the last chart on screen while another range loads.
+    placeholderData: (previous) => previous,
+    staleTime: Infinity,
+    gcTime: 30 * 60_000,
+    retry: false,
+  })
+}
+
+// What the network provisioned for the number, from NTC's ticketing system
+// (2026-10-16). Fetched apart from the profile so a slow source never holds it up.
+export function useSubscriberProvisioning(msisdn: string, reason: string, open = true, emergency?: boolean) {
+  return useQuery({
+    // Asked only once the panel is opened; again when the emergency state changes.
+    queryKey: ['subscriber-provisioning', msisdn, reason, emergency],
+    queryFn: () => {
+      const qs = new URLSearchParams({ msisdn, reason })
+      return apiJson<SubscriberProvisioning>(`/api/v2/subscriber-profile/provisioning/?${qs}`)
+    },
+    enabled: open && !!msisdn && !!reason,
+    staleTime: 5 * 60_000,
+    retry: false,
   })
 }
 

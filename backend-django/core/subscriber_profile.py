@@ -19,7 +19,9 @@ they were built): the last serving cell, network and signal are always shown,
 the exact coordinates only while an emergency is declared, and nothing about
 location for a phone whose owner withdrew rescue consent.
 """
+import uuid
 from collections import Counter
+from datetime import timedelta
 
 from django.db.models import Count, Max, Min, Q
 from rest_framework import status
@@ -27,8 +29,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from . import radio_band
 from .audit import log_audit_event
 from .collection import decrypted_identity, msisdn_lookup_key
+from .cqi import sample_cqi_fields
 from .emergency import active_emergency
 from .models import (
     AuditEvent, CallContextSample, CollectionSession, DeviceCredential, DeviceIdentity, DeviceLocationTraceLog,
@@ -36,7 +40,10 @@ from .models import (
     TelemetryDriveTestConsent, TelemetryDriveTestSession, TelemetryPushToken, TelemetrySample,
     Site, TelemetrySpeedResult, TraceLocationSample, TraceRequest, TraceSpeedResult, VolteCallSample,
 )
+from .operators import operator_name
 from .rescue import _clean_msisdn
+from .serving_site_lookup import lookup_serving_site
+from .subscriber_analytics import profile_analytics
 from .views import IsSuperadminOnly
 
 AUDIT_ACTION = 'SUBSCRIBER_PROFILE.VIEWED'
@@ -63,6 +70,115 @@ def _iso(value):
     return value.isoformat() if value else None
 
 
+def _describe_phones(devices, by_link, credentials):
+    """What each id is, in plain words, and which ids are the same phone
+    (2026-10-16). One phone shows up several times: its registration key
+    (Registered Devices lists only these), the app install that holds the
+    readings, an earlier install linked by hand after a reinstall, and an
+    older registration key a re-registration replaced.
+
+    Sets on each device: `role` (registration, app_install, earlier_install,
+    rescue, identity), `phone_key` (the phone's hardware fingerprint, else its
+    make and model) and, on a registration key, `replaced_at` when a newer
+    registration from the same phone exists."""
+    for d in devices:
+        link = by_link.get(d['device_id'])
+        model = ' '.join(filter(None, [d['manufacturer'], d['phone_model']])).strip().lower()
+        d['phone_key'] = (link and link.hardware_hash) or model or d['device_id']
+        if d['kind'] == 'registration key':
+            d['role'] = 'registration'
+        elif 'manual_link' in d['linked_via']:
+            d['role'] = 'earlier_install'
+        elif d['kind'] in ('app', 'app (linked to registration)'):
+            d['role'] = 'rescue' if d['rescue_beacon'] and not d['readings'] else 'app_install'
+        else:
+            d['role'] = 'identity'
+        d['replaced_at'] = None
+    # A manually linked earlier install of an unknown model is most likely
+    # the same phone when the number has only one.
+    keys = {d['phone_key'] for d in devices if d['role'] != 'earlier_install'}
+    if len(keys) == 1:
+        only = next(iter(keys))
+        for d in devices:
+            if d['role'] == 'earlier_install' and not (d['manufacturer'] or d['phone_model']):
+                d['phone_key'] = only
+    created = {c.device_hash: c.created_at for c in credentials}
+    regs = [d for d in devices if d['role'] == 'registration' and d['device_id'] in created]
+    for d in regs:
+        newer = [created[o['device_id']] for o in regs
+                 if o['phone_key'] == d['phone_key'] and created[o['device_id']] > created[d['device_id']]]
+        if newer:
+            d['replaced_at'] = _iso(min(newer))
+
+
+COMPLAINT_AUDIT_ACTION = 'SUBSCRIBER_PROFILE.COMPLAINT_LOCATION'
+
+
+def complaint_windows(canonical, credentials):
+    """Time windows whose exact positions may be shown for the customer's own
+    complaint (2026-10-16): off unless a superadmin turns it on (Security
+    page). Each problem report from this number in the last N days opens
+    [reported - H hours, reported + H hours]. Returns [(start, end, report_id)]."""
+    from django.utils import timezone
+    cfg = SecuritySettings.objects.filter(pk=1).first()
+    if not cfg or not cfg.complaint_location_access:
+        return []
+    since = timezone.now() - timedelta(days=cfg.complaint_location_days)
+    reports = ProblemReport.objects.filter(
+        Q(device__in=credentials) | Q(msisdn__in=number_variants(canonical)), happened_at__gte=since,
+    ).values_list('id', 'happened_at')
+    span = timedelta(hours=cfg.complaint_location_hours)
+    return [(at - span, at + span, rid) for rid, at in reports]
+
+
+def _in_windows(ts, windows):
+    """The report id whose window holds this time, or None."""
+    for start, end, rid in windows:
+        if start <= ts <= end:
+            return rid
+    return None
+
+
+def devices_of_number(canonical):
+    """Every device id tied to one number, and those whose location must stay
+    hidden. Shared by the profile and its signal history so both apply the
+    same rules: "verified numbers only" (2026-10-15) leaves out phones that
+    only typed this number, and a withdrawn rescue consent hides a phone's
+    readings from the history and its position everywhere."""
+    variants = number_variants(canonical)
+    links = list(SubscriberDevice.objects.filter(msisdn=canonical).order_by('-last_seen_at', '-last_linked_at'))
+    credentials = list(DeviceCredential.objects.filter(msisdn__in=variants).order_by('-created_at'))
+    unproven_claims = 0
+    if SecuritySettings.objects.filter(pk=1, phone_verification_required=True).exists():
+        proven = (SubscriberDevice.VERIFIED_SMS, SubscriberDevice.VERIFIED_SIM)
+        kept_links = [link for link in links if link.number_verified_by in proven]
+        kept_creds = [c for c in credentials if c.msisdn_verified_at]
+        unproven_claims = len({link.device_hash for link in links} - {link.device_hash for link in kept_links}) \
+            + len(credentials) - len(kept_creds)
+        links, credentials = kept_links, kept_creds
+    rescue_rows = list(SubscriberLastLocation.objects.filter(msisdn__in=variants))
+    identities = list(DeviceIdentity.objects.filter(
+        Q(msisdn_lookup=msisdn_lookup_key(canonical))
+        | Q(device_hash__in=[link.device_hash for link in links])
+        | Q(device_hash__in=[c.device_hash for c in credentials])
+    ))
+    ids = set()
+    ids.update(link.device_hash for link in links)
+    for c in credentials:
+        ids.add(c.device_hash)
+        if c.sdk_device_hash:
+            ids.add(c.sdk_device_hash)
+    ids.update(r.device_id for r in rescue_rows)
+    ids.update(i.device_hash for i in identities)
+    withdrawn = {r.device_id for r in rescue_rows if not r.rescue_consent}
+    if credentials:
+        withdrawn |= {c.device_hash for c in credentials if c.sdk_device_hash in withdrawn}
+    return {
+        'links': links, 'credentials': credentials, 'rescue_rows': rescue_rows, 'identities': identities,
+        'ids': sorted(ids), 'withdrawn': withdrawn, 'unproven_claims': unproven_claims,
+    }
+
+
 class SubscriberProfileView(APIView):
     """`GET /api/v2/subscriber-profile/?msisdn=<number>&reason=<ticket>`."""
     permission_classes = [IsAuthenticated, IsSuperadminOnly]
@@ -79,36 +195,11 @@ class SubscriberProfileView(APIView):
         log_audit_event(request, AUDIT_ACTION, resource='subscriber_profile', resource_id=canonical, detail=reason)
 
         # ── Devices of this number ────────────────────────────────────────
-        links = list(SubscriberDevice.objects.filter(msisdn=canonical).order_by('-last_seen_at', '-last_linked_at'))
-        credentials = list(DeviceCredential.objects.filter(msisdn__in=variants).order_by('-created_at'))
-        # "Verified numbers only" (2026-10-15): a phone that only typed this
-        # number is left out and counted, not shown.
-        unproven_claims = 0
-        if SecuritySettings.objects.filter(pk=1, phone_verification_required=True).exists():
-            proven = (SubscriberDevice.VERIFIED_SMS, SubscriberDevice.VERIFIED_SIM)
-            kept_links = [link for link in links if link.number_verified_by in proven]
-            kept_creds = [c for c in credentials if c.msisdn_verified_at]
-            unproven_claims = len({link.device_hash for link in links} - {link.device_hash for link in kept_links}) \
-                + len(credentials) - len(kept_creds)
-            links, credentials = kept_links, kept_creds
-        rescue_rows = list(SubscriberLastLocation.objects.filter(msisdn__in=variants))
-        identities = list(DeviceIdentity.objects.filter(
-            Q(msisdn_lookup=msisdn_lookup_key(canonical))
-            | Q(device_hash__in=[link.device_hash for link in links])
-            | Q(device_hash__in=[c.device_hash for c in credentials])
-        ))
-        ids = set()
-        ids.update(link.device_hash for link in links)
-        for c in credentials:
-            ids.add(c.device_hash)
-            if c.sdk_device_hash:
-                ids.add(c.sdk_device_hash)
-        ids.update(r.device_id for r in rescue_rows)
-        ids.update(i.device_hash for i in identities)
-        ids = sorted(ids)
-        withdrawn = {r.device_id for r in rescue_rows if not r.rescue_consent}
-        if credentials:
-            withdrawn |= {c.device_hash for c in credentials if c.sdk_device_hash in withdrawn}
+        found_devices = devices_of_number(canonical)
+        links, credentials = found_devices['links'], found_devices['credentials']
+        rescue_rows, identities = found_devices['rescue_rows'], found_devices['identities']
+        ids, withdrawn = found_devices['ids'], found_devices['withdrawn']
+        unproven_claims = found_devices['unproven_claims']
 
         # ── Readings per device id ────────────────────────────────────────
         reading_stats = {
@@ -122,9 +213,14 @@ class SubscriberProfileView(APIView):
         on_demand = TelemetrySample.objects.filter(device_id__in=ids, trigger_reason='on_demand').count()
 
         emergency = active_emergency()
+        windows = [] if emergency else complaint_windows(canonical, credentials)
         last = (TelemetrySample.objects.filter(device_id__in=[i for i in ids if i not in withdrawn])
                 .order_by('-ts').first())
         last_location = None
+        complaint_report = _in_windows(last.ts, windows) if last is not None and last.lat is not None else None
+        if complaint_report:
+            log_audit_event(request, COMPLAINT_AUDIT_ACTION, resource='problem_report',
+                            resource_id=str(complaint_report), detail=f'{canonical} | {reason} | last location')
         if last is not None:
             last_location = {
                 'source': 'reading',
@@ -152,16 +248,46 @@ class SubscriberProfileView(APIView):
                 'arfcn': last.arfcn,
                 'band': last.band,
                 'mcc': last.mcc,
+                'operator': operator_name(last.mcc, last.mnc),
                 'gps_accuracy_m': last.gps_accuracy_m,
                 'trigger_reason': last.trigger_reason,
-                # Exact position only while an emergency is declared.
-                'lat': last.lat if emergency else None,
-                'lng': last.lng if emergency else None,
+                # Exact position only while an emergency is declared, or
+                # (when switched on) near the customer's own complaint.
+                'lat': last.lat if (emergency or complaint_report) else None,
+                'lng': last.lng if (emergency or complaint_report) else None,
             }
+            # A reading stored without a serving site (2026-10-19): matched now
+            # with the same rule, else the newest reading that has one, so the
+            # card names the site and sector the phone was last attached to.
+            if not last.serving_site_id:
+                found_site = lookup_serving_site(
+                    last.network_type, cell_id=last.cell_id, pci=last.pci, psc=last.scrambling_code,
+                    bcch=last.bcch, bsic=last.bsic, lat=last.lat, lon=last.lng, tac=last.tac)
+                if found_site:
+                    last_location.update(
+                        serving_site_id=found_site['site_id'], serving_sector=found_site['sector'],
+                        serving_cell_name=found_site['cell_name'],
+                        serving_dist_km=(found_site['distance_m'] / 1000 if found_site['distance_m'] is not None
+                                         else None),
+                        serving_site_basis='matched_now')
+                else:
+                    attached = (TelemetrySample.objects
+                                .filter(device_id__in=[i for i in ids if i not in withdrawn])
+                                .exclude(serving_site_id='').exclude(serving_site_id__isnull=True)
+                                .order_by('-ts').values('ts', 'serving_site_id', 'serving_sector',
+                                                        'serving_cell_name', 'serving_dist_km').first())
+                    if attached:
+                        last_location.update(
+                            serving_site_id=attached['serving_site_id'],
+                            serving_sector=attached['serving_sector'] or None,
+                            serving_cell_name=attached['serving_cell_name'] or None,
+                            serving_dist_km=attached['serving_dist_km'],
+                            serving_site_basis='earlier', serving_site_ts=_iso(attached['ts']))
             # The serving site is a mast, not the customer: its position is
             # always shown, so the card can draw it on a map.
-            site = Site.objects.filter(id=last.serving_site_id).values('name', 'district', 'lat', 'lng').first() \
-                if last.serving_site_id else None
+            site_id = last_location.get('serving_site_id')
+            site = Site.objects.filter(id=site_id).values('name', 'district', 'lat', 'lng').first() \
+                if site_id else None
             if site:
                 last_location.update(site_name=site['name'] or None, site_district=site['district'] or None,
                                      site_lat=site['lat'], site_lng=site['lng'])
@@ -175,7 +301,10 @@ class SubscriberProfileView(APIView):
         # without a GPS fix, a rescue beacon that has not reported one). In an
         # emergency the newest reading that does carry a position is offered.
         if last_location is not None:
-            last_location['position_withheld'] = not emergency
+            last_location['position_withheld'] = not emergency and not complaint_report
+            last_location['position_basis'] = ('emergency' if emergency else
+                                               'complaint' if complaint_report else None)
+            last_location['complaint_report_id'] = complaint_report
             if emergency and last_location.get('lat') is None:
                 fix = (TelemetrySample.objects.filter(device_id__in=[i for i in ids if i not in withdrawn],
                                                       lat__isnull=False, lng__isnull=False)
@@ -241,6 +370,7 @@ class SubscriberProfileView(APIView):
                 'last_reading': _iso(stats['last']) if stats else None,
             })
         devices.sort(key=lambda d: d['last_reading'] or d['registered_at'] or '', reverse=True)
+        _describe_phones(devices, by_link, credentials)
 
         # ── Sessions ──────────────────────────────────────────────────────
         collections = [{
@@ -318,8 +448,13 @@ class SubscriberProfileView(APIView):
             'msisdn': canonical,
             'found': found,
             'emergency_declared': emergency is not None,
+            # Exact positions near this customer's own complaints (2026-10-16, off by default).
+            'complaint_windows': [{'report_id': rid, 'from': _iso(a), 'to': _iso(b)} for a, b, rid in windows],
             'summary': {
                 'devices': len({d['device_id'] for d in devices}),
+                # Physical phones (2026-10-16): one phone carries several ids
+                # (registration keys, app installs), see _describe_phones.
+                'phones': len({d['phone_key'] for d in devices}),
                 'registered': bool(credentials),
                 # Phones left out because they only typed this number (verified-only mode).
                 'unproven_claims': unproven_claims,
@@ -335,6 +470,8 @@ class SubscriberProfileView(APIView):
             },
             'last_location': last_location,
             'signal_series': signal_series,
+            # Cells and sites served, shares, daily trend, histograms (2026-10-16).
+            'analytics': profile_analytics([i for i in ids if i not in withdrawn], include_location=emergency is not None),
             'devices': devices,
             'collections': collections,
             'drive_test_sessions': drive_test_sessions,
@@ -347,3 +484,158 @@ class SubscriberProfileView(APIView):
             'site_photos': photos,
             'lookups': lookups[:30],
         })
+
+
+SIGNAL_AUDIT_ACTION = 'SUBSCRIBER_PROFILE.SIGNAL'
+# Readings in one signal-history answer: the newest 300 by default, at most
+# this many for "all" or one session (newest first when there are more).
+SIGNAL_MAX = 5000
+_TECH_NETWORKS = {'4G': ('LTE', 'NR'), '3G': ('UMTS',), '2G': ('GSM',)}
+_SPANS = {'day': timedelta(days=1), 'week': timedelta(days=7), 'month': timedelta(days=30)}
+
+
+class SubscriberSignalView(APIView):
+    """`GET /api/v2/subscriber-profile/signal/?msisdn=&reason=&range=&session=&tech=`
+    (2026-10-16): the readings behind the profile's signal history, each with
+    every measure, its cell and serving site.
+
+    `range` is `newest` (300, the default), `all` (up to SIGNAL_MAX) or
+    `session` with `session=collection:<id>` or `session=drive:<id>`, or
+    `day` / `week` / `month` (the last span of readings, up to SIGNAL_MAX); `tech`
+    is 4G, 3G or 2G. Same rules as the profile: superadmin, a reason, logged;
+    phones with withdrawn rescue consent left out; the exact position of a
+    reading only while an emergency is declared. Serving sites are masts and
+    are always given, so the map can show where the phone was served from.
+    """
+    permission_classes = [IsAuthenticated, IsSuperadminOnly]
+
+    def get(self, request):
+        canonical = _clean_msisdn(request.query_params.get('msisdn'))
+        reason = (request.query_params.get('reason') or '').strip()[:200]
+        if not canonical or not reason:
+            return Response({'detail': 'A valid number and a reference are needed.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        scope = request.query_params.get('range') or 'newest'
+        tech = request.query_params.get('tech') or ''
+        session = request.query_params.get('session') or ''
+        if scope not in ('newest', 'all', 'session', *_SPANS) or (tech and tech not in _TECH_NETWORKS):
+            return Response({'detail': 'Unknown range or technology.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        found = devices_of_number(canonical)
+        ids = [i for i in found['ids'] if i not in found['withdrawn']]
+        qs = TelemetrySample.objects.filter(device_id__in=ids)
+        if tech:
+            qs = qs.filter(network_type__in=_TECH_NETWORKS[tech])
+        # The last day / week / month of readings (2026-10-19), counted back
+        # from the newest reading, so an old record still shows something.
+        if scope in _SPANS:
+            newest = qs.aggregate(m=Max('ts'))['m']
+            if newest is not None:
+                qs = qs.filter(ts__gte=newest - _SPANS[scope])
+
+        session_label = None
+        if scope == 'session':
+            kind, _, key = session.partition(':')
+            if kind == 'collection':
+                s = CollectionSession.objects.filter(pk=key if _is_uuid(key) else None, device_hash__in=ids).first()
+                if s is None:
+                    return Response({'detail': 'That session is not one of this number.'},
+                                    status=status.HTTP_404_NOT_FOUND)
+                if s.drive_session_id:
+                    qs = qs.filter(drive_session_id=s.drive_session_id)
+                else:
+                    end = s.ended_at or s.last_sample_at
+                    qs = qs.filter(device_id=s.device_hash, ts__gte=s.started_at, **({'ts__lte': end} if end else {}))
+                session_label = f'{s.source} from {s.started_at:%Y-%m-%d %H:%M}'
+            elif kind == 'drive' and key.isdigit():
+                s = TelemetryDriveTestSession.objects.filter(pk=int(key)).first()
+                mine = [d for d in (s.device_ids or []) if d in ids] if s else []
+                if not mine:
+                    return Response({'detail': 'That session is not one of this number.'},
+                                    status=status.HTTP_404_NOT_FOUND)
+                qs = qs.filter(device_id__in=mine, ts__gte=s.started_at, **({'ts__lte': s.ended_at} if s.ended_at else {}))
+                session_label = s.name
+            else:
+                return Response({'detail': 'Choose a session.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        log_audit_event(request, SIGNAL_AUDIT_ACTION, resource='subscriber_profile', resource_id=canonical,
+                        detail=f'{reason} | {scope}{" " + session if session else ""}{" " + tech if tech else ""}')
+
+        total = qs.count()
+        limit = SERIES_CAP if scope == 'newest' else SIGNAL_MAX
+        rows = list(qs.order_by('-ts').values(
+            'ts', 'device_id', 'network_type', 'rsrp_dbm', 'rsrq_db', 'sinr_db', 'cqi', 'rscp_dbm', 'ecio_db',
+            'rssi_dbm', 'rx_qual', 'pci', 'cell_id', 'tac', 'arfcn', 'band', 'band_mhz', 'trigger_reason',
+            'serving_site_id', 'serving_sector', 'serving_dist_km', 'gps_accuracy_m', 'lat', 'lng',
+        )[:limit])[::-1]
+
+        emergency = active_emergency() is not None
+        windows = [] if emergency else complaint_windows(canonical, found['credentials'])
+        released = set()
+        points = []
+        for r in rows:
+            report = _in_windows(r['ts'], windows) if windows else None
+            show = emergency or report is not None
+            if report is not None and r['lat'] is not None:
+                released.add(report)
+            cqi = sample_cqi_fields(r['cqi'], r['sinr_db'], r['rsrq_db'], r['network_type'])
+            level = r['rsrp_dbm'] if r['network_type'] in ('LTE', 'NR') else (
+                r['rscp_dbm'] if r['network_type'] == 'UMTS' else r['rssi_dbm'] if r['network_type'] == 'GSM'
+                else r['rsrp_dbm'])
+            points.append({
+                'ts': _iso(r['ts']), 'device_id': r['device_id'], 'network_type': r['network_type'],
+                'level_dbm': level, 'rsrq_db': r['rsrq_db'], 'sinr_db': r['sinr_db'],
+                'cqi': cqi['cqi_value'], 'cqi_source': cqi['cqi_source'],
+                'ecio_db': r['ecio_db'], 'rx_qual': r['rx_qual'],
+                'pci': r['pci'], 'cell_id': r['cell_id'], 'tac': r['tac'],
+                'band_label': radio_band.label(r['network_type'], r['band'], r['band_mhz']) or None,
+                'trigger_reason': r['trigger_reason'],
+                'serving_site_id': r['serving_site_id'] or None, 'serving_sector': r['serving_sector'] or None,
+                'serving_dist_km': r['serving_dist_km'],
+                'has_position': r['lat'] is not None and r['lng'] is not None,
+                'lat': r['lat'] if show else None, 'lng': r['lng'] if show else None,
+                'gps_accuracy_m': r['gps_accuracy_m'] if show else None,
+                # The problem report whose window released this position.
+                'complaint_report_id': report,
+            })
+        for report in sorted(released):
+            log_audit_event(request, COMPLAINT_AUDIT_ACTION, resource='problem_report', resource_id=str(report),
+                            detail=f'{canonical} | {reason} | signal history')
+        # The analysis cards follow this selection (2026-10-19): the same
+        # readings, or for "newest" the span those readings cover.
+        shown_qs = qs
+        if scope == 'newest' and rows and total > len(rows):
+            shown_qs = qs.filter(ts__gte=rows[0]['ts'])
+        analytics = profile_analytics(ids, include_location=emergency, qs=shown_qs)
+
+        site_ids = {p['serving_site_id'] for p in points if p['serving_site_id']}
+        sites = {s['id']: {'name': s['name'] or None, 'lat': s['lat'], 'lng': s['lng']}
+                 for s in Site.objects.filter(id__in=site_ids).values('id', 'name', 'lat', 'lng')}
+
+        # The sessions this number has, for the range picker.
+        sessions = [{'key': f'collection:{c.id}', 'label': f'{c.source} · {c.started_at:%Y-%m-%d %H:%M}',
+                     'readings': c.sample_count}
+                    for c in CollectionSession.objects.filter(device_hash__in=ids).order_by('-started_at')[:LIST_CAP]]
+        dt_filter = Q()
+        for device_id in ids:
+            dt_filter |= Q(device_ids__contains=[device_id])
+        if ids:
+            sessions += [{'key': f'drive:{d.id}', 'label': f'Drive test · {d.name}', 'readings': None}
+                         for d in TelemetryDriveTestSession.objects.filter(dt_filter).order_by('-started_at')[:LIST_CAP]]
+
+        return Response({
+            'range': scope, 'tech': tech or None, 'session': session or None, 'session_label': session_label,
+            'total': total, 'shown': len(points), 'limited': total > len(points),
+            'positions_shown': emergency, 'points': points, 'sites': sites, 'sessions': sessions,
+            'analytics': analytics,
+            # Customer's own complaint (2026-10-16): the windows that release positions.
+            'complaint_windows': [{'report_id': rid, 'from': _iso(a), 'to': _iso(b)} for a, b, rid in windows],
+        })
+
+
+def _is_uuid(value):
+    try:
+        uuid.UUID(str(value))
+        return True
+    except ValueError:
+        return False

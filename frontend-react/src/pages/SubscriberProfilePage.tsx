@@ -1,13 +1,18 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiErrorMessage } from '../api/client'
-import { useSubscriberProfile } from '../api/queries'
+import { useEmergencyStatus, useSubscriberProfile } from '../api/queries'
 import type { SubscriberProfile } from '../api/types'
 import { OPAQUE_PATHS } from '../constants/opaqueRoutes'
 import RowsPerPageSelect from '../components/RowsPerPageSelect'
 import LinkEarlierReadings from '../components/LinkEarlierReadings'
+import ProfileSignalHistory, { type SignalSelection } from '../components/ProfileSignalHistory'
+import ProfileAnalytics from '../components/ProfileAnalytics'
+import ProfileProvisioning from '../components/ProfileProvisioning'
+import FitToPoints from '../components/FitToPoints'
+import { NET_LABEL, netColor } from '../lib/netColors'
 import { useRowsPerPage } from '../lib/rowsPerPage'
 
 // Subscriber Profile (2026-10-15, core/subscriber_profile.py). Superadmin:
@@ -30,8 +35,6 @@ const SCROLL_KEY = 'dtwatch_profile_scroll'
 // Live Samples' "All stored readings" window for one device (90 days).
 const ALL_STORED_MINUTES = 90 * 24 * 60
 
-const NET_COLOR: Record<string, string> = { LTE: '#22d3ee', NR: '#a78bfa', UMTS: '#818cf8', GSM: '#fbbf24' }
-const netColor = (n: string) => NET_COLOR[n] ?? '#64748b'
 const OUTCOME: Record<string, { label: string; color: string }> = {
   volte: { label: 'Stayed on VoLTE / VoNR', color: '#34d399' },
   vowifi: { label: 'Wi-Fi calling', color: '#22d3ee' },
@@ -86,38 +89,50 @@ function Paged<T>({ rows, head, row }: { rows: T[]; head: ReactNode; row: (r: T,
   )
 }
 
-// Signal level over the newest readings, coloured by network.
-function SignalChart({ series }: { series: SubscriberProfile['signal_series'] }) {
-  const pts = series.filter((s) => s.level_dbm != null)
-  if (pts.length < 2) return <div className="sp-empty">Too few readings for a chart.</div>
-  const W = 640, H = 150, L = 34, R = 6, T = 8, B = 20
-  const lo = -130, hi = -40
-  const x = (i: number) => L + (i * (W - L - R)) / (pts.length - 1)
-  const y = (v: number) => T + ((hi - Math.max(lo, Math.min(hi, v))) * (H - T - B)) / (hi - lo)
-  const nets = Array.from(new Set(pts.map((p) => p.network_type)))
+// What each id on the phones card is (2026-10-16). One phone appears several
+// times: Registered Devices lists only its registrations, while its readings
+// sit under the app install.
+const ROLE: Record<string, { label: string; hint: string }> = {
+  app_install: { label: 'App install · readings', hint: 'The app on the phone. Shared readings are stored under this id.' },
+  registration: { label: 'Registration', hint: 'Made by "Register this phone" in the app. Registered Devices lists these.' },
+  earlier_install: { label: 'Earlier install · linked by hand', hint: 'The app before a reinstall. A superadmin tied its readings to this number.' },
+  rescue: { label: 'Rescue beacon', hint: 'Turned on the rescue location beacon with this number.' },
+  identity: { label: 'Phone details', hint: 'Sent its make and model with this number; no readings.' },
+}
+const ROLE_ORDER = ['app_install', 'registration', 'earlier_install', 'rescue', 'identity']
+const LINKED_BY: Record<string, string> = {
+  registered_phone: 'registering in the app',
+  rescue_enrolment: 'turning on the rescue beacon',
+  identity_upload: 'sending its phone details',
+  manual_link: 'a superadmin, by hand',
+}
+
+function sortDevices(devices: SubscriberProfile['devices']) {
+  return [...devices].sort((a, b) =>
+    a.phone_key.localeCompare(b.phone_key)
+    || ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role)
+    || Number(!!a.replaced_at) - Number(!!b.replaced_at))
+}
+
+// "1 phone · 4 records: …", and why Registered Devices shows fewer.
+function PhonesSummary({ devices, phones, registeredLink }: {
+  devices: SubscriberProfile['devices']; phones?: number; registeredLink: boolean
+}) {
+  const count = (role: string) => devices.filter((d) => d.role === role).length
+  const regs = count('registration')
+  const replaced = devices.filter((d) => d.replaced_at).length
+  const parts = [
+    count('app_install') && `${count('app_install')} app install${count('app_install') === 1 ? '' : 's'} with readings`,
+    regs && `${regs} registration${regs === 1 ? '' : 's'}${replaced ? ` (${replaced} replaced)` : ''}`,
+    count('earlier_install') && `${count('earlier_install')} earlier install${count('earlier_install') === 1 ? '' : 's'} linked by hand`,
+    count('rescue') && `${count('rescue')} rescue beacon`,
+    count('identity') && `${count('identity')} phone details only`,
+  ].filter(Boolean)
+  const n = phones ?? devices.length
   return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="sp-chart" role="img" aria-label="Signal level over the newest readings">
-        {[-110, -90, -70, -50].map((g) => (
-          <g key={g}>
-            <line x1={L} x2={W - R} y1={y(g)} y2={y(g)} className="sp-grid-line" />
-            <text x={L - 6} y={y(g) + 3} className="sp-axis" textAnchor="end">{g}</text>
-          </g>
-        ))}
-        <rect x={L} y={y(-105)} width={W - L - R} height={y(-130) - y(-105)} className="sp-weak-band" />
-        <polyline className="sp-line" points={pts.map((p, i) => `${x(i)},${y(p.level_dbm as number)}`).join(' ')} />
-        {pts.map((p, i) => (
-          <circle key={i} cx={x(i)} cy={y(p.level_dbm as number)} r={2.4} fill={netColor(p.network_type)}>
-            <title>{`${fmt(p.ts)} · ${p.network_type} ${p.level_dbm} dBm`}</title>
-          </circle>
-        ))}
-        <text x={L} y={H - 4} className="sp-axis">{fmtDate(pts[0].ts)}</text>
-        <text x={W - R} y={H - 4} className="sp-axis" textAnchor="end">{fmtDate(pts[pts.length - 1].ts)}</text>
-      </svg>
-      <div className="sp-legend">
-        {nets.map((n) => <span key={n}><i style={{ background: netColor(n) }} />{n || 'unknown'}</span>)}
-        <span><i style={{ background: 'rgba(251,113,133,0.35)' }} />weak (below −105 dBm)</span>
-      </div>
+    <div className="sp-muted" style={{ marginBottom: 8 }}>
+      <b>{n} phone{n === 1 ? '' : 's'}</b> · {devices.length} record{devices.length === 1 ? '' : 's'}: {parts.join(', ')}.
+      {registeredLink && regs > 0 && ` Registered Devices lists the ${regs} registration${regs === 1 ? '' : 's'} only.`}
     </div>
   )
 }
@@ -135,7 +150,7 @@ function NetworkRing({ counts }: { counts: Record<string, number> }) {
         <circle cx={55} cy={55} r={R} className="sp-ring-track" />
         {entries.map(([k, v]) => {
           const len = (v / total) * C
-          const el = <circle key={k} cx={55} cy={55} r={R} fill="none" stroke={netColor(k)} strokeWidth={14}
+          const el = <circle key={k} cx={55} cy={55} r={R} fill="none" style={{ stroke: netColor(k) }} strokeWidth={14}
             strokeDasharray={`${len} ${C - len}`} strokeDashoffset={-offset} transform="rotate(-90 55 55)"><title>{`${k || 'unknown'}: ${v}`}</title></circle>
           offset += len
           return el
@@ -144,7 +159,7 @@ function NetworkRing({ counts }: { counts: Record<string, number> }) {
         <text x={55} y={67} textAnchor="middle" className="sp-axis">readings</text>
       </svg>
       <div className="sp-ring-legend">
-        {entries.map(([k, v]) => <div key={k}><i style={{ background: netColor(k) }} />{k || 'unknown'} <b className="sp-mono">{Math.round((100 * v) / total)}%</b></div>)}
+        {entries.map(([k, v]) => <div key={k}><i style={{ background: netColor(k) }} />{NET_LABEL[k] ?? (k === 'UNKNOWN' || !k ? 'No service' : k)} <b className="sp-mono">{Math.round((100 * v) / total)}%</b></div>)}
       </div>
     </div>
   )
@@ -178,21 +193,31 @@ function SpeedChart({ tests }: { tests: SubscriberProfile['speed_tests'] }) {
 
 // Serving site on a small map; the customer's own position only in an emergency.
 function SiteMap({ loc }: { loc: NonNullable<SubscriberProfile['last_location']> }) {
-  if (loc.site_lat == null || loc.site_lng == null) return null
-  const site: [number, number] = [loc.site_lat, loc.site_lng]
-  const own: [number, number] | null = loc.lat != null && loc.lng != null ? [loc.lat, loc.lng] : null
+  // The reading's own position, else (in an emergency) the newest reading
+  // that has one (2026-10-19: a handover reading often has no GPS fix).
+  const own: [number, number] | null = loc.lat != null && loc.lng != null ? [loc.lat, loc.lng]
+    : loc.earlier_position ? [loc.earlier_position.lat, loc.earlier_position.lng] : null
+  const ownLabel = loc.lat != null
+    ? (loc.position_basis === 'complaint' ? "Last position (customer's problem report)" : 'Last position (emergency)')
+    : loc.earlier_position ? `Last known position, ${fmt(loc.earlier_position.ts)}` : ''
+  const site: [number, number] | null = loc.site_lat != null && loc.site_lng != null ? [loc.site_lat, loc.site_lng] : null
+  if (!site && !own) return null
+  const points = [site, own].filter(Boolean) as [number, number][]
   return (
     <div className="sp-map">
-      <MapContainer center={site} zoom={14} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false} attributionControl={false}>
+      <MapContainer center={points[0]} zoom={14} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false} attributionControl={false}>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        <CircleMarker center={site} radius={8} pathOptions={{ color: '#4f46e5', fillColor: '#818cf8', fillOpacity: 0.9, weight: 2 }}>
-          <Tooltip>{`Serving site ${loc.serving_site_id ?? ''}${loc.site_name ? ` · ${loc.site_name}` : ''}`}</Tooltip>
-        </CircleMarker>
+        <FitToPoints points={points} fitKey={points.map((p) => p.join(',')).join('|')} singleZoom={15} />
+        {site && (
+          <CircleMarker center={site} radius={8} pathOptions={{ color: '#4f46e5', fillColor: '#818cf8', fillOpacity: 0.9, weight: 2 }}>
+            <Tooltip>{`Serving site ${loc.serving_site_id ?? ''}${loc.site_name ? ` · ${loc.site_name}` : ''}`}</Tooltip>
+          </CircleMarker>
+        )}
         {own && (
           <>
-            <Polyline positions={[site, own]} pathOptions={{ color: '#22d3ee', dashArray: '4 6', weight: 2 }} />
-            <CircleMarker center={own} radius={6} pathOptions={{ color: '#0891b2', fillColor: '#22d3ee', fillOpacity: 0.95 }}>
-              <Tooltip>Last position (emergency)</Tooltip>
+            {site && <Polyline positions={[site, own]} pathOptions={{ color: '#22d3ee', dashArray: '4 6', weight: 2 }} />}
+            <CircleMarker center={own} radius={7} pathOptions={{ color: '#0891b2', fillColor: '#22d3ee', fillOpacity: 0.95, weight: 2 }}>
+              <Tooltip permanent direction="top">{ownLabel}</Tooltip>
             </CircleMarker>
           </>
         )}
@@ -201,11 +226,25 @@ function SiteMap({ loc }: { loc: NonNullable<SubscriberProfile['last_location']>
   )
 }
 
-function Profile({ p, out, reason, onChanged }: {
-  p: SubscriberProfile; out: (key: string, extra?: Record<string, string>) => string; reason: string; onChanged: () => void
+function Profile({ p, out, siteLink, reason, onChanged }: {
+  p: SubscriberProfile; out: (key: string, extra?: Record<string, string>) => string
+  siteLink: (siteId: string) => string; reason: string; onChanged: () => void
 }) {
   const s = p.summary
   const loc = p.last_location
+  // The analysis cards follow the signal filter (2026-10-19); until it has
+  // answered, and when its choice has no readings, they show every reading.
+  const [selection, setSelection] = useState<SignalSelection | null>(null)
+  const onSelection = useCallback((x: SignalSelection) => setSelection(x), [])
+  // A session picked on the Sessions card filters the signal history (2026-10-19).
+  const [pick, setPick] = useState<{ session: string; n: number } | null>(null)
+  const showSession = (session: string) => setPick((old) => ({ session, n: (old?.n ?? 0) + 1 }))
+  const showBtn = (session: string) => (
+    <button type="button" className="sp-btn sp-btn-ghost sp-btn-xs" onClick={() => showSession(session)}>Show in signal history</button>
+  )
+  const analytics = selection?.analytics ?? p.analytics
+  const scope = selection?.analytics ? selection.label
+    : selection && !selection.loading ? 'all readings (the signal filter has none)' : undefined
   const mobileTests = p.speed_tests.filter((t) => t.bearer !== 'wifi' && t.download_mbps != null)
   const sortedDl = mobileTests.map((t) => t.download_mbps as number).sort((a, b) => a - b)
   const medianDl = sortedDl.length ? sortedDl[Math.floor(sortedDl.length / 2)] : null
@@ -222,9 +261,12 @@ function Profile({ p, out, reason, onChanged }: {
     : s.rescue_beacon ? { to: out('/rescue-enrolled', { msisdn: p.msisdn }), label: 'Rescue Enrolled Devices' } : null
 
   const nav: [string, string, number | null][] = [
-    ['sp-location', 'Location', null], ['sp-signal', 'Signal', s.readings], ['sp-devices', 'Phones', p.devices.length],
+    ['sp-location', 'Location', null], ['sp-signal', 'Signal', s.readings],
+    ...(p.analytics ? [['sp-capability', 'Quality', null], ['sp-cells', 'Location history', p.analytics.cells_count ?? p.analytics.cells.length]] as [string, string, number | null][] : []),
+    ['sp-devices', 'Phones', p.devices.length],
     ['sp-speed', 'Speed tests', speedCount], ['sp-sessions', 'Sessions', sessions], ['sp-reports', 'Problems', p.problem_reports.length],
     ['sp-calls', 'Calls', callTotal], ['sp-photos', 'Photos', p.site_photos.length], ['sp-lookups', 'Lookups', p.lookups.length],
+    ['sp-bi', 'BI usage', null], ['sp-oss', 'OSS & Core', null],
   ]
 
   return (
@@ -239,7 +281,7 @@ function Profile({ p, out, reason, onChanged }: {
       </nav>
 
       <div className="sp-kpis">
-        <div className="sp-kpi"><div className="sp-kpi-label">Phones</div><div className="sp-kpi-val">{s.devices}</div></div>
+        <div className="sp-kpi"><div className="sp-kpi-label">Phones</div><div className="sp-kpi-val">{s.phones ?? s.devices}</div></div>
         <div className="sp-kpi" style={{ '--sp-accent': '#818cf8' } as CSSProperties}><div className="sp-kpi-label">Readings</div><div className="sp-kpi-val">{s.readings.toLocaleString()}</div></div>
         <div className="sp-kpi" style={{ '--sp-accent': '#34d399' } as CSSProperties}><div className="sp-kpi-label">Mobile download</div><div className="sp-kpi-val">{medianDl != null ? medianDl.toFixed(1) : '—'}<small> Mbps</small></div></div>
         <div className="sp-kpi" style={{ '--sp-accent': '#fbbf24' } as CSSProperties}><div className="sp-kpi-label">Calls fell back</div><div className="sp-kpi-val">{fallbackShare != null ? `${fallbackShare}%` : '—'}</div></div>
@@ -251,23 +293,29 @@ function Profile({ p, out, reason, onChanged }: {
         <Card id="sp-location" icon="📍" title="Last known location" empty={!loc && !s.location_hidden} emptyText="No location stored" wide>
           {s.location_hidden && <div className="sp-locked" style={{ marginBottom: 8 }}>Rescue consent withdrawn on one phone: its location is not shown</div>}
           {loc && (
-            <div className={loc.site_lat != null && loc.site_lng != null ? 'sp-loc' : 'sp-loc sp-loc-nomap'}>
+            <div className={(loc.site_lat != null && loc.site_lng != null) || loc.lat != null || loc.earlier_position ? 'sp-loc' : 'sp-loc sp-loc-nomap'}>
               <SiteMap loc={loc} />
               <dl className="sp-kv sp-kv-2">
                 <dt>Time</dt><dd>{fmt(loc.ts)} <span className="sp-muted">· {loc.source === 'rescue' ? 'rescue beacon' : (loc.trigger_reason || 'reading')}</span></dd>
                 {loc.network_type && <><dt>Network</dt><dd>{loc.network_type}{loc.band_mhz ? ` · ${loc.band_mhz} MHz` : ''}{loc.arfcn != null ? ` · ch ${loc.arfcn}` : ''}</dd></>}
-                {loc.mnc && <><dt>Operator</dt><dd className="sp-mono">{loc.mcc}/{loc.mnc}</dd></>}
+                {(loc.operator || loc.mnc) && <><dt>Operator</dt><dd title={loc.mnc ? `${loc.mcc}/${loc.mnc}` : undefined}>{loc.operator ?? `${loc.mcc}/${loc.mnc}`}</dd></>}
                 {loc.cell_id != null && <><dt>Cell</dt><dd className="sp-mono">{loc.cell_id}{loc.pci != null ? ` · PCI ${loc.pci}` : ''}{loc.tac != null ? ` · TAC ${loc.tac}` : ''}</dd></>}
-                {loc.serving_site_id && <><dt>Serving site</dt><dd>{loc.serving_site_id}{loc.site_name ? ` · ${loc.site_name}` : ''}{loc.site_district ? <span className="sp-muted"> · {loc.site_district}</span> : null}</dd></>}
-                {(loc.serving_sector || loc.serving_dist_km != null) && <><dt>Sector</dt><dd>{loc.serving_sector ?? '—'}{loc.serving_dist_km != null ? <span className="sp-muted"> · {loc.serving_dist_km.toFixed(2)} km from the site</span> : null}</dd></>}
+                {loc.serving_site_id && <><dt>{loc.serving_site_basis === 'earlier' ? 'Last attached site' : 'Serving site'}</dt><dd>
+                  <Link to={siteLink(loc.serving_site_id)}>{loc.serving_site_id}</Link>{loc.site_name ? ` · ${loc.site_name}` : ''}{loc.site_district ? <span className="sp-muted"> · {loc.site_district}</span> : null}
+                  {loc.serving_site_basis === 'earlier' && <span className="sp-muted"> · from the reading of {fmt(loc.serving_site_ts ?? null)}; the latest one names no known cell</span>}
+                  {loc.serving_site_basis === 'matched_now' && <span className="sp-muted"> · matched from the cell just now</span>}</dd></>}
+                {(loc.serving_sector || loc.serving_cell_name || loc.serving_dist_km != null) && <><dt>Sector</dt><dd>
+                  {loc.serving_sector ? `Sector ${loc.serving_sector}` : '—'}{loc.serving_cell_name ? <span className="sp-mono"> · {loc.serving_cell_name}</span> : null}
+                  {loc.serving_dist_km != null ? <span className="sp-muted"> · {loc.serving_dist_km.toFixed(2)} km from the site</span> : null}</dd></>}
                 {loc.level_dbm != null && <><dt>Level</dt><dd className="sp-mono">{loc.level_dbm} dBm</dd></>}
                 {(loc.rsrq_db != null || loc.sinr_db != null || loc.cqi != null) && <><dt>Quality</dt><dd className="sp-mono">{[loc.rsrq_db != null ? `RSRQ ${loc.rsrq_db} dB` : '', loc.sinr_db != null ? `SINR ${loc.sinr_db} dB` : '', loc.cqi != null ? `CQI ${loc.cqi}` : ''].filter(Boolean).join(' · ')}</dd></>}
                 {(loc.ecio_db != null) && <><dt>Ec/Io</dt><dd className="sp-mono">{loc.ecio_db} dB</dd></>}
                 <dt>Position</dt>
                 <dd>{loc.lat != null && loc.lng != null
-                  ? <span className="sp-mono">{loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}{loc.gps_accuracy_m != null ? ` · ±${Math.round(loc.gps_accuracy_m)} m` : ''}</span>
+                  ? <span className="sp-mono">{loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}{loc.gps_accuracy_m != null ? ` · ±${Math.round(loc.gps_accuracy_m)} m` : ''}
+                      {loc.position_basis === 'complaint' && <span className="sp-muted"> · shown for the customer's problem report #{loc.complaint_report_id}</span>}</span>
                   : loc.position_withheld
-                    ? <span className="sp-locked">🔒 Only while an emergency is declared</span>
+                    ? <span className="sp-locked">🔒 Only in an emergency{p.complaint_windows?.length ? ", or near the customer's own problem report" : ''}</span>
                     : loc.earlier_position
                       ? <span className="sp-mono">
                           {loc.earlier_position.lat.toFixed(5)}, {loc.earlier_position.lng.toFixed(5)}
@@ -281,26 +329,35 @@ function Profile({ p, out, reason, onChanged }: {
           )}
         </Card>
 
-        <Card id="sp-signal" icon="📶" title="Signal history" count={s.readings} empty={p.signal_series.length === 0} emptyText="No readings shared" wide>
-          <div className="sp-signal">
-            <div style={{ flex: 1, minWidth: 0 }}><SignalChart series={p.signal_series} /></div>
-            <NetworkRing counts={s.readings_by_network} />
-          </div>
-          <div className="sp-muted" style={{ marginTop: 4 }}>
-            Newest {p.signal_series.length} readings{s.first_reading ? ` · first ${fmt(s.first_reading)}` : ''}
+        <Card id="sp-signal" icon="📶" title="Signal history" count={s.readings} empty={s.readings === 0} emptyText="No readings shared" wide>
+          <ProfileSignalHistory msisdn={p.msisdn} reason={reason} total={s.readings} emergency={p.emergency_declared}
+            onSelection={onSelection} pick={pick}
+            aside={<NetworkRing counts={s.readings_by_network} />} />
+          <div className="sp-muted" style={{ marginTop: 2 }}>
+            {s.first_reading ? `First reading ${fmt(s.first_reading)}` : ''}
             {s.on_demand_readings ? ` · ${s.on_demand_readings} taken on request` : ''}
           </div>
         </Card>
 
+        {analytics && (
+          <ProfileAnalytics a={analytics} scope={scope} callsByOutcome={p.calls.by_outcome} siteLink={siteLink}
+            phone={(() => {
+              const d = p.devices.find((x) => x.phone_model)
+              return d ? `${[d.manufacturer, d.phone_model].filter(Boolean).join(' ')}${d.app_version ? ` · app ${d.app_version}` : ''}` : null
+            })()} />
+        )}
+
         <Card id="sp-devices" icon="📱" title="Phones and app installs" count={p.devices.length} link={phonesLink}
           empty={p.devices.length === 0} emptyText="No phone linked" wide={p.devices.length > 1}>
+          <PhonesSummary devices={p.devices} phones={s.phones} registeredLink={!!phonesLink && s.registered} />
           <div className="sp-devices">
-            {p.devices.map((d) => (
-              <div key={d.device_id} className="sp-device">
+            {sortDevices(p.devices).map((d) => (
+              <div key={d.device_id} className={`sp-device${d.replaced_at ? ' sp-device-old' : ''}`}>
                 <div className="sp-device-top">
                   <span className="sp-device-name">{[d.manufacturer, d.phone_model].filter(Boolean).join(' ') || 'Unknown phone'}</span>
-                  <span className="sp-device-kind">{d.kind}</span>
+                  <span className="sp-device-kind" title={ROLE[d.role]?.hint}>{ROLE[d.role]?.label ?? d.kind}</span>
                 </div>
+                {d.replaced_at && <div className="sp-device-replaced">Replaced {fmt(d.replaced_at)} by a newer registration from this phone</div>}
                 <div className="sp-device-id" title={d.device_id}>{d.device_id}</div>
                 <div className="sp-device-chips">
                   <span className={`sp-chip ${d.registered_at ? (d.registration_revoked_at ? 'bad' : 'ok') : ''}`}>{d.registered_at ? (d.registration_revoked_at ? 'Registration revoked' : 'Registered') : 'Not registered'}</span>
@@ -317,7 +374,7 @@ function Profile({ p, out, reason, onChanged }: {
                   {d.app_version && <div><span>App</span>{d.app_version}</div>}
                   {d.imei && <div><span>IMEI</span><b className="sp-mono">{d.imei}</b></div>}
                   {d.registered_at && <div><span>Registered</span>{fmt(d.registered_at)}</div>}
-                  {d.linked_via.length > 0 && <div><span>Linked by</span>{d.linked_via.map((v) => v === 'manual_link' ? 'superadmin, by hand' : v.replace(/_/g, ' ')).join(', ')}</div>}
+                  {d.linked_via.length > 0 && <div><span>Tied to this number by</span>{d.linked_via.map((v) => LINKED_BY[v] ?? v.replace(/_/g, ' ')).join(', ')}</div>}
                 </div>
                 {d.readings > 0 && <Link className="sp-device-link" to={readings(d.device_id)}>Open all {d.readings.toLocaleString()} readings →</Link>}
               </div>
@@ -350,9 +407,9 @@ function Profile({ p, out, reason, onChanged }: {
             <>
               <div className="sp-sub-head">Shares and phone drives · {p.collections.length} <Link to={out('/collections', { device: p.collections[0].device_id })}>Collections →</Link></div>
               <Paged rows={p.collections}
-                head={<tr><th>Kind</th><th>Started</th><th>Last reading</th><th>Ended</th><th>Readings</th><th>Phone</th><th></th></tr>}
+                head={<tr><th>Kind</th><th>Started</th><th>Last reading</th><th>Ended</th><th>Readings</th><th>Phone</th><th></th><th></th></tr>}
                 row={(c) => (
-                  <tr key={c.id}><td>{c.source}</td><td>{fmt(c.started_at)}</td><td>{fmt(c.last_sample_at)}</td><td>{fmt(c.ended_at)}</td><td className="mono">{c.samples}</td><td className="mono" title={c.device_id}>{short(c.device_id)}</td><td><Link to={out('/collections', { device: c.device_id })}>Open →</Link></td></tr>
+                  <tr key={c.id}><td>{c.source}</td><td>{fmt(c.started_at)}</td><td>{fmt(c.last_sample_at)}</td><td>{fmt(c.ended_at)}</td><td className="mono">{c.samples}</td><td className="mono" title={c.device_id}>{short(c.device_id)}</td><td>{c.samples ? showBtn(`collection:${c.id}`) : null}</td><td><Link to={out('/collections', { device: c.device_id })}>Open →</Link></td></tr>
                 )} />
             </>
           )}
@@ -360,9 +417,9 @@ function Profile({ p, out, reason, onChanged }: {
             <>
               <div className="sp-sub-head">Telemetry drive tests · {p.drive_test_sessions.length} <Link to={out('/telemetry-dt-sessions')}>Telemetry Drive Test →</Link></div>
               <Paged rows={p.drive_test_sessions}
-                head={<tr><th>Name</th><th>Status</th><th>Started</th><th>Ended</th><th>Phones</th></tr>}
+                head={<tr><th>Name</th><th>Status</th><th>Started</th><th>Ended</th><th>Phones</th><th></th></tr>}
                 row={(d) => (
-                  <tr key={d.id}><td><Link to={out('/telemetry-dt-sessions', { name: d.name })}>{d.name}</Link></td><td><span className={`sp-chip ${d.status === 'active' ? 'ok' : 'plain'}`}>{d.status}</span></td><td>{fmt(d.started_at)}</td><td>{fmt(d.ended_at)}</td><td className="mono">{d.devices}</td></tr>
+                  <tr key={d.id}><td><Link to={out('/telemetry-dt-sessions', { name: d.name })}>{d.name}</Link></td><td><span className={`sp-chip ${d.status === 'active' ? 'ok' : 'plain'}`}>{d.status}</span></td><td>{fmt(d.started_at)}</td><td>{fmt(d.ended_at)}</td><td className="mono">{d.devices}</td><td>{showBtn(`drive:${d.id}`)}</td></tr>
                 )} />
             </>
           )}
@@ -422,13 +479,42 @@ function Profile({ p, out, reason, onChanged }: {
         </Card>
 
         <Card id="sp-lookups" icon="🛡️" title="Who looked this number up" count={p.lookups.length} empty={p.lookups.length === 0} emptyText="No earlier lookup" wide>
-          <Paged rows={p.lookups}
-            head={<tr><th>When</th><th>Tool</th><th>By</th><th>Reference</th><th>Found</th></tr>}
-            row={(l, i) => (
-              <tr key={i}><td>{fmt(l.at)}</td><td>{l.tool}</td><td>{l.by ?? '—'}</td><td>{l.reference || '—'}</td><td>{l.found == null ? '—' : l.found ? 'Yes' : 'No'}</td></tr>
-            )} />
+          <LookupsList lookups={p.lookups} />
         </Card>
+
+        {/* NTC's other systems last, after this system's own details (2026-10-19): BI, then OSS & Core. */}
+        <div className="spo-pair sp-wide">
+          <ProfileProvisioning kind="bi" msisdn={p.msisdn} reason={reason} analytics={analytics}
+            callsByOutcome={p.calls.by_outcome} emergency={p.emergency_declared} />
+          <ProfileProvisioning kind="core" msisdn={p.msisdn} reason={reason} analytics={analytics}
+            callsByOutcome={p.calls.by_outcome} emergency={p.emergency_declared} />
+        </div>
       </div>
+    </>
+  )
+}
+
+// Collapsed until asked for (2026-10-16): who looked the number up matters
+// for an audit, rarely for the customer's problem.
+function LookupsList({ lookups }: { lookups: SubscriberProfile['lookups'] }) {
+  const [open, setOpen] = useState(false)
+  const last = lookups[0]
+  if (!open) {
+    return (
+      <div className="sp-muted">
+        {last ? `Last: ${fmt(last.at)} · ${last.tool} · ${last.by ?? '—'}. ` : ''}
+        <button type="button" className="sp-linkbtn" onClick={() => setOpen(true)}>Show all {lookups.length} lookups</button>
+      </div>
+    )
+  }
+  return (
+    <>
+      <button type="button" className="sp-linkbtn" style={{ marginBottom: 6 }} onClick={() => setOpen(false)}>Hide the list</button>
+      <Paged rows={lookups}
+        head={<tr><th>When</th><th>Tool</th><th>By</th><th>Reference</th><th>Found</th></tr>}
+        row={(l, i) => (
+          <tr key={i}><td>{fmt(l.at)}</td><td>{l.tool}</td><td>{l.by ?? '—'}</td><td>{l.reference || '—'}</td><td>{l.found == null ? '—' : l.found ? 'Yes' : 'No'}</td></tr>
+        )} />
     </>
   )
 }
@@ -442,6 +528,16 @@ export default function SubscriberProfilePage() {
   const [ticket, setTicket] = useState(reason)
   const { data, isFetching, error, refetch } = useSubscriberProfile(msisdn, reason)
   const restored = useRef(false)
+
+  // The profile is kept for 30 minutes (each server search is logged), so an
+  // emergency declared or ended meanwhile would not show (2026-10-19). The
+  // emergency status is cheap and not logged: when it disagrees with the
+  // profile, search again.
+  const emergency = useEmergencyStatus()
+  const emergencyActive = emergency.data?.active
+  useEffect(() => {
+    if (data && emergencyActive != null && emergencyActive !== data.emergency_declared && !isFetching) void refetch()
+  }, [data, emergencyActive, isFetching, refetch])
 
   // Keep the boxes in step when the address changes (Back / Forward).
   useEffect(() => { setNumber(msisdn); setTicket(reason) }, [msisdn, reason])
@@ -527,7 +623,8 @@ export default function SubscriberProfilePage() {
               {isFetching ? 'Refreshing…' : '↻ Refresh'}
             </button>
           </div>
-          <Profile p={data} out={out} reason={reason} onChanged={() => void refetch()} />
+          <Profile p={data} out={out} reason={reason} onChanged={() => void refetch()}
+            siteLink={(id) => `/sites/${encodeURIComponent(id)}?${new URLSearchParams({ back: here })}`} />
         </>
       )}
     </div>

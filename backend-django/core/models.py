@@ -1973,6 +1973,15 @@ class SecuritySettings(models.Model):
     def __str__(self):
         return f'Security settings (MFA required: {self.mfa_required})'
 
+    # Exact positions for the customer's own complaint (2026-10-16, off by
+    # default; NTC's decision). When on, the Subscriber Profile shows the
+    # exact positions of readings taken within `complaint_location_hours` of
+    # a problem report from that number made in the last
+    # `complaint_location_days` days, without an emergency. See
+    # core/subscriber_profile.py complaint_windows().
+    complaint_location_access = models.BooleanField(default=False)
+    complaint_location_days = models.PositiveSmallIntegerField(default=7)
+    complaint_location_hours = models.PositiveSmallIntegerField(default=3)
 
 class LiveSiteSyncStatus(models.Model):
     """Singleton row (id forced to 1, same convention as BrandingSettings

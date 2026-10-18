@@ -816,7 +816,22 @@ app needs no setup for that. The stored state and the key alias are the ones
 the reference app used, so phones registered with an older build stay
 registered.
 
-**Plugin layout** (one Flutter package, e.g. `ntc_telemetry`)
+**Built for Android (16 October 2026):** `flutter/ntc_telemetry` in the
+mobile project, version 1.1.0, with its own README for the app team. It
+carries the SDK as a library package in `android/sdk-repo`, so the app needs
+no Gradle change. `init` saves its settings and a start-up provider sets the
+SDK up again whenever Android starts the app in the background. The SDK
+and plugin install on Android 7.0 (API 24), as the Nepal Telecom app does,
+but work only on Android 8.0 and newer: below that `NetTelemetry.isSupported()`
+is false, nothing is scheduled, and the plugin's calls answer `unsupported`
+(`NtcTelemetry.supportedOnThisPhone()` tells the app to hide its screens).
+The SDK now also declares approximate location next to precise location;
+Android 12+ expects both in one runtime request. Tested: Dart calls against a
+stand-in for the Android side, and the example app builds with every
+component merged. Not yet run on a phone.
+
+**Plugin layout as first planned** (one Flutter package, `ntc_telemetry`;
+the iOS part is not built)
 
 - `lib/ntc_telemetry.dart`: the Dart calls below, over a method channel and
   an event channel for live readings.

@@ -112,6 +112,8 @@ export default function SecurityPage() {
             )}
           </section>
 
+          <ComplaintLocation data={data} busy={save.isPending} onSave={(body) => save.mutate(body)} />
+
           <AttackAlerts data={data} busy={save.isPending}
             onSave={(body) => save.mutate(body)} />
 
@@ -119,6 +121,56 @@ export default function SecurityPage() {
         </>
       )}
     </div>
+  )
+}
+
+// Exact positions for the customer's own complaint (2026-10-16). Off by
+// default: turning it on is NTC's decision on how subscriber location may
+// be used. Emergencies are not affected.
+function ComplaintLocation({ data, busy, onSave }: {
+  data: SecuritySettings; busy: boolean; onSave: (body: Partial<Omit<SecuritySettings, 'status'>>) => void
+}) {
+  const [days, setDays] = useState(String(data.complaint_location_days ?? 7))
+  const [hours, setHours] = useState(String(data.complaint_location_hours ?? 3))
+  useEffect(() => {
+    setDays(String(data.complaint_location_days ?? 7))
+    setHours(String(data.complaint_location_hours ?? 3))
+  }, [data.complaint_location_days, data.complaint_location_hours])
+  const dirty = days !== String(data.complaint_location_days ?? 7) || hours !== String(data.complaint_location_hours ?? 3)
+  return (
+    <section className="sec-card">
+      <h2>Customer location for their own complaint</h2>
+      <p className="muted">
+        The Subscriber Profile always shows the cells and sites a customer used, and their signal. Exact positions
+        from the phone are shown only while an emergency is declared. With this switch on, they are also shown for
+        readings taken close to a problem report that customer made, so the complaint can be analysed where it
+        happened. Each time a position is shown this way, the Audit Log records it with the report. A customer who
+        withdrew rescue consent stays hidden either way.
+      </p>
+      <Switch label="Show exact positions near the customer's own problem report"
+        hint="Off by default. Turn on only once NTC has agreed this use of the customer's location."
+        on={data.complaint_location_access} busy={busy}
+        onChange={(v) => {
+          if (v && !window.confirm("Staff with the Subscriber Profile will see exact positions of a customer's readings near that customer's problem reports, without an emergency. Has NTC agreed this?")) return
+          onSave({ complaint_location_access: v })
+        }} />
+      <div className="sec-lists">
+        <label>
+          Problem reports from the last (days, 1 to 30)
+          <input type="number" min={1} max={30} value={days} onChange={(e) => setDays(e.target.value)} />
+        </label>
+        <label>
+          Readings within this many hours of the report (1 to 24)
+          <input type="number" min={1} max={24} value={hours} onChange={(e) => setHours(e.target.value)} />
+        </label>
+      </div>
+      <div className="problem-actions">
+        <button type="button" className="btn-primary btn-small" disabled={busy || !dirty}
+          onClick={() => onSave({ complaint_location_days: Number(days), complaint_location_hours: Number(hours) })}>
+          Save
+        </button>
+      </div>
+    </section>
   )
 }
 
@@ -236,6 +288,11 @@ function InEffect({ s }: { s: NonNullable<SecuritySettings['status']> }) {
     ['Linked-system update addresses', `${s.linked_system_https_only ? 'https only' : 'http and https'}; ${
       s.linked_system_hosts.length ? `hosts: ${s.linked_system_hosts.join(', ')}` : 'any host (no allowed-hosts list)'}`,
       s.linked_system_https_only && s.linked_system_hosts.length > 0],
+    ['Ticketing system (provisioning on the Subscriber Profile)', !s.provisioning || s.provisioning.backend === 'off'
+      ? 'Not linked (set PROVISIONING_BACKEND and the PROVISIONING_* details once the UTS team gives its API)'
+      : s.provisioning.backend === 'demo' ? 'Demo data only: not for real customers'
+        : s.provisioning.configured ? `Linked, through ${s.provisioning.address_host}` : 'Chosen, but the address is not set',
+      !!s.provisioning?.configured && s.provisioning.backend === 'http'],
     ['Debug mode', s.debug ? 'On: must be off in production' : 'Off', !s.debug],
     ['Redirect to https', s.https_redirect ? 'On' : 'Off (set HTTPS_ENABLED=1 once the site is served over https)',
       s.https_redirect],

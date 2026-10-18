@@ -185,20 +185,86 @@ def _row_cell_identity(row):
     return value if value > 255 else None
 
 
+# NTC numbers an eNodeB as a region digit followed by the site number
+# (2026-10-19, the user's rule, checked on the local site list): eNodeB 1856
+# is KTM856, 3172 is CDR172. Used when the site list has no eNodeB ID for a
+# sector (about 4,000 of 24,000 4G sectors).
+ENB_REGION = {1: 'KTM', 2: 'EDR', 3: 'CDR', 4: 'WDR', 5: 'MWDR', 6: 'FWDR'}
+
+
+def site_of_enodeb(enodeb_id):
+    """The site ID an eNodeB number stands for, or None."""
+    if enodeb_id is None or not 1000 <= enodeb_id <= 6999:
+        return None
+    return f'{ENB_REGION[enodeb_id // 1000]}{enodeb_id % 1000:03d}'
+
+
+def _placed(sec):
+    return sec.site is not None and sec.site.lat is not None and sec.site.lng is not None
+
+
 def sectors_by_cell_identity(identities):
-    """{cell identity: Sector} for the 4G sectors that carry one of `identities`."""
+    """{cell identity: Sector} for the 4G sectors that carry one of
+    `identities`: by the sector's eNodeB ID, else by the site the eNodeB
+    number stands for and the sector's local cell ID."""
     enodebs = {i >> 8 for i in identities}
     if not enodebs:
         return {}
     out = {}
     for sec in (Sector.objects.select_related('site')
                 .filter(tech='4G', enodeb_id__in=enodebs, local_cell_id__isnull=False)):
-        site = sec.site
-        if site is None or site.lat is None or site.lng is None:
-            continue
         identity = cell_identity(sec.enodeb_id, sec.local_cell_id)
-        if identity in identities:
+        if identity in identities and _placed(sec):
             out[identity] = sec
+    missing = {i for i in identities if i not in out}
+    by_site = {}
+    for i in missing:
+        site_id = site_of_enodeb(i >> 8)
+        if site_id:
+            by_site.setdefault(site_id, set()).add(i)
+    if by_site:
+        for sec in (Sector.objects.select_related('site')
+                    .filter(tech='4G', site_id__in=by_site, local_cell_id__isnull=False)):
+            for i in by_site[sec.site_id]:
+                if (i & 0xFF) == sec.local_cell_id and _placed(sec):
+                    out.setdefault(i, sec)
+    return out
+
+
+def sectors_of_sites(site_ids, tech='4G'):
+    """{site ID: [Sector]} of one technology, for picking a sector by PCI."""
+    out = {}
+    for sec in Sector.objects.select_related('site').filter(tech=tech, site_id__in=site_ids):
+        if _placed(sec):
+            out.setdefault(sec.site_id, []).append(sec)
+    return out
+
+
+def _lac_ci(tech, row):
+    """(LAC, CI) of a 2G/3G reading as the site list writes them, or None.
+    A phone reports the full 3G cell ID (RNC x 65536 + CI); the list holds
+    the 16-bit CI."""
+    try:
+        lac, ci = int(row.get('tac')), int(row.get('cell_id'))
+    except (TypeError, ValueError):
+        return None
+    if lac <= 0 or ci <= 0:
+        return None
+    return (str(lac), str(ci & 0xFFFF if tech == '3G' else ci))
+
+
+def sectors_by_lac_ci(tech, pairs):
+    """{(LAC, CI): Sector} for 2G/3G sectors (2026-10-19). The CI alone
+    repeats in every region (11431 is site 143 sector A in five of them);
+    with the LAC it is unique."""
+    if not pairs:
+        return {}
+    out = {}
+    for sec in (Sector.objects.select_related('site')
+                .filter(tech=tech, ci__in={c for _, c in pairs}, lac__in={l for l, _ in pairs})):
+        key = (str(sec.lac).strip(), str(sec.ci).strip())
+        if key in pairs and _placed(sec):
+            out.setdefault(key, sec)
     return out
 
 
@@ -218,9 +284,6 @@ def attach_serving_cells(rows, tech, max_km=MATCH_MAX_KM, region_key=None):
     written to rows[i][region_key]."""
     if not rows:
         return
-    placed = [i for i, r in enumerate(rows) if r.get('lat') is not None and r.get('lng') is not None]
-    if not placed:
-        return
 
     def stamp(r, sec, km):
         site = sec.site
@@ -229,25 +292,53 @@ def attach_serving_cells(rows, tech, max_km=MATCH_MAX_KM, region_key=None):
         r['serving_cell_name'] = sec.cell_name or None
         r['serving_sector'] = sec.sector or None
         r['serving_local_cell_id'] = sec.local_cell_id
-        r['serving_dist_km'] = round(km, 3)
+        r['serving_dist_km'] = round(km, 3) if km is not None else None
         if region_key:
             r[region_key] = site.region or ''
 
-    by_identity = {}
+    def km_to(r, sec):
+        if r.get('lat') is None or r.get('lng') is None:
+            return None
+        return _haversine_km(r['lat'], r['lng'], sec.site.lat, sec.site.lng)
+
+    # Exact matches first, with or without a position (2026-10-19): the 4G
+    # cell identity (by eNodeB ID, else the site its number stands for, by
+    # local cell ID, else by PCI within that site), and LAC + CI on 2G/3G.
+    exact = {}
     if tech == '4G':
-        identities = {_row_cell_identity(rows[i]) for i in placed} - {None}
-        by_identity = sectors_by_cell_identity(identities)
+        by_identity = sectors_by_cell_identity({_row_cell_identity(r) for r in rows} - {None})
+        derived = {}
+        for i, r in enumerate(rows):
+            ident = _row_cell_identity(r)
+            if ident is None:
+                continue
+            if ident in by_identity:
+                exact[i] = by_identity[ident]
+            elif site_of_enodeb(ident >> 8) and r.get('pci') is not None:
+                derived[i] = site_of_enodeb(ident >> 8)
+        if derived:
+            site_sectors = sectors_of_sites(set(derived.values()))
+            for i, site_id in derived.items():
+                same_pci = [s for s in site_sectors.get(site_id, ()) if s.pci == rows[i].get('pci')]
+                # The list can hold one sector twice (site list row and
+                # engineering-parameter row): one sector name is one match.
+                if same_pci and len({s.sector for s in same_pci}) == 1:
+                    exact[i] = max(same_pci, key=lambda s: (s.local_cell_id is not None, bool(s.cell_name)))
+    elif tech in ('2G', '3G'):
+        keys = {i: _lac_ci(tech, r) for i, r in enumerate(rows)}
+        by_lac_ci = sectors_by_lac_ci(tech, set(keys.values()) - {None})
+        exact = {i: by_lac_ci[k] for i, k in keys.items() if k in by_lac_ci}
 
     by_pci = []
-    for i in placed:
-        r = rows[i]
-        sec = by_identity.get(_row_cell_identity(r)) if by_identity else None
+    for i, r in enumerate(rows):
+        sec = exact.get(i)
         if sec is not None:
-            km = _haversine_km(r['lat'], r['lng'], sec.site.lat, sec.site.lng)
-            if km <= EXACT_MAX_KM:
+            km = km_to(r, sec)
+            if km is None or km <= EXACT_MAX_KM:
                 stamp(r, sec, km)
                 continue
-        by_pci.append(i)
+        if r.get('lat') is not None and r.get('lng') is not None:
+            by_pci.append(i)
 
     wanted = {i: _sample_key(tech, rows[i]) for i in by_pci}
     wanted = {i: k for i, k in wanted.items() if k is not None and (not isinstance(k, tuple) or None not in k)}

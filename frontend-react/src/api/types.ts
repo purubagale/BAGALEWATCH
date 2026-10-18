@@ -3008,6 +3008,10 @@ export interface DtRetentionSettings {
 }
 
 export interface DtPrunePlanItem {
+  // Exact positions for the customer's own complaint (2026-10-16, off by default).
+  complaint_location_access: boolean
+  complaint_location_days?: number
+  complaint_location_hours?: number
   session_id: number
   name: string
   tech: DtTech
@@ -3026,6 +3030,8 @@ export interface DtPruneRecordItem {
   drive_date: string | null
   action: 'reduced' | 'erased'
   readings_removed: number
+    // Provisioning from NTC's ticketing system (2026-10-16).
+    provisioning?: { backend: string; configured: boolean; address_host: string | null }
   created_at: string
 }
 
@@ -3145,3 +3151,123 @@ export interface SubscriberProfile {
   site_photos: { id: number; site_id: string | null; status: string; taken_at: string | null }[]
   lookups: { tool: string; by: string | null; at: string | null; reference: string; found: boolean | null }[]
 }
+  // What this id is, and which ids are one phone (2026-10-16).
+  role: 'registration' | 'app_install' | 'earlier_install' | 'rescue' | 'identity'
+  phone_key: string
+  replaced_at: string | null
+}
+
+// One reading in the profile's signal history (2026-10-16). Position only
+// while an emergency is declared; has_position says whether one is stored.
+export interface SubscriberSignalPoint {
+  ts: string
+  device_id: string
+  network_type: string
+  level_dbm: number | null
+  rsrq_db: number | null
+  sinr_db: number | null
+  cqi: number | null
+  cqi_source: string | null
+  ecio_db: number | null
+  rx_qual: number | null
+  pci: number | null
+  cell_id: number | null
+  tac: number | null
+  band_label: string | null
+  trigger_reason: string
+  serving_site_id: string | null
+  serving_sector: string | null
+  serving_dist_km: number | null
+  has_position: boolean
+  lat: number | null
+  lng: number | null
+  gps_accuracy_m: number | null
+  complaint_report_id: number | null
+}
+
+// The profile's analysis block (2026-10-16, core/subscriber_analytics.py).
+// No exact positions: cells and sites are masts.
+export interface SubscriberAnalytics {
+  networks: {
+    network_type: string; readings: number; weak: number; fair: number; good: number; no_level: number
+    level_avg: number | null; rsrq_avg: number | null; sinr_avg: number | null
+  }[]
+  cells: {
+    network_type: string; cell_id: number | null; pci: number | null; tac: number | null
+    site_id: string | null; sector: string | null; cell_name: string | null; site_name: string | null
+    district: string | null; band_label: string | null; readings: number; weak: number
+    level_avg: number | null; rsrq_avg: number | null; sinr_avg: number | null; dist_km_avg: number | null
+    first: string; last: string
+  }[]
+  sites: {
+    site_id: string; readings: number; weak: number; level_avg: number | null
+    name: string | null; district: string | null; lat: number | null; lng: number | null
+  }[]
+  daily: { day: string; by_network: Record<string, number>; readings: number; weak: number; level_avg: number | null }[]
+  hours: { hour: number; readings: number; weak: number; level_avg: number | null }[]
+  histograms: {
+    level: Record<'4G' | '3G' | '2G', { from: number; to: number; readings: number }[]>
+    rsrq: { from: number; to: number; readings: number }[]
+    sinr: { from: number; to: number; readings: number }[]
+  }
+  bands: { network_type: string; band_label: string; readings: number; weak: number; level_avg: number | null }[]
+  limits: { weak_dbm: Record<string, number>; good_dbm: Record<string, number> }
+  cells_capped: boolean
+  // Location history (cells, sites) only in an emergency (2026-10-19); counts always.
+  location_shown?: boolean
+  cells_count?: number
+  sites_count?: number
+}
+
+// What the network provisioned, from NTC's ticketing system (2026-10-16,
+// core/provisioning.py). Null fields: the source did not say.
+export interface NtcBand { token: string; tech: string; label: string; use: string; supported?: boolean | null }
+export interface SubscriberProvisioning {
+  enabled: boolean
+  error: string | null
+  ntc_bands: NtcBand[]
+  // The OSS location history is given only while an emergency is declared.
+  location_shown?: boolean
+  data: {
+    source: 'uts' | 'demo'
+    subscriber_name: string | null; billing_type: string | null; status: string | null
+    lte_provisioned: boolean | null; volte_provisioned: boolean | null; sim_type: string | null; usim: boolean | null
+    roaming: boolean | null; plan_name: string | null; data_used_gb: number | null; data_total_gb: number | null
+    device_brand: string | null; device_model: string | null; imei: string | null
+    supported_bands: string[]; ntc_bands: NtcBand[]
+    location_history: Record<string, string | number | boolean | null>[] | null
+    // BI system (2026-10-19): daily usage and the network split.
+    usage_daily?: { day: string; data_mb: number | null; voice_min: number | null; sms: number | null }[]
+    network_split?: Record<string, number>
+  } | null
+}
+
+// A stretch of time whose exact positions are shown for the customer's own
+// problem report (2026-10-16, off unless switched on in Security).
+export interface ComplaintWindow { report_id: number; from: string; to: string }
+
+export interface SubscriberSignal {
+  complaint_windows: ComplaintWindow[]
+  range: string
+  tech: string | null
+  session: string | null
+  session_label: string | null
+  total: number
+  shown: number
+  limited: boolean
+  positions_shown: boolean
+  points: SubscriberSignalPoint[]
+  sites: Record<string, { name: string | null; lat: number | null; lng: number | null }>
+  sessions: { key: string; label: string; readings: number | null }[]
+  // The analysis cards for the same selection (2026-10-19).
+  analytics?: SubscriberAnalytics | null
+    phones?: number
+    // Why a position is shown (2026-10-16): an emergency, or the customer's own complaint.
+    position_basis?: 'emergency' | 'complaint' | null
+    complaint_report_id?: number | null
+    // Matched when the profile was opened, or taken from an earlier reading (2026-10-19).
+    serving_site_basis?: 'matched_now' | 'earlier'
+    serving_site_ts?: string | null
+    operator?: string | null
+  analytics?: SubscriberAnalytics | null
+  complaint_windows?: ComplaintWindow[]

@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import (api_auth, area_sample, audit, auth_log, backup, call_context, collection, consent, dashboard, device_identity,
                device_lookup, device_trace, drive_test, dt_retention, emergency,
-               exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_notify, problem_report, reports, rescue, rf_audit,
+               exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_notify, problem_report, provisioning, reports, rescue, rf_audit,
                rf_reports, roles, site_import, site_coverage, site_photo, sso_views, subscriber_link, subscriber_profile, system_doc,
                telemetry_admin, telemetry_near, views, volte_quality)
 
@@ -237,6 +237,10 @@ urlpatterns = [
          name='problem-notification-retry'),
     # Everything stored about one mobile number, superadmin (2026-10-15) -- see core/subscriber_profile.py.
     path('subscriber-profile/', subscriber_profile.SubscriberProfileView.as_view(), name='subscriber-profile'),
+    # Its signal history by range, session and technology (2026-10-16).
+    path('subscriber-profile/signal/', subscriber_profile.SubscriberSignalView.as_view(), name='subscriber-profile-signal'),
+    # What the network provisioned, from NTC's ticketing system (2026-10-16) -- see core/provisioning.py.
+    path('subscriber-profile/provisioning/', provisioning.SubscriberProvisioningView.as_view(), name='subscriber-profile-provisioning'),
     # Linking a phone's earlier readings by hand (2026-10-15) -- see core/subscriber_link.py.
     path('subscriber-profile/link-candidates/', subscriber_link.LinkCandidatesView.as_view(), name='subscriber-link-candidates'),
     path('subscriber-profile/link-device/', subscriber_link.LinkDeviceView.as_view(), name='subscriber-link-device'),

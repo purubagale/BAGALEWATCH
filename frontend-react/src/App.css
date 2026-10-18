@@ -279,6 +279,10 @@ textarea:focus {
 .app-shell {
   display: flex;
   height: 100vh;
+  /* Nothing inside may stretch the window itself (2026-10-19): an
+     absolutely placed element with no positioned parent once pushed the
+     page past the footer, leaving a blank band under it. */
+  overflow: hidden;
 }
 
 /* ── Sidebar ───────────────────────────────────────────────────────── */
@@ -4074,13 +4078,17 @@ textarea:focus {
    spacing everywhere, small cards for empty sections, 10-row pages, charts
    and the serving-site map. These rules come last and win over the ones
    above. */
-.sp-page { padding: 14px 18px 32px; }
+.sp-page { padding: 14px 18px 32px; position: relative; }
 .sp-hero-body { padding: 12px 16px; gap: 14px; align-items: center; }
 .sp-hero-title { flex: 0 1 300px; }
 .sp-title { font-size: 21px; margin: 2px 0 2px; }
 .sp-sub { font-size: 12px; }
 .sp-search { flex: 1 1 520px; gap: 8px; }
 .sp-field input { padding: 8px 10px; font-size: 13px; }
+  /* Network colours (2026-10-16), checked with the palette validator on this
+     surface (all pairs; 4G/5G in the 6-8 colour-blind band, so every chart
+     with them carries a legend). */
+  --sp-net-4g: #0aa0bd; --sp-net-3g: #7f7cec; --sp-net-2g: #c4860f; --sp-net-5g: #df5b9c; --sp-net-none: #64748b;
 .sp-btn { padding: 9px 18px; }
 .sp-ident { margin-top: 12px; gap: 8px 10px; }
 .sp-msisdn { font-size: 20px; }
@@ -4094,6 +4102,7 @@ textarea:focus {
 .sp-kpi-val small { font-size: 12px; font-weight: 500; color: var(--sp-muted); }
 .sp-flow { margin-top: 12px; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
 .sp-card { border-radius: 12px; scroll-margin-top: 52px; }
+  --sp-net-4g: #0891b2; --sp-net-3g: #4f46e5; --sp-net-2g: #d97706; --sp-net-5g: #db2777; --sp-net-none: #94a3b8;
 .sp-card-head { padding: 9px 14px; gap: 8px; }
 .sp-card-icon { width: 24px; height: 24px; font-size: 13px; border-radius: 7px; }
 .sp-card-title { font-size: 14px; }
@@ -4486,3 +4495,125 @@ tr[hidden] { display: none !important; }
   text-align: left; }
 .sp-linkbtn:hover:not(:disabled) { text-decoration: underline; }
 .sp-linkbtn:disabled { opacity: 0.5; cursor: default; }
+
+/* Phones card roles (2026-10-16): a registration replaced by a newer one. */
+.sp-device-old { opacity: 0.72; }
+.sp-device-replaced { font-size: 11.5px; color: var(--sp-amber); margin: 2px 0 4px; }
+
+/* Signal history (2026-10-16, ProfileSignalHistory.tsx): chart with a hover
+   card and range pick on the left, map of the picked readings on the right. */
+.sp-sh-controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 8px; font-size: 12.5px; }
+.sp-sh-controls select { margin-left: 4px; padding: 3px 6px; border-radius: 8px; border: 1px solid var(--sp-border-2);
+  background: var(--sp-card-2); color: var(--sp-text); font-size: 12.5px; max-width: 260px; }
+.sp-sh-pills { display: inline-flex; border: 1px solid var(--sp-border-2); border-radius: 999px; overflow: hidden; }
+.sp-sh-pills button { border: 0; background: transparent; color: var(--sp-muted); padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.sp-sh-pills button + button { border-left: 1px solid var(--sp-border-2); }
+.sp-sh-pills button.on { background: var(--sp-cyan-soft); color: var(--sp-cyan); font-weight: 600; }
+.sp-sh-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr); gap: 14px; align-items: start; }
+@media (max-width: 900px) { .sp-sh-grid { grid-template-columns: 1fr; } }
+.sp-sh-svg { cursor: crosshair; user-select: none; }
+.sp-sh-range { fill: var(--sp-cyan-soft); stroke: var(--sp-cyan); stroke-width: 0.6; }
+.sp-sh-complaint { fill: var(--sp-amber-soft); }
+.sp-sh-noservice { stroke: var(--sp-faint); stroke-width: 1.4; }
+.sp-legend i.sp-sh-noservice-key { width: 2px; background: var(--sp-faint); }
+.sp-sh-cursor { stroke: var(--sp-faint); stroke-width: 0.8; stroke-dasharray: 3 3; }
+.sp-sh-focus { fill: none; stroke: var(--sp-text); stroke-width: 2; }
+.sp-sh-info { margin-top: 6px; min-height: 64px; padding: 6px 10px; border-radius: 10px; background: var(--sp-card-2);
+  border: 1px solid var(--sp-border); font-size: 12px; line-height: 1.55; font-family: var(--sp-mono); }
+.sp-sh-info-head { font-family: var(--sp-sans); font-weight: 600; }
+.sp-sh-side { display: flex; flex-direction: column; gap: 6px; }
+.sp-sh-map { height: 260px; border-radius: 10px; overflow: hidden; border: 1px solid var(--sp-border); }
+.sp-sh-mapnote { font-size: 11.5px; }
+
+/* Profile analysis cards and their charts (2026-10-16, ProfileAnalytics.tsx,
+   ProfileCharts.tsx). */
+.spc-wrap { position: relative; }
+.spc-tip { position: absolute; top: 4px; pointer-events: none; z-index: 5; background: var(--sp-card); color: var(--sp-text);
+  border: 1px solid var(--sp-border-2); border-radius: 8px; padding: 6px 9px; font-size: 11.5px; line-height: 1.5;
+  box-shadow: 0 6px 18px rgba(2, 6, 23, 0.25); white-space: nowrap; }
+.spc-tip-head { font-weight: 600; }
+.spc-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.spc-tile { border: 1px solid var(--sp-border); border-radius: 10px; padding: 8px 10px; background: var(--sp-card-2);
+  display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.spc-tile > span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sp-muted); }
+.spc-tile > b { font-family: var(--sp-head); font-size: 22px; line-height: 1.1; }
+.spc-tile > b.spc-small { font-size: 13.5px; font-family: var(--sp-sans); }
+.spc-tile small { color: var(--sp-faint); font-size: 11px; }
+.spc-meter { height: 5px; border-radius: 4px; background: var(--sp-border); overflow: hidden; }
+.spc-meter i { display: block; height: 100%; border-radius: 4px; }
+.spc-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.spc-chips em { font-style: normal; font-size: 11.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--sp-border-2);
+  font-family: var(--sp-mono); }
+.spc-quality { display: flex; flex-direction: column; gap: 10px; }
+.spc-quality-head { display: flex; align-items: center; gap: 6px; font-size: 12.5px; flex-wrap: wrap; margin-bottom: 4px; }
+.spc-quality-head > i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.spc-quality-avg { margin-left: auto; font-size: 11.5px; }
+.spc-share { display: flex; gap: 2px; height: 12px; border-radius: 4px; overflow: hidden; }
+.spc-share i { display: block; height: 100%; }
+.spc-foot { font-size: 11.5px; margin-top: 6px; }
+.spc-minis { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.spc-mini-title { font-size: 12.5px; font-weight: 600; margin-bottom: 2px; }
+.spc-hbars { display: flex; flex-direction: column; gap: 5px; margin: 4px 0 6px; }
+.spc-hbar { display: grid; grid-template-columns: minmax(110px, 1.2fr) 2fr auto; gap: 8px; align-items: center; font-size: 12px; }
+.spc-hbar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spc-hbar-track { height: 9px; border-radius: 4px; background: var(--sp-border); overflow: hidden; }
+.spc-hbar-track i { display: block; height: 100%; border-radius: 4px; }
+.spc-hbar-val { font-size: 11.5px; white-space: nowrap; }
+.spc-sites { display: grid; grid-template-columns: minmax(0, 3fr) minmax(240px, 2fr); gap: 14px; align-items: start; }
+@media (max-width: 900px) { .spc-sites { grid-template-columns: 1fr; } }
+.spc-sites-map { height: 250px; border-radius: 10px; overflow: hidden; border: 1px solid var(--sp-border); }
+.spc-sort { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-transform: inherit; letter-spacing: inherit; }
+.spc-sort.on { color: var(--sp-cyan); }
+.spc-net { display: inline-flex; align-items: center; gap: 5px; }
+.spc-net i, .spc-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 5px; vertical-align: middle; }
+.spc-net i { margin-right: 0; border-radius: 3px; }
+.spc-cellbar { height: 4px; width: 60px; border-radius: 3px; background: var(--sp-border); overflow: hidden; margin-bottom: 2px; }
+.spc-cellbar i { display: block; height: 100%; background: var(--sp-cyan); border-radius: 3px; }
+
+/* Provisioned and measured (2026-10-16, ProfileProvisioning.tsx). Verdicts
+   carry an icon and a hidden word, never colour alone. */
+.spc-verdicts { display: flex; flex-direction: column; gap: 6px; }
+.spc-verdict { position: relative; display: flex; gap: 8px; align-items: flex-start; padding: 7px 10px; border-radius: 10px; font-size: 12.5px;
+  border: 1px solid var(--sp-border); background: var(--sp-card-2); }
+.spc-verdict.bad { border-color: var(--sp-rose); background: var(--sp-rose-soft); }
+.spc-verdict.warn { border-color: var(--sp-amber); background: var(--sp-amber-soft); }
+.spc-verdict.ok { border-color: var(--sp-green); background: var(--sp-green-soft); }
+.spc-bands { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.spc-band { border: 1px solid var(--sp-border); border-radius: 10px; padding: 7px 10px; display: flex; flex-direction: column; gap: 3px; }
+.spc-band.yes { border-color: var(--sp-green); }
+.spc-band.no { border-color: var(--sp-rose); background: var(--sp-rose-soft); }
+.spc-band-top { display: flex; justify-content: space-between; gap: 6px; font-size: 12.5px; }
+.spc-band-top em { font-style: normal; font-size: 11px; }
+.spc-band small { color: var(--sp-faint); font-size: 11px; }
+.spc-allbands { margin-top: 8px; font-size: 12px; }
+.spc-allbands summary { cursor: pointer; color: var(--sp-cyan); margin-bottom: 6px; }
+/* Two small charts side by side (2026-10-19). */
+.spc-two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .spc-two { grid-template-columns: 1fr; } }
+
+/* OSS side details window (2026-10-19). */
+.spo-backdrop { position: fixed; inset: 0; z-index: 2000; background: rgba(2, 6, 23, 0.55); display: flex;
+  align-items: flex-start; justify-content: center; padding: 3vh 16px; overflow: auto; }
+.spo-modal.sp-page { min-height: 0; width: min(1180px, 100%); padding: 0; border-radius: 16px; border: 1px solid var(--sp-border);
+  background: var(--sp-bg); box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45); overflow: hidden; }
+.spo-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--sp-border);
+  background: var(--sp-card); }
+.spo-title { font-family: var(--sp-head); font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+.spo-head-actions { margin-left: auto; display: flex; gap: 8px; }
+.spo-tabs { display: flex; gap: 2px; padding: 0 18px; border-bottom: 1px solid var(--sp-border); background: var(--sp-card); overflow-x: auto; }
+.spo-tabs button { border: 0; background: none; color: var(--sp-muted); padding: 10px 14px; font-size: 13px; cursor: pointer;
+  border-bottom: 2px solid transparent; white-space: nowrap; }
+.spo-tabs button.on { color: var(--sp-cyan); border-bottom-color: var(--sp-cyan); font-weight: 600; }
+.spo-body { padding: 16px 18px 20px; max-height: 76vh; overflow: auto; }
+.spo-body .spc-tiles { margin-bottom: 12px; }
+
+/* BI and OSS & Core as two launch cards side by side (2026-10-19). */
+.sp-btn.sp-btn-xs { padding: 3px 8px; font-size: 11.5px; white-space: nowrap; }
+.spo-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.spo-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 18px 20px; }
+.spo-card-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; font-size: 20px;
+  background: color-mix(in srgb, var(--sp-cyan) 14%, transparent); }
+.spo-card-title { font-family: var(--sp-head); font-weight: 700; font-size: 14.5px; }
+.spo-card p { margin: 0 0 6px; font-size: 12.5px; max-width: 46ch; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
