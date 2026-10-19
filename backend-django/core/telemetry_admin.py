@@ -816,6 +816,43 @@ def _smooth_route(rows, window):
             r['lng_smooth'] = round(sum(p['lng'] for p in seg) / len(seg), 7)
 
 
+def session_samples_qs(session, user, drive_session_id=''):
+    """(readings, consent summary) of a Telemetry Drive Test session: its
+    devices and time, its area box, the caller's operator scope, the GPS
+    accuracy gate and, when the session asks for it, consent. Shared by the
+    plot below and the per-sector view (core/sector_stats.py, 2026-10-19)."""
+    window_end = session.ended_at or timezone.now()
+    qs = _scope_by_operator(
+        TelemetrySample.objects
+        .filter(device_id__in=session.device_ids, ts__gte=session.started_at, ts__lte=window_end)
+        .exclude(lat__isnull=True)
+        .exclude(lng__isnull=True),
+        user,
+    )
+    if session.area_min_lat is not None:
+        qs = qs.filter(
+            lat__gte=session.area_min_lat, lat__lte=session.area_max_lat,
+            lng__gte=session.area_min_lng, lng__lte=session.area_max_lng,
+        )
+    if drive_session_id:
+        qs = qs.filter(drive_session_id=drive_session_id)
+    # GPS accuracy gate for route plots (see ROUTE_MAX_ACCURACY_M).
+    qs = qs.filter(Q(gps_accuracy_m__lte=ROUTE_MAX_ACCURACY_M) | Q(gps_accuracy_m__isnull=True))
+    consent_summary = None
+    if session.require_consent:
+        consented_ids = set(
+            TelemetryDriveTestConsent.objects
+            .filter(device_id__in=session.device_ids, consent=True)
+            .values_list('device_id', flat=True)
+        )
+        qs = qs.filter(device_id__in=consented_ids) if consented_ids else qs.none()
+        consent_summary = {
+            'consented': len(consented_ids),
+            'pending': len(set(session.device_ids) - consented_ids),
+        }
+    return qs, consent_summary
+
+
 class TelemetryDriveTestSessionSamplesView(APIView):
     """`GET /api/v2/telemetry/dt-sessions/<id>/samples/` — raw samples
     from this session's enrolled devices only, from `started_at` to
@@ -849,46 +886,16 @@ class TelemetryDriveTestSessionSamplesView(APIView):
             limit = _DEFAULT_LIVE_LIMIT
         limit = max(1, min(_MAX_DT_SESSION_LIMIT, limit))
 
-        window_end = session.ended_at or timezone.now()
-        qs = _scope_by_operator(
-            TelemetrySample.objects
-            .filter(device_id__in=session.device_ids, ts__gte=session.started_at, ts__lte=window_end)
-            .exclude(lat__isnull=True)
-            .exclude(lng__isnull=True),
-            request.user,
-        )
-        if session.area_min_lat is not None:
-            qs = qs.filter(
-                lat__gte=session.area_min_lat, lat__lte=session.area_max_lat,
-                lng__gte=session.area_min_lng, lng__lte=session.area_max_lng,
-            )
-
         # One drive only (2026-10-04): the phone tags each tracked drive with
         # a session id, so its fixes can be picked out exactly.
         drive_session_id = (request.query_params.get('drive_session_id') or '').strip()
-        if drive_session_id:
-            qs = qs.filter(drive_session_id=drive_session_id)
-
-        # GPS accuracy gate for route plots (see ROUTE_MAX_ACCURACY_M).
-        qs = qs.filter(Q(gps_accuracy_m__lte=ROUTE_MAX_ACCURACY_M) | Q(gps_accuracy_m__isnull=True))
+        qs, consent_summary = session_samples_qs(session, request.user, drive_session_id)
+        window_end = session.ended_at or timezone.now()
         try:
             smooth = int(request.query_params.get('smooth', 0))
         except (TypeError, ValueError):
             smooth = 0
         smooth = max(0, min(_MAX_SMOOTH_WINDOW, smooth))
-
-        consent_summary = None
-        if session.require_consent:
-            consented_ids = set(
-                TelemetryDriveTestConsent.objects
-                .filter(device_id__in=session.device_ids, consent=True)
-                .values_list('device_id', flat=True)
-            )
-            qs = qs.filter(device_id__in=consented_ids) if consented_ids else qs.none()
-            consent_summary = {
-                'consented': len(consented_ids),
-                'pending': len(set(session.device_ids) - consented_ids),
-            }
 
         qs = qs.order_by('-received_at')
 

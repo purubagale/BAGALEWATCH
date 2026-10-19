@@ -22,6 +22,7 @@ from django.db.models.functions import Cast, ExtractHour, Floor, TruncDate
 from . import radio_band
 from .models import Site, TelemetrySample
 from .problem_report import GOOD_DBM, WEAK_DBM
+from .sector_stats import telemetry_sectors
 
 NEPAL = ZoneInfo('Asia/Kathmandu')
 CELLS_MAX = 60
@@ -168,8 +169,14 @@ def profile_analytics(ids, include_location=False, qs=None):
         .values('network_type', 'band', 'band_mhz')
         .annotate(n=Count('id'), weak=Count('id', filter=WEAK_Q), level=Avg(level)).order_by('-n')]
 
+    # ── Per serving sector (2026-10-19, core/sector_stats.py) ─────────────
+    by_sector = telemetry_sectors(qs)
+
     return {
         'networks': networks, 'daily': daily, 'hours': hours, 'histograms': histograms, 'bands': bands,
+        # Sectors served are location history too: emergency only; the count always.
+        'sectors': by_sector['sectors'] if include_location else [],
+        'sectors_count': len(by_sector['sectors']), 'sectors_unmatched': by_sector['unmatched'],
         'limits': {'weak_dbm': WEAK_DBM, 'good_dbm': GOOD_DBM},
         # Location history: in an emergency only; the counts always.
         'location_shown': include_location,

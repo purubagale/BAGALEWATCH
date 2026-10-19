@@ -1,13 +1,12 @@
-import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CircleMarker, MapContainer, TileLayer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { SubscriberAnalytics } from '../api/types'
 import { RSRP_BANDS, RSRQ_BANDS, RXLEV_BANDS, SINR_BANDS, bandColor, type Band } from '../lib/dtBands'
 import { NET_LABEL, NET_ORDER, netColor } from '../lib/netColors'
-import { telemetryLevel } from '../lib/telemetryLevel'
 import { ColumnChart, HBars, ShareBar, type Column } from './ProfileCharts'
 import FitToPoints from './FitToPoints'
+import SectorBreakdown from './SectorBreakdown'
 
 // The analysis cards of the Subscriber Profile (2026-10-16), after the
 // patterns of NTC's ticketing system (UTS): measured capability, quality by
@@ -26,10 +25,6 @@ const pct = (a: number, b: number) => (b ? Math.round((100 * a) / b) : 0)
 const fmt = (iso: string) => new Date(iso).toLocaleString()
 const dayLabel = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 const techOf = (n: string) => NET_LABEL[n] ?? n
-
-function levelColor(network: string, v: number | null) {
-  return telemetryLevel({ network_type: network, rsrp: v, rscp: v, rssi: v }).color
-}
 
 function Section({ id, icon, title, note, children }: { id: string; icon: string; title: string; note?: string; children: React.ReactNode }) {
   return (
@@ -62,8 +57,6 @@ function Histogram({ title, bins, bands, unit }: {
   )
 }
 
-type SortKey = 'readings' | 'level_avg' | 'weak' | 'last'
-
 export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, scope }: {
   a: SubscriberAnalytics
   // What the signal filter shows, e.g. "Last 7 days of readings · 4G only" (2026-10-19).
@@ -72,7 +65,6 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
   phone: string | null
   siteLink: (siteId: string) => string
 }) {
-  const [sort, setSort] = useState<SortKey>('readings')
   const total = a.networks.reduce((s, n) => s + n.readings, 0)
   const on4g = a.networks.filter((n) => n.network_type === 'LTE' || n.network_type === 'NR').reduce((s, n) => s + n.readings, 0)
   const weak = a.networks.reduce((s, n) => s + n.weak, 0)
@@ -101,19 +93,11 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
     }
   })
 
-  const cells = useMemo(() => [...a.cells].sort((x, y) => {
-    if (sort === 'level_avg') return (x.level_avg ?? 0) - (y.level_avg ?? 0)
-    if (sort === 'weak') return y.weak / y.readings - x.weak / x.readings
-    if (sort === 'last') return y.last.localeCompare(x.last)
-    return y.readings - x.readings
-  }), [a.cells, sort])
-  const maxCell = Math.max(1, ...a.cells.map((c) => c.readings))
+  // Cells the site list does not know: the sector table cannot show them.
+  const unknownCells = a.cells.filter((c) => !c.site_id)
   const mapSites = a.sites.filter((s) => s.lat != null && s.lng != null)
   const weakColor = (w: number, n: number) => (pct(w, n) >= 30 ? 'var(--sp-rose)' : pct(w, n) >= 10 ? 'var(--sp-amber)' : 'var(--sp-green)')
   const weakHex = (w: number, n: number) => (pct(w, n) >= 30 ? '#e11d48' : pct(w, n) >= 10 ? '#d97706' : '#059669')
-  const th = (key: SortKey, label: string) => (
-    <th><button type="button" className={`spc-sort${sort === key ? ' on' : ''}`} onClick={() => setSort(key)}>{label}{sort === key ? ' ▾' : ''}</button></th>
-  )
 
   return (
     <>
@@ -189,15 +173,15 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
         <section className="sp-card sp-card-empty" id="sp-cells">
           <div className="sp-card-head">
             <span className="sp-card-icon" aria-hidden>🗼</span>
-            <span className="sp-card-title">Location history: cells and sites used</span>
+            <span className="sp-card-title">Location history: sites, sectors and cells</span>
             <span className="sp-count">{a.cells_count ?? 0}</span>
             <span className="sp-card-none" style={{ fontStyle: 'normal' }}>
-              🔒 {a.cells_count ?? 0} cells at {a.sites_count ?? 0} sites; shown only while an emergency is declared
+              🔒 {a.cells_count ?? 0} cells, {a.sectors_count ?? 0} sectors at {a.sites_count ?? 0} sites; shown only while an emergency is declared
             </span>
           </div>
         </section>
       ) : (
-      <Section id="sp-cells" icon="🗼" title="Location history: cells and sites used"
+      <Section id="sp-cells" icon="🗼" title="Location history: sites, sectors and cells"
         note={`Serving cells${a.cells_capped ? ', busiest 60' : ''} · emergency declared${scope ? ` · ${scope}` : ''}`}>
         <div className="spc-sites">
           <div>
@@ -229,38 +213,37 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
             </div>
           )}
         </div>
-        <div className="sp-scroll" style={{ marginTop: 10 }}>
-          <table className="sp-table" data-pager="off">
-            <thead>
-              <tr>
-                <th>Cell</th><th>Network</th>{th('readings', 'Readings')}{th('level_avg', 'Avg level')}
-                <th>RSRQ</th><th>SINR</th>{th('weak', 'Weak')}<th>Distance</th>{th('last', 'Last seen')}
-              </tr>
-            </thead>
-            <tbody>
-              {cells.map((c, i) => (
-                <tr key={i}>
-                  <td>
-                    {c.site_id
-                      ? <Link to={siteLink(c.site_id)}>{c.cell_name ?? `${c.site_id}${c.sector ? `-${c.sector}` : ''}`}</Link>
-                      : <span className="sp-muted">Site not matched</span>}
-                    <div className="sp-muted sp-mono" style={{ fontSize: 11 }}>
-                      {[c.cell_id != null ? `CI ${c.cell_id}` : '', c.pci != null ? `PCI ${c.pci}` : '', c.tac != null ? `TAC ${c.tac}` : ''].filter(Boolean).join(' · ')}
-                    </div>
-                  </td>
-                  <td><span className="spc-net"><i style={{ background: netColor(c.network_type) }} />{techOf(c.network_type)}</span>{c.band_label ? <span className="sp-muted"> {c.band_label}</span> : null}</td>
-                  <td className="mono"><div className="spc-cellbar"><i style={{ width: `${(100 * c.readings) / maxCell}%` }} /></div>{c.readings}</td>
-                  <td className="mono">{c.level_avg != null ? <span className="spc-dot" style={{ background: levelColor(c.network_type, c.level_avg) }} /> : null}{c.level_avg ?? '—'}</td>
-                  <td className="mono">{c.rsrq_avg ?? '—'}</td>
-                  <td className="mono">{c.sinr_avg ?? '—'}</td>
-                  <td className="mono"><span className="spc-dot" style={{ background: weakColor(c.weak, c.readings) }} />{pct(c.weak, c.readings)}%</td>
-                  <td className="mono">{c.dist_km_avg != null ? `${c.dist_km_avg} km` : '—'}</td>
-                  <td title={`First ${fmt(c.first)}`}>{fmt(c.last)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {/* Sectors and cells merged (2026-10-19): one table per serving
+            sector with its quality, and the cells the site list does not know. */}
+        <div style={{ marginTop: 12 }}>
+          <SectorBreakdown siteLink={siteLink} title="Sectors served" data={{
+            sectors: a.sectors ?? [], total,
+            matched: (a.sectors ?? []).reduce((x, r) => x + r.readings, 0),
+            unmatched: a.sectors_unmatched ?? 0, capped: (a.sectors ?? []).length >= 80,
+          }} />
         </div>
+        {unknownCells.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div className="spc-mini-title">Cells not in the site list <span className="sp-muted">· {unknownCells.length}</span></div>
+            <div className="sp-scroll">
+              <table className="sp-table" data-pager="off">
+                <thead><tr><th>Cell</th><th>Network</th><th>Readings</th><th>Avg level</th><th>Weak</th><th>Last seen</th></tr></thead>
+                <tbody>
+                  {unknownCells.slice(0, 20).map((c, i) => (
+                    <tr key={i}>
+                      <td className="mono">{[c.cell_id != null ? `CI ${c.cell_id}` : '', c.pci != null ? `PCI ${c.pci}` : '', c.tac != null ? `TAC ${c.tac}` : ''].filter(Boolean).join(' · ')}</td>
+                      <td><span className="spc-dot" style={{ background: netColor(c.network_type) }} />{techOf(c.network_type)}</td>
+                      <td className="mono">{c.readings}</td>
+                      <td className="mono">{c.level_avg ?? '—'}</td>
+                      <td className="mono">{pct(c.weak, c.readings)}%</td>
+                      <td>{fmt(c.last)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </Section>
       )}
     </>

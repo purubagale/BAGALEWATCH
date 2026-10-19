@@ -24,6 +24,8 @@ from collections import Counter
 from datetime import timedelta
 
 from django.db.models import Count, Max, Min, Q
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -31,7 +33,7 @@ from rest_framework.views import APIView
 
 from . import radio_band
 from .audit import log_audit_event
-from .collection import decrypted_identity, msisdn_lookup_key
+from .collection import NEPAL_TZ, decrypted_identity, msisdn_lookup_key
 from .cqi import sample_cqi_fields
 from .emergency import active_emergency
 from .models import (
@@ -375,6 +377,7 @@ class SubscriberProfileView(APIView):
         # ── Sessions ──────────────────────────────────────────────────────
         collections = [{
             'id': str(s.id), 'source': s.source, 'device_id': s.device_hash, 'samples': s.sample_count,
+            'name': s.name or None, 'district': s.district or None,
             'started_at': _iso(s.started_at), 'last_sample_at': _iso(s.last_sample_at), 'ended_at': _iso(s.ended_at),
         } for s in CollectionSession.objects.filter(device_hash__in=ids).order_by('-started_at')[:LIST_CAP]]
         dt_filter = Q()
@@ -547,6 +550,15 @@ class SubscriberSignalView(APIView):
                     end = s.ended_at or s.last_sample_at
                     qs = qs.filter(device_id=s.device_hash, ts__gte=s.started_at, **({'ts__lte': end} if end else {}))
                 session_label = f'{s.source} from {s.started_at:%Y-%m-%d %H:%M}'
+            elif kind == 'period':
+                # A stretch of readings with no session tag (2026-10-19): old
+                # app builds shared without one; split where the phone went quiet.
+                start, _, end = key.partition('|')
+                a, b = parse_datetime(start), parse_datetime(end)
+                if a is None or b is None:
+                    return Response({'detail': 'Choose a session.'}, status=status.HTTP_400_BAD_REQUEST)
+                qs = qs.filter(Q(drive_session_id='') | Q(drive_session_id__isnull=True), ts__gte=a, ts__lte=b)
+                session_label = f'Sharing from {timezone.localtime(a, NEPAL_TZ):%Y-%m-%d %H:%M}'
             elif kind == 'drive' and key.isdigit():
                 s = TelemetryDriveTestSession.objects.filter(pk=int(key)).first()
                 mine = [d for d in (s.device_ids or []) if d in ids] if s else []
@@ -612,10 +624,14 @@ class SubscriberSignalView(APIView):
         sites = {s['id']: {'name': s['name'] or None, 'lat': s['lat'], 'lng': s['lng']}
                  for s in Site.objects.filter(id__in=site_ids).values('id', 'name', 'lat', 'lng')}
 
-        # The sessions this number has, for the range picker.
-        sessions = [{'key': f'collection:{c.id}', 'label': f'{c.source} · {c.started_at:%Y-%m-%d %H:%M}',
+        # The sessions this number has, for the range picker: its named
+        # sessions, its Telemetry Drive Test sessions, and stretches of
+        # untagged readings (2026-10-19).
+        sessions = [{'key': f'collection:{c.id}',
+                     'label': c.name or f'{c.source} · {timezone.localtime(c.started_at, NEPAL_TZ):%Y-%m-%d %H:%M}',
                      'readings': c.sample_count}
                     for c in CollectionSession.objects.filter(device_hash__in=ids).order_by('-started_at')[:LIST_CAP]]
+        sessions += sharing_periods(ids)
         dt_filter = Q()
         for device_id in ids:
             dt_filter |= Q(device_ids__contains=[device_id])
@@ -631,6 +647,39 @@ class SubscriberSignalView(APIView):
             # Customer's own complaint (2026-10-16): the windows that release positions.
             'complaint_windows': [{'report_id': rid, 'from': _iso(a), 'to': _iso(b)} for a, b, rid in windows],
         })
+
+
+PERIOD_GAP = timedelta(minutes=30)
+PERIODS_MAX = 40
+
+
+def sharing_periods(ids):
+    """Stretches of readings without a session tag, split wherever the phone
+    sent nothing for PERIOD_GAP, newest first, as picker entries named like
+    the sessions: "<district> · Sharing · <start>"."""
+    from .collection import district_at
+    rows = list(TelemetrySample.objects.filter(device_id__in=ids)
+                .filter(Q(drive_session_id='') | Q(drive_session_id__isnull=True))
+                .order_by('ts').values('ts', 'serving_site_id', 'lat', 'lng')[:SIGNAL_MAX * 4])
+    periods, current = [], []
+    for r in rows:
+        if current and r['ts'] - current[-1]['ts'] > PERIOD_GAP:
+            periods.append(current)
+            current = []
+        current.append(r)
+    if current:
+        periods.append(current)
+    out = []
+    for p in reversed(periods[-PERIODS_MAX:]):
+        a, b = p[0]['ts'], p[-1]['ts']
+        la, lb = timezone.localtime(a, NEPAL_TZ), timezone.localtime(b, NEPAL_TZ)
+        district = district_at(p[:50])
+        out.append({'key': f'period:{a.isoformat()}|{b.isoformat()}',
+                    'label': f'{district or "Unknown area"} · Sharing · {la:%Y-%m-%d %H:%M}'
+                             f'–{lb:%H:%M}' if la.date() == lb.date() else
+                             f'{district or "Unknown area"} · Sharing · {la:%Y-%m-%d %H:%M}–{lb:%Y-%m-%d %H:%M}',
+                    'readings': len(p)})
+    return out
 
 
 def _is_uuid(value):

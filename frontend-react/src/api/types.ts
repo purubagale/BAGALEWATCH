@@ -2532,6 +2532,10 @@ export interface CollectionSessionRow {
   last_sample_at: string | null
   ended_at: string | null
   device_hash?: string | null
+  // Set when the session starts (2026-10-19); msisdn for superadmin only.
+  name?: string | null
+  district?: string | null
+  msisdn?: string | null
 }
 
 // One row's route plot (2026-10-07) -- core/collection.py's
@@ -2770,6 +2774,15 @@ export interface ProblemCheck {
   customer_reply: string
 }
 
+// The sites around a problem report (2026-10-19), core/problem_sites.py.
+export interface ProblemNearbySites {
+  radius_km: number; radii_km: number[]; center: { lat: number; lng: number }; serving_site_id: string | null
+  sites: {
+    site_id: string; name: string | null; district: string | null; lat: number; lng: number
+    distance_m: number; bearing_deg: number; techs: string[]; sectors: number; status: string | null; serving: boolean
+  }[]
+}
+
 export interface ProblemReport {
   id: number
   source: 'app' | 'staff' | 'external'
@@ -2811,6 +2824,9 @@ export interface ProblemReport {
   external_ref: string
   // 'site' or 'cell': the other system named only the site or cell.
   located_by: '' | 'point' | 'site' | 'cell'
+  // Name on screens and the Subscriber Profile reference; whether a number is held (2026-10-19).
+  reference?: string
+  has_number?: boolean
   // Superadmin only.
   phone_number?: string | null
   check?: ProblemCheck
@@ -2836,6 +2852,10 @@ export interface SecuritySettings {
   // Superadmin only: extra recipients, comma separated.
   alert_extra_emails?: string
   alert_extra_numbers?: string
+  // Exact positions for the customer's own complaint (2026-10-16, off by default).
+  complaint_location_access: boolean
+  complaint_location_days?: number
+  complaint_location_hours?: number
   // Superadmin only: what .env has set (no secret values).
   status?: {
     alerts: {
@@ -2854,6 +2874,8 @@ export interface SecuritySettings {
       method: string
       verification_available: boolean
     }
+    // Provisioning from NTC's ticketing system (2026-10-16).
+    provisioning?: { backend: string; configured: boolean; address_host: string | null }
     session_login: boolean
     rate_limits: { signed_in: string | null; before_sign_in: string | null; linked_systems: string | null }
     linked_system_hosts: string[]
@@ -3008,10 +3030,6 @@ export interface DtRetentionSettings {
 }
 
 export interface DtPrunePlanItem {
-  // Exact positions for the customer's own complaint (2026-10-16, off by default).
-  complaint_location_access: boolean
-  complaint_location_days?: number
-  complaint_location_hours?: number
   session_id: number
   name: string
   tech: DtTech
@@ -3030,8 +3048,6 @@ export interface DtPruneRecordItem {
   drive_date: string | null
   action: 'reduced' | 'erased'
   readings_removed: number
-    // Provisioning from NTC's ticketing system (2026-10-16).
-    provisioning?: { backend: string; configured: boolean; address_host: string | null }
   created_at: string
 }
 
@@ -3081,76 +3097,6 @@ export interface SubscriberProfileDevice {
   readings: number
   first_reading: string | null
   last_reading: string | null
-}
-
-export interface SubscriberProfile {
-  msisdn: string
-  found: boolean
-  emergency_declared: boolean
-  summary: {
-    devices: number
-    registered: boolean
-    unproven_claims?: number
-    first_registered_at: string | null
-    rescue_beacon: 'on' | 'withdrawn' | null
-    readings: number
-    first_reading: string | null
-    last_reading: string | null
-    readings_by_network: Record<string, number>
-    on_demand_readings: number
-    location_hidden: boolean
-  }
-  last_location: {
-    source: 'reading' | 'rescue'
-    ts: string | null
-    // Why no position may show (2026-10-15): hidden outside an emergency,
-    // or not in the record; then the newest reading that has one.
-    position_withheld?: boolean
-    earlier_position?: { ts: string | null; lat: number; lng: number; gps_accuracy_m: number | null }
-    network_type?: string
-    band_mhz?: number | null
-    cell_id?: number | null
-    pci?: number | null
-    tac?: number | null
-    mnc?: string
-    level_dbm?: number | null
-    serving_site_id?: string | null
-    serving_cell_name?: string | null
-    serving_dist_km?: number | null
-    serving_sector?: string | null
-    device_id?: string
-    rsrq_db?: number | null
-    sinr_db?: number | null
-    cqi?: number | null
-    rscp_dbm?: number | null
-    ecio_db?: number | null
-    rssi_dbm?: number | null
-    arfcn?: number | null
-    band?: number | null
-    mcc?: string
-    gps_accuracy_m?: number | null
-    trigger_reason?: string
-    site_name?: string | null
-    site_district?: string | null
-    site_lat?: number | null
-    site_lng?: number | null
-    lat: number | null
-    lng: number | null
-  } | null
-  // Newest readings, oldest first, for the signal chart (no positions).
-  signal_series: { ts: string | null; network_type: string; level_dbm: number | null; rsrq_db: number | null; sinr_db: number | null }[]
-  devices: SubscriberProfileDevice[]
-  collections: { id: string; source: string; device_id: string; samples: number; started_at: string | null; last_sample_at: string | null; ended_at: string | null }[]
-  drive_test_sessions: { id: number; name: string; status: string; started_at: string | null; ended_at: string | null; devices: number }[]
-  trace_requests: { id: string; kind: string; status: string; case_reference: string; requested_by: string | null; created_at: string | null; ended_at: string | null; positions: number }[]
-  speed_tests: { ts: string | null; device_id: string; bearer: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; jitter_ms: number | null; packet_loss_pct: number | null; network_type: string; rsrp_dbm: number | null }[]
-  trace_speed_tests: { ts: string | null; trace_id: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; network_type: string }[]
-  problem_reports: { id: number; category: string; status: string; happened_at: string | null; network_type: string; level_dbm: number | null; download_mbps: number | null; note: string; source: string; external_system: string; external_ref: string; cause: string }[]
-  calls: { by_outcome: Record<string, number>; latest: { started_at: string | null; duration_s: number | null; outcome: string; voice_networks: string; cell_id: number | null; level_dbm: number | null }[] }
-  volte: { ts: string | null; codec: string; mos_estimate: number | null; packet_loss_pct: number | null }[]
-  site_photos: { id: number; site_id: string | null; status: string; taken_at: string | null }[]
-  lookups: { tool: string; by: string | null; at: string | null; reference: string; found: boolean | null }[]
-}
   // What this id is, and which ids are one phone (2026-10-16).
   role: 'registration' | 'app_install' | 'earlier_install' | 'rescue' | 'identity'
   phone_key: string
@@ -3187,6 +3133,20 @@ export interface SubscriberSignalPoint {
 
 // The profile's analysis block (2026-10-16, core/subscriber_analytics.py).
 // No exact positions: cells and sites are masts.
+// Readings per serving sector (2026-10-19), core/sector_stats.py.
+export interface SectorStat {
+  site_id: string; site_name: string | null; district: string | null; sector: string | null
+  cell_name: string | null; cell_id: number | null; pci: number | null; tac: number | null
+  network_type: string; tech: string; band_label: string | null
+  readings: number; share_pct: number | null; weak: number; fair: number; good: number; no_level: number
+  level_avg: number | null; rsrq_avg: number | null; sinr_avg: number | null; cqi_avg: number | null
+  dl_avg: number | null; dist_km_avg: number | null; first: string | null; last: string | null
+}
+
+export interface SectorBreakdownData {
+  sectors: SectorStat[]; total: number; matched: number; unmatched: number; capped: boolean
+}
+
 export interface SubscriberAnalytics {
   networks: {
     network_type: string; readings: number; weak: number; fair: number; good: number; no_level: number
@@ -3213,6 +3173,10 @@ export interface SubscriberAnalytics {
   bands: { network_type: string; band_label: string; readings: number; weak: number; level_avg: number | null }[]
   limits: { weak_dbm: Record<string, number>; good_dbm: Record<string, number> }
   cells_capped: boolean
+  // Per serving sector (2026-10-19): emergency only, the count always.
+  sectors?: SectorStat[]
+  sectors_count?: number
+  sectors_unmatched?: number
   // Location history (cells, sites) only in an emergency (2026-10-19); counts always.
   location_shown?: boolean
   cells_count?: number
@@ -3261,13 +3225,83 @@ export interface SubscriberSignal {
   sessions: { key: string; label: string; readings: number | null }[]
   // The analysis cards for the same selection (2026-10-19).
   analytics?: SubscriberAnalytics | null
+}
+
+export interface SubscriberProfile {
+  msisdn: string
+  found: boolean
+  emergency_declared: boolean
+  summary: {
+    devices: number
     phones?: number
+    registered: boolean
+    unproven_claims?: number
+    first_registered_at: string | null
+    rescue_beacon: 'on' | 'withdrawn' | null
+    readings: number
+    first_reading: string | null
+    last_reading: string | null
+    readings_by_network: Record<string, number>
+    on_demand_readings: number
+    location_hidden: boolean
+  }
+  last_location: {
+    source: 'reading' | 'rescue'
+    ts: string | null
+    // Why no position may show (2026-10-15): hidden outside an emergency,
+    // or not in the record; then the newest reading that has one.
+    position_withheld?: boolean
+    earlier_position?: { ts: string | null; lat: number; lng: number; gps_accuracy_m: number | null }
     // Why a position is shown (2026-10-16): an emergency, or the customer's own complaint.
     position_basis?: 'emergency' | 'complaint' | null
     complaint_report_id?: number | null
+    network_type?: string
+    band_mhz?: number | null
+    cell_id?: number | null
+    pci?: number | null
+    tac?: number | null
+    mnc?: string
+    level_dbm?: number | null
+    serving_site_id?: string | null
+    serving_cell_name?: string | null
+    serving_dist_km?: number | null
+    serving_sector?: string | null
     // Matched when the profile was opened, or taken from an earlier reading (2026-10-19).
     serving_site_basis?: 'matched_now' | 'earlier'
     serving_site_ts?: string | null
     operator?: string | null
+    device_id?: string
+    rsrq_db?: number | null
+    sinr_db?: number | null
+    cqi?: number | null
+    rscp_dbm?: number | null
+    ecio_db?: number | null
+    rssi_dbm?: number | null
+    arfcn?: number | null
+    band?: number | null
+    mcc?: string
+    gps_accuracy_m?: number | null
+    trigger_reason?: string
+    site_name?: string | null
+    site_district?: string | null
+    site_lat?: number | null
+    site_lng?: number | null
+    lat: number | null
+    lng: number | null
+  } | null
+  // Newest readings, oldest first, for the signal chart (no positions).
+  signal_series: { ts: string | null; network_type: string; level_dbm: number | null; rsrq_db: number | null; sinr_db: number | null }[]
   analytics?: SubscriberAnalytics | null
   complaint_windows?: ComplaintWindow[]
+  devices: SubscriberProfileDevice[]
+  collections: { id: string; source: string; device_id: string; samples: number; started_at: string | null; last_sample_at: string | null; ended_at: string | null; name?: string | null; district?: string | null }[]
+  drive_test_sessions: { id: number; name: string; status: string; started_at: string | null; ended_at: string | null; devices: number }[]
+  trace_requests: { id: string; kind: string; status: string; case_reference: string; requested_by: string | null; created_at: string | null; ended_at: string | null; positions: number }[]
+  speed_tests: { ts: string | null; device_id: string; bearer: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; jitter_ms: number | null; packet_loss_pct: number | null; network_type: string; rsrp_dbm: number | null }[]
+  trace_speed_tests: { ts: string | null; trace_id: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; network_type: string }[]
+  problem_reports: { id: number; category: string; status: string; happened_at: string | null; network_type: string; level_dbm: number | null; download_mbps: number | null; note: string; source: string; external_system: string; external_ref: string; cause: string }[]
+  calls: { by_outcome: Record<string, number>; latest: { started_at: string | null; duration_s: number | null; outcome: string; voice_networks: string; cell_id: number | null; level_dbm: number | null }[] }
+  volte: { ts: string | null; codec: string; mos_estimate: number | null; packet_loss_pct: number | null }[]
+  site_photos: { id: number; site_id: string | null; status: string; taken_at: string | null }[]
+  lookups: { tool: string; by: string | null; at: string | null; reference: string; found: boolean | null }[]
+}

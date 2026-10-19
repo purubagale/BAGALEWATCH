@@ -243,17 +243,17 @@ export default function ProfileSignalHistory({ msisdn, reason, total, emergency,
         </label>
         {/* Sessions as a filter of their own (2026-10-19); the Sessions card's
             rows pick one here too. */}
-        {(sessionList.length > 0 || range === 'session') && (
-          <label>Session{' '}
-            <select value={range === 'session' ? session : ''} onChange={(e) => {
+        {/* Always shown (2026-10-19): a number with no sessions says so. */}
+        <label>Session{' '}
+          <select value={range === 'session' ? session : ''} disabled={sessionList.length === 0 && range !== 'session'}
+            onChange={(e) => {
               const v = e.target.value
               choose(v ? { range: 'session', session: v } : { range: 'newest', session: '' })
             }}>
-              <option value="">All sessions</option>
-              {sessionList.map((s) => <option key={s.key} value={s.key}>{s.label}{s.readings != null ? ` (${s.readings})` : ''}</option>)}
-            </select>
-          </label>
-        )}
+            <option value="">{sessionList.length ? `All sessions (${sessionList.length})` : 'No sessions stored'}</option>
+            {sessionList.map((s) => <option key={s.key} value={s.key}>{s.label}{s.readings != null ? ` (${s.readings})` : ''}</option>)}
+          </select>
+        </label>
         <div className="sp-sh-pills" role="group" aria-label="Technology">
           {['', '4G', '3G', '2G'].map((t) => (
             <button key={t || 'all'} type="button" className={tech === t ? 'on' : ''} onClick={() => choose({ tech: t })}>{t || 'All'}</button>

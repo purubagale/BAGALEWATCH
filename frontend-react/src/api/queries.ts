@@ -4,7 +4,7 @@ import { ApiError, apiFetch, apiJson } from './client'
 import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
   SiteMeasuredCoverage,
 } from './types'
-import type { LinkedSystem, ProblemDashboard, ProblemNotificationRow, ProblemReport, SecuritySettings } from './types'
+import type { LinkedSystem, ProblemDashboard, ProblemNearbySites, ProblemNotificationRow, ProblemReport, SecuritySettings } from './types'
 import type { DtPruneRun, DtPurpose, DtRecentResponse, DtRetentionSettings } from './types'
 import type {
   CollectionSessionRow,
@@ -497,10 +497,11 @@ export function useRecordTracePhoneConsent() {
 }
 
 // Collection sessions (drives and traces) for the Collections page (2026-10-06).
-export function useCollectionSessions(source: string) {
-  const query = source ? `&source=${encodeURIComponent(source)}` : ''
+export function useCollectionSessions(source: string, q = '') {
+  // q (2026-10-19): name or district words, or the phone's number (superadmin).
+  const query = (source ? `&source=${encodeURIComponent(source)}` : '') + (q ? `&q=${encodeURIComponent(q)}` : '')
   return useQuery({
-    queryKey: ['collection-sessions', source],
+    queryKey: ['collection-sessions', source, q],
     queryFn: () => apiJson<{ results: CollectionSessionRow[] }>(`/api/v2/collection-sessions/?limit=200${query}`),
     refetchInterval: 30_000,
   })
@@ -514,6 +515,33 @@ export function useCollectionSessionSamples(id: string | null) {
     queryKey: ['collection-session-samples', id],
     queryFn: () => apiJson<{ results: CollectionSessionSample[] }>(`/api/v2/collection-sessions/${id}/samples/`),
     enabled: !!id,
+  })
+}
+
+// Readings per serving sector (2026-10-19): a phone drive, a drive-test
+// session, a Telemetry Drive Test session. See core/sector_stats.py.
+export function useCollectionSectors(id: string | null) {
+  return useQuery({
+    queryKey: ['collection-session-sectors', id],
+    queryFn: () => apiJson<SectorBreakdownData>(`/api/v2/collection-sessions/${id}/sectors/`),
+    enabled: !!id,
+  })
+}
+
+export function useDtSessionSectors(id: number | undefined) {
+  return useQuery({
+    queryKey: ['dt-session-sectors', id],
+    queryFn: () => apiJson<SectorBreakdownData>(`/api/v2/dt-sessions/${id}/sectors/`),
+    enabled: id !== undefined,
+  })
+}
+
+export function useTelemetryDtSessionSectors(id: number | null) {
+  return useQuery({
+    queryKey: ['telemetry-dt-session-sectors', id],
+    queryFn: () => apiJson<SectorBreakdownData>(`/api/v2/telemetry/dt-sessions/${id}/sectors/`),
+    enabled: id != null,
+    refetchInterval: 60_000,
   })
 }
 
@@ -1430,6 +1458,9 @@ import type {
   CallContextResponse,
   TelemetrySpeedResultsResponse,
   SubscriberProfile,
+  SubscriberSignal,
+  SectorBreakdownData,
+  SubscriberProvisioning,
 } from '../api/types'
 
 // Delta-fetch accumulator (2026-10-02 perf follow-up, "suggest me the
@@ -1443,8 +1474,6 @@ import type {
 // whenever it changes -- a filter change means "different dataset," not
 // an incremental continuation), then only what's new on every subsequent
 // poll via `since`, prepending into a capped accumulator instead of
-  SubscriberSignal,
-  SubscriberProvisioning,
 // replacing it wholesale.
 //
 // Mutates plain refs inside `queryFn` rather than using React state --
@@ -1532,19 +1561,6 @@ export function useSubscriberProfile(msisdn: string, reason: string) {
   })
 }
 
-// The phone's speed tests for the Live Samples window (2026-10-15).
-export function useTelemetrySpeedResults(minutes: number, deviceId?: string) {
-  return useQuery({
-    queryKey: ['telemetry-speed-results', minutes, deviceId ?? ''],
-    queryFn: () => {
-      const qs = new URLSearchParams({ minutes: String(minutes) })
-      if (deviceId) qs.set('device_id', deviceId)
-      return apiJson<TelemetrySpeedResultsResponse>(`/api/v2/telemetry/speed-results/?${qs}`)
-    },
-    refetchInterval: 30_000,
-  })
-}
-
 // The profile's signal history by range, session and technology (2026-10-16).
 // Each fetch is logged on the server; kept for the page's life.
 export function useSubscriberSignal(msisdn: string, reason: string, range: string, session: string, tech: string,
@@ -1580,6 +1596,19 @@ export function useSubscriberProvisioning(msisdn: string, reason: string, open =
     enabled: open && !!msisdn && !!reason,
     staleTime: 5 * 60_000,
     retry: false,
+  })
+}
+
+// The phone's speed tests for the Live Samples window (2026-10-15).
+export function useTelemetrySpeedResults(minutes: number, deviceId?: string) {
+  return useQuery({
+    queryKey: ['telemetry-speed-results', minutes, deviceId ?? ''],
+    queryFn: () => {
+      const qs = new URLSearchParams({ minutes: String(minutes) })
+      if (deviceId) qs.set('device_id', deviceId)
+      return apiJson<TelemetrySpeedResultsResponse>(`/api/v2/telemetry/speed-results/?${qs}`)
+    },
+    refetchInterval: 30_000,
   })
 }
 
@@ -1994,7 +2023,7 @@ export function useTelemetrySessionsNear(
 // ── Problem reports (2026-10-14) ─────────────────────────────────────────
 
 export function useProblemReports(params: {
-  status?: string; source?: string; cause?: string; site?: string; area?: string; days?: number
+  status?: string; source?: string; cause?: string; site?: string; area?: string; days?: number; q?: string
 }) {
   const qs = new URLSearchParams()
   if (params.status) qs.set('status', params.status)
@@ -2004,6 +2033,8 @@ export function useProblemReports(params: {
   if (params.site) qs.set('site', params.site)
   if (params.area) qs.set('area', params.area)
   if (params.days) qs.set('days', String(params.days))
+  // Search by report number, ticket, note words or the customer's number (2026-10-19).
+  if (params.q) qs.set('q', params.q)
   return useQuery({
     queryKey: ['problem-reports', qs.toString()],
     queryFn: () => apiJson<{ results: ProblemReport[] }>(`/api/v2/problem-reports/?${qs.toString()}`),
@@ -2136,10 +2167,19 @@ export function useProblemReport(id: number | null) {
   })
 }
 
+// The sites around one report, within a chosen radius (2026-10-19).
+export function useProblemNearbySites(id: number, radiusKm: number, enabled = true) {
+  return useQuery({
+    queryKey: ['problem-nearby-sites', id, radiusKm],
+    queryFn: () => apiJson<ProblemNearbySites>(`/api/v2/problem-reports/${id}/nearby-sites/?radius_km=${radiusKm}`),
+    enabled,
+  })
+}
+
 export function useCreateProblemReport() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { category: string; note: string; lat: number; lng: number; happened_at: string }) =>
+    mutationFn: (body: { category: string; note: string; lat: number; lng: number; happened_at: string; msisdn?: string }) =>
       apiJson<ProblemReport>('/api/v2/problem-reports/', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['problem-reports'] })

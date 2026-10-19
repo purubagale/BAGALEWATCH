@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, useMap } from 'react-leaflet'
+import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap } from 'react-leaflet'
 import { useEffect } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -176,6 +176,20 @@ function FitToScope({ sites, scopeKey }: { sites: SiteListItem[]; scopeKey: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey, map])
   return null
+}
+
+// A position typed in the search box (2026-10-19): flown to and marked.
+function FocusPoint({ point }: { point: { lat: number; lng: number; label?: string } | null | undefined }) {
+  const map = useMap()
+  useEffect(() => {
+    if (point) map.flyTo([point.lat, point.lng], Math.max(map.getZoom(), 16), { duration: 0.6 })
+  }, [point, map])
+  if (!point) return null
+  return (
+    <CircleMarker center={[point.lat, point.lng]} radius={9} pathOptions={{ color: '#ffffff', weight: 3, fillColor: '#dc2626', fillOpacity: 1 }}>
+      <Tooltip permanent direction="top" offset={[0, -8]}>{point.label ?? `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`}</Tooltip>
+    </CircleMarker>
+  )
 }
 
 function FlyToSelected({ site }: { site: SiteListItem | undefined }) {
@@ -407,6 +421,7 @@ export default function MapView({
   onRelocateRequest,
   mapLayer = 'street',
   showNames = false,
+  focusPoint,
 }: {
   sites: SiteListItem[]
   /** Stable identity for the current scope ('all' | 'prov-X' | 'dist-X-Y'
@@ -447,6 +462,8 @@ export default function MapView({
    * false so DtCoverageMap.tsx/SiteLocationMiniMap.tsx (this component's
    * other two callers) are unaffected. */
   showNames?: boolean
+  /** A searched position to fly to and mark (2026-10-19, SitesPage). */
+  focusPoint?: { lat: number; lng: number; label?: string } | null
 }) {
   return (
     // `key={mapLayer}` forces a full MapContainer remount on toggle,
@@ -467,6 +484,7 @@ export default function MapView({
       />
       <ClusteredMarkers sites={sites} onSelect={onSelect} canRelocate={canRelocate} onRelocateRequest={onRelocateRequest} showNames={showNames} />
       {scopeKey && <FitToScope sites={sites} scopeKey={scopeKey} />}
+      <FocusPoint point={focusPoint} />
       <SelectedHighlight site={selected} />
       <SelectedSectorPins site={selected} sectors={selectedSectors ?? []} />
       <FlyToSelected site={selected} />

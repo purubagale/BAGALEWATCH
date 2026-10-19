@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { Circle, CircleMarker, MapContainer, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiErrorMessage } from '../api/client'
 import {
-  useCreateProblemReport, useNotifyProblemReport, useProblemDashboard, useProblemReport, useProblemReports,
-  useUpdateProblemReport,
+  useCreateProblemReport, useNotifyProblemReport, useProblemDashboard, useProblemNearbySites, useProblemReport,
+  useProblemReports, useUpdateProblemReport,
 } from '../api/queries'
 import type { ProblemCategory, ProblemCount, ProblemDashboard, ProblemHotspot, ProblemReport } from '../api/types'
-import { DT_SESSION_HISTORY_PATH } from '../constants/opaqueRoutes'
+import { useAuth } from '../auth/AuthContext'
+import { DT_SESSION_HISTORY_PATH, OPAQUE_PATHS } from '../constants/opaqueRoutes'
 
 // Problem Dashboard (2026-10-15; Problem Reports since 2026-10-14) --
 // problems people report from the mobile app, ones an engineer enters from a
@@ -335,7 +336,14 @@ function Reports({ params, set, days, statusAll }: {
   const area = params.get('area') ?? ''
   const selected = params.get('report') ? Number(params.get('report')) : null
   const entering = params.get('enter') === '1'
-  const { data, isLoading, error } = useProblemReports({ status, source, cause, site, area, days })
+  const q = params.get('q') ?? ''
+  const [typed, setTyped] = useState(q)
+  useEffect(() => setTyped(q), [q])
+  useEffect(() => {
+    const t = window.setTimeout(() => { if (typed.trim() !== q) set({ q: typed.trim() || null }) }, 400)
+    return () => window.clearTimeout(t)
+  }, [typed, q, set])
+  const { data, isLoading, error } = useProblemReports({ status, source, cause, site, area, days, q })
   const rows = data?.results ?? []
 
   return (
@@ -358,6 +366,10 @@ function Reports({ params, set, days, statusAll }: {
             <option value="staff">Entered by staff</option>
             <option value="external">Other systems</option>
           </select>
+        </label>
+        <label className="pd-search">
+          <input type="search" value={typed} onChange={(e) => setTyped(e.target.value)}
+            placeholder="Search: mobile number, PR-12, ticket or words" aria-label="Search reports" />
         </label>
         {cause && (
           <span className="pd-chip">
@@ -394,6 +406,7 @@ function Reports({ params, set, days, statusAll }: {
               {(r.cause_label || r.site_id) && (
                 <span className="muted">{r.cause_label}{r.site_id ? ` · ${r.site_id}` : ''}</span>
               )}
+              <span className="muted pd-row-ref">{r.reference ?? `PR-${r.id}`}{r.phone_number ? ` · ${r.phone_number}` : ''}</span>
             </button>
           ))}
         </div>
@@ -488,144 +501,307 @@ function Hotspots({ d, onOpen }: { d: ProblemDashboard; onOpen: (h: ProblemHotsp
 
 // ── One report ─────────────────────────────────────────────────────────────
 
+// One complaint as a dashboard (2026-10-19), after NTC's ticketing system:
+// details of the complaint, a diagnostics summary that opens the full
+// diagnostics (likely cause and measurements, nearest sites, the phone's
+// reading, the reply), and status with the engineer's note. The customer's
+// number (superadmin only) opens the Subscriber Profile with this report as
+// its reference, and the profile leads back here.
+type DiagTab = 'cause' | 'sites' | 'phone' | 'reply'
+
+function CopyText({ text, label }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false)
+  return (
+    <button type="button" className="pd-copy" title={`Copy ${label ?? text}`}
+      onClick={() => { void navigator.clipboard?.writeText(text); setDone(true); window.setTimeout(() => setDone(false), 1200) }}>
+      {done ? '✓' : '⧉'}
+    </button>
+  )
+}
+
 function ReportDetail({ id }: { id: number }) {
   const { data: r, isLoading, error } = useProblemReport(id)
   const update = useUpdateProblemReport()
+  const { user } = useAuth()
+  const location = useLocation()
   const [note, setNote] = useState('')
-  const [copied, setCopied] = useState(false)
+  const [diag, setDiag] = useState<DiagTab | null>(null)
   useEffect(() => {
     setNote(r?.engineer_note ?? '')
-    setCopied(false)
+    setDiag(null)
   }, [r?.id, r?.engineer_note])
+  useEffect(() => {
+    if (!diag) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDiag(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [diag])
 
   if (isLoading) return <p className="muted">Checking the measurements around this spot…</p>
   if (error || !r) return <p className="error">{apiErrorMessage(error)}</p>
   const c = r.check
+  const reference = r.reference ?? `PR-${r.id}`
+  const isSuper = user?.role === 'superadmin'
+  // The profile opens on this number with this report as its reference, and
+  // carries the way back to this report (2026-10-19).
+  const profileLink = r.phone_number ? `${OPAQUE_PATHS['/subscriber-profile']}?${new URLSearchParams({
+    msisdn: r.phone_number, reason: `Complaint ${reference}`, from: `${location.pathname}${location.search}`,
+  })}` : null
+  const main = c?.findings[0]
 
   return (
-    <div>
-      <h2 style={{ marginTop: 0 }}>{r.category_label}</h2>
-      <p className="muted" style={{ marginTop: -6 }}>
-        {when(r.happened_at)} ·{' '}
-        {r.source === 'app'
-          ? 'Reported from the mobile app'
-          : r.source === 'external'
-            ? `Sent by ${r.external_system}, their ticket ${r.external_ref}`
-            : `Entered by ${r.entered_by}`}
-        {r.phone_number ? ` · ${r.phone_number}` : ''}
-      </p>
-      {r.note && <p className="problem-note">"{r.note}"</p>}
-      {(r.located_by === 'site' || r.located_by === 'cell') && (
-        <p className="pd-caution">
-          The other system gave only the {r.located_by === 'site' ? 'site' : 'cell'}, not the customer's spot, so the
-          check looks around the mast. Ask for the customer's location for a closer check.
-        </p>
-      )}
-
-      <div className="problem-map">
-        <MapContainer center={[r.lat, r.lng]} zoom={14} style={{ height: '100%', width: '100%' }}>
-          <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          <FlyTo lat={r.lat} lng={r.lng} />
-          <Circle center={[r.lat, r.lng]} radius={c?.radius_m ?? 500} pathOptions={{ color: '#2563eb', weight: 1, fillOpacity: 0.06 }} />
-          <CircleMarker center={[r.lat, r.lng]} radius={7} pathOptions={{ color: '#dc2626', fillColor: '#dc2626', fillOpacity: 0.9 }}>
-            <Tooltip>Where the problem was reported</Tooltip>
-          </CircleMarker>
-        </MapContainer>
-      </div>
-
-      {r.source === 'app' && (
-        <table className="problem-facts">
-          <tbody>
-            <tr><th>Phone's signal</th><td>
-              {r.network_type || '—'}{r.band ? ` ${r.band}` : ''} · level {fmt(r.level_dbm, ' dBm')}
-              {r.rsrq_db != null ? ` · RSRQ ${r.rsrq_db} dB` : ''}{r.sinr_db != null ? ` · SINR ${r.sinr_db} dB` : ''}
-              {r.pci != null ? ` · PCI ${r.pci}` : ''}
-            </td></tr>
-            <tr><th>Speed test</th><td>
-              download {fmt(r.download_mbps, ' Mbps')} · upload {fmt(r.upload_mbps, ' Mbps')} · ping {fmt(r.ping_ms, ' ms')}
-              {' '}· jitter {fmt(r.jitter_ms, ' ms')} · loss {fmt(r.packet_loss_pct, '%')}
-            </td></tr>
-            <tr><th>Phone</th><td>{r.phone_model || '—'}{r.android_version ? `, Android ${r.android_version}` : ''}</td></tr>
-          </tbody>
-        </table>
-      )}
-
-      {c && (
-        <>
-          <h3>Likely cause</h3>
-          {c.findings.map((f, i) => (
-            <div key={i} className="problem-finding">
-              <strong>{f.title}</strong>
-              <p>{f.cause}</p>
-              <p><em>Suggested action:</em> {f.action}</p>
-              {f.evidence.length > 0 && <p className="muted">Measured: {f.evidence.join(' · ')}</p>}
-            </div>
+    <div className="pdd">
+      <div className="pdd-head">
+        <div>
+          <h2>{r.category_label} <span className="pdd-ref">{reference}</span></h2>
+          <div className="pdd-chips">
+            <span className={`pdd-chip pdd-status-${r.status}`}>{STATUS_LABEL[r.status]}</span>
+            {r.network_type && <span className="pdd-chip">{r.network_type}</span>}
+            {r.cause_label && <span className="pdd-chip" style={{ borderColor: CAUSE_COLOR[r.cause || 'unchecked'] }}>
+              <i className="pd-dot" style={{ background: CAUSE_COLOR[r.cause || 'unchecked'] }} />{r.cause_label}</span>}
+            <span className="muted">{sourceText(r)} · {when(r.happened_at)}</span>
+          </div>
+        </div>
+        <div className="problem-actions" style={{ marginTop: 0 }}>
+          {(['checked', 'closed', 'new'] as const).filter((s) => s !== r.status).map((s) => (
+            <button key={s} type="button" className={s === 'checked' ? 'btn-primary btn-small' : 'btn-secondary btn-small'}
+              disabled={update.isPending} onClick={() => update.mutate({ id: r.id, status: s, engineer_note: note })}>
+              {s === 'checked' ? 'Mark checked' : s === 'closed' ? 'Close' : 'Reopen'}
+            </button>
           ))}
-
-          <h3>Measurements around the spot ({c.radius_m} m)</h3>
-          <table className="problem-facts">
-            <tbody>
-              <tr><th>Serving site</th><td>
-                {c.serving
-                  ? <><Link to={`/sites/${c.serving.site_id}`}>{c.serving.site_id}</Link> {c.serving.cell_name} · {fmt(c.serving.km, ' km')} (found by {c.serving.matched_by})</>
-                  : 'Not known from the report'}
-              </td></tr>
-              <tr><th>Nearest sites</th><td>
-                {c.nearest_sites.length
-                  ? c.nearest_sites.map((s, i) => (
-                    <span key={s.site_id}>{i > 0 && ', '}<Link to={`/sites/${s.site_id}`}>{s.site_id}</Link> {s.km} km</span>
-                  ))
-                  : 'None within 5 km'}
-              </td></tr>
-              <tr><th>Phones at the time</th><td>{areaText(c.phones_at_time)}</td></tr>
-              <tr><th>Phones, {c.baseline_days} days before</th><td>{areaText(c.phones_before)}</td></tr>
-              <tr><th>Drive tests</th><td>
-                {c.drive_tests.readings
-                  ? <>
-                    {c.drive_tests.readings} readings; 4G {fmt(c.drive_tests.rsrp_4g_mean, ' dBm')}
-                    {c.drive_tests.rsrq_4g_mean != null ? `, RSRQ ${c.drive_tests.rsrq_4g_mean} dB` : ''}
-                    {c.drive_tests.dl_4g_mean != null ? `, download ${c.drive_tests.dl_4g_mean} Mbps` : ''} average.{' '}
-                    {c.drive_tests.sessions.map((s, i) => (
-                      <span key={s.id}>{i > 0 && ', '}<Link to={`${DT_SESSION_HISTORY_PATH}?session=${s.id}`}>{s.name || `Session ${s.id}`}</Link>{s.date ? ` (${s.date})` : ''}</span>
-                    ))}
-                  </>
-                  : 'None here'}
-              </td></tr>
-            </tbody>
-          </table>
-
-          <h3>Reply to the customer</h3>
-          <p className="problem-reply">{c.customer_reply}</p>
-          <button
-            type="button"
-            className="btn-secondary btn-small"
-            onClick={() => { void navigator.clipboard?.writeText(c.customer_reply); setCopied(true) }}
-          >
-            {copied ? 'Copied' : 'Copy reply'}
-          </button>
-        </>
-      )}
-
-      <h3>Engineer's note</h3>
-      <textarea rows={3} style={{ width: '100%' }} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} />
-      <div className="problem-actions">
-        {(['checked', 'closed', 'new'] as const).map((s) => (
-          <button
-            key={s}
-            type="button"
-            className={s === 'checked' ? 'btn-primary btn-small' : 'btn-secondary btn-small'}
-            disabled={update.isPending}
-            onClick={() => update.mutate({ id: r.id, status: s, engineer_note: note })}
-          >
-            {s === 'checked' ? 'Mark checked' : s === 'closed' ? 'Close' : 'Reopen'}
-          </button>
-        ))}
-        <span className="muted">
-          Now: {STATUS_LABEL[r.status]}{r.checked_by ? ` (by ${r.checked_by})` : ''}
-        </span>
+        </div>
       </div>
-      {update.error && <p className="error">{apiErrorMessage(update.error)}</p>}
-      {r.notify && <SystemUpdates id={r.id} n={r.notify} />}
+
+      <div className="pdd-grid">
+        <section className="pdd-card">
+          <h3>Customer complaint details</h3>
+          <dl className="pdd-kv">
+            <dt>Mobile</dt>
+            <dd>
+              {r.phone_number
+                ? <><span className="mono">{r.phone_number}</span> <CopyText text={r.phone_number} label="the number" />
+                  {profileLink && <Link className="pdd-link" to={profileLink}>Open Subscriber Profile →</Link>}</>
+                : r.has_number && !isSuper ? <span className="muted">Held; shown to superadmin only</span>
+                  : <span className="muted">Not given</span>}
+            </dd>
+            <dt>Source</dt>
+            <dd>{r.source === 'app' ? 'Mobile app' : r.source === 'external' ? `${r.external_system}, ticket ${r.external_ref}` : `Entered by ${r.entered_by}`}</dd>
+            <dt>Problem location</dt>
+            <dd><span className="mono">{r.lat.toFixed(6)}, {r.lng.toFixed(6)}</span> <CopyText text={`${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}`} label="the location" />
+              {r.located_by === 'site' || r.located_by === 'cell' ? <span className="muted"> · from the {r.located_by}</span> : null}</dd>
+            <dt>Issue</dt><dd><b>{r.category_label}</b></dd>
+            {r.note && <><dt>Customer's words</dt><dd className="problem-note" style={{ margin: 0 }}>"{r.note}"</dd></>}
+            {r.site_id && <><dt>Serving site</dt><dd><Link to={`/sites/${r.site_id}`}>{r.site_id}</Link>{r.sector ? ` · sector ${r.sector}` : ''}</dd></>}
+          </dl>
+          {(r.located_by === 'site' || r.located_by === 'cell') && (
+            <p className="pd-caution">
+              The other system gave only the {r.located_by === 'site' ? 'site' : 'cell'}, not the customer's spot, so the
+              check looks around the mast. Ask for the customer's location for a closer check.
+            </p>
+          )}
+        </section>
+
+        <section className="pdd-card pdd-diag">
+          <h3>Diagnostics</h3>
+          {main ? (
+            <div className="pdd-main-finding">
+              <b>{main.title}</b>
+              <p>{main.cause}</p>
+              {main.evidence.length > 0 && <p className="muted">Measured: {main.evidence.slice(0, 3).join(' · ')}</p>}
+            </div>
+          ) : <p className="muted">Not checked yet.</p>}
+          <button type="button" className="btn-primary" onClick={() => setDiag('cause')}>⤢ Open full diagnostics</button>
+          <p className="muted pdd-small">
+            Likely cause and the measurements around the spot, the nearest sites and cells, the phone's own reading, and the
+            reply to the customer.
+          </p>
+          <div className="problem-map pdd-map">
+            <MapContainer center={[r.lat, r.lng]} zoom={14} style={{ height: '100%', width: '100%' }}>
+              <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+              <FlyTo lat={r.lat} lng={r.lng} />
+              <Circle center={[r.lat, r.lng]} radius={c?.radius_m ?? 500} pathOptions={{ color: '#2563eb', weight: 1, fillOpacity: 0.06 }} />
+              <CircleMarker center={[r.lat, r.lng]} radius={7} pathOptions={{ color: '#dc2626', fillColor: '#dc2626', fillOpacity: 0.9 }}>
+                <Tooltip>Where the problem was reported</Tooltip>
+              </CircleMarker>
+            </MapContainer>
+          </div>
+        </section>
+
+        <section className="pdd-card">
+          <h3>Status and engineer's note</h3>
+          <p className="muted" style={{ marginTop: 0 }}>Now: <b>{STATUS_LABEL[r.status]}</b>{r.checked_by ? ` (by ${r.checked_by}${r.checked_at ? `, ${when(r.checked_at)}` : ''})` : ''}</p>
+          <textarea rows={4} style={{ width: '100%' }} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000}
+            placeholder="What was found and done" />
+          <div className="problem-actions">
+            <button type="button" className="btn-secondary btn-small" disabled={update.isPending || note === (r.engineer_note ?? '')}
+              onClick={() => update.mutate({ id: r.id, status: r.status, engineer_note: note })}>Save note</button>
+          </div>
+          {update.error && <p className="error">{apiErrorMessage(update.error)}</p>}
+          {r.notify && <SystemUpdates id={r.id} n={r.notify} />}
+        </section>
+      </div>
+
+      {diag && (
+        <div className="pdd-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setDiag(null) }}>
+          <div className="pdd-modal" role="dialog" aria-modal="true" aria-label="Full diagnostics">
+            <div className="pdd-modal-head">
+              <div>
+                <b>Full diagnostics</b>
+                <div className="muted pdd-small">{reference} · {r.category_label}{r.phone_number ? ` · ${r.phone_number}` : ''} · {r.lat.toFixed(5)}, {r.lng.toFixed(5)}</div>
+              </div>
+              <button type="button" className="btn-secondary btn-small" onClick={() => setDiag(null)}>Close</button>
+            </div>
+            <div className="pdd-modal-body">
+              <nav className="pdd-tabs">
+                {([['cause', 'Likely cause & measurements'], ['sites', 'Nearest sites/cells'],
+                  ...(r.source === 'app' ? [['phone', "Phone's reading"]] : []), ['reply', 'Reply to the customer']] as [DiagTab, string][])
+                  .map(([k, label]) => (
+                    <button key={k} type="button" className={diag === k ? 'on' : ''} onClick={() => setDiag(k)}>{label}</button>
+                  ))}
+                {profileLink && <Link className="pdd-tab-link" to={profileLink}>Subscriber Profile →</Link>}
+              </nav>
+              <div className="pdd-tab-body">
+                {diag === 'cause' && (c ? <CauseTab c={c} reportId={r.id} /> : <p className="muted">Not checked yet.</p>)}
+                {diag === 'sites' && <NearbySites r={r} />}
+                {diag === 'phone' && <PhoneTab r={r} />}
+                {diag === 'reply' && (c ? <ReplyTab text={c.customer_reply} /> : <p className="muted">Not checked yet.</p>)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CauseTab({ c }: { c: NonNullable<ProblemReport['check']>; reportId: number }) {
+  return (
+    <>
+      {c.findings.map((f, i) => (
+        <div key={i} className="problem-finding">
+          <strong>{f.title}</strong>
+          <p>{f.cause}</p>
+          <p><em>Suggested action:</em> {f.action}</p>
+          {f.evidence.length > 0 && <p className="muted">Measured: {f.evidence.join(' · ')}</p>}
+        </div>
+      ))}
+      <h3>Measurements around the spot ({c.radius_m} m)</h3>
+      <table className="problem-facts">
+        <tbody>
+          <tr><th>Serving site</th><td>
+            {c.serving
+              ? <><Link to={`/sites/${c.serving.site_id}`}>{c.serving.site_id}</Link> {c.serving.cell_name} · {fmt(c.serving.km, ' km')} (found by {c.serving.matched_by})</>
+              : 'Not known from the report'}
+          </td></tr>
+          <tr><th>Phones at the time</th><td>{areaText(c.phones_at_time)}</td></tr>
+          <tr><th>Phones, {c.baseline_days} days before</th><td>{areaText(c.phones_before)}</td></tr>
+          <tr><th>Drive tests</th><td>
+            {c.drive_tests.readings
+              ? <>
+                {c.drive_tests.readings} readings; 4G {fmt(c.drive_tests.rsrp_4g_mean, ' dBm')}
+                {c.drive_tests.rsrq_4g_mean != null ? `, RSRQ ${c.drive_tests.rsrq_4g_mean} dB` : ''}
+                {c.drive_tests.dl_4g_mean != null ? `, download ${c.drive_tests.dl_4g_mean} Mbps` : ''} average.{' '}
+                {c.drive_tests.sessions.map((s, i) => (
+                  <span key={s.id}>{i > 0 && ', '}<Link to={`${DT_SESSION_HISTORY_PATH}?session=${s.id}`}>{s.name || `Session ${s.id}`}</Link>{s.date ? ` (${s.date})` : ''}</span>
+                ))}
+              </>
+              : 'None here'}
+          </td></tr>
+        </tbody>
+      </table>
+    </>
+  )
+}
+
+function PhoneTab({ r }: { r: ProblemReport }) {
+  return (
+    <table className="problem-facts">
+      <tbody>
+        <tr><th>Phone's signal</th><td>
+          {r.network_type || '—'}{r.band ? ` ${r.band}` : ''} · level {fmt(r.level_dbm, ' dBm')}
+          {r.rsrq_db != null ? ` · RSRQ ${r.rsrq_db} dB` : ''}{r.sinr_db != null ? ` · SINR ${r.sinr_db} dB` : ''}
+          {r.pci != null ? ` · PCI ${r.pci}` : ''}{r.cell_id != null ? ` · cell ${r.cell_id}` : ''}
+        </td></tr>
+        <tr><th>Speed test</th><td>
+          download {fmt(r.download_mbps, ' Mbps')} · upload {fmt(r.upload_mbps, ' Mbps')} · ping {fmt(r.ping_ms, ' ms')}
+          {' '}· jitter {fmt(r.jitter_ms, ' ms')} · loss {fmt(r.packet_loss_pct, '%')}
+        </td></tr>
+        <tr><th>Phone</th><td>{r.phone_model || '—'}{r.android_version ? `, Android ${r.android_version}` : ''}{r.app_version ? ` · app ${r.app_version}` : ''}</td></tr>
+      </tbody>
+    </table>
+  )
+}
+
+function ReplyTab({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <>
+      <p className="problem-reply">{text}</p>
+      <button type="button" className="btn-secondary btn-small" onClick={() => { void navigator.clipboard?.writeText(text); setCopied(true) }}>
+        {copied ? 'Copied' : 'Copy reply'}
+      </button>
+    </>
+  )
+}
+
+const TECH_COLOR: Record<string, string> = { '2G': '#d97706', '3G': '#4f46e5', '4G': '#0891b2', '5G': '#db2777' }
+
+function NearbySites({ r }: { r: ProblemReport }) {
+  const [radius, setRadius] = useState(1)
+  const [filter, setFilter] = useState('')
+  const [picked, setPicked] = useState<string | null>(null)
+  const { data, isFetching, error } = useProblemNearbySites(r.id, radius)
+  const sites = (data?.sites ?? []).filter((s) => !filter || `${s.site_id} ${s.name ?? ''}`.toLowerCase().includes(filter.toLowerCase()))
+  const nearest = data?.sites[0]?.site_id
+  return (
+    <div>
+      <div className="pdd-sites-bar">
+        <span className="muted">Radius</span>
+        {(data?.radii_km ?? [1, 2, 3, 5, 10]).map((k) => (
+          <button key={k} type="button" className={`pdd-pill${radius === k ? ' on' : ''}`} onClick={() => setRadius(k)}>{k} km</button>
+        ))}
+        <span className="muted">{isFetching ? 'Loading…' : `${data?.sites.length ?? 0} sites within ${radius} km`}</span>
+        <input className="pdd-filter" placeholder="Filter list…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+      </div>
+      {error && <p className="error">{apiErrorMessage(error)}</p>}
+      <div className="pdd-sites">
+        <div className="pdd-sites-map">
+          <MapContainer center={[r.lat, r.lng]} zoom={15} style={{ height: '100%', width: '100%' }}>
+            <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <FitPoints points={[[r.lat, r.lng], ...sites.map((s) => [s.lat, s.lng] as [number, number])]} />
+            <Circle center={[r.lat, r.lng]} radius={radius * 1000} pathOptions={{ color: '#2563eb', weight: 1, fillOpacity: 0.04 }} />
+            <CircleMarker center={[r.lat, r.lng]} radius={8} pathOptions={{ color: '#fff', weight: 2, fillColor: '#dc2626', fillOpacity: 1 }}>
+              <Tooltip>Problem location</Tooltip>
+            </CircleMarker>
+            {sites.map((s) => (
+              <CircleMarker key={s.site_id} center={[s.lat, s.lng]} radius={s.serving || picked === s.site_id ? 8 : 6}
+                eventHandlers={{ click: () => setPicked(s.site_id) }}
+                pathOptions={{ color: s.serving ? '#16a34a' : picked === s.site_id ? '#111827' : '#ffffff', weight: 2,
+                  fillColor: TECH_COLOR[s.techs[s.techs.length - 1]] ?? '#64748b', fillOpacity: 0.95 }}>
+                <Tooltip permanent={sites.length <= 25} direction="right" className="pdd-site-label">{s.site_id}</Tooltip>
+              </CircleMarker>
+            ))}
+          </MapContainer>
+        </div>
+        <div className="pdd-sites-list">
+          {sites.map((s) => (
+            <button key={s.site_id} type="button" className={`pdd-site${picked === s.site_id ? ' on' : ''}`} onClick={() => setPicked(s.site_id)}>
+              <div className="pdd-site-top">
+                <b><Link to={`/sites/${s.site_id}`} onClick={(e) => e.stopPropagation()}>{s.site_id}</Link></b>
+                {s.site_id === nearest && <span className="pdd-chip pdd-chip-blue">Nearest</span>}
+                {s.serving && <span className="pdd-chip pdd-chip-green">Served the report</span>}
+                <span className="pdd-dist">{s.distance_m < 1000 ? `${s.distance_m} m` : `${(s.distance_m / 1000).toFixed(2)} km`}</span>
+              </div>
+              <div className="muted pdd-small">{s.name ?? ''}{s.district ? ` · ${s.district}` : ''} · {s.bearing_deg}° from the spot</div>
+              <div className="pdd-techs">
+                {s.techs.map((t) => <span key={t} style={{ borderColor: TECH_COLOR[t], color: TECH_COLOR[t] }}>{t}</span>)}
+                <span className="muted pdd-small">{s.sectors} sectors{s.status ? ` · ${s.status}` : ''}</span>
+              </div>
+            </button>
+          ))}
+          {!sites.length && !isFetching && <p className="muted">No site within {radius} km.</p>}
+        </div>
+      </div>
     </div>
   )
 }
@@ -686,6 +862,7 @@ function EnterComplaint({ onSaved }: { onSaved: (id: number) => void }) {
   const create = useCreateProblemReport()
   const [category, setCategory] = useState<ProblemCategory>('slow_data')
   const [note, setNote] = useState('')
+  const [msisdn, setMsisdn] = useState('')
   const [point, setPoint] = useState<{ lat: number; lng: number } | null>(null)
   const [time, setTime] = useState(() => {
     const d = new Date()
@@ -696,7 +873,7 @@ function EnterComplaint({ onSaved }: { onSaved: (id: number) => void }) {
   const save = () => {
     if (!point) return
     create.mutate(
-      { category, note, lat: point.lat, lng: point.lng, happened_at: new Date(time).toISOString() },
+      { category, note, lat: point.lat, lng: point.lng, happened_at: new Date(time).toISOString(), msisdn: msisdn.trim() || undefined },
       { onSuccess: (r: ProblemReport) => onSaved(r.id) },
     )
   }
@@ -704,7 +881,10 @@ function EnterComplaint({ onSaved }: { onSaved: (id: number) => void }) {
   return (
     <div>
       <h2 style={{ marginTop: 0 }}>Enter a complaint</h2>
-      <p className="muted">Click the map where the customer has the problem. Do not type the customer's name or number here.</p>
+      <p className="muted">
+        Click the map where the customer has the problem. Put the customer's mobile number in its own box (shown to
+        superadmin only, and it links the complaint to the Subscriber Profile); keep names and numbers out of the note.
+      </p>
       <div className="problem-form">
         <label>
           Problem{' '}
@@ -714,6 +894,9 @@ function EnterComplaint({ onSaved }: { onSaved: (id: number) => void }) {
         </label>
         <label>
           When <input type="datetime-local" value={time} onChange={(e) => setTime(e.target.value)} />
+        </label>
+        <label>
+          Customer's mobile <input type="tel" value={msisdn} onChange={(e) => setMsisdn(e.target.value)} placeholder="98XXXXXXXX (optional)" maxLength={20} />
         </label>
       </div>
       <textarea rows={2} style={{ width: '100%' }} placeholder="What the customer said" value={note}

@@ -329,7 +329,7 @@ function Profile({ p, out, siteLink, reason, onChanged }: {
           )}
         </Card>
 
-        <Card id="sp-signal" icon="📶" title="Signal history" count={s.readings} empty={s.readings === 0} emptyText="No readings shared" wide>
+        <Card id="sp-signal" icon="📶" title="Signal analytics" count={s.readings} empty={s.readings === 0} emptyText="No readings shared" wide>
           <ProfileSignalHistory msisdn={p.msisdn} reason={reason} total={s.readings} emergency={p.emergency_declared}
             onSelection={onSelection} pick={pick}
             aside={<NetworkRing counts={s.readings_by_network} />} />
@@ -407,9 +407,9 @@ function Profile({ p, out, siteLink, reason, onChanged }: {
             <>
               <div className="sp-sub-head">Shares and phone drives · {p.collections.length} <Link to={out('/collections', { device: p.collections[0].device_id })}>Collections →</Link></div>
               <Paged rows={p.collections}
-                head={<tr><th>Kind</th><th>Started</th><th>Last reading</th><th>Ended</th><th>Readings</th><th>Phone</th><th></th><th></th></tr>}
+                head={<tr><th>Session</th><th>Started</th><th>Last reading</th><th>Ended</th><th>Readings</th><th>Phone</th><th></th><th></th></tr>}
                 row={(c) => (
-                  <tr key={c.id}><td>{c.source}</td><td>{fmt(c.started_at)}</td><td>{fmt(c.last_sample_at)}</td><td>{fmt(c.ended_at)}</td><td className="mono">{c.samples}</td><td className="mono" title={c.device_id}>{short(c.device_id)}</td><td>{c.samples ? showBtn(`collection:${c.id}`) : null}</td><td><Link to={out('/collections', { device: c.device_id })}>Open →</Link></td></tr>
+                  <tr key={c.id}><td>{c.name ?? c.source}</td><td>{fmt(c.started_at)}</td><td>{fmt(c.last_sample_at)}</td><td>{fmt(c.ended_at)}</td><td className="mono">{c.samples}</td><td className="mono" title={c.device_id}>{short(c.device_id)}</td><td>{c.samples ? showBtn(`collection:${c.id}`) : null}</td><td><Link to={out('/collections', { device: c.device_id })}>Open →</Link></td></tr>
                 )} />
             </>
           )}
@@ -524,6 +524,10 @@ export default function SubscriberProfilePage() {
   const [params, setParams] = useSearchParams()
   const msisdn = params.get('msisdn') ?? ''
   const reason = params.get('reason') ?? ''
+  // Opened from a complaint (2026-10-19): the way back to it. Only a
+  // Problem Dashboard address is accepted.
+  const fromRaw = params.get('from') ?? ''
+  const from = fromRaw.startsWith(`${OPAQUE_PATHS['/problem-reports']}?`) || fromRaw === OPAQUE_PATHS['/problem-reports'] ? fromRaw : ''
   const [number, setNumber] = useState(msisdn)
   const [ticket, setTicket] = useState(reason)
   const { data, isFetching, error, refetch } = useSubscriberProfile(msisdn, reason)
@@ -573,12 +577,18 @@ export default function SubscriberProfilePage() {
     e.preventDefault()
     if (!number.trim() || !ticket.trim()) return
     restored.current = true
-    setParams({ msisdn: number.trim(), reason: ticket.trim() })
+    setParams({ msisdn: number.trim(), reason: ticket.trim(), ...(from ? { from } : {}) })
   }
 
   const s = data?.summary
   return (
     <div className="sp-page">
+      {from && (
+        <div className="sp-from-bar">
+          <Link to={from}>← Back to the complaint</Link>
+          <span className="sp-muted">{reason}</span>
+        </div>
+      )}
       <div className="sp-hero">
         <div className="sp-hero-band" />
         <div className="sp-hero-body">

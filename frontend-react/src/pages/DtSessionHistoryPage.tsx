@@ -8,6 +8,7 @@ import {
   useDeleteDtSession,
   useDeleteDtSessionAttachment,
   useDtServingCells,
+  useDtSessionSectors,
   useDtSession,
   useDtSessions,
   useSites,
@@ -24,6 +25,7 @@ import DtCompareDeltaMap from '../components/DtCompareDeltaMap'
 import DtCompareReportView from '../components/DtCompareReportView'
 import DtCallDownloadSummary from '../components/DtCallDownloadSummary'
 import DtCoverageMap from '../components/DtCoverageMap'
+import SectorBreakdown from '../components/SectorBreakdown'
 import { assignDtCompareOrder } from '../lib/dtCompareAssignment'
 import { DriveModeSelect } from '../lib/dtDriveMode'
 import { purposeLabel } from '../lib/dtPurpose'
@@ -244,6 +246,7 @@ export default function DtSessionHistoryPage() {
   }, [searchFilteredSessions, latestOnly, clusterBySessionId, expandedClusters])
   const { data: sessionDetail, isLoading: detailLoading } = useDtSession(selectedSessionId ?? undefined)
   const { data: servingCells } = useDtServingCells(selectedSessionId ?? undefined)
+  const { data: sectorStats } = useDtSessionSectors(selectedSessionId ?? undefined)
   const deleteSession = useDeleteDtSession()
 
   // Remarks + attachments (2026-09-07: "add a provision of attaching
@@ -802,6 +805,12 @@ export default function DtSessionHistoryPage() {
                           callSummary={sessionDetail.meta?.callSummary}
                           downloadSummary={sessionDetail.meta?.downloadSummary}
                         />
+                        {/* Readings per serving sector (2026-10-19). */}
+                        {sectorStats && sectorStats.total > 0 && (
+                          <div className="report-card" style={{ margin: '12px 0' }}>
+                            <SectorBreakdown data={sectorStats} showDl siteLink={(id) => `/sites/${encodeURIComponent(id)}`} />
+                          </div>
+                        )}
 
                         {/* Remarks (2026-09-07) — a single free-text field,
                             not a comment thread ("if needed" in the

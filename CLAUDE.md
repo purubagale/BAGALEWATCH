@@ -794,6 +794,58 @@ repo, not on prod):
   digits (10 KTM, 11-13 EDR, 14-16 CDR, 17-19 WDR, 20-22 MWDR, 23-24 FWDR).
   The Signal screen shows "KTM856 · J3" at once and the full site name once
   the server answers. Seen on the Oppo.
+- **Committed 2026-10-19:** dtwatch `78d10ec` (everything above except the
+  AI work), mobile `bfd274d` (also the Flutter plugin and the Android 7
+  switch-off). Neither pushed.
+- **Sector analytics** (2026-10-19, after that commit; built, NOT
+  committed). `core/sector_stats.py`: readings per serving site + sector +
+  technology (share, weak/fair/good by the problem check's limits, average
+  level, RSRQ, SINR, CQI, download on drive tests, distance, first/last).
+  `GET dt-sessions/<id>/sectors/` (any signed-in user),
+  `collection-sessions/<id>/sectors/` (drive.view),
+  `telemetry/dt-sessions/<id>/sectors/` (admin; its readings come from
+  `telemetry_admin.session_samples_qs`, now shared with the plot). One web
+  component, `SectorBreakdown.tsx`, under the map on DT Session History,
+  Collections and Telemetry Drive Test, and as "Sector analysis" on the
+  Subscriber Profile, where sectors are location history: emergency only,
+  the count always, following the signal filter. A 140,000-reading drive
+  test takes about 3 s here.
+- **Profile, complaint and map follow-ups** (2026-10-19, built, NOT
+  committed). Profile: "Signal history" is now "Signal analytics"; its
+  Session filter always shows ("No sessions stored" when none); "Location
+  history" and "Sector analysis" merged into one card (sites chart and map,
+  the sector table with each sector's CI/PCI/TAC, and cells the site list
+  does not know). Problem Dashboard: staff entry takes the customer's mobile
+  (optional, `ProblemReport.msisdn`, superadmin sees it); `q` search on the
+  list (PR-12, id, ticket, note words; the number for superadmin only);
+  each report has a `reference`; the report is a UTS-style dashboard
+  (complaint details, diagnostics with "Open full diagnostics": likely
+  cause and measurements, nearest sites 1-10 km from
+  `core/problem_sites.py`, phone's reading, reply; status and note). The
+  number opens the Subscriber Profile with `reason=Complaint <ref>` and
+  `from=<report address>`; the profile shows "Back to the complaint" (only
+  a Problem Dashboard address is accepted). `ProblemReportsPage.tsx` now
+  mixes this with the AI draft line (`ProblemAiDraft` in CauseTab): a
+  non-AI commit must stage it by hunk. Site Topology: the search box takes
+  a position in any common format (`lib/parseLatLng.ts`: decimal, N/E
+  letters, DMS, degrees and decimal minutes, swapped order, Google Maps
+  links), flies there and marks it with the nearest site.
+- **Session names** (2026-10-19, built, NOT committed). `CollectionSession`
+  gained `name`, `msisdn`, `district` (migration 0139, which also names
+  existing sessions; AI migrations are now 0140-0145, local history
+  renamed). Set when a session starts in `record_collection_sessions`:
+  "<district> · <source> · <start, Nepal time>"; the district from the first
+  reading's serving site, else the nearest site within 20 km, filled in by
+  the first batch with a position. The number is stored beside the name,
+  never in it, and shown to superadmin only. Collections: Session column and
+  search (`q`: name, district, the number for superadmin). Profile: the
+  session picker lists named sessions and, for readings with no session tag
+  (app builds before share windows), "sharing periods" split at 30 minutes
+  of silence (`sharing_periods`, key `period:<from>|<to>`).
+- **Session History "slow"** (same day): the 16-18 s seen in the browser
+  came while containers were rebuilt and tests ran on the same 2-CPU
+  Docker; the list itself answers in about 0.45 s (`sample_count` subquery
+  over 918,000 readings).
 - **Flutter on this PC:** SDK at `D:\DevCache\flutter` (3.47.7), pub cache
   `D:\DevCache\pub-cache`, Gradle home `D:\DevCache\gradle`. `flutter build
   apk` fails here (the `&` in the path breaks `gradlew.bat`; a junction does

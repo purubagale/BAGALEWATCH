@@ -12,6 +12,7 @@ import AddSiteModal from '../components/AddSiteModal'
 import RelocateConfirmModal from '../components/RelocateConfirmModal'
 import RowsPerPageSelect from '../components/RowsPerPageSelect'
 import { useRowsPerPage } from '../lib/rowsPerPage'
+import { parseLatLng } from '../lib/parseLatLng'
 
 // ── 2026-09-07 rebuild ──────────────────────────────────────────────────
 // Replaces the always-visible left sidebar tree (region -> district ->
@@ -201,6 +202,24 @@ export default function SitesPage() {
   const [view, setView] = useState<'table' | 'map'>('map')
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
   const [searchInput, setSearchInput] = useState('')
+  const [focusPoint, setFocusPoint] = useState<{ lat: number; lng: number } | null>(null)
+  // The nearest site to a searched position, named on its marker.
+  const focusNearest = useMemo(() => {
+    if (!focusPoint) return null
+    let best: { id: string; m: number } | null = null
+    for (const site of sites ?? []) {
+      if (site.lat == null || site.lng == null) continue
+      const dLat = ((site.lat - focusPoint.lat) * Math.PI) / 180
+      const dLng = ((site.lng - focusPoint.lng) * Math.PI) / 180
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos((focusPoint.lat * Math.PI) / 180) * Math.cos((site.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+      const m = 12742000 * Math.asin(Math.sqrt(a))
+      if (!best || m < best.m) best = { id: site.id, m }
+    }
+    return best
+  }, [focusPoint, sites])
+  const focusLabel = focusPoint
+    ? `${focusPoint.lat.toFixed(5)}, ${focusPoint.lng.toFixed(5)}${focusNearest ? ` · nearest ${focusNearest.id} ${focusNearest.m < 1000 ? `${Math.round(focusNearest.m)} m` : `${(focusNearest.m / 1000).toFixed(1)} km`}` : ''}`
+    : undefined
 
   function setRegion(region: string) {
     // Clearing/changing the region also clears the district — same
@@ -250,12 +269,22 @@ export default function SitesPage() {
     setTablePage(1)
   }
   function commitSearch() {
+    // A position in any common format flies the map there (2026-10-19);
+    // anything else searches site names and IDs as before.
+    const point = parseLatLng(searchInput)
+    if (point) {
+      setFocusPoint(point)
+      setView('map')
+      return
+    }
+    setFocusPoint(null)
     setFilters((f) => ({ ...f, search: searchInput.trim() }))
     setTablePage(1)
   }
   function clearFilters() {
     setFilters(EMPTY_FILTERS)
     setSearchInput('')
+    setFocusPoint(null)
     setTablePage(1)
   }
   const activeFilterCount = [
@@ -773,7 +802,8 @@ export default function SitesPage() {
                 type="text"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="Site name or ID…"
+                placeholder="Site name, ID, or a position (any lat, long format)"
+                title="A position can be typed as 27.7172, 85.324 or 27°43'02&quot;N 85°19'26&quot;E or 27 43 2 N 85 19 26 E, or pasted as a Google Maps link"
               />
             </form>
             {activeFilterCount > 0 && (
@@ -798,6 +828,7 @@ export default function SitesPage() {
             onRelocateRequest={handleRelocateRequest}
             mapLayer={mapLayer}
             showNames={showNames}
+            focusPoint={focusPoint ? { ...focusPoint, label: focusLabel } : null}
           />
           {selected && (
             <div className="site-quickview">

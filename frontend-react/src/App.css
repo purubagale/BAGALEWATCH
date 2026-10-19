@@ -3961,6 +3961,10 @@ textarea:focus {
   --sp-cyan: #22d3ee; --sp-cyan-soft: rgba(34, 211, 238, 0.12); --sp-indigo: #818cf8; --sp-indigo-soft: rgba(129, 140, 248, 0.14);
   --sp-green: #34d399; --sp-green-soft: rgba(52, 211, 153, 0.13); --sp-amber: #fbbf24; --sp-amber-soft: rgba(251, 191, 36, 0.13);
   --sp-rose: #fb7185; --sp-rose-soft: rgba(251, 113, 133, 0.13);
+  /* Network colours (2026-10-16), checked with the palette validator on this
+     surface (all pairs; 4G/5G in the 6-8 colour-blind band, so every chart
+     with them carries a legend). */
+  --sp-net-4g: #0aa0bd; --sp-net-3g: #7f7cec; --sp-net-2g: #c4860f; --sp-net-5g: #df5b9c; --sp-net-none: #64748b;
   --sp-sans: 'Plus Jakarta Sans', 'Segoe UI', system-ui, sans-serif;
   --sp-head: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
   --sp-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
@@ -3974,6 +3978,7 @@ textarea:focus {
   --sp-cyan: #0891b2; --sp-cyan-soft: rgba(8, 145, 178, 0.10); --sp-indigo: #4f46e5; --sp-indigo-soft: rgba(79, 70, 229, 0.10);
   --sp-green: #059669; --sp-green-soft: rgba(5, 150, 105, 0.10); --sp-amber: #b45309; --sp-amber-soft: rgba(180, 83, 9, 0.10);
   --sp-rose: #e11d48; --sp-rose-soft: rgba(225, 29, 72, 0.08);
+  --sp-net-4g: #0891b2; --sp-net-3g: #4f46e5; --sp-net-2g: #d97706; --sp-net-5g: #db2777; --sp-net-none: #94a3b8;
 }
 .sp-page a { color: var(--sp-cyan); text-decoration: none; }
 .sp-page a:hover { text-decoration: underline; }
@@ -4085,10 +4090,6 @@ textarea:focus {
 .sp-sub { font-size: 12px; }
 .sp-search { flex: 1 1 520px; gap: 8px; }
 .sp-field input { padding: 8px 10px; font-size: 13px; }
-  /* Network colours (2026-10-16), checked with the palette validator on this
-     surface (all pairs; 4G/5G in the 6-8 colour-blind band, so every chart
-     with them carries a legend). */
-  --sp-net-4g: #0aa0bd; --sp-net-3g: #7f7cec; --sp-net-2g: #c4860f; --sp-net-5g: #df5b9c; --sp-net-none: #64748b;
 .sp-btn { padding: 9px 18px; }
 .sp-ident { margin-top: 12px; gap: 8px 10px; }
 .sp-msisdn { font-size: 20px; }
@@ -4102,7 +4103,6 @@ textarea:focus {
 .sp-kpi-val small { font-size: 12px; font-weight: 500; color: var(--sp-muted); }
 .sp-flow { margin-top: 12px; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
 .sp-card { border-radius: 12px; scroll-margin-top: 52px; }
-  --sp-net-4g: #0891b2; --sp-net-3g: #4f46e5; --sp-net-2g: #d97706; --sp-net-5g: #db2777; --sp-net-none: #94a3b8;
 .sp-card-head { padding: 9px 14px; gap: 8px; }
 .sp-card-icon { width: 24px; height: 24px; font-size: 13px; border-radius: 7px; }
 .sp-card-title { font-size: 14px; }
@@ -4617,3 +4617,85 @@ tr[hidden] { display: none !important; }
 .spo-card p { margin: 0 0 6px; font-size: 12.5px; max-width: 46ch; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
+
+/* Readings per serving sector (2026-10-19, SectorBreakdown.tsx). Uses the
+   surrounding text colour, so it sits on the profile's console look and on
+   the ordinary pages alike. */
+.secb { font-size: 13px; }
+.secb-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 8px; }
+.secb-muted { opacity: 0.68; }
+.secb-small { font-size: 11.5px; }
+.secb-legend { display: inline-flex; flex-wrap: wrap; gap: 10px; margin-left: auto; font-size: 11.5px; }
+.secb-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.secb-note { padding: 6px 10px; margin-bottom: 8px; border-left: 3px solid #dc2626; background: rgba(220, 38, 38, 0.08); border-radius: 4px; }
+.secb-scroll { overflow-x: auto; }
+.secb-table { width: 100%; border-collapse: collapse; }
+.secb-table th, .secb-table td { padding: 6px 8px; border-bottom: 1px solid rgba(127, 127, 127, 0.22); text-align: left; vertical-align: middle; white-space: nowrap; }
+.secb-table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.75; font-weight: 600; }
+.secb-num { font-variant-numeric: tabular-nums; }
+.secb-sort { all: unset; cursor: pointer; }
+.secb-sort.on { text-decoration: underline; }
+.secb-share { height: 4px; width: 90px; background: rgba(127, 127, 127, 0.18); border-radius: 2px; margin-bottom: 3px; }
+.secb-share i { display: block; height: 100%; background: #0891b2; border-radius: 2px; }
+.secb-qbar { display: flex; width: 110px; height: 9px; border-radius: 3px; overflow: hidden; background: rgba(127, 127, 127, 0.18); margin-bottom: 2px; }
+.secb-qbar i { display: block; height: 100%; }
+.secb-more { margin-top: 8px; background: none; border: 1px solid rgba(127, 127, 127, 0.4); border-radius: 6px; padding: 4px 10px; cursor: pointer; color: inherit; font-size: 12px; }
+
+/* One complaint as a dashboard (2026-10-19, ProblemReportsPage ReportDetail),
+   after NTC's ticketing system: details, diagnostics, status. */
+.pd-search input { min-width: 280px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border, #cbd5e1); }
+.pd-row-ref { font-size: 11.5px; font-family: ui-monospace, monospace; }
+.pdd-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
+.pdd-head h2 { margin: 0 0 4px; }
+.pdd-ref { font-size: 13px; font-weight: 500; font-family: ui-monospace, monospace; color: var(--brand, #0153a5); margin-left: 6px; }
+.pdd-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; }
+.pdd-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border, #cbd5e1); font-size: 12px; background: var(--surface, #fff); }
+.pdd-status-new { border-color: #f59e0b; color: #b45309; }
+.pdd-status-checked { border-color: #0ea5e9; color: #0369a1; }
+.pdd-status-closed { border-color: #16a34a; color: #15803d; }
+.pdd-chip-blue { border-color: #2563eb; color: #1d4ed8; }
+.pdd-chip-green { border-color: #16a34a; color: #15803d; }
+.pdd-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 0.9fr); gap: 12px; align-items: start; }
+@media (max-width: 1200px) { .pdd-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+@media (max-width: 760px) { .pdd-grid { grid-template-columns: minmax(0, 1fr); } }
+.pdd-card { border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; background: var(--surface, #fff); }
+.pdd-card h3 { margin: 0 0 10px; font-size: 14px; color: var(--brand, #0153a5); }
+.pdd-kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 7px 12px; margin: 0; font-size: 13px; }
+.pdd-kv dt { color: var(--muted, #64748b); font-size: 12px; }
+.pdd-kv dd { margin: 0; overflow-wrap: anywhere; }
+.pdd-link { margin-left: 8px; font-size: 12.5px; font-weight: 600; }
+.pd-copy { border: 0; background: none; cursor: pointer; color: var(--muted, #64748b); padding: 0 2px; font-size: 13px; }
+.pdd-diag { display: flex; flex-direction: column; gap: 8px; }
+.pdd-main-finding p { margin: 4px 0; font-size: 13px; }
+.pdd-small { font-size: 12px; }
+.pdd-map { height: 220px !important; }
+.pdd-backdrop { position: fixed; inset: 0; z-index: 2000; background: rgba(2, 6, 23, 0.5); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.pdd-modal { width: min(1280px, 100%); max-height: 92vh; display: flex; flex-direction: column; background: var(--surface, #fff); border-radius: 14px; overflow: hidden; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3); }
+.pdd-modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border, #e2e8f0); }
+.pdd-modal-body { display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: 0; flex: 1; }
+@media (max-width: 760px) { .pdd-modal-body { grid-template-columns: minmax(0, 1fr); } }
+.pdd-tabs { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-right: 1px solid var(--border, #e2e8f0); }
+.pdd-tabs button, .pdd-tab-link { text-align: left; border: 1px solid transparent; background: none; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; color: inherit; }
+.pdd-tabs button.on { border-color: var(--border, #e2e8f0); background: var(--surface-2, #f1f5f9); font-weight: 600; }
+.pdd-tab-link { margin-top: 8px; color: var(--brand, #0153a5); font-weight: 600; }
+.pdd-tab-body { padding: 14px 16px; overflow: auto; }
+.pdd-sites-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-bottom: 10px; font-size: 12.5px; }
+.pdd-pill { border: 1px solid var(--border, #cbd5e1); background: none; border-radius: 999px; padding: 3px 10px; cursor: pointer; font-size: 12px; color: inherit; }
+.pdd-pill.on { background: var(--brand, #0153a5); border-color: var(--brand, #0153a5); color: #fff; }
+.pdd-filter { margin-left: auto; padding: 5px 9px; border-radius: 8px; border: 1px solid var(--border, #cbd5e1); }
+.pdd-sites { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr); gap: 12px; }
+@media (max-width: 900px) { .pdd-sites { grid-template-columns: minmax(0, 1fr); } }
+.pdd-sites-map { height: 460px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border, #e2e8f0); }
+.pdd-sites-list { max-height: 460px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.pdd-site { text-align: left; border: 1px solid var(--border, #e2e8f0); background: var(--surface, #fff); border-radius: 10px; padding: 8px 10px; cursor: pointer; color: inherit; }
+.pdd-site.on { border-color: var(--brand, #0153a5); box-shadow: inset 3px 0 0 var(--brand, #0153a5); }
+.pdd-site-top { display: flex; align-items: center; gap: 6px; }
+.pdd-dist { margin-left: auto; font-weight: 600; color: #0891b2; font-variant-numeric: tabular-nums; }
+.pdd-techs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
+.pdd-techs span:not(.muted) { border: 1px solid; border-radius: 4px; padding: 0 5px; font-size: 11px; font-weight: 600; }
+.pdd-site-label { font-size: 10.5px; padding: 1px 4px; }
+
+/* Profile opened from a complaint (2026-10-19): the way back. */
+.sp-from-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; padding: 8px 12px; border-radius: 10px;
+  border: 1px solid var(--sp-border, rgba(127,127,127,.3)); background: var(--sp-card, transparent); font-size: 13px; }
+.sp-from-bar a { font-weight: 600; }
