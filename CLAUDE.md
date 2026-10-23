@@ -842,6 +842,42 @@ repo, not on prod):
   session picker lists named sessions and, for readings with no session tag
   (app builds before share windows), "sharing periods" split at 30 minutes
   of silence (`sharing_periods`, key `period:<from>|<to>`).
+- **Audit 2026-10-23** (`docs/AUDIT_2026-10-23.md`, 13-item action list).
+  Items 1 and 2 done the same day, NOT committed: Pillow 13.0.0 and DRF
+  3.18.2 (`requirements.txt`); `DriveTestSession.samples_total` kept by two
+  statement-level triggers on `v2_dt_samples` (migration 0140, Postgres
+  only; `sample_count_expr()` now reads it, callers unchanged); `jit=off`
+  in `DATABASES.OPTIONS`. Session list 26 s cold to 0.57 s. AI migrations
+  are now 0141-0146 (local history renamed). Prod needs 0138-0140.
+  `manage.py test core` has 13 stale failures that predate the audit.
+  Item 3 done (frontend only, NOT committed): `weakestPerSquare()` in
+  `lib/dtBands.ts` replaces every-Nth thinning on the Session History,
+  Compare and Explore measure plots (PCI/band plots unchanged). Session 27:
+  12,451 dots, every weak square shown (2,840 of 2,840, was 1,298).
+  Item 5 done (mobile, NOT committed): `SampleQueue.kt` keeps its line
+  count and a lock shared by all instances (it was one lock per instance),
+  trims only 500 lines over the cap, streams `peek`. First SDK unit tests:
+  `netplanning-telemetry-sdk/src/test/.../SampleQueueTest.kt` (JUnit +
+  org.json test deps), run with `:netplanning-telemetry-sdk:testReleaseUnitTest`.
+  Release APKs on the Desktop, not yet run on a phone; SDK republished to
+  `maven-repo/` and the Flutter plugin's `sdk-repo`.
+  Items 6-9 and 11-13 done the same day (NOT committed): web-process-only
+  `statement_timeout` 115 s (`gunicorn.conf.py` sets
+  `DB_STATEMENT_TIMEOUT_MS`); `PUBLIC_URL` for reset links (prod `.env`
+  must set it and a named `ALLOWED_HOSTS`); 2 gunicorn threads; lazy map on
+  Sites (first download 205 to 140 KB gzip); `DemoApplication.kt` untracked
+  in the staging clone, project `.gitignore` now identical to the clone's;
+  `DATA_UPLOAD_MAX_MEMORY_SIZE` 150 MB (it never covered file parts); all
+  244 unit tests pass. New: backup export takes 74 s (item 14);
+  `manage.py shared_key_usage` (read-only) for deciding items 4 and 10.
+  Item 4 done 2026-10-24: signed `device/rescue-consent/`
+  (`core/rescue_signed.py`, number from the registration, beacon under the
+  SDK id, 409 until linked); old `rescue-enroll/` answers 410 after
+  `RESCUE_SHARED_KEY_ACCEPTED_UNTIL` (proposed 2026-12-31 in
+  `.env.example`; local `.env` has none). SDK `RescueEnrollWorker` goes
+  signed for registered phones, falls back on 404, stops on final answers;
+  app's rescue dialog shows the registered number. Item 10
+  (`TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL`) waits for `shared_key_usage` on prod.
 - **Session History "slow"** (same day): the 16-18 s seen in the browser
   came while containers were rebuilt and tests ran on the same 2-CPU
   Docker; the list itself answers in about 0.45 s (`sample_count` subquery

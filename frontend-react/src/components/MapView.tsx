@@ -268,7 +268,7 @@ function ClusteredMarkers({
   const map = useMap()
 
   useEffect(() => {
-    const cluster = (L as unknown as { markerClusterGroup: (opts: object) => L.LayerGroup }).markerClusterGroup({
+    const cluster = (L as unknown as { markerClusterGroup: (opts: object) => L.LayerGroup & { addLayers: (layers: L.Layer[]) => void } }).markerClusterGroup({
       chunkedLoading: true,
       disableClusteringAtZoom: 14,
     })
@@ -278,6 +278,7 @@ function ClusteredMarkers({
     // completing, etc.) can't fire a stray closePopup() after the marker
     // it belonged to is already gone.
     const pendingCloseTimers = new Set<ReturnType<typeof setTimeout>>()
+    const markers: L.Layer[] = []
     for (const s of withCoords) {
       const marker = L.marker([s.lat as number, s.lng as number], { icon: defaultIcon, draggable: canRelocate })
       const popupHtml = buildMarkerPopupHtml(s)
@@ -396,8 +397,10 @@ function ClusteredMarkers({
           onRelocateRequest(s, oldLat, oldLng, dropped.lat, dropped.lng)
         })
       }
-      cluster.addLayer(marker)
+      markers.push(marker)
     }
+    // One bulk add (audit 2026-10-23) rather than one addLayer per site.
+    cluster.addLayers(markers)
     map.addLayer(cluster)
     return () => {
       for (const t of pendingCloseTimers) clearTimeout(t)

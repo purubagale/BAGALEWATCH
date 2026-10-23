@@ -49,9 +49,9 @@ worker_class = 'gthread'
 # The cap was 12, which assumed this app has the machine to itself. The
 # prod host has 8 cores but is shared with about 50 other containers, so
 # it took all 12 (about 1 GB). Workers are sized to the CPU share the app
-# may use, not to the number of users: 4 workers x 4 threads is 16
-# requests in flight at once, and most of a request is spent waiting on
-# Postgres, which threads handle. GUNICORN_WORKERS / GUNICORN_THREADS in
+# may use, not to the number of users: 4 workers x 2 threads is 8
+# requests in flight at once (16 before the 2026-10-23 audit), and most of
+# a request is spent waiting on Postgres, which threads handle. GUNICORN_WORKERS / GUNICORN_THREADS in
 # .env override this on a host that can give more. Unset, empty or not a
 # positive number: the computed value.
 MAX_COMPUTED_WORKERS = 4
@@ -66,7 +66,12 @@ def _positive_int(name, default):
 
 
 workers = _positive_int('GUNICORN_WORKERS', min((multiprocessing.cpu_count() * 2) + 1, MAX_COMPUTED_WORKERS))
-threads = _positive_int('GUNICORN_THREADS', 4)
+# Two threads per worker (audit 2026-10-23; was 4). The Django container has
+# 1 GB and the idle app already holds about 555 MB; one large drive-test
+# session or the site list adds 40-60 MB while it is built, so 16 such
+# requests at once could get a worker killed. 4 x 2 = 8 in flight is ample
+# for staff use; raise GUNICORN_THREADS together with DJANGO_MEM_LIMIT.
+threads = _positive_int('GUNICORN_THREADS', 2)
 
 # Same 120s kept from the original Dockerfile CMD — a real large
 # Site/Sector Excel import can legitimately take a while even with the
@@ -74,6 +79,13 @@ threads = _positive_int('GUNICORN_THREADS', 4)
 # about per-request speed, it's a safety net against a slow request
 # getting killed mid-write.
 timeout = 120
+
+# Database query limit for web requests (audit 2026-10-23), a little under
+# `timeout`. When gunicorn kills a worker at 120 s, Postgres would otherwise
+# keep running that worker's query with nobody waiting for it. Read by
+# settings.py only in this process: migrations and the maintenance jobs
+# (backfills, retention) keep no limit. DB_STATEMENT_TIMEOUT_MS=0 turns it off.
+os.environ.setdefault('DB_STATEMENT_TIMEOUT_MS', str((timeout - 5) * 1000))
 
 # Recycle each worker after a while, staggered (`_jitter`) so all workers
 # don't restart in the same instant and briefly drop capacity together —

@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from rest_framework.test import APIClient
 
 from . import sso
 from . import sso_config as cfg
@@ -452,7 +453,10 @@ class HealthBuildStampTests(TestCase):
         user = User.objects.create(username='someone', role='viewer')
         user.set_password('pw')
         user.save()
-        self.client.force_login(user)
+        # Token sign-in as the app does it: browser-session sign-in to the API
+        # is off unless DEBUG or API_SESSION_AUTH=1 (2026-10-15).
+        self.client = APIClient()
+        self.client.force_authenticate(user)
         body = self.client.get(reverse('health')).json()
         self.assertEqual(body['version'], 'v1.2.3')
         self.assertEqual(body['build_tag'], 'v1.2.3-1-x-abc')
@@ -497,7 +501,10 @@ class LogoutSsoTests(SSOTestBase):
         user.save()
         if id_token:
             sso.store_id_token(user.pk, id_token)
-        self.client.force_login(user)
+        # Token sign-in as the app does it: browser-session sign-in to the API
+        # is off unless DEBUG or API_SESSION_AUTH=1 (2026-10-15).
+        self.client = APIClient()
+        self.client.force_authenticate(user)
         return user
 
     def test_sso_user_gets_keycloak_logout_url(self):

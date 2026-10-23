@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { DtSessionDetail } from '../api/types'
-import { bandColor, subsampleForMap, type Band, type TaggedMetric } from '../lib/dtBands'
+import { bandColor, weakestPerSquare, type Band, type TaggedMetric } from '../lib/dtBands'
 import { declusterForPlot } from '../lib/declusterPlot'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 import { useDtMetrics } from '../lib/useDtMetrics'
@@ -48,7 +48,15 @@ function CompareDots({ sessions, metric }: { sessions: DtSessionDetail[]; metric
     sessions.forEach((s, si) => {
       if (s.tech !== metric.tech) return
       const withVal = s.samples.filter((sample) => sample.lat != null && sample.lng != null && sample[metric.key] != null)
-      const drawn = subsampleForMap(withVal)
+      // Weakest reading per small square, not every Nth (audit 2026-10-23).
+      const drawn = weakestPerSquare(
+        withVal,
+        (sample) => [sample.lat as number, sample.lng as number],
+        (sample) => {
+          const raw = sample[metric.key] as number
+          return higherIsBetter ? raw : -raw
+        },
+      ).kept.map((k) => k.item)
       // Overlap management (2026-10-07, "manage plot with worst and best
       // data with no overlapping ... manage this in all telemetry
       // sessions") -- see lib/declusterPlot.ts's own header. `si` prefixes

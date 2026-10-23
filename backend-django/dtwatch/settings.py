@@ -30,6 +30,10 @@ if not DEBUG and (SECRET_KEY == _DEV_SECRET_KEY or len(SECRET_KEY) < 50 or len(s
         'SECRET_KEY is missing, the published default, or too weak. Set a random value of at least 50 '
         'characters in .env (python -c "import secrets; print(secrets.token_urlsafe(64))").')
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
+# The address users open (audit 2026-10-23), e.g. https://dtwatch.ntc.net.np;
+# password-reset emails use it instead of the request's Host header. Empty
+# keeps the old behaviour.
+PUBLIC_URL = os.environ.get('PUBLIC_URL', '').strip().rstrip('/')
 
 # Django's own default (2.5MB) is well under a single DT-session sample
 # batch (2026-08-14 fix — a real 25-file .trp upload produced 363,082
@@ -73,7 +77,16 @@ ALLOWED_HOSTS = [h.strip() for h in os.environ.get('ALLOWED_HOSTS', 'localhost,1
 # occasional upload (not a routine per-user action), so the DoS-surface
 # tradeoff of a larger cap here is the same one already accepted for
 # Backup/Restore above, not a new category of risk.
-DATA_UPLOAD_MAX_MEMORY_SIZE = 700 * 1024 * 1024
+#
+# Back to 150MB (audit 2026-10-23). The paragraph above is wrong for this
+# Django: the limit counts the non-file part of a request only, so it never
+# held back the .docx (tested: a 60 MB file goes through with a 50 MB limit,
+# a 60 MB JSON body is refused). What it does govern is a JSON body, which
+# Django holds in memory, and 700MB of that would exhaust the 1 GB
+# container. The largest JSON body is a Backup/Restore payload (a full
+# export measured 38 MB on 2026-10-23), so 150MB keeps that headroom. The
+# .docx and attachment size limits stay in nginx (700m on those paths).
+DATA_UPLOAD_MAX_MEMORY_SIZE = 150 * 1024 * 1024
 
 # ── Security hardening (2026-08-08, "secure the system for unauthorized
 # access and tampering" follow-up) ──────────────────────────────────────
@@ -270,6 +283,16 @@ else:
             # connections for the rest of that 60s window.
             'CONN_MAX_AGE': 60,
             'CONN_HEALTH_CHECKS': True,
+            # JIT off (audit 2026-10-23): Postgres compiled every query with a
+            # high cost estimate before running it, 50-200 ms each time, with
+            # no gain at this data size. Set per connection so it also holds
+            # on prod's separate database server. The web process also gets a
+            # per-query limit (DB_STATEMENT_TIMEOUT_MS, set in gunicorn.conf.py
+            # just under gunicorn's own timeout); migrations and background
+            # jobs, which run without it, keep no limit.
+            'OPTIONS': {'options': '-c jit=off' + (
+                f" -c statement_timeout={int(os.environ['DB_STATEMENT_TIMEOUT_MS'])}"
+                if os.environ.get('DB_STATEMENT_TIMEOUT_MS', '').isdigit() else '')},
         }
     }
 
@@ -744,6 +767,13 @@ TRACE_MAX_TTL_MINUTES = int(os.environ.get('TRACE_MAX_TTL_MINUTES', '1440'))
 from django.utils.dateparse import parse_datetime as _parse_datetime  # noqa: E402
 
 TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL = _parse_datetime(os.environ.get('TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL', '') or '') or None
+# Rescue enrolment with the shared key (audit 2026-10-23), separately: the
+# old `rescue-enroll/` endpoint accepts any typed number from any phone that
+# has the key. A registered phone now uses the signed `device/rescue-consent/`
+# (core/rescue_signed.py), which takes the number from its registration.
+# Unset: the old endpoint keeps working. After this date it answers 410
+# "update the app". Same format as above.
+RESCUE_SHARED_KEY_ACCEPTED_UNTIL = _parse_datetime(os.environ.get('RESCUE_SHARED_KEY_ACCEPTED_UNTIL', '') or '') or None
 # Per-device batches/min for signed calls. Shared-key calls keep their
 # per-key limit (TelemetryIngestKey.rate_limit_per_min).
 TELEMETRY_DEVICE_RATE_PER_MIN = int(os.environ.get('TELEMETRY_DEVICE_RATE_PER_MIN', '60'))
@@ -787,15 +817,6 @@ SMS_SENDER_ID = os.environ.get('SMS_SENDER_ID', 'NTC')
 SMS_VERIFY_TEXT = os.environ.get(
     'SMS_VERIFY_TEXT', 'Your DT-WATCH code is {code}. It is valid for {minutes} minutes. Do not share it.')
 
-# ── Linked systems' update addresses (2026-10-15, core/problem_notify.py) ──
-# LINKED_SYSTEM_ALLOWED_HOSTS: comma-separated host names the update
-# addresses may point at; "*.ntc.net.np" allows every name under it. Empty
-# allows any host. LINKED_SYSTEM_HTTPS_ONLY=1 (the default) refuses http://.
-# Addresses on this server itself, its internal services and link-local
-# (cloud metadata) addresses are always refused.
-LINKED_SYSTEM_ALLOWED_HOSTS = [h.strip().lower() for h in os.environ.get('LINKED_SYSTEM_ALLOWED_HOSTS', '').split(',')
-                               if h.strip()]
-LINKED_SYSTEM_HTTPS_ONLY = os.environ.get('LINKED_SYSTEM_HTTPS_ONLY', '1') != '0'
 # ── Subscriber provisioning from NTC's ticketing system (2026-10-16) ──
 # core/provisioning.py. What the network has provisioned for a number (4G,
 # VoLTE, SIM type, roaming, plan) and the phone's supported bands, shown on
@@ -833,3 +854,12 @@ PROVISIONING_HTTP_TIMEOUT = float(os.environ.get('PROVISIONING_HTTP_TIMEOUT', '8
 PROVISIONING_HTTP_VERIFY_TLS = os.environ.get('PROVISIONING_HTTP_VERIFY_TLS', '1') != '0'
 PROVISIONING_CACHE_SECONDS = int(os.environ.get('PROVISIONING_CACHE_SECONDS', '300'))
 
+# ── Linked systems' update addresses (2026-10-15, core/problem_notify.py) ──
+# LINKED_SYSTEM_ALLOWED_HOSTS: comma-separated host names the update
+# addresses may point at; "*.ntc.net.np" allows every name under it. Empty
+# allows any host. LINKED_SYSTEM_HTTPS_ONLY=1 (the default) refuses http://.
+# Addresses on this server itself, its internal services and link-local
+# (cloud metadata) addresses are always refused.
+LINKED_SYSTEM_ALLOWED_HOSTS = [h.strip().lower() for h in os.environ.get('LINKED_SYSTEM_ALLOWED_HOSTS', '').split(',')
+                               if h.strip()]
+LINKED_SYSTEM_HTTPS_ONLY = os.environ.get('LINKED_SYSTEM_HTTPS_ONLY', '1') != '0'

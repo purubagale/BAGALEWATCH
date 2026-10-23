@@ -14,7 +14,7 @@ import { techOf, telemetryMetricValue } from '../lib/telemetryLevel'
 import { purposeLabel } from '../lib/dtPurpose'
 import { ACTIVITY_ROLE_LABELS } from './AttachActivityModal'
 import { clusterDtSessionsByArea, type DtSessionCluster } from '../lib/dtSessionClustering'
-import { ALL_TECHS, bandCategoryColor, bandColor, PCI_DISTINCT_COLORS, pciColorMap, pciMod3Color, subsampleForMap, type TaggedMetric } from '../lib/dtBands'
+import { ALL_TECHS, bandCategoryColor, bandColor, PCI_DISTINCT_COLORS, pciColorMap, pciMod3Color, subsampleForMap, weakestPerSquare, type TaggedMetric } from '../lib/dtBands'
 import { declusterForPlot } from '../lib/declusterPlot'
 import { useDtMetrics } from '../lib/useDtMetrics'
 import { haversineKm } from '../lib/dtTemplateParser'
@@ -524,7 +524,15 @@ function NearSamplesLayer({
     sessions.forEach((session, si) => {
       if (session.tech !== metric.tech) return
       const withVal = session.samples.filter((sample) => sample.lat != null && sample.lng != null && sample[metric.key] != null)
-      const drawn = subsampleForMap(withVal)
+      // Weakest reading per small square, not every Nth (audit 2026-10-23).
+      const drawn = weakestPerSquare(
+        withVal,
+        (sample) => [sample.lat as number, sample.lng as number],
+        (sample) => {
+          const raw = sample[metric.key] as number
+          return higherIsBetter ? raw : -raw
+        },
+      ).kept.map((k) => k.item)
       const points = declusterForPlot(drawn, (sample) => {
         const raw = sample[metric.key] as number | null
         return {

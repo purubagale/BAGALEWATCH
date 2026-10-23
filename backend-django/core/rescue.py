@@ -200,6 +200,14 @@ class RescueEnrollView(APIView):
     permission_classes = [AllowAny]  # does its own key check, same as TelemetryIngestView
 
     def post(self, request):
+        # Retired after RESCUE_SHARED_KEY_ACCEPTED_UNTIL (audit 2026-10-23): a
+        # registered phone uses the signed device/rescue-consent/ instead
+        # (core/rescue_signed.py), which takes the number from its registration.
+        from django.conf import settings
+        until = getattr(settings, 'RESCUE_SHARED_KEY_ACCEPTED_UNTIL', None)
+        if until is not None and timezone.now() > until:
+            return Response({'detail': 'Rescue sharing now needs the latest app. Please update it.'},
+                            status=status.HTTP_410_GONE)
         key = _resolve_key(_key_from_request(request))
         if key is None:
             return Response({'detail': 'invalid or missing telemetry ingest key'},
