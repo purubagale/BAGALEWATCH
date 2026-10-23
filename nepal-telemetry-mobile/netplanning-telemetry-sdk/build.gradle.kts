@@ -69,6 +69,11 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06") // encrypted pseudonymous-ID storage
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // Unit tests on the JVM (2026-10-23): JUnit, and a real org.json because
+    // Android's copy is only a stub off the device.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
 
 publishing {

@@ -149,6 +149,7 @@
     <string name="live_params_close">Close</string>
     <string name="rescue_enroll">Rescue Location Beacon</string>
     <string name="rescue_enroll_prompt">Registering shares this device\'s last known location with verified rescue operators only, searchable by this phone number during a disaster. You can withdraw at any time.</string>
+    <string name="rescue_enroll_registered">Rescue sharing uses this phone\'s registered number, %1$s. Turning it on shares this phone\'s last known location with verified rescue operators only, and only while an emergency is declared. You can turn it off at any time.</string>
     <string name="map_site_photo">Site photo</string>
     <string name="site_photo_no_compass">Compass…</string>
     <string name="site_photo_waiting_location">Waiting for location…</string>

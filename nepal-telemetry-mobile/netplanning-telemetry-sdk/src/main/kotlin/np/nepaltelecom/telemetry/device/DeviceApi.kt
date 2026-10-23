@@ -238,6 +238,15 @@ object DeviceApi {
         request("POST", "device/site-photos/", body, signed = true)
     }
 
+    /**
+     * Rescue beacon on or off for this registered phone (2026-10-23). Signed;
+     * the server takes the number from the registration, never from here.
+     */
+    fun rescueConsent(consent: Boolean, appVersion: String) {
+        val body = JSONObject().put("consent", consent).put("app_version", appVersion).toString()
+        request("POST", "device/rescue-consent/", body, signed = true)
+    }
+
     /** "Report a problem" (2026-10-14): one report with the phone's reading and speed test. */
     fun reportProblem(body: String) {
         request("POST", "device/problem-reports/", body, signed = true)

@@ -19,8 +19,13 @@ internal class RescueApi(
     private val endpointUrl: String,
     private val apiKey: String?,
 ) {
-    /** @return true if the server accepted the request (2xx). Throws nothing -- network/parse failures return false. */
-    fun enroll(deviceId: String, consent: Boolean, msisdn: String?, device: Map<String, String> = emptyMap()): Boolean {
+    /**
+     * @return the HTTP status, or -1 when the request could not be made
+     * (2026-10-23: a status rather than true/false, so the worker can stop
+     * on a final answer such as 410 "update the app" instead of retrying
+     * it forever). Throws nothing.
+     */
+    fun enroll(deviceId: String, consent: Boolean, msisdn: String?, device: Map<String, String> = emptyMap()): Int {
         return try {
             val body = JSONObject().apply {
                 put("device_id", deviceId)
@@ -56,10 +61,10 @@ internal class RescueApi(
                 Log.w(TAG, "Rescue enrollment rejected by $endpointUrl -- HTTP $code${errorBody?.let { ": $it" } ?: ""}")
             }
             connection.disconnect()
-            ok
+            code
         } catch (e: Exception) {
             Log.w(TAG, "Rescue enrollment request to $endpointUrl failed: ${e.javaClass.simpleName}: ${e.message}")
-            false
+            -1
         }
     }
 

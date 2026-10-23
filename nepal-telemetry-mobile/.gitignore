@@ -12,3 +12,7 @@ keystore.properties
 *.jks
 *.keystore
 
+
+# Holds the real ingest key on the build PC (audit 2026-10-23): never tracked.
+app/src/main/kotlin/np/nepaltelecom/telemetry/demo/DemoApplication.kt
+app/google-services.json

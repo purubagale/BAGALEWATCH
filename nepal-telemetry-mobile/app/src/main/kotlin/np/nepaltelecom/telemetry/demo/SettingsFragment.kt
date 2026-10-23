@@ -15,6 +15,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import np.nepaltelecom.telemetry.NetTelemetry
+import np.nepaltelecom.telemetry.device.NetDevice
 import java.util.Date
 
 /**
@@ -140,6 +141,26 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
      * a raw phone number is typed in. Withdrawing erases what was already sent.
      */
     private fun showRescueEnrollDialog() {
+        // A registered phone uses its registered number, sent by the server
+        // side of a signed request, never a typed one (2026-10-23).
+        val ctx = requireContext()
+        if (NetDevice.isRegistered(ctx)) {
+            val number = NetDevice.number(ctx)
+            AlertDialog.Builder(ctx)
+                .setTitle(R.string.rescue_enroll)
+                .setMessage(getString(R.string.rescue_enroll_registered, number))
+                .setPositiveButton("Turn on") { _, _ ->
+                    NetTelemetry.enrollForRescue(number)
+                    toast("Rescue location sharing requested")
+                }
+                .setNeutralButton("Turn off") { _, _ ->
+                    NetTelemetry.optOutOfRescue()
+                    toast("Rescue location withdrawal requested")
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+            return
+        }
         val input = EditText(requireContext()).apply {
             inputType = InputType.TYPE_CLASS_PHONE
             hint = "+977..."
