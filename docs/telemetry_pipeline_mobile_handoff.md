@@ -4,7 +4,7 @@
 
 **From:** Puru (RAN O&M, owner of the DT-WATCH server and web application)
 
-**Last updated:** 2026-10-13. This version replaces the guide of 2026-09-21 and its two addenda.
+**Last updated:** 2026-10-24 (signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
 
 ## 1. Summary
 
@@ -86,7 +86,9 @@ a signed call (section 7.3). "Signed" means a registered phone only.
 | `push-token/` | POST | Key | Push address of a sharing phone (section 8) |
 | `speed-samples/` | POST | Key | One speed test result (section 10) |
 | `speedtest/ping/`, `download/`, `upload/` | GET, GET, POST | none, rate limited | Far end of the speed test |
-| `rescue-enroll/` | POST | Key | Rescue sharing on or off, with the number (section 12) |
+| `rescue-enroll/` | POST | Key | Rescue sharing on or off, with a typed number. Older apps only; refused with 410 after the cut-off date (section 12) |
+| `device/rescue-consent/` | POST | Signed | Rescue sharing on or off for the registered number (section 12) |
+| `device/serving-site/` | GET | Signed | Site and sector of the serving cell, for the Signal screen; nothing is stored |
 | `drive-test-consent/` | POST | Key | Standing consent to be included in staff drive-test sessions |
 | `drive-test-consent-message/` | GET | none | Current consent wording |
 | `volte-samples/` | POST | Key | Call quality. Dormant (section 13.2) |
@@ -559,6 +561,38 @@ see the phone's last known position during a declared emergency.
   samples while the phone is sharing.
 - A subscriber who withdrew is never shown by a lookup, even in an emergency.
 
+**Signed rescue sharing (24 October 2026).** `rescue-enroll/` takes any typed
+number from any phone that holds the shared key, so anyone who extracts the key
+can enrol someone else's number. A registered phone therefore uses
+`POST device/rescue-consent/` (signed, section 7.2) instead:
+
+- Body: `{"consent": true}` or `{"consent": false}`, plus optional
+  `app_version`. The number is never sent; the server takes it from the
+  phone's registration.
+- The beacon is filed under the phone's SDK id, so the phone must have sent
+  `device/sdk-link/` first; until then both on and off answer `409`.
+- On: `200 {"enrolled": true, "msisdn": "977..."}`. With no number on the
+  registration: `400`. When the server requires proved numbers and this one has
+  not been proved by SMS (section 7.4): `403`.
+- Off: `200 {"enrolled": false, "removed": bool}`. The stored position is deleted.
+- The SDK's `RescueEnrollWorker` uses this route for a registered phone. It falls
+  back to `rescue-enroll/` only when the server answers `404` (an older server),
+  retries `409`, `408`, `429` and `5xx`, and stops on any other answer.
+- After `RESCUE_SHARED_KEY_ACCEPTED_UNTIL` (server setting; proposed
+  31 December 2026) `rescue-enroll/` answers
+  `410 {"detail": "Rescue sharing now needs the latest app. Please update it."}`.
+  The SDK treats `410` as final and does not retry.
+
+**Serving site** (`GET device/serving-site/`, signed). Query parameters, all
+optional: `network` (`LTE`, `NR`, `WCDMA`, `GSM`), `cell_id`, `tac`, `pci`,
+`psc`, `bcch`, `bsic`, `lat`, `lon`. Returns `{"site": null}` or
+`{"site": {"site_id", "site_name", "sector", "cell_name", "distance_m"}}`,
+matched as stored readings are: 4G by eNodeB ID, 2G/3G by LAC (TAC) and cell
+ID, else by PCI, scrambling code or BCCH/BSIC near the position. Nothing is
+stored. The reference app asks once per serving cell and waits 30 s after a
+failure. Before the answer, it shows the site and sector worked out on the
+phone from NTC's numbering (`model/NtcCellName.kt`).
+
 **Drive-test consent** (`POST drive-test-consent/`) with
 `{"device_id": "...", "consent": true}` returns `{"consent": true}`. It decides
 whether this phone's readings may appear in a staff drive-test session. It does
@@ -760,6 +794,15 @@ and service and the site photo screen stay in the reference app
 - A drive test records a fix every 2 seconds and drops fixes worse than 30 m.
 - Past drives stay on the phone. Deleting one there does not delete it on the server.
 - Error messages shown to the user are general. Details go to the device log.
+- SINR and CQI: many modems leave them blank in `getAllCellInfo()` but report
+  them in `getSignalStrength()` (seen on an Oppo CPH2569). Since 19 October
+  2026 the SDK fills a blank from the same SIM's `getSignalStrength()`
+  (Android 10 and later).
+- The upload queue (`SampleQueue.kt`) uses one lock per queue file shared by
+  every instance, keeps its line count instead of re-reading the file, trims
+  500 lines past the cap at a time, and reads a batch without loading the
+  whole file. The SDK's first unit tests cover it:
+  `:netplanning-telemetry-sdk:testReleaseUnitTest`.
 - iOS does not expose cell or signal figures to apps, so there is no iOS
   equivalent of the signal collection.
 
@@ -872,8 +915,8 @@ Apple developer account for signing, App Attest and push.
 |---|---|---|
 | Carrier-privileged status for the app | NTC, app team | Read the number from the SIM; read IMEI; measure call quality |
 | Play Integrity at registration | App team, with the Google Cloud project | A copied or modified app can register today. The server check exists and is switched off |
-| Sign all uploads with the device key | App team | The shared key is in the APK. Anyone who extracts it can post readings. The server can then set a date after which the key is refused |
-| Send SINR | App team | No live 4G reading carried it on 12 October 2026 |
+| Retire the shared key | App team, Puru | Registered phones sign every upload and rescue request. Unregistered phones still use the shared key, which is in the APK. The server refuses rescue enrolment with it after `RESCUE_SHARED_KEY_ACCEPTED_UNTIL`, and all uploads with it after `TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL` (not set; to be chosen from `manage.py shared_key_usage` on the live server) |
+| Send SINR | App team | Filled from the overall signal reading since 19 October 2026; check on more phone models |
 | Staff login in the app | App team, NTC identity team | "NTC employee" is a tick box. Site photos rest on registration, distance and admin review instead |
 | Firebase project owned by NTC | App team | Push for reading requests and location requests |
 | Public route to the device API | NTC network team | The live server is reachable only inside NTC or over VPN |
@@ -885,5 +928,5 @@ Apple developer account for signing, App Attest and push.
 ## 16. Who to ask
 
 Server, keys, and whether data is arriving: Puru. This document describes the
-server as of 13 October 2026. If something here disagrees with what the server
+server as of 24 October 2026. If something here disagrees with what the server
 returns, the server is right; please report the difference.

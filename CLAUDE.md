@@ -878,6 +878,15 @@ repo, not on prod):
   signed for registered phones, falls back on 404, stops on final answers;
   app's rescue dialog shows the registered number. Item 10
   (`TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL`) waits for `shared_key_usage` on prod.
+- **Documents brought up to date on 2026-10-24** for the work of 14-24
+  October, AI still left out: the four manuals ("Updated 24 October"
+  paragraph plus sections; Technical has new Problem Dashboard and Subscriber
+  Profile sections, security rows, deploy and config steps), management deck
+  (new slide `complaints`, now 17 slides), technical deck (new slide
+  `complaints-flow`, now 26), and the mobile handoff `.md`/`.docx` (signed
+  rescue consent, serving-site lookup, SINR fill-in, queue). Deck page numbers
+  are typed in each slide file; inserting a slide means renumbering the ones
+  after it.
 - **Session History "slow"** (same day): the 16-18 s seen in the browser
   came while containers were rebuilt and tests ran on the same 2-CPU
   Docker; the list itself answers in about 0.45 s (`sample_count` subquery
