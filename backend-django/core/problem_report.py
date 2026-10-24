@@ -456,6 +456,9 @@ def _row(report, user, with_check=False):
         'external_system': report.external_system,
         'external_ref': report.external_ref,
         'located_by': report.located_by,
+        # How the report is named on screens and as the profile's reference (2026-10-19).
+        'reference': f'{report.external_system} {report.external_ref}' if report.external_ref else f'PR-{report.pk}',
+        'has_number': bool((report.device_id and report.device.msisdn) or report.msisdn),
     }
     if user.role == 'superadmin':
         out['phone_number'] = (report.device.msisdn if report.device_id else None) or report.msisdn or None
@@ -525,6 +528,20 @@ class DeviceProblemReportView(APIView):
         return Response({'id': report.pk, 'stored': True}, status=201)
 
 
+def _search_q(q, user):
+    from .rescue import _clean_msisdn
+    from .subscriber_profile import number_variants
+    cond = Q(external_ref__icontains=q) | Q(note__icontains=q)
+    digits = q.upper().removeprefix('PR-').removeprefix('PR').strip()
+    if digits.isdigit() and len(digits) <= 9:
+        cond |= Q(pk=int(digits))
+    canonical = _clean_msisdn(q) if user.role == 'superadmin' else None
+    if canonical:
+        variants = number_variants(canonical)
+        cond |= Q(msisdn__in=variants) | Q(device__msisdn__in=variants)
+    return cond
+
+
 class ProblemReportListView(APIView):
     permission_classes = [IsAdminOrSuperadmin]
 
@@ -549,6 +566,12 @@ class ProblemReportListView(APIView):
         days = _int(request.query_params.get('days'), 1, 3650)
         if days:
             qs = qs.filter(happened_at__gte=timezone.now() - timedelta(days=days))
+        # Search (2026-10-19): a report number (PR-12 or 12), another
+        # system's ticket, words of the note, or (superadmin, who alone sees
+        # numbers) the customer's mobile number in any spelling.
+        q = (request.query_params.get('q') or '').strip()[:60]
+        if q:
+            qs = qs.filter(_search_q(q, request.user))
         return Response({'results': [_row(r, request.user) for r in qs[:500]]})
 
     def post(self, request):
@@ -564,9 +587,18 @@ class ProblemReportListView(APIView):
         happened_at = parse_datetime(str(data.get('happened_at') or '')) or timezone.now()
         if timezone.is_naive(happened_at):
             happened_at = timezone.make_aware(happened_at)
+        # The customer's mobile number (2026-10-19), optional; shown to
+        # superadmin only and links the report to the Subscriber Profile.
+        msisdn = ''
+        if str(data.get('msisdn') or '').strip():
+            from .rescue import _clean_msisdn
+            msisdn = _clean_msisdn(data.get('msisdn')) or ''
+            if not msisdn:
+                return Response({'detail': 'That is not a mobile number.'}, status=400)
         report = ProblemReport.objects.create(
             source=ProblemReport.SOURCE_STAFF, entered_by=request.user, category=category,
             note=str(data.get('note') or '')[:MAX_NOTE_CHARS], happened_at=happened_at, lat=lat, lng=lng,
+            msisdn=msisdn,
         )
         log_audit_event(request, 'problem_report_create', resource='problem_report', resource_id=str(report.pk),
                         detail=f'entered a {category} problem')

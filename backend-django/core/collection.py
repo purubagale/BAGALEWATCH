@@ -16,6 +16,7 @@ import hashlib
 import hmac
 from collections import Counter
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.db.models import F
@@ -92,6 +93,53 @@ def decrypted_identity(identity):
     }
 
 
+# Session names (2026-10-19): "<district> · <source> · <start>", set when a
+# session starts so sessions can be told apart and searched. The phone's
+# number is kept beside the name (superadmin sees it), never inside it.
+NEPAL_TZ = ZoneInfo('Asia/Kathmandu')
+NEAREST_SITE_KM = 20
+
+
+def session_number(device_hash):
+    """The number this phone is registered or linked to, or ''."""
+    from .models import DeviceCredential, SubscriberDevice
+    from django.db.models import Q
+    cred = (DeviceCredential.objects.filter(Q(device_hash=device_hash) | Q(sdk_device_hash=device_hash))
+            .exclude(msisdn__isnull=True).exclude(msisdn='').order_by('-created_at').values_list('msisdn', flat=True).first())
+    if cred:
+        return cred
+    return (SubscriberDevice.objects.filter(device_hash=device_hash, ended_at__isnull=True)
+            .order_by('-last_seen_at').values_list('msisdn', flat=True).first()) or ''
+
+
+def district_at(rows):
+    """District of the first reading's serving site, else of the site
+    nearest its position (within NEAREST_SITE_KM), else ''."""
+    from django.contrib.gis.db.models.functions import Distance
+    from django.contrib.gis.geos import Point
+    from django.contrib.gis.measure import D
+    from .models import Site
+    for r in rows:
+        if r.get('serving_site_id'):
+            district = Site.objects.filter(pk=r['serving_site_id']).values_list('district', flat=True).first()
+            if district:
+                return district
+    for r in rows:
+        if r.get('lat') is not None and r.get('lng') is not None:
+            point = Point(r['lng'], r['lat'], srid=4326)
+            district = (Site.objects.filter(location__distance_lte=(point, D(km=NEAREST_SITE_KM)))
+                        .exclude(district='').annotate(d=Distance('location', point)).order_by('d')
+                        .values_list('district', flat=True).first())
+            if district:
+                return district
+    return ''
+
+
+def session_name(source, district, started_at):
+    label = dict(CollectionSession.SOURCE_CHOICES).get(source, source)
+    return f'{district or "Unknown area"} · {label} · {timezone.localtime(started_at, NEPAL_TZ):%Y-%m-%d %H:%M}'
+
+
 def record_collection_sessions(rows):
     """Called by ingest after samples are stored. Groups the batch's drive
     samples by drive_session_id and bumps each session's count, creating the
@@ -119,7 +167,7 @@ def record_collection_sessions(rows):
             if user_type == DeviceIdentity.USER_EMPLOYEE
             else CollectionSession.SOURCE_CROWD_DRIVE
         )
-        session, _ = CollectionSession.objects.get_or_create(
+        session, created = CollectionSession.objects.get_or_create(
             drive_session_id=dsid,
             defaults={
                 'source': source,
@@ -128,9 +176,19 @@ def record_collection_sessions(rows):
                 'started_at': now,
             },
         )
+        extra = {}
+        if created or not session.district:
+            # Named at the start; the district is filled in by the first
+            # batch that carries a position or a serving site.
+            mine = [r for r in rows if r['device_id'] == device_hash and r.get('drive_session_id') == dsid]
+            district = district_at(mine)
+            extra = {'district': district, 'name': session_name(session.source, district, session.started_at)}
+            if created or not session.msisdn:
+                extra['msisdn'] = session_number(device_hash)
         CollectionSession.objects.filter(pk=session.pk).update(
             sample_count=F('sample_count') + n,
             last_sample_at=now,
+            **extra,
         )
     for device_hash, dsid in stops:
         CollectionSession.objects.filter(drive_session_id=dsid, ended_at__isnull=True).update(ended_at=now)
@@ -165,14 +223,17 @@ def ensure_trace_session(trace):
         CollectionSession.SOURCE_CASE if trace.kind == TraceRequest.KIND_CASE
         else CollectionSession.SOURCE_INVESTIGATION
     )
+    started = trace.consent_at or timezone.now()
     session, _ = CollectionSession.objects.get_or_create(
         trace=trace,
         defaults={
+            'name': session_name(source, '', started),
+            'msisdn': trace.msisdn or '',
             'source': source,
             'device_hash': trace.device.device_hash,
             'user_type': DeviceIdentity.objects.filter(device_hash=trace.device.device_hash)
                 .values_list('user_type', flat=True).first() or DeviceIdentity.USER_GENERAL,
-            'started_at': trace.consent_at or timezone.now(),
+            'started_at': started,
         },
     )
     return session
@@ -219,6 +280,19 @@ class CollectionSessionListView(APIView):
         source = (request.query_params.get('source') or '').strip()
         if source:
             qs = qs.filter(source=source)
+        # Search (2026-10-19): name or district words, or (superadmin, who
+        # alone sees numbers) the phone's number in any spelling.
+        q = (request.query_params.get('q') or '').strip()[:60]
+        is_super = getattr(request.user, 'role', '') == 'superadmin'
+        if q:
+            from django.db.models import Q
+            cond = Q(name__icontains=q) | Q(district__icontains=q)
+            if is_super:
+                from .rescue import _clean_msisdn
+                canonical = _clean_msisdn(q)
+                if canonical:
+                    cond |= Q(msisdn=canonical)
+            qs = qs.filter(cond)
         try:
             limit = max(1, min(int(request.query_params.get('limit', 50)), 200))
         except (TypeError, ValueError):
@@ -236,7 +310,11 @@ class CollectionSessionListView(APIView):
                 'started_at': s.started_at,
                 'last_sample_at': s.last_sample_at,
                 'ended_at': _inferred_ended_at(s),
+                'name': s.name or None,
+                'district': s.district or None,
             }
+            if is_super:
+                row['msisdn'] = s.msisdn or None
             if can_see_identity:
                 row['device_hash'] = s.device_hash or None
             rows.append(row)

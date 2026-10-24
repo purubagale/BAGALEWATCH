@@ -484,6 +484,15 @@ repo, not on prod):
   need a new export with that column. Sessions already stored have no
   `cell_id` until uploaded again. 2G/3G identity (LAC + cell ID, already
   in the site list from the RF Database) is not built.
+- **2G/3G AI rules use the serving site** (2026-10-13, asked by the
+  user, uncommitted with the AI work). After the user's RF Database
+  imports the local site list has BCCH/BSIC (13,960 2G sectors) and
+  scrambling codes (12,640 3G). `backfill_dt_serving_cells --session N`
+  was run on the stored 2G/3G sessions: the TEMS-log 2G sessions matched
+  (81 to 100% of readings); the Excel 2G/3G exports carry no cell
+  identity and stay unmatched. `_analyse_23g` now uses the serving site
+  where known (act-on site, "nearer site not serving", the two sites of
+  a ping-pong pair) and falls back to the nearest site otherwise.
 - **Operating band of phone readings** (2026-10-13, committed: dtwatch
   `ba796b3` pushed, mobile `17b952b`; not on prod). The app sends `arfcn` (channel number)
   and `band` (`getBands()` on Android 11+, else from the channel) with
@@ -535,6 +544,83 @@ repo, not on prod):
   assistant"), management deck slide 14 and technical deck slide 21,
   always marked planned with a dashed border. The documents still say
   "planned"; the prototype below is not in them yet.
+- **AI assistant prototype** (2026-10-12, built on this PC, NOT
+  committed, not on prod). Approved by the user stage by stage the same
+  day. Menu item "AI Assistant" (opaque route `/a8k3zd`), permission
+  `ai.assist` (admin and superadmin hold it; a superadmin can tick other
+  roles on the page). Migrations 0129-0133.
+  - **2G and 3G reviews and higher caps** (2026-10-13, asked by the
+    user). Caps raised to 120 findings and 30 per kind (were 40 and
+    12). 2G and 3G sessions are reviewed with the checks their logs
+    support: weak coverage near a site or in a gap, good level with poor
+    quality (RxQual on 2G, Ec/No on 3G), worse than an earlier drive,
+    and ping-pong between two BCCH/BSIC cells on 2G. The site directory
+    has no BCCH, BSIC or scrambling code, so a 2G/3G reading has no
+    serving site and findings name the nearest site of that technology.
+    Thresholds are in `PROFILES`; three new rulebook entries are seeded
+    by 0130. Seen on the user's uploads of 2026-10-13: the two long
+    Excel drives (Palpa, Gulmi) give 462 and 281 findings, mostly
+    ping-pong and far serving cell, which looks like rules too
+    sensitive for hill terrain or interleaved rows, not real faults;
+    and `good_level_poor_quality` fired with a single PCI seen, where
+    the model repeated the "several cells" cause anyway. Both need an
+    RF engineer's judgement before the limits are changed.
+  - `core/ai_findings.py` finds the problems in a 4G drive test with
+    plain rules (no model): weak coverage in three forms, far serving
+    cell, same PCI nearby, ping-pong handover, good signal with low
+    speed, worse than an earlier drive, and three that need the
+    neighbour reading (PCI mod-3, far neighbour, no dominant cell). It
+    sets severity and confidence and names the site to act on. Limits
+    are constants at the top, starting values for RF engineers to tune.
+  - `AiRule` is the RF rulebook (cause and action per kind, editable on
+    the page, `{name}` filled from the finding's facts). It is the main
+    quality lever: tested models gave wrong RF advice without it.
+  - `core/ai_assistant.py` sends one finding at a time to the model,
+    which only words it; `check_text` flags any number or site name not
+    in the facts. Engineers accept, edit or reject; "Pilot results" tab
+    counts the decisions. `core/ai_tools.py` holds seven read-only
+    look-ups for the "Ask" tab: the model picks one, the server runs it,
+    the model answers from that result. No look-up reads personal data.
+  - The worker is `run_ai_drafts` inside `run_maintenance`. Questions go
+    ahead of drafts. `AI_MODEL_URL` unset means no model call at all;
+    findings then carry the rulebook wording.
+  - Model: any OpenAI-compatible server. Here llama.cpp's server runs
+    natively on Windows (`D:\DevCache\llm\start-model.ps1`, port 8099,
+    bound to 127.0.0.1; binding to 0.0.0.0 is denied in auto mode) and
+    Docker reaches it as `host.docker.internal`. Docker on this PC has
+    only 4 GB, so the model cannot run inside it. Measured on this CPU:
+    Phi-4 14B about 160 s per finding and 11 GB, right on all test
+    findings; Qwen2.5 7B about 70 s and 7.5 GB, some wrong sites; 3B
+    models not usable. Server target from the user's earlier note
+    (`../dtwatch-local-llm/DESIGN.md`): a 27B model on a 24 GB GPU.
+  - Neighbour readings: a TEMS .trp has one LTE neighbour per record.
+    `DtUploadPage.tsx` now attaches the nearest one in time to each
+    reading (`earfcn`, `nbr_pci`, `nbr_earfcn`, `nbr_rsrp` on
+    `DriveTestSample`). Tested with a script that mirrors the page, not
+    through the page. Old sessions have none until re-uploaded. Local
+    test session "AI test: Chitwan 4G DL with neighbours" was made this
+    way from `../sample/0611101538.trp`.
+  - **Problem Dashboard drafts (phase 2, 2026-10-15)**: `core/ai_problems.py`,
+    `AiProblemDraft` (migration 0141, which also seeds nine rulebook
+    entries `problem_<cause>`), `components/ProblemAiDraft.tsx`. Kinds:
+    report (summary, cause, action, customer reply; in the report's
+    detail), hotspot ("AI" on a Hotspots row) and digest (period summary
+    for management on Overview, filed under `days:N`). Same terms as the
+    drive-test drafts: server facts, rule wording, `check_text` flags,
+    accept/edit/reject. The facts never hold the customer's number, the
+    phone, the linked system's name or ticket, or the customer's note.
+    Worker order in `run_ai_drafts`: questions, problem drafts, drive-test
+    drafts. Ask tab gained `site_problem_reports` and `problem_hotspots`.
+    `dashboard_data()` was split out of the dashboard view (committed
+    code) for the digest. Tested with Phi-4 here: a report draft took
+    206 s, no flags. All of `ProblemReportsPage.tsx`'s changes after
+    `5957ff5` are AI-only, so a non-AI commit leaves that file out.
+  - Decided by the user on 2026-10-12: the assistant is for NT engineers
+    only, with a staff-only pilot that runs on this PC until a live
+    server is planned for the local model; no subscriber-facing
+    assistant is planned now. If one is ever built it needs the subscriber's consent
+    and identity verified against the NTC billing system. Do not build
+    a subscriber lane without being asked.
 - **Telemetry sessions in DT Explore** (2026-10-12). `core/telemetry_near.py`
   (`/api/v2/telemetry/sessions-near/`), `TelemetryNearLayer.tsx`, and an
   "Include telemetry sessions" tick box in Explore, off by default and
@@ -577,6 +663,199 @@ repo, not on prod):
   use `-Xmx128m -XX:+UseSerialGC` on the wrapper JVM and
   `-Dorg.gradle.jvmargs="-Xmx640m -XX:+UseSerialGC"` with
   `-Pkotlin.compiler.execution.strategy=in-process`.
+
+- **Device features in the SDK, and the app version** (2026-10-16, mobile
+  `10f9e68`, committed, not pushed). Registration, key and signing, number
+  proof, speed test and problem report moved from the reference app into
+  the SDK's `device` package (`NetDevice`, `DeviceApi`, `SpeedTest`,
+  `NetProblem`); the SDK installs the upload signer itself. App version is
+  set once in `app/build.gradle.kts` (`appVersionName`, 1.1.0 = build
+  10100), shown in Settings, sent with registration and reports. An update
+  notice (latest/minimum version) was offered and deferred by the user.
+- **Flutter plugin `ntc_telemetry`** (2026-10-16, built, NOT committed, not
+  run on a phone). The Nepal Telecom customer app is Flutter (its APK
+  4.0.49 has `libflutter.so`); iOS was set aside by the user. Plugin in
+  `nepal-telemetry-project/flutter/ntc_telemetry`, Android only, carries the
+  SDK in `android/sdk-repo` (written by `:netplanning-telemetry-sdk:publish`,
+  which also writes `maven-repo/`). Example app = test screen for every call.
+  The plugin needs API 26; the NT app supports API 24.
+- **Android 7 and location permissions** (2026-10-16, NOT committed). SDK
+  and plugin `minSdk` 24 (the NT app's); `NetTelemetry.isSupported()` is
+  false below Android 8.0 and every feature is then off; the plugin answers
+  `unsupported`. The SDK now declares coarse location too, and the app asks
+  for fine and coarse together (Android 12+).
+- **Subscriber Profile, phones and signal history** (2026-10-16, built, NOT
+  committed, not seen in a browser). Phones card: one physical phone shows
+  as several ids (registration keys, the app install holding the readings,
+  an earlier install linked by hand); `_describe_phones` gives each a
+  `role`, a `phone_key` (hardware hash, else make and model) and marks an
+  older registration replaced by a newer one from the same phone; summary
+  line explains that Registered Devices lists registrations only.
+  `devices_of_number()` is shared by the profile and the new
+  `GET /api/v2/subscriber-profile/signal/` (newest 300, all up to 5000, one
+  session; tech filter; every measure, serving site; positions only in an
+  emergency; logged as `SUBSCRIBER_PROFILE.SIGNAL`).
+  `ProfileSignalHistory.tsx`: colour by level/RSRQ/SINR/CQI/network, hover
+  card, click or drag to pick, map of the picked readings (serving sites
+  when no emergency). "Who looked this number up" is collapsed by default.
+- **Subscriber Profile after UTS** (2026-10-16 to 18, built, NOT
+  committed, not seen in a browser; user's steps 1-4 after comparing with
+  NTC's ticketing system UTS). Step 1, `core/subscriber_analytics.py` (in
+  the profile answer as `analytics`, no positions): quality by network
+  (weak/fair/good from problem_report WEAK_DBM/GOOD_DBM), cells and sites
+  served (busiest 60, UTS "cell sites visited" with quality), daily trend
+  (90 days, Nepal time), time of day, level/RSRQ/SINR histograms, 4G bands
+  seen. `ProfileAnalytics.tsx` + `ProfileCharts.tsx` (plain SVG, hover
+  cards). Network colours re-picked with the dataviz validator (old 3G and
+  5G were indistinguishable): `--sp-net-*` tokens, `lib/netColors.ts`.
+  Step 2, off by default: `SecuritySettings.complaint_location_access`,
+  `_days` (7), `_hours` (3), migration 0138 (AI migrations moved to
+  0139-0144, local history renamed). `complaint_windows()`: exact positions
+  of readings within H hours of the number's problem reports of the last N
+  days, without an emergency; logged `SUBSCRIBER_PROFILE.COMPLAINT_LOCATION`
+  per report; Security page card with a confirm. Steps 3+4:
+  `core/provisioning.py`, `GET /api/v2/subscriber-profile/provisioning/`,
+  `PROVISIONING_*` in settings/.env.example (off, demo, http with URL,
+  headers, token and a field map; the UTS team's API is not known yet),
+  cached 5 min, IMEI masked, logged. `ProfileProvisioning.tsx`: provisioned
+  vs measured tiles, plain verdicts (4G not provisioned, not a USIM, VoLTE
+  off, band missing), NTC bands (GSM900/1800, WCDMA B1, B3, B20, n78)
+  against the phone's list and the bands seen. Local `.env` has
+  `PROVISIONING_BACKEND=demo`. Not done: the problem check using
+  provisioning ("4G not provisioned" as a cause).
+  After the user looked (2026-10-19): `.app-shell` has `overflow: hidden`
+  (an absolutely placed hidden label stretched the window past the
+  footer); the profile searches again when the emergency status (polled,
+  not logged) disagrees with it, since it is cached 30 min; the location
+  map falls back to `earlier_position`; signal history has a time axis
+  (adaptive ticks, line broken over gaps, no-service ticks) and ranges
+  day/week/month counted back from the newest reading. Decided by the
+  user: location history (cells and sites served, and UTS's cells
+  visited, `location_history` field) only while an emergency is declared;
+  counts always. Provisioning is now "OSS side details", one card at the
+  end of the profile opening a window (tabs: subscription, device and
+  bands, location history), asked only when opened. Per day and time of
+  day share one row.
+  Second look (2026-10-19, built, NOT committed): the analysis cards follow
+  the signal filter (`analytics` in the signal answer, `profile_analytics(qs=)`;
+  "newest" covers the span of those readings). Operator names from
+  `core/operators.py` (app: `model/Operators.kt`; keep in step). The location
+  card names the serving site and sector: stored, else matched now
+  (`core/serving_site_lookup.py`), else the newest reading that has one
+  ("Last attached site"). The other systems are two cards: BI (usage per
+  day, network split, location history in an emergency; `BI_FIELDS`,
+  `usage_daily`, `network_split`) and OSS & Core (provisioning, device and
+  bands); one source, one lookup.
+- **Phone SINR and serving site** (2026-10-19, built, NOT committed in
+  either repo). Why prod had no SINR: many modems leave RSSNR and CQI blank
+  in `getAllCellInfo()` but report them in `getSignalStrength()` (seen on the
+  Oppo CPH2569: cell list blank, overall 16 dB). `CellSampleCollector`
+  fills a blank from the same SIM's `getSignalStrength()` (Android 10+).
+  New signed `GET device/serving-site/` (site and sector of the serving
+  cell, same matching as stored readings, nothing stored); the app's Signal
+  screen shows a "Serving site" row once the server answers
+  (`ServingSiteLookup.kt`, once per cell, 30 s wait after a failure) and
+  "Nepal Telecom" instead of 429/01. Installed on the Oppo (release-signed
+  collector 1.1.0, upgraded in place; SINR 14 dB seen); both release APKs
+  on the Desktop. The phone's mobile data (APN `ntnet`) cannot reach prod
+  (172.16.41.201, ports 80/443 time out), so every server call from a phone
+  on mobile data fails there, the speed test included; not an app fault.
+- **Exact cell matching by identity** (2026-10-19, built, NOT committed).
+  NTC numbering, checked on the site list: eNodeB = region digit (1 KTM,
+  2 EDR, 3 CDR, 4 WDR, 5 MWDR, 6 FWDR) + site number, so 1856 is KTM856
+  (`site_of_enodeb`). `attach_serving_cells` now matches exactly, with or
+  without a position: 4G by eNodeB ID, else the site from the number plus
+  the local cell ID (`sectors_by_cell_identity`), else plus the PCI within
+  that site; 2G/3G by LAC + CI (the CI alone repeats in every region; 3G
+  uses CI & 0xFFFF of the phone's full cell ID). The site list holds some
+  4G sectors twice (site-list row with cell ID, engineering row with eNodeB
+  only): one sector name counts as one match. New command
+  `backfill_telemetry_serving_cells [--all] [--dry-run]` matched 730 of 793
+  unmatched local phone readings; **run it on prod after the deploy.** The
+  app sends `tac` to `device/serving-site/`.
+- **Session filter in the profile's signal history** (same day): its own
+  "Session" select; the Sessions card rows have "Show in signal history",
+  which sets it (and the analysis cards follow).
+- **App in the Nepal Telecom look** (same day, built, NOT committed):
+  light theme (`Theme.MaterialComponents.Light.NoActionBar`), NT blue
+  #1E4FA0 status bar, titles and buttons, gold #F2C21B accents, white cards
+  with a thin border. Taken from the NT app's own assets (blue mountain
+  banner, gold line icons, Myriad Pro); the NT app blocks screenshots, so
+  its screens were not seen. Installed on the Oppo. After the user's photos
+  of the NT app: deep blue #023A8E header band continuing the status bar,
+  title in gold capitals (`ScreenHeader` style, `clipToPadding=false` on
+  each screen), white-to-light-blue background (`bg_screen`), gold row
+  dividers (`bg_row_divider` on `CellRow`), solid blue square buttons.
+- **Site and sector on the phone without the server** (same day):
+  `model/NtcCellName.kt` reads them from the cell number. 4G: eNodeB rule,
+  local cell 1 J3, 2 K3, 3 L3, 4 J20, 5 K20, 6 L20, 7 M3, 8 N3 (99% of the
+  site list); 2G CI = 1 + site + sector digit (A, B, C...); 3G CI = 2 +
+  site + digit (P1, Q1, R1, P2, Q2, R2); region from the LAC's first two
+  digits (10 KTM, 11-13 EDR, 14-16 CDR, 17-19 WDR, 20-22 MWDR, 23-24 FWDR).
+  The Signal screen shows "KTM856 · J3" at once and the full site name once
+  the server answers. Seen on the Oppo.
+- **Committed 2026-10-19:** dtwatch `78d10ec` (everything above except the
+  AI work), mobile `bfd274d` (also the Flutter plugin and the Android 7
+  switch-off). Neither pushed.
+- **Sector analytics** (2026-10-19, after that commit; built, NOT
+  committed). `core/sector_stats.py`: readings per serving site + sector +
+  technology (share, weak/fair/good by the problem check's limits, average
+  level, RSRQ, SINR, CQI, download on drive tests, distance, first/last).
+  `GET dt-sessions/<id>/sectors/` (any signed-in user),
+  `collection-sessions/<id>/sectors/` (drive.view),
+  `telemetry/dt-sessions/<id>/sectors/` (admin; its readings come from
+  `telemetry_admin.session_samples_qs`, now shared with the plot). One web
+  component, `SectorBreakdown.tsx`, under the map on DT Session History,
+  Collections and Telemetry Drive Test, and as "Sector analysis" on the
+  Subscriber Profile, where sectors are location history: emergency only,
+  the count always, following the signal filter. A 140,000-reading drive
+  test takes about 3 s here.
+- **Profile, complaint and map follow-ups** (2026-10-19, built, NOT
+  committed). Profile: "Signal history" is now "Signal analytics"; its
+  Session filter always shows ("No sessions stored" when none); "Location
+  history" and "Sector analysis" merged into one card (sites chart and map,
+  the sector table with each sector's CI/PCI/TAC, and cells the site list
+  does not know). Problem Dashboard: staff entry takes the customer's mobile
+  (optional, `ProblemReport.msisdn`, superadmin sees it); `q` search on the
+  list (PR-12, id, ticket, note words; the number for superadmin only);
+  each report has a `reference`; the report is a UTS-style dashboard
+  (complaint details, diagnostics with "Open full diagnostics": likely
+  cause and measurements, nearest sites 1-10 km from
+  `core/problem_sites.py`, phone's reading, reply; status and note). The
+  number opens the Subscriber Profile with `reason=Complaint <ref>` and
+  `from=<report address>`; the profile shows "Back to the complaint" (only
+  a Problem Dashboard address is accepted). `ProblemReportsPage.tsx` now
+  mixes this with the AI draft line (`ProblemAiDraft` in CauseTab): a
+  non-AI commit must stage it by hunk. Site Topology: the search box takes
+  a position in any common format (`lib/parseLatLng.ts`: decimal, N/E
+  letters, DMS, degrees and decimal minutes, swapped order, Google Maps
+  links), flies there and marks it with the nearest site.
+- **Session names** (2026-10-19, built, NOT committed). `CollectionSession`
+  gained `name`, `msisdn`, `district` (migration 0139, which also names
+  existing sessions; AI migrations are now 0140-0145, local history
+  renamed). Set when a session starts in `record_collection_sessions`:
+  "<district> · <source> · <start, Nepal time>"; the district from the first
+  reading's serving site, else the nearest site within 20 km, filled in by
+  the first batch with a position. The number is stored beside the name,
+  never in it, and shown to superadmin only. Collections: Session column and
+  search (`q`: name, district, the number for superadmin). Profile: the
+  session picker lists named sessions and, for readings with no session tag
+  (app builds before share windows), "sharing periods" split at 30 minutes
+  of silence (`sharing_periods`, key `period:<from>|<to>`).
+- **Session History "slow"** (same day): the 16-18 s seen in the browser
+  came while containers were rebuilt and tests ran on the same 2-CPU
+  Docker; the list itself answers in about 0.45 s (`sample_count` subquery
+  over 918,000 readings).
+- **Flutter on this PC:** SDK at `D:\DevCache\flutter` (3.47.7), pub cache
+  `D:\DevCache\pub-cache`, Gradle home `D:\DevCache\gradle`. `flutter build
+  apk` fails here (the `&` in the path breaks `gradlew.bat`; a junction does
+  not help, Flutter resolves it). Build the example with
+  `"$JAVA_HOME/bin/java" -Xmx128m -classpath gradle/wrapper/gradle-wrapper.jar
+  org.gradle.wrapper.GradleWrapperMain --no-daemon assembleDebug` from
+  `example/android`. Java cannot download from GitHub release hosts here, so
+  a new Gradle version must be fetched with curl into
+  `D:\DevCache\gradle\wrapper\dists\<name>\<hash>\`. `flutter analyze` and
+  `flutter test` work normally.
 
 - **Collector edition of the app** (2026-10-14, built, not committed, not
   run on a phone). Product flavours `standard` and `collector` in

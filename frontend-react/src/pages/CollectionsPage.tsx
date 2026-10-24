@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -7,7 +7,8 @@ import FitToPoints from '../components/FitToPoints'
 import SitePhotoLayer from '../components/SitePhotoLayer'
 import { telemetryLevel } from '../lib/telemetryLevel'
 import { declusterForPlot } from '../lib/declusterPlot'
-import { useCollectionSessionSamples, useCollectionSessions } from '../api/queries'
+import { useCollectionSectors, useCollectionSessionSamples, useCollectionSessions } from '../api/queries'
+import SectorBreakdown from '../components/SectorBreakdown'
 import { CQI_COLUMN_HINT, CQI_MODULATION_HINT, cqiLabel, cqiModulationLabel } from '../lib/cqiDisplay'
 
 // Collections (2026-10-06, detail+plot added 2026-10-07): every drive and
@@ -37,10 +38,18 @@ function levelText(s: { network_type: string; rsrp_dbm: number | null; rscp_dbm?
 
 export default function CollectionsPage() {
   const [source, setSource] = useState('')
-  const { data, isLoading, error } = useCollectionSessions(source)
+  // Search by session name, district or (superadmin) the phone's number (2026-10-19).
+  const [typed, setTyped] = useState('')
+  const [q, setQ] = useState('')
+  useEffect(() => {
+    const t = window.setTimeout(() => setQ(typed.trim()), 400)
+    return () => window.clearTimeout(t)
+  }, [typed])
+  const { data, isLoading, error } = useCollectionSessions(source, q)
   const allRows = data?.results ?? []
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const samples = useCollectionSessionSamples(selectedId)
+  const sectors = useCollectionSectors(selectedId)
 
   // Filters beyond source (2026-10-07) -- client-side over the <=200 rows
   // the list endpoint already caps, same reasoning as the Telemetry Drive
@@ -95,6 +104,8 @@ export default function CollectionsPage() {
       </p>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+        <input type="search" value={typed} onChange={(e) => setTyped(e.target.value)}
+          placeholder="Search: district, session name or mobile number" style={{ flex: '1 1 260px' }} aria-label="Search sessions" />
         <label>
           Source{' '}
           <select value={source} onChange={(e) => setSource(e.target.value)}>
@@ -156,6 +167,7 @@ export default function CollectionsPage() {
         <table className="admin-table">
           <thead>
             <tr>
+              <th>Session</th>
               <th>Started</th>
               <th>Source</th>
               <th>User type</th>
@@ -173,6 +185,10 @@ export default function CollectionsPage() {
                 onClick={() => setSelectedId(row.id === selectedId ? null : row.id)}
                 style={{ cursor: 'pointer', background: row.id === selectedId ? 'var(--row-selected-bg, #eef4fc)' : undefined }}
               >
+                <td>
+                  <b>{row.name ?? '—'}</b>
+                  {row.msisdn && <div className="muted mono" style={{ fontSize: 11.5 }}>{row.msisdn}</div>}
+                </td>
                 <td>{new Date(row.started_at).toLocaleString()}</td>
                 <td>{SOURCE_LABEL[row.source] ?? row.source}</td>
                 <td>{row.user_type}</td>
@@ -251,6 +267,12 @@ export default function CollectionsPage() {
                   })}
                 </MapContainer>
               </div>
+              {/* Readings per serving sector of this drive (2026-10-19). */}
+              {sectors.data && sectors.data.total > 0 && (
+                <div className="report-card" style={{ marginBottom: 12 }}>
+                  <SectorBreakdown data={sectors.data} siteLink={(id) => `/sites/${encodeURIComponent(id)}`} />
+                </div>
+              )}
               <table className="admin-table">
                 <thead>
                   <tr>

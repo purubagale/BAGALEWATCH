@@ -2532,6 +2532,10 @@ export interface CollectionSessionRow {
   last_sample_at: string | null
   ended_at: string | null
   device_hash?: string | null
+  // Set when the session starts (2026-10-19); msisdn for superadmin only.
+  name?: string | null
+  district?: string | null
+  msisdn?: string | null
 }
 
 // One row's route plot (2026-10-07) -- core/collection.py's
@@ -2770,6 +2774,15 @@ export interface ProblemCheck {
   customer_reply: string
 }
 
+// The sites around a problem report (2026-10-19), core/problem_sites.py.
+export interface ProblemNearbySites {
+  radius_km: number; radii_km: number[]; center: { lat: number; lng: number }; serving_site_id: string | null
+  sites: {
+    site_id: string; name: string | null; district: string | null; lat: number; lng: number
+    distance_m: number; bearing_deg: number; techs: string[]; sectors: number; status: string | null; serving: boolean
+  }[]
+}
+
 export interface ProblemReport {
   id: number
   source: 'app' | 'staff' | 'external'
@@ -2811,6 +2824,9 @@ export interface ProblemReport {
   external_ref: string
   // 'site' or 'cell': the other system named only the site or cell.
   located_by: '' | 'point' | 'site' | 'cell'
+  // Name on screens and the Subscriber Profile reference; whether a number is held (2026-10-19).
+  reference?: string
+  has_number?: boolean
   // Superadmin only.
   phone_number?: string | null
   check?: ProblemCheck
@@ -2836,6 +2852,10 @@ export interface SecuritySettings {
   // Superadmin only: extra recipients, comma separated.
   alert_extra_emails?: string
   alert_extra_numbers?: string
+  // Exact positions for the customer's own complaint (2026-10-16, off by default).
+  complaint_location_access: boolean
+  complaint_location_days?: number
+  complaint_location_hours?: number
   // Superadmin only: what .env has set (no secret values).
   status?: {
     alerts: {
@@ -2854,6 +2874,8 @@ export interface SecuritySettings {
       method: string
       verification_available: boolean
     }
+    // Provisioning from NTC's ticketing system (2026-10-16).
+    provisioning?: { backend: string; configured: boolean; address_host: string | null }
     session_login: boolean
     rate_limits: { signed_in: string | null; before_sign_in: string | null; linked_systems: string | null }
     linked_system_hosts: string[]
@@ -3075,6 +3097,134 @@ export interface SubscriberProfileDevice {
   readings: number
   first_reading: string | null
   last_reading: string | null
+  // What this id is, and which ids are one phone (2026-10-16).
+  role: 'registration' | 'app_install' | 'earlier_install' | 'rescue' | 'identity'
+  phone_key: string
+  replaced_at: string | null
+}
+
+// One reading in the profile's signal history (2026-10-16). Position only
+// while an emergency is declared; has_position says whether one is stored.
+export interface SubscriberSignalPoint {
+  ts: string
+  device_id: string
+  network_type: string
+  level_dbm: number | null
+  rsrq_db: number | null
+  sinr_db: number | null
+  cqi: number | null
+  cqi_source: string | null
+  ecio_db: number | null
+  rx_qual: number | null
+  pci: number | null
+  cell_id: number | null
+  tac: number | null
+  band_label: string | null
+  trigger_reason: string
+  serving_site_id: string | null
+  serving_sector: string | null
+  serving_dist_km: number | null
+  has_position: boolean
+  lat: number | null
+  lng: number | null
+  gps_accuracy_m: number | null
+  complaint_report_id: number | null
+}
+
+// The profile's analysis block (2026-10-16, core/subscriber_analytics.py).
+// No exact positions: cells and sites are masts.
+// Readings per serving sector (2026-10-19), core/sector_stats.py.
+export interface SectorStat {
+  site_id: string; site_name: string | null; district: string | null; sector: string | null
+  cell_name: string | null; cell_id: number | null; pci: number | null; tac: number | null
+  network_type: string; tech: string; band_label: string | null
+  readings: number; share_pct: number | null; weak: number; fair: number; good: number; no_level: number
+  level_avg: number | null; rsrq_avg: number | null; sinr_avg: number | null; cqi_avg: number | null
+  dl_avg: number | null; dist_km_avg: number | null; first: string | null; last: string | null
+}
+
+export interface SectorBreakdownData {
+  sectors: SectorStat[]; total: number; matched: number; unmatched: number; capped: boolean
+}
+
+export interface SubscriberAnalytics {
+  networks: {
+    network_type: string; readings: number; weak: number; fair: number; good: number; no_level: number
+    level_avg: number | null; rsrq_avg: number | null; sinr_avg: number | null
+  }[]
+  cells: {
+    network_type: string; cell_id: number | null; pci: number | null; tac: number | null
+    site_id: string | null; sector: string | null; cell_name: string | null; site_name: string | null
+    district: string | null; band_label: string | null; readings: number; weak: number
+    level_avg: number | null; rsrq_avg: number | null; sinr_avg: number | null; dist_km_avg: number | null
+    first: string; last: string
+  }[]
+  sites: {
+    site_id: string; readings: number; weak: number; level_avg: number | null
+    name: string | null; district: string | null; lat: number | null; lng: number | null
+  }[]
+  daily: { day: string; by_network: Record<string, number>; readings: number; weak: number; level_avg: number | null }[]
+  hours: { hour: number; readings: number; weak: number; level_avg: number | null }[]
+  histograms: {
+    level: Record<'4G' | '3G' | '2G', { from: number; to: number; readings: number }[]>
+    rsrq: { from: number; to: number; readings: number }[]
+    sinr: { from: number; to: number; readings: number }[]
+  }
+  bands: { network_type: string; band_label: string; readings: number; weak: number; level_avg: number | null }[]
+  limits: { weak_dbm: Record<string, number>; good_dbm: Record<string, number> }
+  cells_capped: boolean
+  // Per serving sector (2026-10-19): emergency only, the count always.
+  sectors?: SectorStat[]
+  sectors_count?: number
+  sectors_unmatched?: number
+  // Location history (cells, sites) only in an emergency (2026-10-19); counts always.
+  location_shown?: boolean
+  cells_count?: number
+  sites_count?: number
+}
+
+// What the network provisioned, from NTC's ticketing system (2026-10-16,
+// core/provisioning.py). Null fields: the source did not say.
+export interface NtcBand { token: string; tech: string; label: string; use: string; supported?: boolean | null }
+export interface SubscriberProvisioning {
+  enabled: boolean
+  error: string | null
+  ntc_bands: NtcBand[]
+  // The OSS location history is given only while an emergency is declared.
+  location_shown?: boolean
+  data: {
+    source: 'uts' | 'demo'
+    subscriber_name: string | null; billing_type: string | null; status: string | null
+    lte_provisioned: boolean | null; volte_provisioned: boolean | null; sim_type: string | null; usim: boolean | null
+    roaming: boolean | null; plan_name: string | null; data_used_gb: number | null; data_total_gb: number | null
+    device_brand: string | null; device_model: string | null; imei: string | null
+    supported_bands: string[]; ntc_bands: NtcBand[]
+    location_history: Record<string, string | number | boolean | null>[] | null
+    // BI system (2026-10-19): daily usage and the network split.
+    usage_daily?: { day: string; data_mb: number | null; voice_min: number | null; sms: number | null }[]
+    network_split?: Record<string, number>
+  } | null
+}
+
+// A stretch of time whose exact positions are shown for the customer's own
+// problem report (2026-10-16, off unless switched on in Security).
+export interface ComplaintWindow { report_id: number; from: string; to: string }
+
+export interface SubscriberSignal {
+  complaint_windows: ComplaintWindow[]
+  range: string
+  tech: string | null
+  session: string | null
+  session_label: string | null
+  total: number
+  shown: number
+  limited: boolean
+  positions_shown: boolean
+  points: SubscriberSignalPoint[]
+  sites: Record<string, { name: string | null; lat: number | null; lng: number | null }>
+  sessions: { key: string; label: string; readings: number | null }[]
+  // The analysis cards for the same selection (2026-10-19).
+  analytics?: SubscriberAnalytics | null
 }
 
 export interface SubscriberProfile {
@@ -3083,6 +3233,7 @@ export interface SubscriberProfile {
   emergency_declared: boolean
   summary: {
     devices: number
+    phones?: number
     registered: boolean
     unproven_claims?: number
     first_registered_at: string | null
@@ -3101,6 +3252,9 @@ export interface SubscriberProfile {
     // or not in the record; then the newest reading that has one.
     position_withheld?: boolean
     earlier_position?: { ts: string | null; lat: number; lng: number; gps_accuracy_m: number | null }
+    // Why a position is shown (2026-10-16): an emergency, or the customer's own complaint.
+    position_basis?: 'emergency' | 'complaint' | null
+    complaint_report_id?: number | null
     network_type?: string
     band_mhz?: number | null
     cell_id?: number | null
@@ -3112,6 +3266,10 @@ export interface SubscriberProfile {
     serving_cell_name?: string | null
     serving_dist_km?: number | null
     serving_sector?: string | null
+    // Matched when the profile was opened, or taken from an earlier reading (2026-10-19).
+    serving_site_basis?: 'matched_now' | 'earlier'
+    serving_site_ts?: string | null
+    operator?: string | null
     device_id?: string
     rsrq_db?: number | null
     sinr_db?: number | null
@@ -3133,8 +3291,10 @@ export interface SubscriberProfile {
   } | null
   // Newest readings, oldest first, for the signal chart (no positions).
   signal_series: { ts: string | null; network_type: string; level_dbm: number | null; rsrq_db: number | null; sinr_db: number | null }[]
+  analytics?: SubscriberAnalytics | null
+  complaint_windows?: ComplaintWindow[]
   devices: SubscriberProfileDevice[]
-  collections: { id: string; source: string; device_id: string; samples: number; started_at: string | null; last_sample_at: string | null; ended_at: string | null }[]
+  collections: { id: string; source: string; device_id: string; samples: number; started_at: string | null; last_sample_at: string | null; ended_at: string | null; name?: string | null; district?: string | null }[]
   drive_test_sessions: { id: number; name: string; status: string; started_at: string | null; ended_at: string | null; devices: number }[]
   trace_requests: { id: string; kind: string; status: string; case_reference: string; requested_by: string | null; created_at: string | null; ended_at: string | null; positions: number }[]
   speed_tests: { ts: string | null; device_id: string; bearer: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; jitter_ms: number | null; packet_loss_pct: number | null; network_type: string; rsrp_dbm: number | null }[]

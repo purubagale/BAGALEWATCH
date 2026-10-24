@@ -279,6 +279,10 @@ textarea:focus {
 .app-shell {
   display: flex;
   height: 100vh;
+  /* Nothing inside may stretch the window itself (2026-10-19): an
+     absolutely placed element with no positioned parent once pushed the
+     page past the footer, leaving a blank band under it. */
+  overflow: hidden;
 }
 
 /* ── Sidebar ───────────────────────────────────────────────────────── */
@@ -3957,6 +3961,10 @@ textarea:focus {
   --sp-cyan: #22d3ee; --sp-cyan-soft: rgba(34, 211, 238, 0.12); --sp-indigo: #818cf8; --sp-indigo-soft: rgba(129, 140, 248, 0.14);
   --sp-green: #34d399; --sp-green-soft: rgba(52, 211, 153, 0.13); --sp-amber: #fbbf24; --sp-amber-soft: rgba(251, 191, 36, 0.13);
   --sp-rose: #fb7185; --sp-rose-soft: rgba(251, 113, 133, 0.13);
+  /* Network colours (2026-10-16), checked with the palette validator on this
+     surface (all pairs; 4G/5G in the 6-8 colour-blind band, so every chart
+     with them carries a legend). */
+  --sp-net-4g: #0aa0bd; --sp-net-3g: #7f7cec; --sp-net-2g: #c4860f; --sp-net-5g: #df5b9c; --sp-net-none: #64748b;
   --sp-sans: 'Plus Jakarta Sans', 'Segoe UI', system-ui, sans-serif;
   --sp-head: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
   --sp-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
@@ -3970,6 +3978,7 @@ textarea:focus {
   --sp-cyan: #0891b2; --sp-cyan-soft: rgba(8, 145, 178, 0.10); --sp-indigo: #4f46e5; --sp-indigo-soft: rgba(79, 70, 229, 0.10);
   --sp-green: #059669; --sp-green-soft: rgba(5, 150, 105, 0.10); --sp-amber: #b45309; --sp-amber-soft: rgba(180, 83, 9, 0.10);
   --sp-rose: #e11d48; --sp-rose-soft: rgba(225, 29, 72, 0.08);
+  --sp-net-4g: #0891b2; --sp-net-3g: #4f46e5; --sp-net-2g: #d97706; --sp-net-5g: #db2777; --sp-net-none: #94a3b8;
 }
 .sp-page a { color: var(--sp-cyan); text-decoration: none; }
 .sp-page a:hover { text-decoration: underline; }
@@ -4074,7 +4083,7 @@ textarea:focus {
    spacing everywhere, small cards for empty sections, 10-row pages, charts
    and the serving-site map. These rules come last and win over the ones
    above. */
-.sp-page { padding: 14px 18px 32px; }
+.sp-page { padding: 14px 18px 32px; position: relative; }
 .sp-hero-body { padding: 12px 16px; gap: 14px; align-items: center; }
 .sp-hero-title { flex: 0 1 300px; }
 .sp-title { font-size: 21px; margin: 2px 0 2px; }
@@ -4486,3 +4495,207 @@ tr[hidden] { display: none !important; }
   text-align: left; }
 .sp-linkbtn:hover:not(:disabled) { text-decoration: underline; }
 .sp-linkbtn:disabled { opacity: 0.5; cursor: default; }
+
+/* Phones card roles (2026-10-16): a registration replaced by a newer one. */
+.sp-device-old { opacity: 0.72; }
+.sp-device-replaced { font-size: 11.5px; color: var(--sp-amber); margin: 2px 0 4px; }
+
+/* Signal history (2026-10-16, ProfileSignalHistory.tsx): chart with a hover
+   card and range pick on the left, map of the picked readings on the right. */
+.sp-sh-controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 8px; font-size: 12.5px; }
+.sp-sh-controls select { margin-left: 4px; padding: 3px 6px; border-radius: 8px; border: 1px solid var(--sp-border-2);
+  background: var(--sp-card-2); color: var(--sp-text); font-size: 12.5px; max-width: 260px; }
+.sp-sh-pills { display: inline-flex; border: 1px solid var(--sp-border-2); border-radius: 999px; overflow: hidden; }
+.sp-sh-pills button { border: 0; background: transparent; color: var(--sp-muted); padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.sp-sh-pills button + button { border-left: 1px solid var(--sp-border-2); }
+.sp-sh-pills button.on { background: var(--sp-cyan-soft); color: var(--sp-cyan); font-weight: 600; }
+.sp-sh-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr); gap: 14px; align-items: start; }
+@media (max-width: 900px) { .sp-sh-grid { grid-template-columns: 1fr; } }
+.sp-sh-svg { cursor: crosshair; user-select: none; }
+.sp-sh-range { fill: var(--sp-cyan-soft); stroke: var(--sp-cyan); stroke-width: 0.6; }
+.sp-sh-complaint { fill: var(--sp-amber-soft); }
+.sp-sh-noservice { stroke: var(--sp-faint); stroke-width: 1.4; }
+.sp-legend i.sp-sh-noservice-key { width: 2px; background: var(--sp-faint); }
+.sp-sh-cursor { stroke: var(--sp-faint); stroke-width: 0.8; stroke-dasharray: 3 3; }
+.sp-sh-focus { fill: none; stroke: var(--sp-text); stroke-width: 2; }
+.sp-sh-info { margin-top: 6px; min-height: 64px; padding: 6px 10px; border-radius: 10px; background: var(--sp-card-2);
+  border: 1px solid var(--sp-border); font-size: 12px; line-height: 1.55; font-family: var(--sp-mono); }
+.sp-sh-info-head { font-family: var(--sp-sans); font-weight: 600; }
+.sp-sh-side { display: flex; flex-direction: column; gap: 6px; }
+.sp-sh-map { height: 260px; border-radius: 10px; overflow: hidden; border: 1px solid var(--sp-border); }
+.sp-sh-mapnote { font-size: 11.5px; }
+
+/* Profile analysis cards and their charts (2026-10-16, ProfileAnalytics.tsx,
+   ProfileCharts.tsx). */
+.spc-wrap { position: relative; }
+.spc-tip { position: absolute; top: 4px; pointer-events: none; z-index: 5; background: var(--sp-card); color: var(--sp-text);
+  border: 1px solid var(--sp-border-2); border-radius: 8px; padding: 6px 9px; font-size: 11.5px; line-height: 1.5;
+  box-shadow: 0 6px 18px rgba(2, 6, 23, 0.25); white-space: nowrap; }
+.spc-tip-head { font-weight: 600; }
+.spc-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.spc-tile { border: 1px solid var(--sp-border); border-radius: 10px; padding: 8px 10px; background: var(--sp-card-2);
+  display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.spc-tile > span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sp-muted); }
+.spc-tile > b { font-family: var(--sp-head); font-size: 22px; line-height: 1.1; }
+.spc-tile > b.spc-small { font-size: 13.5px; font-family: var(--sp-sans); }
+.spc-tile small { color: var(--sp-faint); font-size: 11px; }
+.spc-meter { height: 5px; border-radius: 4px; background: var(--sp-border); overflow: hidden; }
+.spc-meter i { display: block; height: 100%; border-radius: 4px; }
+.spc-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.spc-chips em { font-style: normal; font-size: 11.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--sp-border-2);
+  font-family: var(--sp-mono); }
+.spc-quality { display: flex; flex-direction: column; gap: 10px; }
+.spc-quality-head { display: flex; align-items: center; gap: 6px; font-size: 12.5px; flex-wrap: wrap; margin-bottom: 4px; }
+.spc-quality-head > i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.spc-quality-avg { margin-left: auto; font-size: 11.5px; }
+.spc-share { display: flex; gap: 2px; height: 12px; border-radius: 4px; overflow: hidden; }
+.spc-share i { display: block; height: 100%; }
+.spc-foot { font-size: 11.5px; margin-top: 6px; }
+.spc-minis { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.spc-mini-title { font-size: 12.5px; font-weight: 600; margin-bottom: 2px; }
+.spc-hbars { display: flex; flex-direction: column; gap: 5px; margin: 4px 0 6px; }
+.spc-hbar { display: grid; grid-template-columns: minmax(110px, 1.2fr) 2fr auto; gap: 8px; align-items: center; font-size: 12px; }
+.spc-hbar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spc-hbar-track { height: 9px; border-radius: 4px; background: var(--sp-border); overflow: hidden; }
+.spc-hbar-track i { display: block; height: 100%; border-radius: 4px; }
+.spc-hbar-val { font-size: 11.5px; white-space: nowrap; }
+.spc-sites { display: grid; grid-template-columns: minmax(0, 3fr) minmax(240px, 2fr); gap: 14px; align-items: start; }
+@media (max-width: 900px) { .spc-sites { grid-template-columns: 1fr; } }
+.spc-sites-map { height: 250px; border-radius: 10px; overflow: hidden; border: 1px solid var(--sp-border); }
+.spc-sort { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-transform: inherit; letter-spacing: inherit; }
+.spc-sort.on { color: var(--sp-cyan); }
+.spc-net { display: inline-flex; align-items: center; gap: 5px; }
+.spc-net i, .spc-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 5px; vertical-align: middle; }
+.spc-net i { margin-right: 0; border-radius: 3px; }
+.spc-cellbar { height: 4px; width: 60px; border-radius: 3px; background: var(--sp-border); overflow: hidden; margin-bottom: 2px; }
+.spc-cellbar i { display: block; height: 100%; background: var(--sp-cyan); border-radius: 3px; }
+
+/* Provisioned and measured (2026-10-16, ProfileProvisioning.tsx). Verdicts
+   carry an icon and a hidden word, never colour alone. */
+.spc-verdicts { display: flex; flex-direction: column; gap: 6px; }
+.spc-verdict { position: relative; display: flex; gap: 8px; align-items: flex-start; padding: 7px 10px; border-radius: 10px; font-size: 12.5px;
+  border: 1px solid var(--sp-border); background: var(--sp-card-2); }
+.spc-verdict.bad { border-color: var(--sp-rose); background: var(--sp-rose-soft); }
+.spc-verdict.warn { border-color: var(--sp-amber); background: var(--sp-amber-soft); }
+.spc-verdict.ok { border-color: var(--sp-green); background: var(--sp-green-soft); }
+.spc-bands { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.spc-band { border: 1px solid var(--sp-border); border-radius: 10px; padding: 7px 10px; display: flex; flex-direction: column; gap: 3px; }
+.spc-band.yes { border-color: var(--sp-green); }
+.spc-band.no { border-color: var(--sp-rose); background: var(--sp-rose-soft); }
+.spc-band-top { display: flex; justify-content: space-between; gap: 6px; font-size: 12.5px; }
+.spc-band-top em { font-style: normal; font-size: 11px; }
+.spc-band small { color: var(--sp-faint); font-size: 11px; }
+.spc-allbands { margin-top: 8px; font-size: 12px; }
+.spc-allbands summary { cursor: pointer; color: var(--sp-cyan); margin-bottom: 6px; }
+/* Two small charts side by side (2026-10-19). */
+.spc-two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .spc-two { grid-template-columns: 1fr; } }
+
+/* OSS side details window (2026-10-19). */
+.spo-backdrop { position: fixed; inset: 0; z-index: 2000; background: rgba(2, 6, 23, 0.55); display: flex;
+  align-items: flex-start; justify-content: center; padding: 3vh 16px; overflow: auto; }
+.spo-modal.sp-page { min-height: 0; width: min(1180px, 100%); padding: 0; border-radius: 16px; border: 1px solid var(--sp-border);
+  background: var(--sp-bg); box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45); overflow: hidden; }
+.spo-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--sp-border);
+  background: var(--sp-card); }
+.spo-title { font-family: var(--sp-head); font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+.spo-head-actions { margin-left: auto; display: flex; gap: 8px; }
+.spo-tabs { display: flex; gap: 2px; padding: 0 18px; border-bottom: 1px solid var(--sp-border); background: var(--sp-card); overflow-x: auto; }
+.spo-tabs button { border: 0; background: none; color: var(--sp-muted); padding: 10px 14px; font-size: 13px; cursor: pointer;
+  border-bottom: 2px solid transparent; white-space: nowrap; }
+.spo-tabs button.on { color: var(--sp-cyan); border-bottom-color: var(--sp-cyan); font-weight: 600; }
+.spo-body { padding: 16px 18px 20px; max-height: 76vh; overflow: auto; }
+.spo-body .spc-tiles { margin-bottom: 12px; }
+
+/* BI and OSS & Core as two launch cards side by side (2026-10-19). */
+.sp-btn.sp-btn-xs { padding: 3px 8px; font-size: 11.5px; white-space: nowrap; }
+.spo-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.spo-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 18px 20px; }
+.spo-card-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; font-size: 20px;
+  background: color-mix(in srgb, var(--sp-cyan) 14%, transparent); }
+.spo-card-title { font-family: var(--sp-head); font-weight: 700; font-size: 14.5px; }
+.spo-card p { margin: 0 0 6px; font-size: 12.5px; max-width: 46ch; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
+
+/* Readings per serving sector (2026-10-19, SectorBreakdown.tsx). Uses the
+   surrounding text colour, so it sits on the profile's console look and on
+   the ordinary pages alike. */
+.secb { font-size: 13px; }
+.secb-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 8px; }
+.secb-muted { opacity: 0.68; }
+.secb-small { font-size: 11.5px; }
+.secb-legend { display: inline-flex; flex-wrap: wrap; gap: 10px; margin-left: auto; font-size: 11.5px; }
+.secb-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.secb-note { padding: 6px 10px; margin-bottom: 8px; border-left: 3px solid #dc2626; background: rgba(220, 38, 38, 0.08); border-radius: 4px; }
+.secb-scroll { overflow-x: auto; }
+.secb-table { width: 100%; border-collapse: collapse; }
+.secb-table th, .secb-table td { padding: 6px 8px; border-bottom: 1px solid rgba(127, 127, 127, 0.22); text-align: left; vertical-align: middle; white-space: nowrap; }
+.secb-table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.75; font-weight: 600; }
+.secb-num { font-variant-numeric: tabular-nums; }
+.secb-sort { all: unset; cursor: pointer; }
+.secb-sort.on { text-decoration: underline; }
+.secb-share { height: 4px; width: 90px; background: rgba(127, 127, 127, 0.18); border-radius: 2px; margin-bottom: 3px; }
+.secb-share i { display: block; height: 100%; background: #0891b2; border-radius: 2px; }
+.secb-qbar { display: flex; width: 110px; height: 9px; border-radius: 3px; overflow: hidden; background: rgba(127, 127, 127, 0.18); margin-bottom: 2px; }
+.secb-qbar i { display: block; height: 100%; }
+.secb-more { margin-top: 8px; background: none; border: 1px solid rgba(127, 127, 127, 0.4); border-radius: 6px; padding: 4px 10px; cursor: pointer; color: inherit; font-size: 12px; }
+
+/* One complaint as a dashboard (2026-10-19, ProblemReportsPage ReportDetail),
+   after NTC's ticketing system: details, diagnostics, status. */
+.pd-search input { min-width: 280px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border, #cbd5e1); }
+.pd-row-ref { font-size: 11.5px; font-family: ui-monospace, monospace; }
+.pdd-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
+.pdd-head h2 { margin: 0 0 4px; }
+.pdd-ref { font-size: 13px; font-weight: 500; font-family: ui-monospace, monospace; color: var(--brand, #0153a5); margin-left: 6px; }
+.pdd-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; }
+.pdd-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border, #cbd5e1); font-size: 12px; background: var(--surface, #fff); }
+.pdd-status-new { border-color: #f59e0b; color: #b45309; }
+.pdd-status-checked { border-color: #0ea5e9; color: #0369a1; }
+.pdd-status-closed { border-color: #16a34a; color: #15803d; }
+.pdd-chip-blue { border-color: #2563eb; color: #1d4ed8; }
+.pdd-chip-green { border-color: #16a34a; color: #15803d; }
+.pdd-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 0.9fr); gap: 12px; align-items: start; }
+@media (max-width: 1200px) { .pdd-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+@media (max-width: 760px) { .pdd-grid { grid-template-columns: minmax(0, 1fr); } }
+.pdd-card { border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; background: var(--surface, #fff); }
+.pdd-card h3 { margin: 0 0 10px; font-size: 14px; color: var(--brand, #0153a5); }
+.pdd-kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 7px 12px; margin: 0; font-size: 13px; }
+.pdd-kv dt { color: var(--muted, #64748b); font-size: 12px; }
+.pdd-kv dd { margin: 0; overflow-wrap: anywhere; }
+.pdd-link { margin-left: 8px; font-size: 12.5px; font-weight: 600; }
+.pd-copy { border: 0; background: none; cursor: pointer; color: var(--muted, #64748b); padding: 0 2px; font-size: 13px; }
+.pdd-diag { display: flex; flex-direction: column; gap: 8px; }
+.pdd-main-finding p { margin: 4px 0; font-size: 13px; }
+.pdd-small { font-size: 12px; }
+.pdd-map { height: 220px !important; }
+.pdd-backdrop { position: fixed; inset: 0; z-index: 2000; background: rgba(2, 6, 23, 0.5); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.pdd-modal { width: min(1280px, 100%); max-height: 92vh; display: flex; flex-direction: column; background: var(--surface, #fff); border-radius: 14px; overflow: hidden; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3); }
+.pdd-modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border, #e2e8f0); }
+.pdd-modal-body { display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: 0; flex: 1; }
+@media (max-width: 760px) { .pdd-modal-body { grid-template-columns: minmax(0, 1fr); } }
+.pdd-tabs { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-right: 1px solid var(--border, #e2e8f0); }
+.pdd-tabs button, .pdd-tab-link { text-align: left; border: 1px solid transparent; background: none; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; color: inherit; }
+.pdd-tabs button.on { border-color: var(--border, #e2e8f0); background: var(--surface-2, #f1f5f9); font-weight: 600; }
+.pdd-tab-link { margin-top: 8px; color: var(--brand, #0153a5); font-weight: 600; }
+.pdd-tab-body { padding: 14px 16px; overflow: auto; }
+.pdd-sites-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-bottom: 10px; font-size: 12.5px; }
+.pdd-pill { border: 1px solid var(--border, #cbd5e1); background: none; border-radius: 999px; padding: 3px 10px; cursor: pointer; font-size: 12px; color: inherit; }
+.pdd-pill.on { background: var(--brand, #0153a5); border-color: var(--brand, #0153a5); color: #fff; }
+.pdd-filter { margin-left: auto; padding: 5px 9px; border-radius: 8px; border: 1px solid var(--border, #cbd5e1); }
+.pdd-sites { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr); gap: 12px; }
+@media (max-width: 900px) { .pdd-sites { grid-template-columns: minmax(0, 1fr); } }
+.pdd-sites-map { height: 460px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border, #e2e8f0); }
+.pdd-sites-list { max-height: 460px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.pdd-site { text-align: left; border: 1px solid var(--border, #e2e8f0); background: var(--surface, #fff); border-radius: 10px; padding: 8px 10px; cursor: pointer; color: inherit; }
+.pdd-site.on { border-color: var(--brand, #0153a5); box-shadow: inset 3px 0 0 var(--brand, #0153a5); }
+.pdd-site-top { display: flex; align-items: center; gap: 6px; }
+.pdd-dist { margin-left: auto; font-weight: 600; color: #0891b2; font-variant-numeric: tabular-nums; }
+.pdd-techs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
+.pdd-techs span:not(.muted) { border: 1px solid; border-radius: 4px; padding: 0 5px; font-size: 11px; font-weight: 600; }
+.pdd-site-label { font-size: 10.5px; padding: 1px 4px; }
+
+/* Profile opened from a complaint (2026-10-19): the way back. */
+.sp-from-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; padding: 8px 12px; border-radius: 10px;
+  border: 1px solid var(--sp-border, rgba(127,127,127,.3)); background: var(--sp-card, transparent); font-size: 13px; }
+.sp-from-bar a { font-weight: 600; }

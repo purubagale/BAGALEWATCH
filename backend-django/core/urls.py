@@ -4,8 +4,8 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import (api_auth, area_sample, audit, auth_log, backup, call_context, collection, consent, dashboard, device_identity,
                device_lookup, device_trace, drive_test, dt_retention, emergency,
-               exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_notify, problem_report, reports, rescue, rf_audit,
-               rf_reports, roles, site_import, site_coverage, site_photo, sso_views, subscriber_link, subscriber_profile, system_doc,
+               exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_notify, problem_report, problem_sites, provisioning, reports, rescue, rf_audit,
+               rf_reports, roles, sector_stats, site_import, site_coverage, site_photo, sso_views, subscriber_link, subscriber_profile, system_doc,
                telemetry_admin, telemetry_near, views, volte_quality)
 
 router = DefaultRouter()
@@ -94,6 +94,10 @@ urlpatterns = [
     path('collection-sessions/', collection.CollectionSessionListView.as_view(), name='collection-sessions'),
     path('collection-sessions/<uuid:pk>/samples/', collection.CollectionSessionSamplesView.as_view(),
          name='collection-session-samples'),
+    # Readings per serving sector (2026-10-19) -- see core/sector_stats.py.
+    path('collection-sessions/<uuid:pk>/sectors/', sector_stats.CollectionSessionSectorsView.as_view(),
+         name='collection-session-sectors'),
+    path('dt-sessions/<int:pk>/sectors/', sector_stats.DriveTestSessionSectorsView.as_view(), name='dt-session-sectors'),
     path('emergency/', emergency.EmergencyStatusView.as_view(), name='emergency-status'),
     path('emergency/declare/', emergency.EmergencyDeclareView.as_view(), name='emergency-declare'),
     path('emergency/end/', emergency.EmergencyEndView.as_view(), name='emergency-end'),
@@ -226,6 +230,9 @@ urlpatterns = [
     # Problem reports from the app or entered from complaints (2026-10-14) -- see core/problem_report.py.
     path('problem-reports/', problem_report.ProblemReportListView.as_view(), name='problem-reports'),
     path('problem-reports/dashboard/', problem_report.ProblemDashboardView.as_view(), name='problem-dashboard'),
+    # The sites around a report, for its full diagnostics (2026-10-19) -- see core/problem_sites.py.
+    path('problem-reports/<int:pk>/nearby-sites/', problem_sites.ProblemReportNearbySitesView.as_view(),
+         name='problem-report-nearby-sites'),
     path('problem-reports/<int:pk>/notify/', problem_notify.ProblemReportNotifyView.as_view(), name='problem-report-notify'),
     # Linked systems and their status updates (2026-10-15) -- see core/problem_notify.py.
     path('linked-systems/', problem_notify.LinkedSystemListView.as_view(), name='linked-systems'),
@@ -237,6 +244,10 @@ urlpatterns = [
          name='problem-notification-retry'),
     # Everything stored about one mobile number, superadmin (2026-10-15) -- see core/subscriber_profile.py.
     path('subscriber-profile/', subscriber_profile.SubscriberProfileView.as_view(), name='subscriber-profile'),
+    # Its signal history by range, session and technology (2026-10-16).
+    path('subscriber-profile/signal/', subscriber_profile.SubscriberSignalView.as_view(), name='subscriber-profile-signal'),
+    # What the network provisioned, from NTC's ticketing system (2026-10-16) -- see core/provisioning.py.
+    path('subscriber-profile/provisioning/', provisioning.SubscriberProvisioningView.as_view(), name='subscriber-profile-provisioning'),
     # Linking a phone's earlier readings by hand (2026-10-15) -- see core/subscriber_link.py.
     path('subscriber-profile/link-candidates/', subscriber_link.LinkCandidatesView.as_view(), name='subscriber-link-candidates'),
     path('subscriber-profile/link-device/', subscriber_link.LinkDeviceView.as_view(), name='subscriber-link-device'),
@@ -261,6 +272,7 @@ urlpatterns = [
     path('telemetry/dt-sessions/<int:pk>/', telemetry_admin.TelemetryDriveTestSessionDetailView.as_view(), name='telemetry-dt-session-detail'),
     path('telemetry/dt-sessions/<int:pk>/end/', telemetry_admin.TelemetryDriveTestSessionEndView.as_view(), name='telemetry-dt-session-end'),
     path('telemetry/dt-sessions/<int:pk>/samples/', telemetry_admin.TelemetryDriveTestSessionSamplesView.as_view(), name='telemetry-dt-session-samples'),
+    path('telemetry/dt-sessions/<int:pk>/sectors/', sector_stats.TelemetryDriveTestSessionSectorsView.as_view(), name='telemetry-dt-session-sectors'),
 
     # Rescue-location lookup (2026-09-01) — IsRescueOperator-gated, every
     # call audited. See core/rescue.py.

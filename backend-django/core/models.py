@@ -1962,6 +1962,15 @@ class SecuritySettings(models.Model):
     alert_by_sms = models.BooleanField(default=False)
     alert_extra_emails = models.TextField(blank=True, default='')
     alert_extra_numbers = models.TextField(blank=True, default='')
+    # Exact positions for the customer's own complaint (2026-10-16, off by
+    # default; NTC's decision). When on, the Subscriber Profile shows the
+    # exact positions of readings taken within `complaint_location_hours` of
+    # a problem report from that number made in the last
+    # `complaint_location_days` days, without an emergency. See
+    # core/subscriber_profile.py complaint_windows().
+    complaint_location_access = models.BooleanField(default=False)
+    complaint_location_days = models.PositiveSmallIntegerField(default=7)
+    complaint_location_hours = models.PositiveSmallIntegerField(default=3)
 
     class Meta:
         db_table = 'v2_security_settings'
@@ -3844,6 +3853,13 @@ class CollectionSession(models.Model):
     started_at = models.DateTimeField(default=timezone.now)
     last_sample_at = models.DateTimeField(null=True, blank=True)
     ended_at = models.DateTimeField(null=True, blank=True)  # 2026-10-06: set when the trace ends
+    # Set when the session starts (2026-10-19), so sessions can be told apart
+    # and searched: "<district> · <source> · <start>", the phone's number
+    # (shown to superadmin only, never in the name) and the district of the
+    # first reading's serving or nearest site. See core/collection.py.
+    name = models.CharField(max_length=200, blank=True, default='')
+    msisdn = models.CharField(max_length=24, blank=True, default='', db_index=True)
+    district = models.CharField(max_length=100, blank=True, default='')
 
     class Meta:
         db_table = 'v2_collection_session'

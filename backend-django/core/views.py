@@ -1666,14 +1666,17 @@ class SecuritySettingsView(APIView):
     # The switches a superadmin flips on the Security page (2026-10-15 adds
     # the last two).
     TOGGLES = ('mfa_required', 'mfa_required_admins', 'phone_verification_required',
-               'attack_alerts_enabled', 'alert_by_email', 'alert_by_sms')
+               'attack_alerts_enabled', 'alert_by_email', 'alert_by_sms', 'complaint_location_access')
     # Extra alert recipients (2026-10-15), superadmin only.
     LISTS = ('alert_extra_emails', 'alert_extra_numbers')
+    # Whole numbers with their allowed range (2026-10-16), superadmin only.
+    NUMBERS = {'complaint_location_days': (1, 30), 'complaint_location_hours': (1, 24)}
 
     def _out(self, request, obj):
         out = {name: getattr(obj, name) for name in self.TOGGLES}
         if getattr(request.user, 'role', '') == 'superadmin':
             out.update({name: getattr(obj, name) for name in self.LISTS})
+            out.update({name: getattr(obj, name) for name in self.NUMBERS})
             out['status'] = security_status()
         return out
 
@@ -1701,12 +1704,23 @@ class SecuritySettingsView(APIView):
                 return Response({'detail': f'Not a mobile number: {", ".join(bad)}'}, status=status.HTTP_400_BAD_REQUEST)
             obj.alert_extra_numbers = ', '.join(_clean_msisdn(n.strip()) for n in raw)[:2000]
             changed.append('alert_extra_numbers')
+        for name, (lo, hi) in self.NUMBERS.items():
+            if name not in request.data:
+                continue
+            try:
+                value = int(request.data[name])
+            except (TypeError, ValueError):
+                value = None
+            if value is None or not lo <= value <= hi:
+                return Response({'detail': f'Enter a whole number from {lo} to {hi}.'}, status=status.HTTP_400_BAD_REQUEST)
+            setattr(obj, name, value)
+            changed.append(name)
         if changed:
             obj.save()
         from .audit import log_audit_event
         log_audit_event(
             request, 'SECURITY_SETTINGS.UPDATED', resource='security_settings',
-            detail=', '.join(f'{name}={getattr(obj, name)}' for name in self.TOGGLES),
+            detail=', '.join(f'{name}={getattr(obj, name)}' for name in (*self.TOGGLES, *self.NUMBERS)),
         )
         return Response(self._out(request, obj))
 
@@ -1719,6 +1733,7 @@ def security_status():
     from .sms import status as sms_status
     rates = s.REST_FRAMEWORK.get('DEFAULT_THROTTLE_RATES', {})
     from .alerts import email_configured
+    from .provisioning import status_summary as provisioning_status
     supers = list(User.objects.filter(role='superadmin', is_active=True).values_list('username', 'email', 'mobile_number'))
     return {
         'alerts': {
@@ -1728,6 +1743,8 @@ def security_status():
             'superadmins_without_mobile': [u for u, _, m in supers if not m],
         },
         'sms': {**sms_status(), 'verification_available': verification_available()},
+        # Provisioning from NTC's ticketing system (2026-10-16, core/provisioning.py).
+        'provisioning': provisioning_status(),
         'session_login': s.API_SESSION_AUTH,
         'rate_limits': {'signed_in': rates.get('user'), 'before_sign_in': rates.get('anon'),
                         'linked_systems': rates.get('external_api')},

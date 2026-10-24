@@ -8,9 +8,11 @@ import {
   useEndTelemetryDtSession,
   useSites,
   useTelemetryDtSessionSamples,
+  useTelemetryDtSessionSectors,
   useTelemetryDtSessions,
   useTelemetryLiveSamples,
 } from '../api/queries'
+import SectorBreakdown from '../components/SectorBreakdown'
 import type { TelemetryLiveSample } from '../api/types'
 import { resolveAreaQuery, type ResolvedAreaPoint } from '../lib/resolveDeviceAreaQuery'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
@@ -584,6 +586,7 @@ export default function TelemetryDriveTestSessionsPage() {
   const { data: sessions, isLoading } = useTelemetryDtSessions()
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const { data: samplesData } = useTelemetryDtSessionSamples(selectedId)
+  const { data: sectorStats } = useTelemetryDtSessionSectors(selectedId)
   const endSession = useEndTelemetryDtSession()
   const deleteSession = useDeleteTelemetryDtSession()
   const samples = useMemo(() => samplesData?.samples ?? [], [samplesData])
@@ -818,6 +821,12 @@ export default function TelemetryDriveTestSessionsPage() {
                 <MetricPoints samples={techSamples} metric={metric} />
               </MapContainer>
             </>
+          )}
+          {/* Readings per serving sector of this session (2026-10-19). */}
+          {sectorStats && sectorStats.total > 0 && (
+            <div className="report-card" style={{ marginTop: 16 }}>
+              <SectorBreakdown data={sectorStats} siteLink={(id) => `/sites/${encodeURIComponent(id)}`} />
+            </div>
           )}
           <table className="admin-table" style={{ marginTop: 16 }}>
             <thead>
