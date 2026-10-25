@@ -47,12 +47,13 @@ import requests
 from django.db import IntegrityError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .audit import log_audit_event
 from .models import LinkedSystem, ProblemNotification, ProblemReport
-from .views import IsAdminOrSuperadmin, IsSuperadminOnly
+from .views import IsSuperadminOnly
 
 SEND_TIMEOUT_SECONDS = 10
 RETRY_MINUTES = (1, 5, 15, 60, 180, 360, 720)   # waits after the 1st, 2nd, ... failure
@@ -353,10 +354,17 @@ class ProblemNotificationRetryView(APIView):
         return Response(_note_row(send_one(note)))
 
 
+class _CanUseProblemDashboard(BasePermission):
+    # problem_report imports this module, so its check is imported late.
+    def has_permission(self, request, view):
+        from .problem_report import can_use_problem_dashboard
+        return can_use_problem_dashboard(request.user)
+
+
 class ProblemReportNotifyView(APIView):
     """"Send update" on one report: queued and sent straight away; a failure
     is tried again in the background like any other update."""
-    permission_classes = [IsAdminOrSuperadmin]
+    permission_classes = [_CanUseProblemDashboard]
 
     def post(self, request, pk):
         report = get_object_or_404(ProblemReport, pk=pk)

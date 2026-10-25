@@ -594,7 +594,7 @@ export default function SubscriberProfilePage() {
         <div className="sp-hero-body">
           <div className="sp-hero-title">
             <div className="sp-eyebrow">Customer diagnostics · superadmin</div>
-            <h1 className="sp-title">Subscriber Profile</h1>
+            <h1 className="sp-title">Subscriber Network Diagnosis Dashboard</h1>
             <p className="sp-sub">Stored data only · every search needs a reference and is logged with your name.</p>
           </div>
           <form className="sp-search" onSubmit={search}>

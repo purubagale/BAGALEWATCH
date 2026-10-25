@@ -478,40 +478,53 @@ class TraceRequestListCreateView(APIView):
             return Response({'detail': 'case_reference is required for a case'},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        device = DeviceCredential.objects.filter(
-            msisdn=msisdn, revoked_at__isnull=True,
-        ).order_by('-last_seen_at').first()
+        device = registered_device(msisdn)
         if device is None:
             return Response({'detail': 'no registered device for this number'},
                             status=status.HTTP_404_NOT_FOUND)
-
-        now = timezone.now()
-        ttl = _ttl_minutes(request.data.get('ttl_minutes'))
-        # An active emergency lets a case trace skip the device Accept. The OS
-        # location permission still applies. Investigations always need Accept.
-        bypass = active_emergency() is not None and kind == TraceRequest.KIND_CASE
-
-        trace = TraceRequest(
-            device=device, msisdn=msisdn, requested_by=request.user,
-            kind=kind, case_reference=case_reference, ttl_minutes=ttl,
-            expires_at=now + timedelta(minutes=ttl),
-        )
-        if bypass:
-            trace.status = TraceRequest.STATUS_ACCEPTED
-            trace.consent_method = TraceRequest.CONSENT_POLICY
-            trace.consent_at = now
-            trace.policy_mode = 'emergency'
-        trace.save()
-        if trace.status == TraceRequest.STATUS_ACCEPTED:
-            ensure_trace_session(trace)
-
-        push_sent = send_trace_push(device.fcm_token, trace.id)
-        log_audit_event(
-            request, 'TRACE.CREATED', resource='trace_request', resource_id=str(trace.id),
-            detail=f'case={case_reference} consent={trace.consent_method or "pending"} push={push_sent}',
-        )
+        trace, push_sent = create_trace(request, device, msisdn, kind, case_reference,
+                                        request.data.get('ttl_minutes'))
         return Response({**_operator_view(trace), 'push_sent': push_sent},
                         status=status.HTTP_201_CREATED)
+
+
+def registered_device(msisdn):
+    """The newest active registration bound to this canonical number, or None."""
+    return DeviceCredential.objects.filter(
+        msisdn=msisdn, revoked_at__isnull=True,
+    ).order_by('-last_seen_at').first()
+
+
+def create_trace(request, device, msisdn, kind, case_reference, ttl_raw):
+    """Creates the request, pushes it to the phone and logs it. Returns
+    (trace, push_sent). The caller has checked the permission for `kind`.
+    Also used by a complaint on the Problem Dashboard (core/problem_live.py)."""
+    now = timezone.now()
+    ttl = _ttl_minutes(ttl_raw)
+    # An active emergency lets a case trace skip the device Accept. The OS
+    # location permission still applies. Investigations always need Accept.
+    bypass = active_emergency() is not None and kind == TraceRequest.KIND_CASE
+
+    trace = TraceRequest(
+        device=device, msisdn=msisdn, requested_by=request.user,
+        kind=kind, case_reference=case_reference, ttl_minutes=ttl,
+        expires_at=now + timedelta(minutes=ttl),
+    )
+    if bypass:
+        trace.status = TraceRequest.STATUS_ACCEPTED
+        trace.consent_method = TraceRequest.CONSENT_POLICY
+        trace.consent_at = now
+        trace.policy_mode = 'emergency'
+    trace.save()
+    if trace.status == TraceRequest.STATUS_ACCEPTED:
+        ensure_trace_session(trace)
+
+    push_sent = send_trace_push(device.fcm_token, trace.id)
+    log_audit_event(
+        request, 'TRACE.CREATED', resource='trace_request', resource_id=str(trace.id),
+        detail=f'case={case_reference} consent={trace.consent_method or "pending"} push={push_sent}',
+    )
+    return trace, push_sent
 
 
 class TraceSamplesView(APIView):

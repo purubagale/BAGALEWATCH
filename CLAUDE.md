@@ -887,6 +887,35 @@ repo, not on prod):
   rescue consent, serving-site lookup, SINR fill-in, queue). Deck page numbers
   are typed in each slide file; inserting a slide means renumbering the ones
   after it.
+- **Live readings from a complaint, and the rename** (2026-10-24, built, NOT
+  committed, not seen in a browser). "Subscriber Profile" is now "Subscriber
+  Network Diagnosis Dashboard" on screen and in the menu (migration 0141,
+  only rows still holding the seeded text; AI migrations are now 0142-0147,
+  local history renamed). A report on the Problem Dashboard has two views,
+  `?view=` in the address: Site related analysis (the old cards plus "Live
+  readings around this spot", an area request at the complaint's position,
+  label `Complaint <ref>`) and Subscriber related analysis (the number, a
+  link to the diagnosis dashboard, and "Send request to the customer's
+  phone": a trace request, case reference `Complaint <ref>`, 30/60/120 min,
+  to the phone that sent the report or the newest registration of the
+  number; one open request per complaint). `core/problem_live.py`;
+  `create_area_request`, `area_results` and `create_trace` were split out of
+  `area_sample.py` and `device_trace.py`. Live answers never carry the
+  number. Tested in a rolled-back transaction with a throwaway registered
+  phone; a real push needs FCM on prod.
+  Rules decided by the user the same day: the Problem Dashboard permission
+  is the visibility of its menu item (`can_use_problem_dashboard` in
+  `core/problem_report.py`: admin, superadmin, or a role ticked for the
+  menu item), used by every problem view. One complaint's detail shows the
+  customer's number to all of them (list and number search stay
+  superadmin-only); a non-superadmin opening it is logged
+  `PROBLEM_REPORT.NUMBER_VIEWED`, once an hour per person and complaint.
+  Any of them may send the phone request; it is an investigation and waits
+  for the customer's Accept, except a superadmin's during a declared
+  emergency, which is a case trace (POLICY_BYPASS, no Accept). Readings and
+  cancel go through the complaint (`live/phone/<trace>/`), so no trace
+  permission is needed. The diagnosis dashboard link stays superadmin-only.
+  A local emergency "test1" is declared until 2026-10-25 17:56 UTC.
 - **Session History "slow"** (same day): the 16-18 s seen in the browser
   came while containers were rebuilt and tests ran on the same 2-CPU
   Docker; the list itself answers in about 0.45 s (`sample_count` subquery

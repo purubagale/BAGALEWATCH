@@ -5,11 +5,13 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiErrorMessage } from '../api/client'
 import {
-  useCreateProblemReport, useNotifyProblemReport, useProblemDashboard, useProblemNearbySites, useProblemReport,
-  useProblemReports, useUpdateProblemReport,
+  useCancelProblemLivePhone, useCreateProblemReport, useNotifyProblemReport, useProblemDashboard, useProblemLive,
+  useProblemLiveArea, useProblemLiveAreaResults, useProblemLivePhone, useProblemLivePhoneFixes, useProblemNearbySites,
+  useProblemReport, useProblemReports, useUpdateProblemReport,
 } from '../api/queries'
 import type { ProblemCategory, ProblemCount, ProblemDashboard, ProblemHotspot, ProblemReport } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
+import { telemetryLevel } from '../lib/telemetryLevel'
 import { DT_SESSION_HISTORY_PATH, OPAQUE_PATHS } from '../constants/opaqueRoutes'
 
 // Problem Dashboard (2026-10-15; Problem Reports since 2026-10-14) --
@@ -524,6 +526,15 @@ function ReportDetail({ id }: { id: number }) {
   const update = useUpdateProblemReport()
   const { user } = useAuth()
   const location = useLocation()
+  // Site related or subscriber related analysis (2026-10-24), kept in the
+  // address so coming back from the diagnosis dashboard opens the same one.
+  const [params, setParams] = useSearchParams()
+  const view: 'site' | 'subscriber' = params.get('view') === 'subscriber' ? 'subscriber' : 'site'
+  const setView = (v: 'site' | 'subscriber') => setParams((p) => {
+    const next = new URLSearchParams(p)
+    if (v === 'site') next.delete('view'); else next.set('view', v)
+    return next
+  }, { replace: true })
   const [note, setNote] = useState('')
   const [diag, setDiag] = useState<DiagTab | null>(null)
   useEffect(() => {
@@ -544,7 +555,8 @@ function ReportDetail({ id }: { id: number }) {
   const isSuper = user?.role === 'superadmin'
   // The profile opens on this number with this report as its reference, and
   // carries the way back to this report (2026-10-19).
-  const profileLink = r.phone_number ? `${OPAQUE_PATHS['/subscriber-profile']}?${new URLSearchParams({
+  // The dashboard itself is for superadmins; others see the number here only.
+  const profileLink = isSuper && r.phone_number ? `${OPAQUE_PATHS['/subscriber-profile']}?${new URLSearchParams({
     msisdn: r.phone_number, reason: `Complaint ${reference}`, from: `${location.pathname}${location.search}`,
   })}` : null
   const main = c?.findings[0]
@@ -572,6 +584,15 @@ function ReportDetail({ id }: { id: number }) {
         </div>
       </div>
 
+      <nav className="pdd-views" aria-label="Analysis">
+        <button type="button" className={view === 'site' ? 'on' : ''} onClick={() => setView('site')}>Site related analysis</button>
+        <button type="button" className={view === 'subscriber' ? 'on' : ''} onClick={() => setView('subscriber')}>
+          Subscriber related analysis</button>
+      </nav>
+
+      {view === 'subscriber' && <SubscriberAnalysis r={r} isSuper={isSuper} profileLink={profileLink} />}
+
+      {view === 'site' && <>
       <div className="pdd-grid">
         <section className="pdd-card">
           <h3>Customer complaint details</h3>
@@ -580,7 +601,7 @@ function ReportDetail({ id }: { id: number }) {
             <dd>
               {r.phone_number
                 ? <><span className="mono">{r.phone_number}</span> <CopyText text={r.phone_number} label="the number" />
-                  {profileLink && <Link className="pdd-link" to={profileLink}>Open Subscriber Profile →</Link>}</>
+                  {profileLink && <Link className="pdd-link" to={profileLink}>Open Subscriber Network Diagnosis →</Link>}</>
                 : r.has_number && !isSuper ? <span className="muted">Held; shown to superadmin only</span>
                   : <span className="muted">Not given</span>}
             </dd>
@@ -640,6 +661,8 @@ function ReportDetail({ id }: { id: number }) {
           {r.notify && <SystemUpdates id={r.id} n={r.notify} />}
         </section>
       </div>
+      <LiveAround r={r} />
+      </>}
 
       {diag && (
         <div className="pdd-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setDiag(null) }}>
@@ -658,7 +681,7 @@ function ReportDetail({ id }: { id: number }) {
                   .map(([k, label]) => (
                     <button key={k} type="button" className={diag === k ? 'on' : ''} onClick={() => setDiag(k)}>{label}</button>
                   ))}
-                {profileLink && <Link className="pdd-tab-link" to={profileLink}>Subscriber Profile →</Link>}
+                {profileLink && <Link className="pdd-tab-link" to={profileLink}>Subscriber Network Diagnosis →</Link>}
               </nav>
               <div className="pdd-tab-body">
                 {diag === 'cause' && (c ? <CauseTab c={c} reportId={r.id} /> : <p className="muted">Not checked yet.</p>)}
@@ -669,6 +692,239 @@ function ReportDetail({ id }: { id: number }) {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  )
+}
+
+// ── Live readings (2026-10-24, core/problem_live.py) ───────────────────────
+
+interface LivePoint { lat: number; lng: number; color: string; tip: string }
+
+function LiveMap({ r, points, radiusM }: { r: ProblemReport; points: LivePoint[]; radiusM?: number }) {
+  return (
+    <div className="problem-map pdd-live-map">
+      <MapContainer center={[r.lat, r.lng]} zoom={14} style={{ height: '100%', width: '100%' }}>
+        <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <FitPoints points={[[r.lat, r.lng], ...points.map((p) => [p.lat, p.lng] as [number, number])]} />
+        {radiusM && <Circle center={[r.lat, r.lng]} radius={radiusM} pathOptions={{ color: '#2563eb', weight: 1, fillOpacity: 0.05 }} />}
+        <CircleMarker center={[r.lat, r.lng]} radius={7} pathOptions={{ color: '#dc2626', fillColor: '#dc2626', fillOpacity: 0.9 }}>
+          <Tooltip>Where the problem was reported</Tooltip>
+        </CircleMarker>
+        {points.map((p, i) => (
+          <CircleMarker key={i} center={[p.lat, p.lng]} radius={5} pathOptions={{ color: '#1e293b', weight: 1, fillColor: p.color, fillOpacity: 0.9 }}>
+            <Tooltip>{p.tip}</Tooltip>
+          </CircleMarker>
+        ))}
+      </MapContainer>
+    </div>
+  )
+}
+
+function levelText(network: string, rsrp: number | null, rscp: number | null | undefined, rssi: number | null) {
+  const l = telemetryLevel({ network_type: network, rsrp, rscp, rssi })
+  return { l, text: `${l.tech ?? network ?? 'No service'}${l.value != null ? ` · ${l.name} ${l.value} dBm` : ''}` }
+}
+
+// Site related: ask the phones sharing around the spot for one reading each.
+function LiveAround({ r }: { r: ProblemReport }) {
+  const live = useProblemLive(r.id)
+  const ask = useProblemLiveArea(r.id)
+  const [radius, setRadius] = useState(1)
+  const [picked, setPicked] = useState<number | null>(null)
+  const requests = live.data?.area.requests ?? []
+  const shown = picked ?? requests[0]?.id ?? null
+  const results = useProblemLiveAreaResults(r.id, shown)
+  const res = results.data
+  const points: LivePoint[] = (res?.samples ?? []).map((s) => {
+    const { l, text } = levelText(s.network_type, s.rsrp_dbm, s.rscp_dbm, s.rssi_dbm)
+    return { lat: s.lat, lng: s.lng, color: l.color, tip: `${new Date(s.ts).toLocaleTimeString()} · ${text}${s.serving_site_id ? ` · ${s.serving_site_id}` : ''}` }
+  })
+  const levels = (res?.samples ?? []).map((s) => levelText(s.network_type, s.rsrp_dbm, s.rscp_dbm, s.rssi_dbm).l)
+    .filter((l) => l.tech === '4G' && l.value != null).map((l) => l.value as number)
+
+  return (
+    <section className="pdd-card pdd-live">
+      <h3>Live readings around this spot</h3>
+      <p className="muted pdd-small" style={{ marginTop: 0 }}>
+        Asks the phones that shared their signal near this spot in the last 24 hours, and are sharing now, for one fresh
+        reading each. Answers arrive within 15 minutes and do not say which phone sent them.
+      </p>
+      <div className="pdd-live-bar">
+        <label>Within <select value={radius} onChange={(e) => setRadius(Number(e.target.value))}>
+          {(live.data?.area.radii_km ?? [0.5, 1, 2, 5]).map((km) => <option key={km} value={km}>{km < 1 ? `${km * 1000} m` : `${km} km`}</option>)}
+        </select></label>
+        <button type="button" className="btn-primary btn-small" disabled={ask.isPending}
+          onClick={() => ask.mutate(radius, { onSuccess: (d) => setPicked(d.id) })}>
+          {ask.isPending ? 'Asking…' : 'Ask phones around this spot'}
+        </button>
+        {ask.data && (
+          <span className="muted pdd-small">
+            {ask.data.devices_in_area === 0 ? 'No phone has shared near here in the last 24 hours.'
+              : `${ask.data.pushes_sent} of ${ask.data.devices_in_area} phones seen here were asked${ask.data.pushes_sent === 0 ? ' (none is sharing now)' : ''}.`}
+          </span>
+        )}
+        {ask.error && <span className="error">{apiErrorMessage(ask.error)}</span>}
+      </div>
+      {requests.length > 0 && (
+        <div className="pdd-live-cols">
+          <div className="pdd-live-list">
+            {requests.map((q) => (
+              <button key={q.id} type="button" className={`pdd-site${q.id === shown ? ' on' : ''}`} onClick={() => setPicked(q.id)}>
+                <b>{when(q.created_at)}</b>
+                <div className="muted pdd-small">
+                  {q.radius_km < 1 ? `${q.radius_km * 1000} m` : `${q.radius_km} km`} · {q.pushes_sent} asked · by {q.requested_by ?? '-'}
+                </div>
+              </button>
+            ))}
+          </div>
+          <div>
+            {res && (
+              <p className="pdd-small" style={{ marginTop: 0 }}>
+                <b>{res.samples.length}</b> readings from <b>{res.devices}</b> phones
+                {levels.length > 0 && <> · 4G RSRP average <b>{Math.round(levels.reduce((a, b) => a + b, 0) / levels.length)} dBm</b></>}
+                {res.open ? <span className="muted"> · still collecting until {new Date(res.open_until).toLocaleTimeString()}</span> : null}
+              </p>
+            )}
+            <LiveMap r={r} points={points} radiusM={(res?.request.radius_km ?? radius) * 1000} />
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+const TRACE_STATUS: Record<string, string> = {
+  PENDING: 'Waiting for the customer to accept', ACCEPTED: 'Sharing now', REJECTED: 'Declined by the customer',
+  EXPIRED: 'Ended (time up)', CANCELLED: 'Cancelled', REVOKED: 'Stopped by the customer', COMPLETED: 'Ended',
+}
+
+// Subscriber related: the customer's own phone, with their consent, and the
+// way to the Subscriber Network Diagnosis Dashboard.
+function SubscriberAnalysis({ r, isSuper, profileLink }: { r: ProblemReport; isSuper: boolean; profileLink: string | null }) {
+  const live = useProblemLive(r.id)
+  const ask = useProblemLivePhone(r.id)
+  const cancel = useCancelProblemLivePhone(r.id)
+  const [ttl, setTtl] = useState(60)
+  const [picked, setPicked] = useState<string | null>(null)
+  const phone = live.data?.phone
+  const traces = phone?.traces ?? []
+  const shown = picked ?? traces[0]?.id ?? null
+  const shownTrace = traces.find((t) => t.id === shown)
+  const fixes = useProblemLivePhoneFixes(r.id, shown, shownTrace?.status === 'ACCEPTED' || shownTrace?.status === 'PENDING')
+  const rows = fixes.data?.results ?? []
+  const points: LivePoint[] = rows.map((f) => {
+    const { l, text } = levelText(f.network_type, f.rsrp_dbm, null, f.rssi_dbm)
+    return { lat: f.lat, lng: f.lng, color: l.color, tip: `${new Date(f.ts).toLocaleTimeString()} · ${text}${f.pci != null ? ` · PCI ${f.pci}` : ''}` }
+  })
+  const open = traces.some((t) => t.status === 'PENDING' || t.status === 'ACCEPTED')
+
+  return (
+    <div className="pdd-grid pdd-grid-2">
+      <section className="pdd-card">
+        <h3>Customer</h3>
+        <dl className="pdd-kv">
+          <dt>Mobile</dt>
+          <dd>{r.phone_number ? <span className="mono">{r.phone_number}</span>
+            : <span className="muted">Not given</span>}</dd>
+          <dt>App on the phone</dt>
+          <dd>{!phone ? '…' : !phone.has_number ? '-' : phone.registered ? 'Registered with the DT-WATCH app' : 'Not registered'}</dd>
+          {r.phone_model && <><dt>Phone</dt><dd>{r.phone_model}{r.android_version ? ` · Android ${r.android_version}` : ''}</dd></>}
+        </dl>
+        {profileLink
+          ? <Link className="btn-primary pdd-live-go" to={profileLink}>Open Subscriber Network Diagnosis Dashboard →</Link>
+          : <p className="muted pdd-small">
+            {isSuper ? 'Add the customer\'s mobile number to the complaint to open the Subscriber Network Diagnosis Dashboard.'
+              : 'The Subscriber Network Diagnosis Dashboard is for superadmins.'}
+          </p>}
+        <p className="muted pdd-small">
+          The dashboard shows the number's phones, signal over time, sessions, speed tests and complaints. Where the customer
+          was is shown only under the rules on the Security page.
+        </p>
+      </section>
+
+      <section className="pdd-card">
+        <h3>Live readings from the customer's phone</h3>
+        {live.isLoading ? <p className="muted">…</p> : !phone?.has_number ? (
+          <p className="muted">This complaint has no mobile number, so there is no phone to ask. Use "Live readings around this
+            spot" under Site related analysis.</p>
+        ) : !phone.registered ? (
+          <p className="muted">No phone with the DT-WATCH app is registered to this number, so it cannot be asked. Use "Live
+            readings around this spot" under Site related analysis.</p>
+        ) : (
+          <>
+            {phone.skips_accept ? (
+              <p className="pd-caution" style={{ marginTop: 0 }}>
+                An emergency is declared, so your request starts without the customer's Accept. The phone still needs its
+                location permission, and the customer can stop it.
+              </p>
+            ) : (
+              <p className="muted pdd-small" style={{ marginTop: 0 }}>
+                The customer sees a request on the phone. Readings (signal and position) start only after they accept, and they
+                can stop at any time.
+              </p>
+            )}
+            <div className="pdd-live-bar">
+              <label>For <select value={ttl} onChange={(e) => setTtl(Number(e.target.value))}>
+                {phone.ttl_minutes.map((m) => <option key={m} value={m}>{m < 60 ? `${m} minutes` : `${m / 60} hour${m > 60 ? 's' : ''}`}</option>)}
+              </select></label>
+              <button type="button" className="btn-primary btn-small" disabled={ask.isPending || open}
+                title={open ? 'A request for this complaint is still open' : undefined}
+                onClick={() => ask.mutate(ttl, { onSuccess: (d) => setPicked(d.id) })}>
+                {ask.isPending ? 'Sending…' : 'Send request to the customer\'s phone'}
+              </button>
+            </div>
+            {ask.data && ask.data.push_sent === false && (
+              <p className="muted pdd-small">The phone could not be reached right now; it will see the request the next time the
+                app checks.</p>
+            )}
+            {ask.error && <p className="error">{apiErrorMessage(ask.error)}</p>}
+          </>
+        )}
+        {traces.length > 0 && (
+          <div className="pdd-live-list" style={{ marginTop: 10 }}>
+            {traces.map((t) => (
+              <div key={t.id} className={`pdd-site${t.id === shown ? ' on' : ''}`} role="button" tabIndex={0}
+                onClick={() => setPicked(t.id)} onKeyDown={(e) => { if (e.key === 'Enter') setPicked(t.id) }}>
+                <b>{TRACE_STATUS[t.status] ?? t.status}</b>
+                <div className="muted pdd-small">
+                  Sent {when(t.created_at)} by {t.requested_by ?? '-'} · {t.sample_count} readings
+                  {t.expires_at && (t.status === 'PENDING' || t.status === 'ACCEPTED') ? ` · until ${new Date(t.expires_at).toLocaleTimeString()}` : ''}
+                </div>
+                {(t.status === 'PENDING' || t.status === 'ACCEPTED') && (
+                  <button type="button" className="btn-secondary btn-small" disabled={cancel.isPending}
+                    onClick={(e) => { e.stopPropagation(); cancel.mutate(t.id) }}>
+                    Cancel request</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {shown && (
+        <section className="pdd-card pdd-span-2">
+          <h3>Readings from the customer's phone</h3>
+          {rows.length === 0 ? <p className="muted">No readings yet.</p> : <>
+            <LiveMap r={r} points={points} />
+            <table className="admin-table" style={{ marginTop: 10 }}>
+              <thead><tr><th>Time</th><th>Network</th><th>Level</th><th>RSRQ</th><th>SINR</th><th>PCI</th><th>Cell</th></tr></thead>
+              <tbody>
+                {rows.slice().reverse().map((f, i) => (
+                  <tr key={i}>
+                    <td>{new Date(f.ts).toLocaleString()}</td>
+                    <td>{f.network_type || '-'}</td>
+                    <td>{levelText(f.network_type, f.rsrp_dbm, null, f.rssi_dbm).text}</td>
+                    <td>{fmt(f.rsrq_db, ' dB')}</td>
+                    <td>{fmt(f.sinr_db, ' dB')}</td>
+                    <td>{f.pci ?? '-'}</td>
+                    <td>{f.cell_id ?? '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>}
+        </section>
       )}
     </div>
   )
@@ -882,8 +1138,9 @@ function EnterComplaint({ onSaved }: { onSaved: (id: number) => void }) {
     <div>
       <h2 style={{ marginTop: 0 }}>Enter a complaint</h2>
       <p className="muted">
-        Click the map where the customer has the problem. Put the customer's mobile number in its own box (shown to
-        superadmin only, and it links the complaint to the Subscriber Profile); keep names and numbers out of the note.
+        Click the map where the customer has the problem. Put the customer's mobile number in its own box (shown inside
+        this complaint to the staff who handle complaints, and it links the complaint to the Subscriber Network Diagnosis
+        Dashboard); keep names and numbers out of the note.
       </p>
       <div className="problem-form">
         <label>
