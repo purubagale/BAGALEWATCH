@@ -3523,6 +3523,33 @@ class ProblemNotification(models.Model):
         indexes = [models.Index(fields=['status', 'next_try_at'], name='v2_problem_notify_due_idx')]
 
 
+class AlarmSourceSettings(models.Model):
+    """Where the active alarms come from (2026-10-26, core/alarms.py), set on
+    the Live Site Sync page so prod needs no .env edit. Singleton (pk=1). The
+    key is encrypted at rest (core/mfa.py's encrypt_secret) and never sent
+    back. With no address here, ALARM_API_URL / ALARM_API_TOKEN from .env
+    apply. Alarms themselves are never stored; this is only the connection."""
+    AUTH_CHOICES = [('Bearer', 'Bearer <key>'), ('Token', 'Token <key>')]
+    api_url = models.CharField(max_length=500, blank=True, default='')
+    api_key_encrypted = models.TextField(blank=True, default='')
+    auth_scheme = models.CharField(max_length=10, choices=AUTH_CHOICES, default='Bearer')
+    cache_seconds = models.PositiveIntegerField(default=60)
+    enabled = models.BooleanField(default=True)
+    updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_alarm_source_settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        return cls.objects.filter(pk=1).first()
+
+
 class TelemetryPushToken(models.Model):
     """Push address of a device that is currently sharing (2026-10-08), so an
     engineer can ask an area's sharing devices for a fresh reading

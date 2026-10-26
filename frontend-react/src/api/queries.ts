@@ -5,7 +5,7 @@ import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
   SiteMeasuredCoverage,
 } from './types'
 import type {
-  AlarmSummary, SiteActiveAlarms,
+  AlarmSource, AlarmSourceInput, AlarmSummary, SiteActiveAlarms,
   LinkedSystem, ProblemDashboard, ProblemLive, ProblemLiveTrace, ProblemNearbySites, ProblemNotificationRow, ProblemRelated,
   ProblemReport,
   SecuritySettings,
@@ -2221,6 +2221,23 @@ export function useAlarmSummary() {
     queryKey: ['alarm-summary'],
     queryFn: () => alarmJson<AlarmSummary>('/api/v2/alarms/summary/'),
     refetchInterval: 120_000,
+  })
+}
+
+export function useAlarmSource() {
+  return useQuery({ queryKey: ['alarm-source'], queryFn: () => apiJson<AlarmSource>('/api/v2/alarms/source/') })
+}
+
+export function useSaveAlarmSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: AlarmSourceInput) =>
+      apiJson<AlarmSource>('/api/v2/alarms/source/', { method: 'PUT', body: JSON.stringify(input) }),
+    onSuccess: (d) => {
+      qc.setQueryData(['alarm-source'], d)
+      qc.invalidateQueries({ queryKey: ['alarm-summary'] })
+      qc.invalidateQueries({ queryKey: ['site-alarms'] })
+    },
   })
 }
 

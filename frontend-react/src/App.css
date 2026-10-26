@@ -5045,3 +5045,12 @@ tr.rel-st-no_coverage td:first-child { color: #be123c; font-weight: 600; }
 
 /* Count line under the signal chart, in the chart column (2026-10-26). */
 .sp-sh-foot { margin-top: 4px; font-size: 11px; }
+
+/* Alarm connection form on Live Site Sync (2026-10-26). */
+.alarm-source-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px 12px; padding: 10px 12px;
+  margin-bottom: 10px; background: #f5f8fc; border: 1px solid #e6edf6; border-radius: 8px; }
+.alarm-source-form label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--ui-faint, #64748b); }
+.alarm-source-form label:first-child { grid-column: 1 / -1; }
+.alarm-source-form .alarm-source-check { flex-direction: row; align-items: center; gap: 6px; font-size: 12.5px; color: inherit; }
+.alarm-source-form > p, .alarm-source-form > .admin-page-actions, .alarm-source-form > .error { grid-column: 1 / -1; }
+:root[data-theme='dark'] .alarm-source-form { background: rgba(148, 163, 184, .07); border-color: rgba(148, 163, 184, .18); }

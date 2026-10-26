@@ -239,6 +239,7 @@ urlpatterns = [
     # Active alarms from the alarm middleware, read live (2026-10-26) -- see core/alarms.py.
     path('alarms/active/', alarms.SiteActiveAlarmsView.as_view(), name='alarms-active'),
     path('alarms/summary/', alarms.AlarmSummaryView.as_view(), name='alarms-summary'),
+    path('alarms/source/', alarms.AlarmSourceView.as_view(), name='alarms-source'),
     # Everything stored that relates to a complaint, for a chosen time range (2026-10-26).
     path('problem-reports/<int:pk>/related/', problem_related.ProblemRelatedView.as_view(), name='problem-related'),
     path('problem-reports/<int:pk>/live/area/', problem_live.ProblemLiveAreaView.as_view(), name='problem-live-area'),

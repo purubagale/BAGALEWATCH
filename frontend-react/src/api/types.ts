@@ -2798,6 +2798,15 @@ export interface ActiveAlarm {
 export interface SiteActiveAlarms {
   configured: boolean; site: string; alarms: ActiveAlarm[]; fetched_at?: string; error?: string
 }
+// The alarm connection set on Live Site Sync (2026-10-26). The key is never returned.
+export interface AlarmSource {
+  api_url: string; auth_scheme: 'Bearer' | 'Token'; has_key: boolean; cache_seconds: number; enabled: boolean
+  origin: 'page' | 'env' | 'none'; env_url: string | null; updated_by: string | null; updated_at: string | null
+}
+export interface AlarmSourceInput {
+  api_url?: string; api_key?: string; clear_key?: boolean; auth_scheme?: 'Bearer' | 'Token'; cache_seconds?: number; enabled?: boolean
+}
+
 export interface AlarmSummary {
   configured: boolean; url: string | null; cache_seconds: number; error?: string
   fetched_at?: string; took_ms?: number; total?: number; received?: number

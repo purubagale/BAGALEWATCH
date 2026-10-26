@@ -953,6 +953,13 @@ repo, not on prod):
   window like the user's reference) on Site Detail and on the complaint's
   site in Related data; an "Active alarms" card on Live Site Sync (status,
   by severity/type/NE type, sites with the most alarms, Refresh now).
+  Later the same day (not committed): the connection is set on that card
+  ("Edit connection": address, Bearer/Token, key, keep-for time, on/off),
+  `AlarmSourceSettings` singleton (migration 0143; AI migrations now
+  0144-0149, local history renamed, table created by hand), key encrypted
+  with `mfa.encrypt_secret` and never returned; .env applies only when no
+  address is saved. The user had tried adding the alarm API as a site
+  source; a site source overwrites site fields, so never do that.
 - **Blank cell and signal on phone calls** (2026-10-26, mobile built, NOT
   committed, not run on a phone). On prod only the Collector edition's calls
   had cell and level: during a call the dialer is in front, and Android

@@ -2,8 +2,10 @@ import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { apiErrorMessage } from '../api/client'
 import {
+  useAlarmSource,
   useAlarmSummary,
   useRefreshAlarms,
+  useSaveAlarmSource,
   useCreateLiveSiteSource,
   useDeleteLiveSiteSource,
   useLiveSiteSources,
@@ -446,6 +448,74 @@ export default function LiveSiteSyncPage() {
 // nothing is copied in: alarms are read live from the alarm system, kept for
 // a minute and shown per site ("Active alarms" on each site page). This card
 // shows whether the feed answers and what it holds now.
+// The alarm connection (2026-10-26, core/alarms.py AlarmSourceView): address,
+// header, key and refresh time, saved here instead of in the server's .env.
+// The key is never shown again; leaving it blank keeps the saved one.
+function AlarmSourceForm() {
+  const { data: src } = useAlarmSource()
+  const save = useSaveAlarmSource()
+  const [open, setOpen] = useState(false)
+  const [url, setUrl] = useState('')
+  const [scheme, setScheme] = useState<'Bearer' | 'Token'>('Bearer')
+  const [key, setKey] = useState('')
+  const [cacheS, setCacheS] = useState(60)
+  const [enabled, setEnabled] = useState(true)
+  const [msg, setMsg] = useState('')
+  const start = () => {
+    setUrl(src?.api_url || src?.env_url || ''); setScheme(src?.auth_scheme ?? 'Bearer'); setKey('')
+    setCacheS(src?.cache_seconds ?? 60); setEnabled(src?.enabled ?? true); setMsg(''); setOpen(true)
+  }
+  const where = src?.origin === 'page'
+    ? `Set on this page${src.updated_by ? ` by ${src.updated_by}` : ''}${src.updated_at ? `, ${new Date(src.updated_at).toLocaleString()}` : ''}`
+    : src?.origin === 'env' ? "From the server's settings file (.env)" : 'Not set'
+  if (!open) {
+    return (
+      <div className="admin-page-actions" style={{ justifyContent: 'flex-start', gap: 10, alignItems: 'center' }}>
+        <span className="muted">Connection: <b>{src?.api_url || src?.env_url || '—'}</b> · {where}{src?.origin === 'page' && !src.enabled ? ' · paused' : ''}</span>
+        <button type="button" className="btn-secondary btn-small" onClick={start}>Edit connection</button>
+        {msg && <span className="muted">{msg}</span>}
+      </div>
+    )
+  }
+  return (
+    <form className="alarm-source-form" onSubmit={(e) => {
+      e.preventDefault()
+      save.mutate({ api_url: url.trim(), auth_scheme: scheme, cache_seconds: cacheS, enabled, ...(key.trim() ? { api_key: key.trim() } : {}) },
+        { onSuccess: () => { setOpen(false); setMsg('Saved. The next look asks the alarm system again.') } })
+    }}>
+      <label>Address of the active-alarm list
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://10.26.192.141:3000/api/v1/alarms/active" />
+      </label>
+      <label>Header
+        <select value={scheme} onChange={(e) => setScheme(e.target.value as 'Bearer' | 'Token')}>
+          <option value="Bearer">Bearer &lt;key&gt;</option>
+          <option value="Token">Token &lt;key&gt;</option>
+        </select>
+      </label>
+      <label>Key
+        <input type="password" value={key} onChange={(e) => setKey(e.target.value)} autoComplete="new-password"
+          placeholder={src?.has_key ? 'Leave blank to keep the saved key' : 'Paste the key'} />
+      </label>
+      <label>Keep the list for
+        <select value={cacheS} onChange={(e) => setCacheS(Number(e.target.value))}>
+          {[30, 60, 120, 300, 600].map((s) => <option key={s} value={s}>{s < 60 ? `${s} seconds` : `${s / 60} minute${s > 60 ? 's' : ''}`}</option>)}
+        </select>
+      </label>
+      <label className="alarm-source-check"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> On (untick to pause)</label>
+      <p className="muted" style={{ margin: 0 }}>Leave the address empty to use the server's settings file instead.</p>
+      {save.error && <p className="error">{apiErrorMessage(save.error)}</p>}
+      <div className="admin-page-actions" style={{ justifyContent: 'flex-start' }}>
+        <button type="button" className="btn-secondary btn-small" onClick={() => setOpen(false)}>Cancel</button>
+        <button type="submit" className="btn-primary btn-small" disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Save'}</button>
+        {src?.has_key && (
+          <button type="button" className="btn-secondary btn-small" disabled={save.isPending}
+            onClick={() => { if (window.confirm('Remove the saved key?')) save.mutate({ clear_key: true }) }}>Remove saved key</button>
+        )}
+      </div>
+    </form>
+  )
+}
+
 function AlarmFeedSection() {
   const { data: s, isLoading, error } = useAlarmSummary()
   const refresh = useRefreshAlarms()
@@ -455,11 +525,13 @@ function AlarmFeedSection() {
       <p className="muted">
         Live alarms from NTC's alarm system. They are not copied into DT-WATCH: each site page asks for its own when
         opened (button "Active alarms"), and the list is kept for {s?.cache_seconds ?? 60} seconds so every user shares
-        one fetch. The address and key are set by the server administrator.
+        one fetch. Set the connection here, not as a site source above: a site source overwrites site details with
+        what it returns.
       </p>
+      <AlarmSourceForm />
       {isLoading ? <p className="muted">Asking the alarm system…</p>
         : error ? <p className="error">{apiErrorMessage(error)}</p>
-          : !s?.configured ? <p className="muted">Not set up on this server.</p>
+          : !s?.configured ? <p className="muted">No alarm connection is set yet.</p>
             : (
               <>
                 <div className="admin-page-actions" style={{ justifyContent: 'flex-start', gap: 12, alignItems: 'center' }}>
