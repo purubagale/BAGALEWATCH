@@ -1,12 +1,15 @@
 import { useNavigate } from 'react-router-dom'
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { useDeleteSite, useSite, useSites, useSitesPage } from '../api/queries'
 import { isAllowed } from '../api/types'
 import type { SiteListItem, SitesPageParams } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { useTreeStore } from '../store/treeStore'
 import { siteMatchesTreeQuery } from '../components/SidebarTree'
-import MapView from '../components/MapView'
+// Loaded only when the map is shown (audit 2026-10-23): it brings Leaflet and
+// the marker clustering (about 50 KB gzip) that every other page paid for on
+// first load, because this page is part of the main bundle.
+const MapView = lazy(() => import('../components/MapView'))
 import SearchableSelect from '../components/SearchableSelect'
 import AddSiteModal from '../components/AddSiteModal'
 import RelocateConfirmModal from '../components/RelocateConfirmModal'
@@ -816,6 +819,7 @@ export default function SitesPage() {
             </p>
           </div>
 
+          <Suspense fallback={<div className="page-status">Loading map…</div>}>
           <MapView
             sites={filteredSites}
             scopeKey={mapScopeKey}
@@ -830,6 +834,7 @@ export default function SitesPage() {
             showNames={showNames}
             focusPoint={focusPoint ? { ...focusPoint, label: focusLabel } : null}
           />
+          </Suspense>
           {selected && (
             <div className="site-quickview">
               <div className="site-quickview-title">{selected.name || selected.id}</div>

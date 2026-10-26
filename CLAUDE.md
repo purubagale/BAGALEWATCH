@@ -842,6 +842,80 @@ repo, not on prod):
   session picker lists named sessions and, for readings with no session tag
   (app builds before share windows), "sharing periods" split at 30 minutes
   of silence (`sharing_periods`, key `period:<from>|<to>`).
+- **Audit 2026-10-23** (`docs/AUDIT_2026-10-23.md`, 13-item action list).
+  Items 1 and 2 done the same day, NOT committed: Pillow 13.0.0 and DRF
+  3.18.2 (`requirements.txt`); `DriveTestSession.samples_total` kept by two
+  statement-level triggers on `v2_dt_samples` (migration 0140, Postgres
+  only; `sample_count_expr()` now reads it, callers unchanged); `jit=off`
+  in `DATABASES.OPTIONS`. Session list 26 s cold to 0.57 s. AI migrations
+  are now 0141-0146 (local history renamed). Prod needs 0138-0140.
+  `manage.py test core` has 13 stale failures that predate the audit.
+  Item 3 done (frontend only, NOT committed): `weakestPerSquare()` in
+  `lib/dtBands.ts` replaces every-Nth thinning on the Session History,
+  Compare and Explore measure plots (PCI/band plots unchanged). Session 27:
+  12,451 dots, every weak square shown (2,840 of 2,840, was 1,298).
+  Item 5 done (mobile, NOT committed): `SampleQueue.kt` keeps its line
+  count and a lock shared by all instances (it was one lock per instance),
+  trims only 500 lines over the cap, streams `peek`. First SDK unit tests:
+  `netplanning-telemetry-sdk/src/test/.../SampleQueueTest.kt` (JUnit +
+  org.json test deps), run with `:netplanning-telemetry-sdk:testReleaseUnitTest`.
+  Release APKs on the Desktop, not yet run on a phone; SDK republished to
+  `maven-repo/` and the Flutter plugin's `sdk-repo`.
+  Items 6-9 and 11-13 done the same day (NOT committed): web-process-only
+  `statement_timeout` 115 s (`gunicorn.conf.py` sets
+  `DB_STATEMENT_TIMEOUT_MS`); `PUBLIC_URL` for reset links (prod `.env`
+  must set it and a named `ALLOWED_HOSTS`); 2 gunicorn threads; lazy map on
+  Sites (first download 205 to 140 KB gzip); `DemoApplication.kt` untracked
+  in the staging clone, project `.gitignore` now identical to the clone's;
+  `DATA_UPLOAD_MAX_MEMORY_SIZE` 150 MB (it never covered file parts); all
+  244 unit tests pass. New: backup export takes 74 s (item 14);
+  `manage.py shared_key_usage` (read-only) for deciding items 4 and 10.
+  Item 4 done 2026-10-24: signed `device/rescue-consent/`
+  (`core/rescue_signed.py`, number from the registration, beacon under the
+  SDK id, 409 until linked); old `rescue-enroll/` answers 410 after
+  `RESCUE_SHARED_KEY_ACCEPTED_UNTIL` (proposed 2026-12-31 in
+  `.env.example`; local `.env` has none). SDK `RescueEnrollWorker` goes
+  signed for registered phones, falls back on 404, stops on final answers;
+  app's rescue dialog shows the registered number. Item 10
+  (`TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL`) waits for `shared_key_usage` on prod.
+- **Documents brought up to date on 2026-10-24** for the work of 14-24
+  October, AI still left out: the four manuals ("Updated 24 October"
+  paragraph plus sections; Technical has new Problem Dashboard and Subscriber
+  Profile sections, security rows, deploy and config steps), management deck
+  (new slide `complaints`, now 17 slides), technical deck (new slide
+  `complaints-flow`, now 26), and the mobile handoff `.md`/`.docx` (signed
+  rescue consent, serving-site lookup, SINR fill-in, queue). Deck page numbers
+  are typed in each slide file; inserting a slide means renumbering the ones
+  after it.
+- **Live readings from a complaint, and the rename** (2026-10-24, built, NOT
+  committed, not seen in a browser). "Subscriber Profile" is now "Subscriber
+  Network Diagnosis Dashboard" on screen and in the menu (migration 0141,
+  only rows still holding the seeded text; AI migrations are now 0142-0147,
+  local history renamed). A report on the Problem Dashboard has two views,
+  `?view=` in the address: Site related analysis (the old cards plus "Live
+  readings around this spot", an area request at the complaint's position,
+  label `Complaint <ref>`) and Subscriber related analysis (the number, a
+  link to the diagnosis dashboard, and "Send request to the customer's
+  phone": a trace request, case reference `Complaint <ref>`, 30/60/120 min,
+  to the phone that sent the report or the newest registration of the
+  number; one open request per complaint). `core/problem_live.py`;
+  `create_area_request`, `area_results` and `create_trace` were split out of
+  `area_sample.py` and `device_trace.py`. Live answers never carry the
+  number. Tested in a rolled-back transaction with a throwaway registered
+  phone; a real push needs FCM on prod.
+  Rules decided by the user the same day: the Problem Dashboard permission
+  is the visibility of its menu item (`can_use_problem_dashboard` in
+  `core/problem_report.py`: admin, superadmin, or a role ticked for the
+  menu item), used by every problem view. One complaint's detail shows the
+  customer's number to all of them (list and number search stay
+  superadmin-only); a non-superadmin opening it is logged
+  `PROBLEM_REPORT.NUMBER_VIEWED`, once an hour per person and complaint.
+  Any of them may send the phone request; it is an investigation and waits
+  for the customer's Accept, except a superadmin's during a declared
+  emergency, which is a case trace (POLICY_BYPASS, no Accept). Readings and
+  cancel go through the complaint (`live/phone/<trace>/`), so no trace
+  permission is needed. The diagnosis dashboard link stays superadmin-only.
+  A local emergency "test1" is declared until 2026-10-25 17:56 UTC.
 - **Session History "slow"** (same day): the 16-18 s seen in the browser
   came while containers were rebuilt and tests ran on the same 2-CPU
   Docker; the list itself answers in about 0.45 s (`sample_count` subquery

@@ -13,8 +13,8 @@ export default function BackToProfileBar() {
   const number = new URLSearchParams(back.split('?')[1] ?? '').get('msisdn')
   return (
     <div className="sp-backbar">
-      <Link to={back}>← Back to Subscriber Profile{number ? ` · ${number}` : ''}</Link>
-      <span>Opened from a subscriber profile</span>
+      <Link to={back}>← Back to Subscriber Network Diagnosis{number ? ` · ${number}` : ''}</Link>
+      <span>Opened from the subscriber network diagnosis dashboard</span>
     </div>
   )
 }

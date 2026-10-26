@@ -100,10 +100,15 @@ class PasswordResetRequestView(APIView):
 
 
 def _frontend_origin(request):
-    # Same-origin-through-nginx convention this whole app already uses
-    # (see frontend-react/nginx.conf) -- the browser reaches this API on
-    # the same host/scheme it's rendering the SPA from, so that's also the
-    # correct base for a link this email asks the user to click.
+    # PUBLIC_URL first (audit 2026-10-23): the link must not take its host
+    # from the request, or anyone could ask for a reset with a forged Host
+    # header and have the email point at their own server, wherever
+    # ALLOWED_HOSTS lets that through. Without PUBLIC_URL, the old
+    # same-origin-through-nginx rule: the browser reaches this API on the
+    # same host/scheme it renders the SPA from.
+    from django.conf import settings
+    if settings.PUBLIC_URL:
+        return settings.PUBLIC_URL
     return f'{request.scheme}://{request.get_host()}'
 
 

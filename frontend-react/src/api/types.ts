@@ -2783,6 +2783,24 @@ export interface ProblemNearbySites {
   }[]
 }
 
+// Live readings asked for one complaint (2026-10-24) -- core/problem_live.py.
+export interface ProblemLiveTrace {
+  id: string; status: string; consent_method: string | null; consent_at: string | null
+  created_at: string; expires_at: string | null; ended_at: string | null; ttl_minutes: number
+  requested_by: string | null; sample_count: number; push_sent?: boolean
+}
+
+export interface ProblemLive {
+  reference: string
+  area: { radii_km: number[]; requests: AreaSampleRequest[] }
+  phone: {
+    has_number: boolean; registered: boolean; can_request: boolean
+    // True for a superadmin while an emergency is declared: no Accept needed.
+    skips_accept: boolean
+    ttl_minutes: number[]; traces: ProblemLiveTrace[]
+  }
+}
+
 export interface ProblemReport {
   id: number
   source: 'app' | 'staff' | 'external'

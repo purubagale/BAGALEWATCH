@@ -111,16 +111,18 @@ class MeSerializerPermissionShapeTests(TestCase):
 
     def test_crud_menu_shape(self):
         user = User.objects.create(username='admin1', role='admin')
-        MenuPermission.objects.create(role='admin', menu_key='sites', action='read', allowed=True)
-        MenuPermission.objects.create(role='admin', menu_key='sites', action='write', allowed=True)
-        MenuPermission.objects.create(role='admin', menu_key='sites', action='delete', allowed=False)
+        MenuPermission.objects.update_or_create(role='admin', menu_key='sites', action='read', defaults={'allowed': True})
+        MenuPermission.objects.update_or_create(role='admin', menu_key='sites', action='write', defaults={'allowed': True})
+        MenuPermission.objects.update_or_create(role='admin', menu_key='sites', action='delete', defaults={'allowed': False})
 
         data = MeSerializer(user).data
-        self.assertEqual(data['permissions']['sites'], {'read': True, 'write': True, 'delete': False})
+        # The menu migrations seed more actions (e.g. update); check the ones set here.
+        sites = data['permissions']['sites']
+        self.assertEqual({k: sites[k] for k in ('read', 'write', 'delete')}, {'read': True, 'write': True, 'delete': False})
 
     def test_simple_menu_shape(self):
         user = User.objects.create(username='admin2', role='admin')
-        MenuPermission.objects.create(role='admin', menu_key='reports', action='read', allowed=True)
+        MenuPermission.objects.update_or_create(role='admin', menu_key='reports', action='read', defaults={'allowed': True})
 
         data = MeSerializer(user).data
         self.assertEqual(data['permissions']['reports'], True)
@@ -167,7 +169,9 @@ class SiteWriteEndpointTests(TestCase):
         resp = self.client.put(f'/api/v2/sites/{self.site.id}/', payload, format='json')
         self.assertEqual(resp.status_code, 200, resp.data)
         self.site.refresh_from_db()
-        self.assertEqual(self.site.name, 'Renamed')
+        # The name belongs to the Live Site Directory since 2026-08-26: an
+        # edit of an existing site leaves it as it was.
+        self.assertEqual(self.site.name, 'Test Site')
         self.assertEqual(list(self.site.sectors.values_list('cell_name', flat=True)), ['NEW_A'])
 
     def test_update_ignores_id_in_body_uses_url(self):
@@ -175,11 +179,13 @@ class SiteWriteEndpointTests(TestCase):
         # redirect the write — the URL is authoritative (see
         # SiteWriteSerializer.update()'s comment on why).
         self.client.force_authenticate(self.admin)
-        payload = {'id': 'SOMETHING_ELSE', 'name': 'Renamed Again'}
+        # tower_remark rather than the name: the name is Live-Site-Directory
+        # owned and ignored on edit (2026-08-26).
+        payload = {'id': 'SOMETHING_ELSE', 'name': self.site.name, 'tower_remark': 'Edited again'}
         resp = self.client.put(f'/api/v2/sites/{self.site.id}/', payload, format='json')
         self.assertEqual(resp.status_code, 200, resp.data)
         self.site.refresh_from_db()
-        self.assertEqual(self.site.name, 'Renamed Again')
+        self.assertEqual(self.site.tower_remark, 'Edited again')
         self.assertFalse(Site.objects.filter(id='SOMETHING_ELSE').exists())
 
     def test_admin_can_delete_site(self):
@@ -317,8 +323,8 @@ class PermissionsMatrixEndpointTests(TestCase):
         self.admin = User.objects.create(username='a5', role='admin')
 
     def test_superadmin_excluded_from_output(self):
-        MenuPermission.objects.create(role='superadmin', menu_key='sites', action='read', allowed=True)
-        MenuPermission.objects.create(role='viewer', menu_key='reports', action='read', allowed=True)
+        MenuPermission.objects.update_or_create(role='superadmin', menu_key='sites', action='read', defaults={'allowed': True})
+        MenuPermission.objects.update_or_create(role='viewer', menu_key='reports', action='read', defaults={'allowed': True})
         self.client.force_authenticate(self.admin)
         resp = self.client.get('/api/v2/permissions-matrix/')
         self.assertNotIn('superadmin', resp.data)
@@ -404,6 +410,11 @@ class NtaReportEndpointTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.viewer = User.objects.create(username='v1', role='viewer')
+        # The report is cached for 60 s (reports._cached_report); without
+        # this each test read the previous test's answer. Only these keys are
+        # dropped: the cache is the shared Redis.
+        from django.core.cache import cache
+        cache.delete_many(['nta-report:all-sites', 'nta-report:violations'])
 
     def test_missing_data_fails_hi_type_kpis_passes_lo_type_kpis(self):
         # No fields set at all — every NTA_THRESHOLDS key is None.

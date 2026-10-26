@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import (api_auth, area_sample, audit, auth_log, backup, call_context, collection, consent, dashboard, device_identity,
                device_lookup, device_trace, drive_test, dt_retention, emergency,
-               exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_notify, problem_report, problem_sites, provisioning, reports, rescue, rf_audit,
+               exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_live, problem_notify, problem_report, problem_sites, provisioning, reports, rescue, rf_audit,
                rf_reports, roles, sector_stats, site_import, site_coverage, site_photo, sso_views, subscriber_link, subscriber_profile, system_doc,
                telemetry_admin, telemetry_near, views, volte_quality)
 
@@ -234,6 +234,16 @@ urlpatterns = [
     path('problem-reports/<int:pk>/nearby-sites/', problem_sites.ProblemReportNearbySitesView.as_view(),
          name='problem-report-nearby-sites'),
     path('problem-reports/<int:pk>/notify/', problem_notify.ProblemReportNotifyView.as_view(), name='problem-report-notify'),
+    # Live readings for a complaint: around the spot, or from the customer's phone (2026-10-24).
+    path('problem-reports/<int:pk>/live/', problem_live.ProblemLiveView.as_view(), name='problem-live'),
+    path('problem-reports/<int:pk>/live/area/', problem_live.ProblemLiveAreaView.as_view(), name='problem-live-area'),
+    path('problem-reports/<int:pk>/live/area/<int:req_id>/', problem_live.ProblemLiveAreaResultsView.as_view(),
+         name='problem-live-area-results'),
+    path('problem-reports/<int:pk>/live/phone/', problem_live.ProblemLivePhoneView.as_view(), name='problem-live-phone'),
+    path('problem-reports/<int:pk>/live/phone/<uuid:trace_id>/', problem_live.ProblemLivePhoneFixesView.as_view(),
+         name='problem-live-phone-fixes'),
+    path('problem-reports/<int:pk>/live/phone/<uuid:trace_id>/cancel/', problem_live.ProblemLivePhoneCancelView.as_view(),
+         name='problem-live-phone-cancel'),
     # Linked systems and their status updates (2026-10-15) -- see core/problem_notify.py.
     path('linked-systems/', problem_notify.LinkedSystemListView.as_view(), name='linked-systems'),
     path('linked-systems/<int:pk>/', problem_notify.LinkedSystemDetailView.as_view(), name='linked-system-detail'),

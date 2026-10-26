@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import CurrentLocationMarker from './CurrentLocationMarker'
 import SitePhotoLayer from './SitePhotoLayer'
 import type { DtSample, DtServingCell, DtTech } from '../api/types'
-import { bandColor, subsampleForMap, type DtMetric } from '../lib/dtBands'
+import { bandColor, weakestPerSquare, type DtMetric } from '../lib/dtBands'
 import { declusterForPlot } from '../lib/declusterPlot'
 import { buildWedgePolygon } from '../lib/sectorWedge'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
@@ -122,10 +122,15 @@ function CoverageDots({
   samples,
   metric,
   servingCells,
+  counts,
+  squareM,
 }: {
   samples: DtSample[]
   metric: DtMetric
   servingCells?: DtServingCell[]
+  // Readings each drawn dot stands for, when the drive was grouped into squares (2026-10-23).
+  counts?: Map<DtSample, number>
+  squareM?: number
 }) {
   const map = useMap()
 
@@ -213,7 +218,10 @@ function CoverageDots({
         weight: 0,
       })
       const valueText = v != null ? `${v}${metric.unit}` : 'No data'
-      const roleText = p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : ''
+      const grouped = counts?.get(s) ?? 1
+      const roleText = grouped > 1
+        ? ` (weakest of ${grouped} readings in this ${Math.round(squareM ?? 0)} m square)`
+        : p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : ''
       dot.bindTooltip(
         `${metric.label}: ${valueText}${s.serving_site_name ? ` — ${s.serving_site_name}` : ''}${roleText}`,
       )
@@ -239,7 +247,7 @@ function CoverageDots({
       map.removeLayer(layer)
       map.removeLayer(linkLayer)
     }
-  }, [samples, metric, map, servingCells])
+  }, [samples, metric, map, servingCells, counts, squareM])
 
   return null
 }
@@ -292,7 +300,26 @@ export default function DtCoverageMap({
   // whether it was the cause of CQI/DL Throughput showing sparse/empty
   // (see git history) -- confirmed live: same result with or without
   // the cap, so restored to the real cap.
-  const drawnSamples = useMemo(() => subsampleForMap(withGps), [withGps])
+  //
+  // 2026-10-23 (audit): the cap keeps the WEAKEST reading of the active
+  // measure in each small square instead of every Nth reading, so a weak
+  // stretch can no longer fall between the kept ones.
+  const grouped = useMemo(() => {
+    const higherIsBetter = activeMetric.key !== 'rx_qual'
+    return weakestPerSquare(
+      withGps,
+      (s) => [s.lat as number, s.lng as number],
+      (s) => {
+        const v = s[activeMetric.key] as number | null
+        return v == null ? null : higherIsBetter ? v : -v
+      },
+    )
+  }, [withGps, activeMetric])
+  const drawnSamples = useMemo(() => grouped.kept.map((k) => k.item), [grouped])
+  const counts = useMemo(
+    () => (grouped.squareM ? new Map(grouped.kept.map((k) => [k.item, k.count] as [DtSample, number])) : undefined),
+    [grouped],
+  )
   const bounds = useMemo(
     () => (withGps.length ? L.latLngBounds(withGps.map((s) => [s.lat as number, s.lng as number])) : null),
     [withGps],
@@ -344,7 +371,8 @@ export default function DtCoverageMap({
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             <SectorWedgeOverlay servingCells={servingCells} />
-            <CoverageDots samples={drawnSamples} metric={activeMetric} servingCells={servingCells} />
+            <CoverageDots samples={drawnSamples} metric={activeMetric} servingCells={servingCells}
+              counts={counts} squareM={grouped.squareM} />
           </>
         )}
       </MapContainer>
@@ -365,8 +393,9 @@ export default function DtCoverageMap({
       </div>
       {drawnSamples.length < withGps.length && (
         <div className="muted" style={{ fontSize: 10, marginTop: 4 }}>
-          Showing {drawnSamples.length.toLocaleString()} of {withGps.length.toLocaleString()} GPS points on the map
-          (subsampled evenly along the route for performance — the summary stats above use every real point).
+          Showing {drawnSamples.length.toLocaleString()} dots for {withGps.length.toLocaleString()} GPS points: the
+          route is grouped into {Math.round(grouped.squareM)} m squares and each dot is the weakest {activeMetric.label} reading in
+          its square, so no weak spot is hidden. The summary above uses every reading.
         </div>
       )}
     </div>

@@ -4,7 +4,10 @@ import { ApiError, apiFetch, apiJson } from './client'
 import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
   SiteMeasuredCoverage,
 } from './types'
-import type { LinkedSystem, ProblemDashboard, ProblemNearbySites, ProblemNotificationRow, ProblemReport, SecuritySettings } from './types'
+import type {
+  LinkedSystem, ProblemDashboard, ProblemLive, ProblemLiveTrace, ProblemNearbySites, ProblemNotificationRow, ProblemReport,
+  SecuritySettings,
+} from './types'
 import type { DtPruneRun, DtPurpose, DtRecentResponse, DtRetentionSettings } from './types'
 import type {
   CollectionSessionRow,
@@ -2164,6 +2167,75 @@ export function useProblemReport(id: number | null) {
     queryKey: ['problem-report', id],
     queryFn: () => apiJson<ProblemReport>(`/api/v2/problem-reports/${id}/`),
     enabled: id != null,
+  })
+}
+
+// Live readings for one complaint: around the spot, or from the customer's
+// phone with their consent (2026-10-24, core/problem_live.py). Polls while a
+// phone request is open.
+export function useProblemLive(id: number) {
+  return useQuery({
+    queryKey: ['problem-live', id],
+    queryFn: () => apiJson<ProblemLive>(`/api/v2/problem-reports/${id}/live/`),
+    refetchInterval: (query) =>
+      query.state.data?.phone.traces.some((t) => t.status === 'PENDING' || t.status === 'ACCEPTED') ? 15_000 : false,
+  })
+}
+
+export function useProblemLiveArea(id: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (radiusKm: number) =>
+      apiJson<AreaSampleRequest>(`/api/v2/problem-reports/${id}/live/area/`, {
+        method: 'POST', body: JSON.stringify({ radius_km: radiusKm }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['problem-live', id] })
+      qc.invalidateQueries({ queryKey: ['area-sample-requests'] })
+    },
+  })
+}
+
+// Answers to one of the complaint's area requests; polls while it collects.
+export function useProblemLiveAreaResults(id: number, reqId: number | null) {
+  return useQuery({
+    queryKey: ['problem-live-area', id, reqId],
+    queryFn: () => apiJson<AreaSampleResults>(`/api/v2/problem-reports/${id}/live/area/${reqId}/`),
+    enabled: reqId != null,
+    refetchInterval: (query) => (query.state.data?.open ? 5_000 : false),
+  })
+}
+
+// Readings from one of the complaint's phone requests.
+export function useProblemLivePhoneFixes(id: number, traceId: string | null, open: boolean) {
+  return useQuery({
+    queryKey: ['problem-live-fixes', id, traceId],
+    queryFn: () => apiJson<{ results: TraceFix[] }>(`/api/v2/problem-reports/${id}/live/phone/${traceId}/`),
+    enabled: !!traceId,
+    refetchInterval: open ? 15_000 : false,
+  })
+}
+
+export function useCancelProblemLivePhone(id: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (traceId: string) =>
+      apiJson<ProblemLiveTrace>(`/api/v2/problem-reports/${id}/live/phone/${traceId}/cancel/`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['problem-live', id] }),
+  })
+}
+
+export function useProblemLivePhone(id: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ttlMinutes: number) =>
+      apiJson<ProblemLiveTrace>(`/api/v2/problem-reports/${id}/live/phone/`, {
+        method: 'POST', body: JSON.stringify({ ttl_minutes: ttlMinutes }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['problem-live', id] })
+      qc.invalidateQueries({ queryKey: ['trace-requests'] })
+    },
   })
 }
 

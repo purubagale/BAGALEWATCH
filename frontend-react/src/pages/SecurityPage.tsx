@@ -69,7 +69,7 @@ export default function SecurityPage() {
             </p>
             <Switch
               label="Only verified numbers count in lookups"
-              hint="Subscriber Profile, Device Location Trace and rescue lookups then ignore phones that only typed the number."
+              hint="Subscriber Network Diagnosis, Device Location Trace and rescue lookups then ignore phones that only typed the number."
               on={data.phone_verification_required}
               busy={save.isPending}
               onChange={(v) => flip('phone_verification_required', v,
@@ -141,7 +141,7 @@ function ComplaintLocation({ data, busy, onSave }: {
     <section className="sec-card">
       <h2>Customer location for their own complaint</h2>
       <p className="muted">
-        The Subscriber Profile always shows the cells and sites a customer used, and their signal. Exact positions
+        The Subscriber Network Diagnosis Dashboard always shows the cells and sites a customer used, and their signal. Exact positions
         from the phone are shown only while an emergency is declared. With this switch on, they are also shown for
         readings taken close to a problem report that customer made, so the complaint can be analysed where it
         happened. Each time a position is shown this way, the Audit Log records it with the report. A customer who
@@ -151,7 +151,7 @@ function ComplaintLocation({ data, busy, onSave }: {
         hint="Off by default. Turn on only once NTC has agreed this use of the customer's location."
         on={data.complaint_location_access} busy={busy}
         onChange={(v) => {
-          if (v && !window.confirm("Staff with the Subscriber Profile will see exact positions of a customer's readings near that customer's problem reports, without an emergency. Has NTC agreed this?")) return
+          if (v && !window.confirm("Staff with the Subscriber Network Diagnosis Dashboard will see exact positions of a customer's readings near that customer's problem reports, without an emergency. Has NTC agreed this?")) return
           onSave({ complaint_location_access: v })
         }} />
       <div className="sec-lists">
@@ -288,7 +288,7 @@ function InEffect({ s }: { s: NonNullable<SecuritySettings['status']> }) {
     ['Linked-system update addresses', `${s.linked_system_https_only ? 'https only' : 'http and https'}; ${
       s.linked_system_hosts.length ? `hosts: ${s.linked_system_hosts.join(', ')}` : 'any host (no allowed-hosts list)'}`,
       s.linked_system_https_only && s.linked_system_hosts.length > 0],
-    ['Ticketing system (provisioning on the Subscriber Profile)', !s.provisioning || s.provisioning.backend === 'off'
+    ['Ticketing system (provisioning on the Subscriber Network Diagnosis Dashboard)', !s.provisioning || s.provisioning.backend === 'off'
       ? 'Not linked (set PROVISIONING_BACKEND and the PROVISIONING_* details once the UTS team gives its API)'
       : s.provisioning.backend === 'demo' ? 'Demo data only: not for real customers'
         : s.provisioning.configured ? `Linked, through ${s.provisioning.address_host}` : 'Chosen, but the address is not set',

@@ -18,7 +18,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import ProblemReport, Sector, Site
-from .views import IsAdminOrSuperadmin
+from .problem_report import CanUseProblemDashboard
 
 RADII_KM = (1, 2, 3, 5, 10)
 MAX_SITES = 80
@@ -33,7 +33,7 @@ def _bearing(lat1, lng1, lat2, lng2):
 
 
 class ProblemReportNearbySitesView(APIView):
-    permission_classes = [IsAdminOrSuperadmin]
+    permission_classes = [CanUseProblemDashboard]
 
     def get(self, request, pk):
         report = get_object_or_404(ProblemReport, pk=pk)

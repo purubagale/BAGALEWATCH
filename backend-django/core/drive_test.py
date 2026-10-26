@@ -199,13 +199,14 @@ def sample_count_expr():
     sessions / 47,014 samples: 4.4 s, with a 19 MB on-disk sort and the
     attachment subquery run once per SAMPLE instead of once per session.
     The cost grew with the total number of samples ever uploaded. As a
-    subquery this is one index-only count per session.
+    subquery it was one count per session, but that count still visited
+    every reading's table page: 31,800 pages (about 250 MB) for 24
+    sessions, 26 s from a cold cache (audit 2026-10-23).
+
+    It now reads `DriveTestSession.samples_total`, which a database
+    trigger keeps up to date (migration 0140). Callers are unchanged.
     """
-    counts = (
-        DriveTestSample.objects.filter(session=OuterRef('pk'))
-        .order_by().values('session').annotate(c=Count('id')).values('c')
-    )
-    return Coalesce(Subquery(counts, output_field=IntegerField()), 0)
+    return F('samples_total')
 
 
 # Hard cap on the unpaginated `dt-sessions/` list (2026-10-02 perf audit

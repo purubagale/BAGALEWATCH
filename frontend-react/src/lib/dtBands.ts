@@ -298,3 +298,41 @@ export function subsampleForMap<T>(items: T[], max: number = MAX_MAP_DOTS): T[] 
   for (let i = 0; i < max; i++) out.push(items[Math.floor(i * stride)])
   return out
 }
+
+/** One reading per small square, the weakest (audit 2026-10-23). The even
+ * stride above dropped about nine readings in ten on a 140,000-reading drive,
+ * so a short weak stretch could vanish from the map; for RF work that is the
+ * reading that matters. Squares start at `startM` metres and widen until at
+ * most `max` remain. `score` is higher-is-better (negate RxQual); a square
+ * with no score keeps its first reading. Returns the kept readings with how
+ * many each square held, and the square size used. */
+export function weakestPerSquare<T>(
+  items: T[],
+  pos: (item: T) => [number, number],
+  score: (item: T) => number | null,
+  max: number = MAX_MAP_DOTS,
+  startM = 15,
+): { kept: { item: T; count: number }[]; squareM: number } {
+  if (items.length <= max) return { kept: items.map((item) => ({ item, count: 1 })), squareM: 0 }
+  const lat0 = pos(items[0])[0]
+  const mPerDegLng = 111_320 * Math.cos((lat0 * Math.PI) / 180)
+  for (let size = startM; ; size *= 1.5) {
+    const dLat = size / 110_574
+    const dLng = size / mPerDegLng
+    const cells = new Map<string, { item: T; s: number | null; count: number }>()
+    for (const item of items) {
+      const [lat, lng] = pos(item)
+      const key = `${Math.floor(lat / dLat)}:${Math.floor(lng / dLng)}`
+      const s = score(item)
+      const cell = cells.get(key)
+      if (!cell) cells.set(key, { item, s, count: 1 })
+      else {
+        cell.count++
+        if (s != null && (cell.s == null || s < cell.s)) { cell.item = item; cell.s = s }
+      }
+    }
+    if (cells.size <= max || size > 5_000) {
+      return { kept: [...cells.values()].map(({ item, count }) => ({ item, count })), squareM: size }
+    }
+  }
+}

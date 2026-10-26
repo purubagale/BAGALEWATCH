@@ -440,7 +440,7 @@ class SubscriberProfileView(APIView):
                      'at': _iso(l.queried_at), 'reference': l.case_reference, 'found': l.found}
                     for l in RescueLocationAccessLog.objects.filter(msisdn_queried__in=variants)
                     .select_related('looked_up_by').order_by('-queried_at')[:20]]
-        lookups += [{'tool': 'Subscriber Profile', 'by': e.actor_username or None, 'at': _iso(e.created_at),
+        lookups += [{'tool': 'Subscriber Network Diagnosis', 'by': e.actor_username or None, 'at': _iso(e.created_at),
                      'reference': e.detail, 'found': None}
                     for e in AuditEvent.objects.filter(action=AUDIT_ACTION, resource_id=canonical)
                     .order_by('-created_at')[:20]]

@@ -111,14 +111,9 @@ class AreaSampleRequestListCreateView(APIView):
         return Response({'results': [_describe(r) for r in qs]})
 
     def post(self, request):
-        bucket = f'areasample:rl:{request.user.pk}:{int(time.time() // 60)}'
-        cache.add(bucket, 0, timeout=120)
-        try:
-            if cache.incr(bucket) > REQUESTS_PER_USER_PER_MIN:
-                return Response({'detail': 'Too many requests. Wait a minute and try again.'},
-                                status=status.HTTP_429_TOO_MANY_REQUESTS)
-        except ValueError:
-            pass
+        if user_rate_limited(request.user):
+            return Response({'detail': 'Too many requests. Wait a minute and try again.'},
+                            status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         try:
             lat = float(request.data.get('lat'))
@@ -138,34 +133,52 @@ class AreaSampleRequestListCreateView(APIView):
             lookback_hours = MAX_LOOKBACK_HOURS
         lookback_hours = max(1, min(lookback_hours, MAX_LOOKBACK_HOURS))
         label = str(request.data.get('label') or '').strip()[:120]
+        return Response(create_area_request(request, lat, lng, radius_km, lookback_hours, label),
+                        status=status.HTTP_201_CREATED)
 
-        since = timezone.now() - timedelta(hours=lookback_hours)
-        point = Point(lng, lat, srid=4326)
-        device_ids = list(
-            _scope_by_operator(
-                TelemetrySample.objects.filter(
-                    received_at__gte=since, location__distance_lte=(point, D(km=radius_km)),
-                ),
-                request.user,
-            ).order_by().values_list('device_id', flat=True).distinct()[:MAX_DEVICES_PER_REQUEST]
-        )
-        tokens = list(TelemetryPushToken.objects.filter(device_id__in=device_ids))
 
-        req = AreaSampleRequest.objects.create(
-            requested_by=request.user, label=label, lat=lat, lng=lng, radius_km=radius_km,
-            lookback_hours=lookback_hours, devices_in_area=len(device_ids),
-        )
-        sent = sum(1 for t in tokens if send_sample_request_push(t.fcm_token, req.id))
-        req.pushes_sent = sent
-        req.save(update_fields=['pushes_sent'])
+def user_rate_limited(user):
+    """True when this user has already sent REQUESTS_PER_USER_PER_MIN area
+    requests this minute. Shared with the Problem Dashboard (core/problem_live.py)."""
+    bucket = f'areasample:rl:{user.pk}:{int(time.time() // 60)}'
+    cache.add(bucket, 0, timeout=120)
+    try:
+        return cache.incr(bucket) > REQUESTS_PER_USER_PER_MIN
+    except ValueError:
+        return False
 
-        log_audit_event(
-            request, 'AREA_SAMPLE.REQUESTED', resource='area_sample_request', resource_id=str(req.id),
-            detail=f'radius_km={radius_km} devices_in_area={len(device_ids)} sharing={len(tokens)} sent={sent}',
-        )
-        payload = _describe(req)
-        payload['devices_sharing'] = len(tokens)
-        return Response(payload, status=status.HTTP_201_CREATED)
+
+def create_area_request(request, lat, lng, radius_km, lookback_hours, label):
+    """Finds the devices sharing in the circle, asks each for one reading and
+    records the request. Returns its description plus `devices_sharing`. Also
+    used by a complaint on the Problem Dashboard (core/problem_live.py)."""
+    since = timezone.now() - timedelta(hours=lookback_hours)
+    point = Point(lng, lat, srid=4326)
+    device_ids = list(
+        _scope_by_operator(
+            TelemetrySample.objects.filter(
+                received_at__gte=since, location__distance_lte=(point, D(km=radius_km)),
+            ),
+            request.user,
+        ).order_by().values_list('device_id', flat=True).distinct()[:MAX_DEVICES_PER_REQUEST]
+    )
+    tokens = list(TelemetryPushToken.objects.filter(device_id__in=device_ids))
+
+    req = AreaSampleRequest.objects.create(
+        requested_by=request.user, label=label, lat=lat, lng=lng, radius_km=radius_km,
+        lookback_hours=lookback_hours, devices_in_area=len(device_ids),
+    )
+    sent = sum(1 for t in tokens if send_sample_request_push(t.fcm_token, req.id))
+    req.pushes_sent = sent
+    req.save(update_fields=['pushes_sent'])
+
+    log_audit_event(
+        request, 'AREA_SAMPLE.REQUESTED', resource='area_sample_request', resource_id=str(req.id),
+        detail=f'radius_km={radius_km} devices_in_area={len(device_ids)} sharing={len(tokens)} sent={sent}',
+    )
+    payload = _describe(req)
+    payload['devices_sharing'] = len(tokens)
+    return payload
 
 
 class AreaSampleRequestSamplesView(APIView):
@@ -176,47 +189,52 @@ class AreaSampleRequestSamplesView(APIView):
     permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
 
     def get(self, request, pk):
-        req = get_object_or_404(AreaSampleRequest, pk=pk)
-        point = Point(req.lng, req.lat, srid=4326)
-        qs = _scope_by_operator(
-            TelemetrySample.objects.filter(
-                trigger_reason='on_demand',
-                received_at__gte=req.created_at,
-                received_at__lte=req.created_at + RESPONSE_WINDOW,
-                location__distance_lte=(point, D(km=req.radius_km)),
-            ),
-            request.user,
-        )
-        devices = qs.order_by().values('device_id').distinct().count()
-        samples = [
-            {
-                'ts': s.ts,
-                'lat': s.lat,
-                'lng': s.lng,
-                'gps_accuracy_m': s.gps_accuracy_m,
-                'network_type': s.network_type,
-                'pci': s.pci,
-                'rsrp_dbm': s.rsrp_dbm,
-                'rsrq_db': s.rsrq_db,
-                'sinr_db': s.sinr_db,
-                'rssi_dbm': s.rssi_dbm,
-                'rscp_dbm': s.rscp_dbm,
-                'ecio_db': s.ecio_db,
-                'rx_qual': s.rx_qual,
-                **radio_band.fields(s.network_type, s.arfcn, s.band, s.band_mhz),
-                'cqi': s.cqi,
-                'cqi_derived': s.cqi_derived,
-                **sample_cqi_fields(s.cqi, s.sinr_db, s.rsrq_db, s.network_type),
-                'serving_site_id': s.serving_site_id,
-                'serving_sector': s.serving_sector,
-            }
-            for s in qs.order_by('-received_at')[:MAX_RESULT_ROWS]
-        ]
-        open_until = req.created_at + RESPONSE_WINDOW
-        return Response({
-            'request': _describe(req),
-            'devices': devices,
-            'samples': samples,
-            'open': timezone.now() < open_until,
-            'open_until': open_until,
-        })
+        return Response(area_results(get_object_or_404(AreaSampleRequest, pk=pk), request.user))
+
+
+def area_results(req, user):
+    """The answers to one area request. Also used by a complaint on the
+    Problem Dashboard (core/problem_live.py)."""
+    point = Point(req.lng, req.lat, srid=4326)
+    qs = _scope_by_operator(
+        TelemetrySample.objects.filter(
+            trigger_reason='on_demand',
+            received_at__gte=req.created_at,
+            received_at__lte=req.created_at + RESPONSE_WINDOW,
+            location__distance_lte=(point, D(km=req.radius_km)),
+        ),
+        user,
+    )
+    devices = qs.order_by().values('device_id').distinct().count()
+    samples = [
+        {
+            'ts': s.ts,
+            'lat': s.lat,
+            'lng': s.lng,
+            'gps_accuracy_m': s.gps_accuracy_m,
+            'network_type': s.network_type,
+            'pci': s.pci,
+            'rsrp_dbm': s.rsrp_dbm,
+            'rsrq_db': s.rsrq_db,
+            'sinr_db': s.sinr_db,
+            'rssi_dbm': s.rssi_dbm,
+            'rscp_dbm': s.rscp_dbm,
+            'ecio_db': s.ecio_db,
+            'rx_qual': s.rx_qual,
+            **radio_band.fields(s.network_type, s.arfcn, s.band, s.band_mhz),
+            'cqi': s.cqi,
+            'cqi_derived': s.cqi_derived,
+            **sample_cqi_fields(s.cqi, s.sinr_db, s.rsrq_db, s.network_type),
+            'serving_site_id': s.serving_site_id,
+            'serving_sector': s.serving_sector,
+        }
+        for s in qs.order_by('-received_at')[:MAX_RESULT_ROWS]
+    ]
+    open_until = req.created_at + RESPONSE_WINDOW
+    return {
+        'request': _describe(req),
+        'devices': devices,
+        'samples': samples,
+        'open': timezone.now() < open_until,
+        'open_until': open_until,
+    }

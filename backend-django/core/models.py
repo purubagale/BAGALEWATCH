@@ -955,6 +955,12 @@ class DriveTestSession(models.Model):
     # convention, not a general update/PATCH (see this model's own
     # viewset docstring).
     mode = models.CharField(max_length=40, blank=True, default='')
+    # How many readings the session holds (audit 2026-10-23). Kept by a
+    # database trigger on v2_dt_samples (migration 0140), so every path that
+    # adds or deletes readings (upload COPY, append, partner API, retention)
+    # keeps it right. Counting on each list request read about 250 MB of the
+    # readings table and took 26 s from a cold cache.
+    samples_total = models.PositiveIntegerField(default=0)
 
     class Meta:
         db_table = 'v2_dt_sessions'

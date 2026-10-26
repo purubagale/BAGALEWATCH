@@ -39,7 +39,9 @@ from .models import DriveTestSample, ProblemReport, Site, TelemetrySample
 from .problem_notify import queue_update, report_notify_info
 from .telemetry import TELEMETRY_MATCH_MAX_KM, _scope_by_operator
 from .telemetry_level import sample_level
-from .views import IsAdminOrSuperadmin
+from rest_framework.permissions import BasePermission
+
+from .views import get_visible_menu_items
 
 # Limits on reports from phones.
 MAX_REPORTS_PER_DAY = 10            # one phone
@@ -427,6 +429,32 @@ def _unrestricted(user):
 # ── Views ──────────────────────────────────────────────────────────────────
 
 
+PROBLEM_DASHBOARD_PATH = '/r4q7cx'
+
+
+def can_use_problem_dashboard(user):
+    """Admin and superadmin, and any role a superadmin has given the Problem
+    Dashboard menu item (2026-10-24): the menu's visibility is the
+    permission, so there is one switch for the page and its API."""
+    if not (user and user.is_authenticated):
+        return False
+    if user.role in ('superadmin', 'admin'):
+        return True
+    visible_top, visible_children = get_visible_menu_items(user)
+    stack = list(visible_top)
+    while stack:
+        item = stack.pop()
+        if item.path == PROBLEM_DASHBOARD_PATH:
+            return True
+        stack.extend(visible_children(item.id))
+    return False
+
+
+class CanUseProblemDashboard(BasePermission):
+    def has_permission(self, request, view):
+        return can_use_problem_dashboard(request.user)
+
+
 def _row(report, user, with_check=False):
     out = {
         'id': report.pk,
@@ -460,7 +488,10 @@ def _row(report, user, with_check=False):
         'reference': f'{report.external_system} {report.external_ref}' if report.external_ref else f'PR-{report.pk}',
         'has_number': bool((report.device_id and report.device.msisdn) or report.msisdn),
     }
-    if user.role == 'superadmin':
+    # The list shows the number to a superadmin only. One complaint opened on
+    # the Problem Dashboard shows it to everyone who may use the dashboard,
+    # to deal with that complaint (2026-10-24); the detail view logs it.
+    if user.role == 'superadmin' or with_check:
         out['phone_number'] = (report.device.msisdn if report.device_id else None) or report.msisdn or None
     if with_check:
         out['notify'] = report_notify_info(report)
@@ -543,7 +574,7 @@ def _search_q(q, user):
 
 
 class ProblemReportListView(APIView):
-    permission_classes = [IsAdminOrSuperadmin]
+    permission_classes = [CanUseProblemDashboard]
 
     def get(self, request):
         qs = ProblemReport.objects.select_related('device', 'entered_by', 'checked_by')
@@ -606,11 +637,18 @@ class ProblemReportListView(APIView):
 
 
 class ProblemReportDetailView(APIView):
-    permission_classes = [IsAdminOrSuperadmin]
+    permission_classes = [CanUseProblemDashboard]
 
     def get(self, request, pk):
         report = get_object_or_404(ProblemReport.objects.select_related('device', 'entered_by', 'checked_by'), pk=pk)
-        return Response(_row(report, request.user, with_check=True))
+        out = _row(report, request.user, with_check=True)
+        if (out.get('phone_number') and request.user.role != 'superadmin'
+                and cache.add(f'prnum:seen:{request.user.pk}:{pk}', 1, timeout=3600)):
+            # Who saw a customer's number, and for which complaint (2026-10-24);
+            # once an hour per person and complaint, as the page refetches.
+            log_audit_event(request, 'PROBLEM_REPORT.NUMBER_VIEWED', resource='problem_report',
+                            resource_id=str(pk), detail=f'reference={out["reference"]}')
+        return Response(out)
 
     def patch(self, request, pk):
         report = get_object_or_404(ProblemReport, pk=pk)
@@ -659,7 +697,7 @@ class ProblemDashboardView(APIView):
     Reports are classified in the background; this spends at most
     DASHBOARD_CLASSIFY_SECONDS on any still waiting, and counts the rest in
     `pending`. No phone number is returned."""
-    permission_classes = [IsAdminOrSuperadmin]
+    permission_classes = [CanUseProblemDashboard]
 
     def get(self, request):
         days = _int(request.query_params.get('days'), 1, 3650) or 30

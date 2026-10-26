@@ -4689,6 +4689,22 @@ tr[hidden] { display: none !important; }
 .pdd-sites-list { max-height: 460px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
 .pdd-site { text-align: left; border: 1px solid var(--border, #e2e8f0); background: var(--surface, #fff); border-radius: 10px; padding: 8px 10px; cursor: pointer; color: inherit; }
 .pdd-site.on { border-color: var(--brand, #0153a5); box-shadow: inset 3px 0 0 var(--brand, #0153a5); }
+/* Site related / subscriber related analysis and live readings of a complaint (2026-10-24). */
+.pdd-views { display: flex; gap: 0; margin: 4px 0 12px; border-bottom: 1px solid var(--border, #e2e8f0); }
+.pdd-views button { border: none; background: none; padding: 8px 14px; font-size: 13.5px; cursor: pointer; color: inherit; border-bottom: 3px solid transparent; margin-bottom: -1px; }
+.pdd-views button.on { border-bottom-color: var(--brand, #0153a5); color: var(--brand, #0153a5); font-weight: 600; }
+.pdd-live { margin-top: 12px; }
+.pdd-live-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px; font-size: 13px; }
+.pdd-live-bar select { margin-left: 4px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--border, #cbd5e1); }
+.pdd-live-cols { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 900px) { .pdd-live-cols { grid-template-columns: minmax(0, 1fr); } }
+.pdd-live-list { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow: auto; }
+.pdd-live-list .btn-small { margin-top: 6px; }
+.pdd-live-map { height: 320px !important; }
+.pdd-grid-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 760px) { .pdd-grid-2 { grid-template-columns: minmax(0, 1fr); } }
+.pdd-span-2 { grid-column: 1 / -1; }
+.pdd-live-go { display: inline-block; margin: 10px 0 4px; text-decoration: none; }
 .pdd-site-top { display: flex; align-items: center; gap: 6px; }
 .pdd-dist { margin-left: auto; font-weight: 600; color: #0891b2; font-variant-numeric: tabular-nums; }
 .pdd-techs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }

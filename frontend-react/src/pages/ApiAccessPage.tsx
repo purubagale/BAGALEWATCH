@@ -264,7 +264,7 @@ curl -X POST -H "X-API-Key: bw_..." -H "Content-Type: application/json" \\
           needs the system's ticket number (<code>external_ref</code>), a <code>category</code> (no_signal, slow_data,
           call_drop, stuck_2g3g, other) and a place: <code>lat</code>/<code>lng</code>, a <code>site_id</code>, or a 4G
           <code> cell_id</code>. Optional: <code>msisdn</code>, the customer's number in any spelling, which puts the
-          report on that number's Subscriber Profile (shown to superadmins only). Sending the same ticket again updates
+          report on that number's Subscriber Network Diagnosis Dashboard (shown to superadmins only). Sending the same ticket again updates
           it until an engineer has checked it. Status updates can also be sent to the system: see Linked systems below.
         </p>
         <pre className="code-block">
