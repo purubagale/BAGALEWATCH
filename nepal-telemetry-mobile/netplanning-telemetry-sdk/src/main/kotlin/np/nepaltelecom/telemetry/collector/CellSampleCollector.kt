@@ -96,6 +96,10 @@ internal class CellSampleCollector(
         if (!hasLocationPermission()) return null
 
         val cell = readServingCell()
+        // Why there is or is not a cell, and the level without a cell from the
+        // overall signal reading (2026-10-26, RadioStatus).
+        val status = RadioStatus.read(context, telephonyManager, cell != null)
+        val signal = if (cell == null) RadioStatus.signalOnly(telephonyManager) else null
 
         return Sample(
             deviceId = identity.deviceId,
@@ -108,14 +112,14 @@ internal class CellSampleCollector(
             tac = cell?.tac,
             mcc = cell?.mcc,
             mnc = cell?.mnc,
-            networkType = cell?.networkType ?: "UNKNOWN",
-            rsrpDbm = cell?.rsrpDbm,
-            rsrqDb = cell?.rsrqDb,
-            rssiDbm = cell?.rssiDbm,
-            sinrDb = cell?.sinrDb,
+            networkType = cell?.networkType ?: signal?.networkType ?: "UNKNOWN",
+            rsrpDbm = cell?.rsrpDbm ?: signal?.rsrpDbm,
+            rsrqDb = cell?.rsrqDb ?: signal?.rsrqDb,
+            rssiDbm = cell?.rssiDbm ?: signal?.rssiDbm,
+            sinrDb = cell?.sinrDb ?: signal?.sinrDb,
             cqi = cell?.cqi,
             rxQual = cell?.rxQual,
-            rscpDbm = cell?.rscpDbm,
+            rscpDbm = cell?.rscpDbm ?: signal?.rscpDbm,
             ecioDb = cell?.ecioDb,
             scramblingCode = cell?.scramblingCode,
             bcch = cell?.bcch,
@@ -125,6 +129,10 @@ internal class CellSampleCollector(
             batteryPct = readBatteryPct(),
             triggerReason = triggerReason,
             driveSessionId = driveSessionId,
+            serviceState = status.serviceState,
+            cellInfoStatus = status.cellInfoStatus,
+            airplaneMode = status.airplaneMode,
+            simState = status.simState,
         )
     }
 

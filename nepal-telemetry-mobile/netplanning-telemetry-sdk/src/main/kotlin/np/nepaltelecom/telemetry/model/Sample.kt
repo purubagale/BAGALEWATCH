@@ -64,6 +64,13 @@ data class Sample(
     // LTE CQI the modem reports (API 29+, CellSignalStrengthLte.getCqi()). Null
     // where the device gives none. Separate from the CQI the server estimates from SINR.
     val cqi: Int? = null,
+    // Why the reading has or lacks a cell (2026-10-26, collector/RadioStatus.kt):
+    // in_service | out_of_service | emergency_only | radio_off,
+    // ok | background | location_off | no_permission | empty, flight mode, SIM state.
+    val serviceState: String? = null,
+    val cellInfoStatus: String? = null,
+    val airplaneMode: Boolean? = null,
+    val simState: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("device_id", deviceId)
@@ -93,6 +100,10 @@ data class Sample(
         put("trigger_reason", triggerReason)
         putOpt("drive_session_id", driveSessionId)
         putOpt("cqi", cqi)
+        putOpt("service_state", serviceState)
+        putOpt("cell_info_status", cellInfoStatus)
+        putOpt("airplane_mode", airplaneMode)
+        putOpt("sim_state", simState)
     }
 
     companion object {
@@ -124,6 +135,10 @@ data class Sample(
             triggerReason = o.optString("trigger_reason", "periodic"),
             driveSessionId = o.optString("drive_session_id", "").takeIf { it.isNotEmpty() },
             cqi = o.optIntOrNull("cqi"),
+            serviceState = o.optString("service_state", "").takeIf { it.isNotEmpty() },
+            cellInfoStatus = o.optString("cell_info_status", "").takeIf { it.isNotEmpty() },
+            airplaneMode = if (o.has("airplane_mode") && !o.isNull("airplane_mode")) o.getBoolean("airplane_mode") else null,
+            simState = o.optString("sim_state", "").takeIf { it.isNotEmpty() },
         )
     }
 }

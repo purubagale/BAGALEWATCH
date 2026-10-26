@@ -155,8 +155,47 @@ internal class CallListener(
         }
     }
 
-    private suspend fun snapshot(): CallPoint? =
-        CellSampleCollector(context, identity).collect(triggerReason = "call")?.let { CallPoint.from(it) }
+    private suspend fun snapshot(): CallPoint? {
+        val full = CellSampleCollector(context, identity).collect(triggerReason = "call")?.let { CallPoint.from(it) }
+        if (full != null && (full.cellId != null || full.levelDbm != null)) return full
+        // During a call the dialer is in front, and Android gives an app in the
+        // background no cell list or position without background location
+        // (2026-10-26: on prod only the Collector edition, which runs a
+        // foreground service, had cell and level on its calls). The voice
+        // network and the overall signal reading need neither, so they still
+        // fill the call; the cell stays blank.
+        val net = voiceNetworkName()?.takeIf { it != "UNKNOWN" }
+        val level = signalLevel(net ?: full?.networkType)
+        if (net == null && level == null) return full
+        val base = full ?: CallPoint(null, null, net ?: "UNKNOWN", null, null, null, null, null, null)
+        return base.copy(
+            networkType = base.networkType.takeIf { it.isNotEmpty() && it != "UNKNOWN" } ?: (net ?: "UNKNOWN"),
+            levelDbm = base.levelDbm ?: level,
+        )
+    }
+
+    /** Level of the serving cell from getSignalStrength(), which needs no location permission. */
+    private fun signalLevel(network: String?): Int? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        val strengths = runCatching { telephony.signalStrength?.cellSignalStrengths }.getOrNull() ?: return null
+        val found = strengths.mapNotNull { s ->
+            when (s) {
+                is android.telephony.CellSignalStrengthLte -> "4G" to s.rsrp
+                is android.telephony.CellSignalStrengthNr -> "5G" to s.ssRsrp
+                is android.telephony.CellSignalStrengthWcdma -> "3G" to s.dbm
+                is android.telephony.CellSignalStrengthGsm -> "2G" to s.dbm
+                else -> null
+            }?.takeIf { it.second in -150..-20 }
+        }
+        val family = when (network) {
+            "LTE" -> "4G"
+            "NR" -> "5G"
+            "UMTS", "HSDPA", "HSUPA", "HSPA", "HSPAP", "TD_SCDMA" -> "3G"
+            "GSM", "EDGE", "GPRS" -> "2G"
+            else -> null
+        }
+        return (found.firstOrNull { it.first == family } ?: found.firstOrNull())?.second
+    }
 
     private fun noteVoiceNetwork() {
         val name = voiceNetworkName() ?: return
