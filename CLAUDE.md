@@ -1012,6 +1012,14 @@ repo, not on prod):
   and guide for a public test machine (tested in Docker). Public exposure
   checklist (Claude Docs, private to the user):
   `claude.ai/artifact/WudWv2TDh1GmRFM73tDrF2`.
+- **Session names with every district** (2026-10-26, built, NOT committed).
+  `CollectionSession.district` is now a comma list of the districts in the
+  order first reached (`districts_in`, `merge_districts` in
+  `core/collection.py`; serving site's district, else nearest site, at most
+  20 map lookups a batch); every batch adds to it and the generated name
+  follows ("Lalitpur, Kathmandu, Bhaktapur +2 · Crowd drive · …"). No
+  migration. **After deploying, run `manage.py refresh_session_districts`
+  on prod once** (`--dry-run` first) to rename stored sessions.
 - **Readable complaint tiles** (same day): Phone's reading and the
   measurements of Likely cause are tiles with rounded values and a plain
   verdict (Good/Fair/Weak, Slow, High) from the check's limits.
