@@ -114,7 +114,7 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
             val result = if (wifi) {
                 SpeedTest.runOnWifi(context)
             } else {
-                SpeedTest.runOnMobileData(context, fallback = true) ?: SpeedTest.run()
+                SpeedTest.runOnMobileData(context, fallback = true) ?: SpeedTest.run(context = context)
             }
             activity?.runOnUiThread {
                 if (!isAdded) return@runOnUiThread

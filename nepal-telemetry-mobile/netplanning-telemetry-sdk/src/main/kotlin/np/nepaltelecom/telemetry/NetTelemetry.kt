@@ -27,7 +27,9 @@ import java.net.URL
 import np.nepaltelecom.telemetry.collector.CallListener
 import np.nepaltelecom.telemetry.collector.CellSampleCollector
 import np.nepaltelecom.telemetry.storage.CallQueue
+import np.nepaltelecom.telemetry.storage.SpeedResultQueue
 import np.nepaltelecom.telemetry.upload.CallUploadWorker
+import np.nepaltelecom.telemetry.upload.SpeedResultUploadWorker
 import np.nepaltelecom.telemetry.collector.DriveHistoryStore
 import np.nepaltelecom.telemetry.collector.DriveTestService
 import np.nepaltelecom.telemetry.collector.RouteTrail
@@ -84,6 +86,7 @@ object NetTelemetry {
     private const val RESCUE_ENROLL_WORK_NAME = "netplanning_telemetry_rescue_enroll"
     private const val DRIVE_TEST_CONSENT_WORK_NAME = "netplanning_telemetry_dt_consent"
     private const val CALL_UPLOAD_WORK_NAME = "netplanning_call_upload"
+    private const val SPEED_UPLOAD_WORK_NAME = "netplanning_speed_upload"
 
     /**
      * Whether this phone can run the SDK (2026-10-16). The SDK installs on
@@ -149,6 +152,7 @@ object NetTelemetry {
         if (wipeQueuedData) {
             SampleQueue(appContext).clear()
             CallQueue(appContext).clear()
+            SpeedResultQueue(appContext).clear()
             DriveShare.setDrainPending(appContext, false)
         }
         syncPushToken(register = false)
@@ -501,8 +505,10 @@ object NetTelemetry {
      * Sends one Speed test card result to [TelemetryConfig.speedSamplesUrl]
      * (2026-10-07). Does nothing when that URL isn't configured, or while not
      * opted in -- this is a crowdsourced upload, same consent gate as a
-     * regular sample. Fire-and-forget: a failure is swallowed, same posture
-     * as the rest of this SDK's background uploads.
+     * regular sample. Since 2026-10-26 the result is held on the phone and
+     * sent by [SpeedResultUploadWorker] once DT-WATCH can be reached, so a
+     * test run where the server is out of reach (mobile data today) is not
+     * lost. `ts` is the time of the test, not of the upload.
      */
     fun reportSpeedTest(
         pingMedianMs: Double?,
@@ -520,29 +526,27 @@ object NetTelemetry {
         val config = internalConfig ?: return
         val url = config.speedSamplesUrl ?: return
         if (!isOptedIn()) return
+        if (url.isEmpty()) return
         val deviceId = DeviceIdentity(appContext).deviceId
-        val apiKey = config.apiKey
-        scope.launch {
-            withContext(Dispatchers.IO) {
-                try {
-                    val body = JSONObject().apply {
-                        put("device_id", deviceId)
-                        put("ts", System.currentTimeMillis())
-                        pingMedianMs?.let { put("ping_median_ms", it) }
-                        jitterMs?.let { put("jitter_ms", it) }
-                        packetLossPct?.let { put("packet_loss_pct", it) }
-                        downloadMbps?.let { put("download_mbps", it) }
-                        uploadMbps?.let { put("upload_mbps", it) }
-                        networkType?.let { put("network_type", it) }
-                        rsrpDbm?.let { put("rsrp_dbm", it) }
-                        bearer?.takeIf { it.isNotEmpty() }?.let { put("bearer", it) }
-                    }.toString()
-                    postJson(url, body, apiKey)
-                } catch (_: Exception) {
-                    // Best effort: the on-screen result already shown either way.
-                }
-            }
-        }
+        val body = JSONObject().apply {
+            put("device_id", deviceId)
+            put("ts", System.currentTimeMillis())
+            pingMedianMs?.let { put("ping_median_ms", it) }
+            jitterMs?.let { put("jitter_ms", it) }
+            packetLossPct?.let { put("packet_loss_pct", it) }
+            downloadMbps?.let { put("download_mbps", it) }
+            uploadMbps?.let { put("upload_mbps", it) }
+            networkType?.let { put("network_type", it) }
+            rsrpDbm?.let { put("rsrp_dbm", it) }
+            bearer?.takeIf { it.isNotEmpty() }?.let { put("bearer", it) }
+        }.toString()
+        SpeedResultQueue(appContext).append(body)
+        val work = OneTimeWorkRequestBuilder<SpeedResultUploadWorker>()
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 60, TimeUnit.SECONDS)
+            .build()
+        WorkManager.getInstance(appContext)
+            .enqueueUniqueWork(SPEED_UPLOAD_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, work)
     }
 
     /**

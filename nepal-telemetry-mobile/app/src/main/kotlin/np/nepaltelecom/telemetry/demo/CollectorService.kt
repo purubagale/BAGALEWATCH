@@ -67,7 +67,7 @@ class CollectorService : Service() {
                 var radio: np.nepaltelecom.telemetry.model.Sample? = null
                 NetTelemetry.readLiveCell { radio = it; latch.countDown() }
                 latch.await(10, java.util.concurrent.TimeUnit.SECONDS)
-                val r = SpeedTest.runOnMobileData(this, fallback = false)
+                val r = SpeedTest.runOnMobileData(this, fallback = false, profile = SpeedTest.Profile.LIGHT)
                 if (r != null && r.error == null) {
                     val s = radio
                     NetTelemetry.reportSpeedTest(

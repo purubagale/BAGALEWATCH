@@ -56,7 +56,7 @@ object NetProblem {
         NetTelemetry.readLiveSample { sample = it; latch.countDown() }
         latch.await(READ_WAIT_S, TimeUnit.SECONDS)
         val s = sample
-        val speed = if (withSpeedTest) SpeedTest.runOnMobileData(app, fallback = false) else null
+        val speed = if (withSpeedTest) SpeedTest.runOnMobileData(app, fallback = false, profile = SpeedTest.Profile.LIGHT) else null
         if (s?.lat == null || s.lon == null) return Outcome(sent = false, noLocation = true, sample = s, speed = speed)
         return try {
             DeviceApi.reportProblem(body(app, category, note.take(NOTE_MAX), s, speed).toString())
