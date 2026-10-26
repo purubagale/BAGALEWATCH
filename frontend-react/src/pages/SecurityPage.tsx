@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { apiErrorMessage } from '../api/client'
-import { useAlertTest, useSaveSecuritySettings, useSecuritySettings, useSmsTest } from '../api/queries'
+import {
+  useAlertTest, useSaveSecuritySettings, useSaveSpeedTestSettings, useSecuritySettings, useSmsTest, useSpeedTestSettings,
+} from '../api/queries'
 import type { SecuritySettings } from '../api/types'
 
 // Security (2026-10-15, superadmin) -- the switches that can be turned on or
@@ -117,10 +119,38 @@ export default function SecurityPage() {
           <AttackAlerts data={data} busy={save.isPending}
             onSave={(body) => save.mutate(body)} />
 
+          <SpeedTestServer />
+
           {s && <InEffect s={s} />}
         </>
       )}
     </div>
+  )
+}
+
+// Where phones run the speed test (2026-10-26, core/speed_test.py). Blank =
+// this server's own /speedtest/. Phones ask before each test and remember
+// the answer, so moving the test to a public machine needs no new app.
+function SpeedTestServer() {
+  const { data } = useSpeedTestSettings()
+  const save = useSaveSpeedTestSettings()
+  const [url, setUrl] = useState('')
+  useEffect(() => { setUrl(data?.base_url ?? '') }, [data?.base_url])
+  return (
+    <section className="sec-card">
+      <h2>Speed test server</h2>
+      <p className="muted">
+        Where the app runs its speed test. Leave it empty to use this server. Once a public machine is ready (for
+        example https://speedtest.ntc.net.np/speedtest/), enter its address: phones use it from their next test.
+      </p>
+      <label className="sec-row" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="This server" style={{ minWidth: 320, flex: 1 }} />
+        <button type="button" className="btn-primary btn-small" disabled={save.isPending || url.trim() === (data?.base_url ?? '')}
+          onClick={() => save.mutate(url.trim())}>{save.isPending ? 'Saving…' : 'Save'}</button>
+      </label>
+      {data?.updated_by && <p className="muted" style={{ margin: '6px 0 0' }}>Last set by {data.updated_by}{data.updated_at ? `, ${new Date(data.updated_at).toLocaleString()}` : ''}</p>}
+      {save.error && <p className="error">{apiErrorMessage(save.error)}</p>}
+    </section>
   )
 }
 

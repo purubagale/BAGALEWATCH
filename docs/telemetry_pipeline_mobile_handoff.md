@@ -454,7 +454,33 @@ A request lasts 120 minutes by default.
 ## 10. Speed test
 
 The test runs when the user taps a test button (and every 30 minutes in the
-Collector edition, section 14). It takes about 20 seconds and about 8 MB of data.
+Collector edition, section 14).
+
+**How it measures (since 26 October 2026).** The way LibreSpeed and Ookla do,
+so the numbers can be compared with theirs: several connections at once, each
+for a fixed time, the first second or so left out while TCP speeds up, and
+the sustained rate reported. The far end is served by nginx at the root of the
+dtwatch server (not under `/api/`), so parallel streams never hold up the web
+application:
+
+| Call | Detail |
+|---|---|
+| `GET /speedtest/empty` | 204, no body. Ping; add a `?r=<random>` so nothing caches it |
+| `GET /speedtest/garbage` | A 32 MB random file. Each download stream requests it again and again until its time is up |
+| `POST /speedtest/upload` | Any body up to 64 MB, read and dropped; returns 200. Chunked bodies are accepted |
+
+At most 16 open connections per address. Two profiles:
+
+| Profile | When | Download | Upload | Data at most |
+|---|---|---|---|---|
+| Full | the user taps a test button | 6 connections, 10 s | 4 connections, 10 s | 150 MB down, 60 MB up |
+| Light | Collector every 30 min, a problem report's test | 3 connections, 5 s | 2 connections, 5 s | 15 MB down, 6 MB up |
+
+On a fast 4G cell a full test uses roughly 50 to 90 MB; tell the user before
+running it on a metered plan. A server without `/speedtest/empty` (404) gets
+the old single-connection test below, which reads lower than Ookla.
+
+The old endpoints stay for older app builds:
 
 Since 15 October 2026 the reference app offers two tests: **Test mobile
 data** and **Test Wi-Fi**. Both results are sent, tagged with `bearer`

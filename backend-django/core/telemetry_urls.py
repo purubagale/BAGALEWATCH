@@ -25,6 +25,8 @@ urlpatterns = [
     path('speedtest/ping/', speed_test.SpeedTestPingView.as_view(), name='speedtest-ping'),
     path('speedtest/download/', speed_test.SpeedTestDownloadView.as_view(), name='speedtest-download'),
     path('speedtest/upload/', speed_test.SpeedTestUploadView.as_view(), name='speedtest-upload'),
+    # Where phones run the test (2026-10-26): null = this server's nginx /speedtest/.
+    path('speedtest/config/', speed_test.SpeedTestConfigView.as_view(), name='speedtest-config'),
     # VoLTE/VoNR call-quality ingest (2026-10-02) -- same ingest-key auth,
     # dormant until the app has carrier-privileged status. See
     # core/volte_quality.py's module docstring.

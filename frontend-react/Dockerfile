@@ -40,6 +40,9 @@ ENV VITE_APP_VERSION=$VITE_APP_VERSION \
 RUN npm run build
 
 FROM nginx:1.27-alpine
+# Speed-test download file (2026-10-26, nginx.conf /speedtest/): 32 MB of
+# random bytes, so no compression on the way can make the link look faster.
+RUN mkdir -p /usr/share/nginx/speedtest && head -c 33554432 /dev/urandom > /usr/share/nginx/speedtest/garbage.bin
 COPY --from=build /app/frontend-react/dist /usr/share/nginx/html
 COPY frontend-react/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

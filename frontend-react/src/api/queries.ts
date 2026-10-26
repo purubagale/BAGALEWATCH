@@ -2224,6 +2224,25 @@ export function useAlarmSummary() {
   })
 }
 
+// Where phones run the speed test (2026-10-26, core/speed_test.py). Superadmin.
+export function useSpeedTestSettings() {
+  return useQuery({
+    queryKey: ['speedtest-settings'],
+    queryFn: () => apiJson<{ base_url: string; updated_by: string | null; updated_at: string | null }>('/api/v2/speedtest/settings/'),
+  })
+}
+
+export function useSaveSpeedTestSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (baseUrl: string) =>
+      apiJson<{ base_url: string; updated_by: string | null; updated_at: string | null }>('/api/v2/speedtest/settings/', {
+        method: 'PUT', body: JSON.stringify({ base_url: baseUrl }),
+      }),
+    onSuccess: (d) => qc.setQueryData(['speedtest-settings'], d),
+  })
+}
+
 export function useAlarmSource() {
   return useQuery({ queryKey: ['alarm-source'], queryFn: () => apiJson<AlarmSource>('/api/v2/alarms/source/') })
 }

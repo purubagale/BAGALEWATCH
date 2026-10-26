@@ -988,6 +988,30 @@ repo, not on prod):
   the reading arrived. Related data: groups in the table, "Reached the
   server late" tile (> 10 min). Handoff doc lists the four fields. Release
   APKs on the Desktop (previous in `old-apks\*_before_status_*`).
+- **Speed test like LibreSpeed / Ookla** (2026-10-26, built, NOT committed,
+  not run on a phone). The old test was one connection, a fixed 6 MB / 2 MB
+  file through Django, so it read below Ookla. Now nginx serves
+  `/speedtest/empty` (204), `/speedtest/garbage` (32 MB random file baked
+  into the frontend image) and `/speedtest/upload` (body dropped, 64 MB
+  max), `limit_conn` 16 per address, no Django worker used. SDK
+  `device/SpeedTest.kt`: parallel streams for a fixed time, first 1-1.5 s
+  left out, sustained rate; Profile FULL (6 down / 4 up, 10 s, caps 150 MB /
+  60 MB) for a tap, LIGHT (3/2, 5 s, caps 15 MB / 6 MB) for Collector and
+  problem reports; falls back to the old Django test on a 404. Phones on
+  mobile data still cannot reach prod (172.16.41.201) until NTC routes the
+  APN to it. Ookla itself can only come through Ookla's licensed SDK or
+  data products.
+  Then (same day, NOT committed): `SpeedTestSettings` singleton (migration
+  0144; AI migrations now 0145-0150, local history renamed, table created
+  by hand) set on Security, card "Speed test server" (superadmin; blank =
+  this server); phones read `GET /api/telemetry/v1/speedtest/config/`
+  before each test and remember it. Speed results are held on the phone
+  (`storage/SpeedResultQueue.kt`, `upload/SpeedResultUploadWorker.kt`)
+  until DT-WATCH can be reached; an unreachable server on mobile data says
+  so in plain words. `docs/speedtest-server/` = nginx config, Dockerfile
+  and guide for a public test machine (tested in Docker). Public exposure
+  checklist (Claude Docs, private to the user):
+  `claude.ai/artifact/WudWv2TDh1GmRFM73tDrF2`.
 - **Readable complaint tiles** (same day): Phone's reading and the
   measurements of Likely cause are tiles with rounded values and a plain
   verdict (Good/Fair/Weak, Slow, High) from the check's limits.

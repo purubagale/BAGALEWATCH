@@ -3523,6 +3523,28 @@ class ProblemNotification(models.Model):
         indexes = [models.Index(fields=['status', 'next_try_at'], name='v2_problem_notify_due_idx')]
 
 
+class SpeedTestSettings(models.Model):
+    """Where phones run the speed test (2026-10-26, core/speed_test.py
+    SpeedTestConfigView). Blank = this server's own /speedtest/. Set to a
+    public machine's https://<name>/speedtest/ once one exists; phones pick
+    it up at their next test and remember it, so no new app is needed.
+    Singleton (pk=1)."""
+    base_url = models.CharField(max_length=300, blank=True, default='')
+    updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_speedtest_settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        return cls.objects.filter(pk=1).first()
+
+
 class AlarmSourceSettings(models.Model):
     """Where the active alarms come from (2026-10-26, core/alarms.py), set on
     the Live Site Sync page so prod needs no .env edit. Singleton (pk=1). The

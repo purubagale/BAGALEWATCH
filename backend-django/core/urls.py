@@ -5,7 +5,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from . import (alarms, api_auth, area_sample, audit, auth_log, backup, call_context, collection, consent, dashboard, device_identity,
                device_lookup, device_trace, drive_test, dt_retention, emergency,
                exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_live, problem_notify, problem_related, problem_report, problem_sites, provisioning, reports, rescue, rf_audit,
-               rf_reports, roles, sector_stats, site_import, site_coverage, site_photo, sso_views, subscriber_link, subscriber_profile, system_doc,
+               rf_reports, roles, sector_stats, site_import, site_coverage, site_photo, speed_test, sso_views, subscriber_link, subscriber_profile, system_doc,
                telemetry_admin, telemetry_near, views, volte_quality)
 
 router = DefaultRouter()
@@ -240,6 +240,8 @@ urlpatterns = [
     path('alarms/active/', alarms.SiteActiveAlarmsView.as_view(), name='alarms-active'),
     path('alarms/summary/', alarms.AlarmSummaryView.as_view(), name='alarms-summary'),
     path('alarms/source/', alarms.AlarmSourceView.as_view(), name='alarms-source'),
+    # Where phones run the speed test (2026-10-26) -- see core/speed_test.py.
+    path('speedtest/settings/', speed_test.SpeedTestSettingsView.as_view(), name='speedtest-settings'),
     # Everything stored that relates to a complaint, for a chosen time range (2026-10-26).
     path('problem-reports/<int:pk>/related/', problem_related.ProblemRelatedView.as_view(), name='problem-related'),
     path('problem-reports/<int:pk>/live/area/', problem_live.ProblemLiveAreaView.as_view(), name='problem-live-area'),
