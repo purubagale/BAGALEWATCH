@@ -14,6 +14,7 @@ import { useAuth } from '../auth/AuthContext'
 import { telemetryLevel } from '../lib/telemetryLevel'
 import { RelatedCustomer, RelatedSiteAndArea, RelatedSummaryLine } from '../components/ProblemRelatedData'
 import { Band, CardHead, Tile, rate, rateLevel, round, techOfNet } from '../components/MetricTile'
+import { ENV_LABEL } from '../components/EnvironmentTools'
 import { useSiteLinkBack } from '../lib/siteLinkBack'
 import { DT_SESSION_HISTORY_PATH, OPAQUE_PATHS } from '../constants/opaqueRoutes'
 
@@ -1022,6 +1023,7 @@ function PhoneTab({ r }: { r: ProblemReport }) {
         <Tile icon="📱" hue="slate" label="Model" value={r.phone_model || null} />
         <Tile icon="🤖" hue="green" label="Android" value={r.android_version || null} />
         <Tile icon="🧩" hue="violet" label="App" value={r.app_version || null} />
+        {r.environment && <Tile icon={r.environment === "indoor" ? "🏢" : r.environment === "vehicle" ? "🚗" : "🌳"} hue="slate" label="Where" value={ENV_LABEL[r.environment] ?? r.environment} hint="as the phone had it when the customer reported" />}
       </div>
     </>
   )

@@ -952,6 +952,8 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 # GPS accuracy of this fix, in metres (see ROUTE_MAX_ACCURACY_M).
                 'gps_accuracy_m': s.gps_accuracy_m,
                 'drive_session_id': s.drive_session_id,
+                # Outdoors / indoors / in a vehicle and who said so (2026-10-26).
+                'environment': s.environment, 'environment_source': s.environment_source,
                 **radio_band.fields(s.network_type, s.arfcn, s.band, s.band_mhz),
                 # Serving-cell identity (2026-10-07) -- same fields
                 # TelemetryLiveSamplesView already returns above; this view

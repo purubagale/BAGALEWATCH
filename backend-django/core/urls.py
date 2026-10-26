@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import (alarms, api_auth, area_sample, audit, auth_log, backup, call_context, collection, consent, dashboard, device_identity,
-               device_lookup, device_trace, drive_test, dt_retention, emergency,
+               device_lookup, device_trace, drive_test, dt_retention, emergency, environment,
                exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_live, problem_notify, problem_related, problem_report, problem_sites, provisioning, reports, rescue, rf_audit,
                rf_reports, roles, sector_stats, site_import, site_coverage, site_photo, speed_test, sso_views, subscriber_link, subscriber_profile, system_doc,
                telemetry_admin, telemetry_near, views, volte_quality)
@@ -282,6 +282,8 @@ urlpatterns = [
     path('site-photos/<int:pk>/review/', site_photo.SitePhotoReviewView.as_view(), name='site-photo-review'),
     # On-demand area sample (2026-10-08) -- see core/area_sample.py.
     path('telemetry/area-samples/', area_sample.AreaSampleRequestListCreateView.as_view(), name='telemetry-area-samples'),
+    # Outdoors / indoors / in a vehicle for a stretch of a session, set afterwards (2026-10-26).
+    path('telemetry/environment/', environment.EnvironmentEditView.as_view(), name='telemetry-environment'),
     path('telemetry/area-samples/<int:pk>/samples/', area_sample.AreaSampleRequestSamplesView.as_view(),
          name='telemetry-area-sample-results'),
     # Telemetry sessions around a point, for DT Explore (2026-10-12) -- see core/telemetry_near.py.

@@ -178,6 +178,9 @@ def profile_analytics(ids, include_location=False, qs=None):
         # Readings without a network, split by what they mean (2026-10-26):
         # no coverage, flight mode / no SIM, or not measured by the phone.
         'no_network': status_breakdown(qs),
+        # Outdoors / indoors / in a vehicle (2026-10-26); '' = not tagged.
+        'environments': {(r['environment'] or ''): r['n'] for r in
+                         qs.values('environment').annotate(n=Count('id')).order_by()},
         # Sectors served are location history too: emergency only; the count always.
         'sectors': by_sector['sectors'] if include_location else [],
         'sectors_count': len(by_sector['sectors']), 'sectors_unmatched': by_sector['unmatched'],

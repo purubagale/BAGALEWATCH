@@ -7,6 +7,7 @@ import { NET_LABEL, NET_ORDER, netColor } from '../lib/netColors'
 import { ColumnChart, HBars, ShareBar, type Column } from './ProfileCharts'
 import FitToPoints from './FitToPoints'
 import SectorBreakdown from './SectorBreakdown'
+import { environmentShare } from './EnvironmentTools'
 
 // The analysis cards of the Subscriber Profile (2026-10-16), after the
 // patterns of NTC's ticketing system (UTS): measured capability, quality by
@@ -75,6 +76,7 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
   const withLevel = a.networks.reduce((s, n) => s + n.readings - n.no_level, 0)
   const calls = Object.values(callsByOutcome).reduce((x, y) => x + y, 0)
   const nets = NET_ORDER.filter((n) => a.networks.some((x) => x.network_type === n))
+  const envShare = environmentShare(a.environments)
   const bandTotal = a.bands.reduce((s, b) => s + b.readings, 0)
 
   const daily: Column[] = a.daily.map((d) => ({
@@ -124,6 +126,11 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
               {a.bands.length ? a.bands.map((b) => <em key={`${b.network_type}${b.band_label}`}>{b.band_label} · {pct(b.readings, bandTotal)}%</em>) : <small>None reported</small>}
             </div></div>
           <div className="spc-tile"><span>Phone</span><b className="spc-small">{phone ?? '—'}</b></div>
+          {envShare && (
+            <div className="spc-tile" title={envShare.text}><span>Inside a building</span><b>{envShare.indoorPct}%</b>
+              <div className="spc-meter"><i style={{ width: `${envShare.indoorPct}%`, background: 'var(--sp-violet, #8b5cf6)' }} /></div>
+              <small>of {envShare.tagged} readings tagged by place</small></div>
+          )}
           {/* Every reading has a row, so the shares add up to 100% (2026-10-26):
               readings where the phone reported no network are their own row. */}
           <div className="spc-tile spc-quality spc-quality-box"

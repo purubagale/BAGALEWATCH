@@ -169,6 +169,8 @@ Android ID or phone number.
 | `cell_info_status` | string | Why the cell is there or missing: `ok`, `background` (app in the background without background location), `location_off`, `no_permission` or `empty` (the phone returned no cell). Added 2026-10-26 |
 | `airplane_mode` | boolean | Flight mode on. Added 2026-10-26 |
 | `sim_state` | string | `ready`, `absent`, `locked` or `other`. Added 2026-10-26 |
+| `environment` | string | Where the person is: `outdoor`, `indoor` or `vehicle`; leave it out when unknown. Added 2026-10-26 |
+| `environment_source` | string | `user` (tapped in the app) or `estimated` (from movement and GPS accuracy). Sent only with `environment`. Added 2026-10-26 |
 
 **Readings without a network (2026-10-26).** Always send a reading, even when
 the cell list is empty: `network_type` `UNKNOWN` plus the four fields above.
@@ -537,6 +539,9 @@ that moment. `POST device/problem-reports/`, signed (section 7):
 
 `category` is one of `no_signal`, `slow_data`, `call_drop`, `stuck_2g3g`,
 `other`; `lat` and `lon` are required, everything else is optional. Returns
+Optional `environment` and `environment_source` as in 5.1: a report made
+inside a building lets the server tell "weak indoors, good outside" from a
+coverage gap.
 `201 {"id": N, "stored": true}`. At most 10 a day per phone; the 11th gets 429.
 The server checks the report against stored measurements; staff see the
 result on the Problem Reports page. The reference app also shows hints from
@@ -796,6 +801,8 @@ NetTelemetry.answerSampleRequest()         // on a sample_request push
 NetTelemetry.reportSpeedTest(...)
 NetTelemetry.enrollForRescue(msisdn); NetTelemetry.optOutOfRescue()
 NetTelemetry.setDriveTestConsent(true)
+NetTelemetry.setEnvironment(context, "indoor")   // "outdoor", "indoor", "vehicle" or null; cleared at stop
+NetTelemetry.environment(context)
 ```
 
 ### 14.3 Configuration (`TelemetryConfig`)

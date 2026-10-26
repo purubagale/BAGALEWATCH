@@ -940,6 +940,8 @@ export interface DtSessionListItem {
   file_hash?: string
   source_location?: string
   readings_pruned?: number
+  // Drive, walk outdoors or walk indoors (2026-10-26); '' = not said.
+  environment?: DtEnvironment
 }
 
 export type DtPurpose = 'yearly' | 'complaint' | 'optimization' | 'other'
@@ -1405,6 +1407,13 @@ export interface DtSessionCreate {
   purpose?: DtPurpose
   file_hash?: string
   source_location?: string
+  environment?: DtEnvironment
+}
+
+// How a drive test was measured (2026-10-26, DriveTestSession.environment).
+export type DtEnvironment = '' | 'drive' | 'walk_outdoor' | 'walk_indoor'
+export const DT_ENVIRONMENT_LABEL: Record<string, string> = {
+  drive: 'Drive (in a vehicle)', walk_outdoor: 'Walk test outdoors', walk_indoor: 'Walk test inside a building',
 }
 
 // GET/PUT /permissions-matrix/ shape — excludes superadmin (see
@@ -1894,6 +1903,9 @@ export interface TelemetryCoverageParams {
 }
 
 export interface TelemetryLiveSample extends SampleBandFields {
+  // Outdoors / indoors / in a vehicle and who said so (2026-10-26).
+  environment?: string | null
+  environment_source?: string | null
   device_id: string
   ts: number
   received_at: string
@@ -2619,6 +2631,9 @@ export interface SampleBandFields {
 }
 
 export interface CollectionSessionSample extends SampleCqiFields, SampleBandFields {
+  // Outdoors / indoors / in a vehicle and who said so (2026-10-26).
+  environment?: string | null
+  environment_source?: string | null
   ts: string
   lat: number
   lng: number
@@ -2823,6 +2838,7 @@ export interface RelatedTelemetry {
     level_mean: number | null; rsrq_mean: number | null; sinr_mean: number | null; cqi_mean: number | null }[]
   // How late readings reached the server (2026-10-26).
   delay?: { median_s: number | null; late_pct: number | null; late_after_s: number }
+  environments?: Record<string, number>
   sites_count: number
   sites: { site_id: string; sector: string; tech: string; readings: number; weak: number; level_mean: number | null }[] | null
   newest: { ts: string; network_type: string; tech: string | null; level: number | null; rsrq: number | null
@@ -2911,6 +2927,8 @@ export interface ProblemReport {
   external_ref: string
   // 'site' or 'cell': the other system named only the site or cell.
   located_by: '' | 'point' | 'site' | 'cell'
+  // Where the phone was when the customer reported (2026-10-26): outdoor / indoor / vehicle.
+  environment?: string
   // Name on screens and the Subscriber Profile reference; whether a number is held (2026-10-19).
   reference?: string
   has_number?: boolean
@@ -3221,6 +3239,8 @@ export interface SubscriberSignalPoint {
   status?: ReadingStatus
   status_reason?: string | null
   delay_s?: number | null
+  environment?: string | null
+  environment_source?: string | null
 }
 
 // The profile's analysis block (2026-10-16, core/subscriber_analytics.py).
@@ -3233,6 +3253,9 @@ export interface SectorStat {
   readings: number; share_pct: number | null; weak: number; fair: number; good: number; no_level: number
   level_avg: number | null; rsrq_avg: number | null; sinr_avg: number | null; cqi_avg: number | null
   dl_avg: number | null; dist_km_avg: number | null; first: string | null; last: string | null
+  // Phone readings inside a building against outdoors (2026-10-26); loss once 10 of each.
+  indoor_readings?: number | null; outdoor_readings?: number | null
+  indoor_level_avg?: number | null; outdoor_level_avg?: number | null; indoor_loss_db?: number | null
 }
 
 export interface SectorBreakdownData {
@@ -3247,6 +3270,8 @@ export interface NoNetworkGroup {
 export interface SubscriberAnalytics {
   // Readings without a network, by what they mean (2026-10-26).
   no_network?: NoNetworkGroup[]
+  // Readings by place the phone was in: outdoor / indoor / vehicle / none (2026-10-26).
+  environments?: Record<string, number>
   networks: {
     network_type: string; readings: number; weak: number; fair: number; good: number; no_level: number
     level_avg: number | null; rsrq_avg: number | null; sinr_avg: number | null

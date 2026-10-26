@@ -12,6 +12,7 @@ import { RSRP_BANDS, RXLEV_BANDS, bandColor } from '../lib/dtBands'
 import ActiveAlarmsButton from './ActiveAlarmsButton'
 import { Band, CardHead, Tile, rate, rateLevel } from './MetricTile'
 import { useSiteLinkBack } from '../lib/siteLinkBack'
+import { environmentShare } from './EnvironmentTools'
 
 // Everything stored that relates to one complaint (2026-10-26,
 // core/problem_related.py): the customer's own phone readings wherever they
@@ -141,6 +142,7 @@ function TelemetryBlock({ t, title, showDevices = true }: { t: RelatedTelemetry 
   // Only measured networks speak about coverage; "not measured" and "radio
   // off / no SIM" are shown apart and never as the main network (2026-10-26).
   const main = t.by_tech.find((x) => !x.status || x.status === 'measured')
+  const envShare = environmentShare(t.environments)
   const unmeasured = t.by_tech.filter((x) => x.status === 'not_measured' || x.status === 'radio_off').reduce((s, x) => s + x.readings, 0)
   return (
     <div className="pdd-rel-block">
@@ -156,6 +158,9 @@ function TelemetryBlock({ t, title, showDevices = true }: { t: RelatedTelemetry 
             <Tile icon="⏳" label="Reached the server late" value={`${t.delay.late_pct}%`}
               verdict={t.delay.late_pct >= 50 ? { text: 'Often queued', tone: 'fair' } : null}
               hint={`more than ${Math.round(t.delay.late_after_s / 60)} min after; median ${t.delay.median_s != null ? (t.delay.median_s >= 3600 ? `${Math.round(t.delay.median_s / 3600)} h` : `${Math.round(t.delay.median_s / 60)} min`) : '-'}`} />
+          )}
+          {envShare && (
+            <Tile icon="🏢" hue="violet" label="Inside a building" value={`${envShare.indoorPct}%`} hint={envShare.text} />
           )}
           <Tile icon="✅" label={`Good on ${main.tech}`} value={pct(main.good, main.readings)}
             verdict={rate(main.readings ? (100 * main.good) / main.readings : null, 80, 50, true, ['Mostly good', 'Mixed', 'Mostly weak'])} />

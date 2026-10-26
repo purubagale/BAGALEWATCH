@@ -928,6 +928,12 @@ class DriveTestSession(models.Model):
     purpose = models.CharField(max_length=12, choices=PURPOSES, default='other')
     # Pinned: retention never reduces or erases this session.
     keep = models.BooleanField(default=False)
+    # How it was measured (2026-10-26): from a vehicle, walking outdoors or
+    # walking inside a building. Asked at upload, editable in Session
+    # History; '' = not said (older sessions).
+    ENVIRONMENTS = [('drive', 'Drive (in a vehicle)'), ('walk_outdoor', 'Walk test outdoors'),
+                    ('walk_indoor', 'Walk test inside a building')]
+    environment = models.CharField(max_length=16, choices=ENVIRONMENTS, blank=True, default='')
     # Fingerprint (SHA-256) of the source file(s), worked out in the
     # browser; the file itself is never uploaded. Finds a re-upload.
     file_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
@@ -2451,6 +2457,12 @@ class TelemetrySample(models.Model):
     cell_info_status = models.CharField(max_length=16, null=True, blank=True)  # ok / background / location_off / no_permission / empty
     airplane_mode = models.BooleanField(null=True, blank=True)
     sim_state = models.CharField(max_length=10, null=True, blank=True)         # ready / absent / locked / other
+    # Outdoors, inside a building or in a vehicle (2026-10-26, SDK
+    # collector/Environment.kt; core/environment.py). Source: 'user' (tapped
+    # in the app), 'estimated' (from speed and GPS accuracy) or 'edited'
+    # (set afterwards on the web). Null on readings before then.
+    environment = models.CharField(max_length=10, null=True, blank=True)       # outdoor / indoor / vehicle
+    environment_source = models.CharField(max_length=10, null=True, blank=True)
     battery_pct = models.SmallIntegerField(null=True, blank=True)
     trigger_reason = models.CharField(max_length=16, choices=TRIGGERS, default='periodic')
     # Groups a drive's fixes and markers (2026-10-04). Set by the phone, a UUID
@@ -3447,6 +3459,9 @@ class ProblemReport(models.Model):
     # the canonical form (rescue._clean_msisdn), so the report appears on
     # that number's Subscriber Profile. Shown to a superadmin only.
     msisdn = models.CharField(max_length=20, blank=True, default='', db_index=True)
+    # Where the phone was when it reported (2026-10-26): outdoor / indoor /
+    # vehicle, '' = not said. Used by the check (building penetration).
+    environment = models.CharField(max_length=10, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

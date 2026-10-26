@@ -4,7 +4,8 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { apiErrorMessage } from '../api/client'
 import { useAppendDtSamples, useCreateDtSession, useDeleteDtSession, useDtSessions, useSites } from '../api/queries'
-import type { DtCallSummary, DtDownloadSummary, DtPurpose, DtSample, DtSessionCreate, DtSessionDetail, DtSessionListItem, DtSessionMeta, DtTech, SiteListItem } from '../api/types'
+import { DT_ENVIRONMENT_LABEL } from '../api/types'
+import type { DtCallSummary, DtDownloadSummary, DtEnvironment, DtPurpose, DtSample, DtSessionCreate, DtSessionDetail, DtSessionListItem, DtSessionMeta, DtTech, SiteListItem } from '../api/types'
 import { isAllowed } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import DtCallDownloadSummary from '../components/DtCallDownloadSummary'
@@ -664,6 +665,8 @@ export default function DtUploadPage() {
   // drives" of a place) and where the original file is kept. The file
   // itself is never sent, only its fingerprint, to find a re-upload.
   const [purpose, setPurpose] = useState<DtPurpose | ''>('')
+  // Drive, walk outdoors or walk indoors (2026-10-26); optional.
+  const [testKind, setTestKind] = useState<DtEnvironment>('')
   const [sourceLocation, setSourceLocation] = useState('')
   const [fileHash, setFileHash] = useState('')
   const trpHashesRef = useRef<Map<string, string>>(new Map())
@@ -847,6 +850,7 @@ export default function DtUploadPage() {
           purpose: purpose || 'other',
           file_hash: fileHash,
           source_location: sourceLocation.trim(),
+          environment: testKind,
         },
         parsedSamples,
       )
@@ -1004,6 +1008,7 @@ export default function DtUploadPage() {
           purpose: purpose || 'other',
           file_hash: s.fileHash ?? '',
           source_location: sourceLocation.trim(),
+          environment: testKind,
         },
         s.samples,
       )
@@ -1087,6 +1092,10 @@ export default function DtUploadPage() {
 
           <div className="report-toolbar dt-upload-about">
             <PurposeSelect value={purpose} onChange={setPurpose} />
+            <select value={testKind} onChange={(e) => setTestKind(e.target.value as DtEnvironment)} title="How the test was measured">
+              <option value="">Kind of test (optional)</option>
+              {Object.entries(DT_ENVIRONMENT_LABEL).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+            </select>
             <input
               type="text"
               placeholder="Where the original file is kept (optional, e.g. TEMS server path)"

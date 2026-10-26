@@ -581,6 +581,7 @@ class SubscriberSignalView(APIView):
             'rssi_dbm', 'rx_qual', 'pci', 'cell_id', 'tac', 'arfcn', 'band', 'band_mhz', 'trigger_reason',
             'serving_site_id', 'serving_sector', 'serving_dist_km', 'gps_accuracy_m', 'lat', 'lng',
             'received_at', 'service_state', 'cell_info_status', 'airplane_mode', 'sim_state',
+            'environment', 'environment_source',
         )[:limit])[::-1]
 
         emergency = active_emergency() is not None
@@ -617,6 +618,8 @@ class SubscriberSignalView(APIView):
                                     r['airplane_mode'], r['sim_state']),
                 'status_reason': r['cell_info_status'] or r['service_state'] or None,
                 'delay_s': int((r['received_at'] - r['ts']).total_seconds()) if r['received_at'] and r['ts'] else None,
+                # Outdoors / indoors / in a vehicle and who said so (2026-10-26).
+                'environment': r['environment'], 'environment_source': r['environment_source'],
             })
         for report in sorted(released):
             log_audit_event(request, COMPLAINT_AUDIT_ACTION, resource='problem_report', resource_id=str(report),

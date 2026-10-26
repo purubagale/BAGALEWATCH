@@ -8,6 +8,7 @@ import { CQI_BANDS, RSRP_BANDS, RSRQ_BANDS, RXLEV_BANDS, SINR_BANDS, bandColor, 
 import { netHex } from '../lib/netColors'
 import { telemetryLevel } from '../lib/telemetryLevel'
 import FitToPoints from './FitToPoints'
+import { environmentText } from './EnvironmentTools'
 
 // Signal history on the Subscriber Profile (2026-10-16). Newest 300
 // readings by default, or every stored one, or one session, for all
@@ -112,7 +113,7 @@ function details(p: SubscriberSignalPoint, siteName: string | null, hiddenWhy: s
     measured
       ? `${p.network_type}${p.band_label ? ` ${p.band_label}` : ''} · ${level.name} ${p.level_dbm ?? '—'} dBm`
       : `${STATUS_TEXT[p.status as string] ?? 'No network'}${p.status_reason ? ` (${REASON_TEXT[p.status_reason] ?? p.status_reason.replace(/_/g, ' ')})` : ''}`,
-    quality, cell, site, pos, p.trigger_reason ? `Taken: ${p.trigger_reason.replace(/_/g, ' ')}` : '',
+    quality, cell, site, pos, environmentText(p), p.trigger_reason ? `Taken: ${p.trigger_reason.replace(/_/g, ' ')}` : '',
     p.delay_s != null && p.delay_s > 600 ? `Reached the server ${delayText(p.delay_s)} later` : '',
   ].filter(Boolean)
 }

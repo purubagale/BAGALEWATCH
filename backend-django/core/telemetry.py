@@ -220,6 +220,7 @@ _TRIGGERS = {'periodic', 'handover', 'manual', 'drive', 'drive_start', 'drive_st
 _SERVICE_STATES = {'in_service', 'out_of_service', 'emergency_only', 'radio_off'}
 _CELL_INFO_STATUSES = {'ok', 'background', 'location_off', 'no_permission', 'empty'}
 _SIM_STATES = {'ready', 'absent', 'locked', 'other'}
+_ENVIRONMENTS = {'outdoor', 'indoor', 'vehicle'}
 
 
 def _choice(value, allowed):
@@ -358,6 +359,10 @@ def coerce_sample(raw, received_at):
         'cell_info_status': _choice(raw.get('cell_info_status'), _CELL_INFO_STATUSES),
         'airplane_mode': raw.get('airplane_mode') if isinstance(raw.get('airplane_mode'), bool) else None,
         'sim_state': _choice(raw.get('sim_state'), _SIM_STATES),
+        # Outdoors, indoors or in a vehicle, and who said so (2026-10-26).
+        'environment': _choice(raw.get('environment'), _ENVIRONMENTS),
+        'environment_source': _choice(raw.get('environment_source'), {'user', 'estimated'})
+        if _choice(raw.get('environment'), _ENVIRONMENTS) else None,
         'region': '',
         # Filled by attach_telemetry_serving_cells() before the COPY insert.
         'serving_site_id': '',
@@ -417,6 +422,7 @@ _COPY_COLS = (
     'serving_site_id', 'serving_cell_name', 'serving_sector', 'serving_local_cell_id', 'serving_dist_km',
     'drive_session_id',
     'service_state', 'cell_info_status', 'airplane_mode', 'sim_state',
+    'environment', 'environment_source',
 )
 _COPY_SQL = 'COPY v2_telemetry_samples (' + ', '.join(_COPY_COLS) + ') FROM STDIN WITH (FORMAT text)'
 
@@ -513,6 +519,7 @@ def bulk_insert_samples(rows):
             _cf(r.get('service_state')), _cf(r.get('cell_info_status')),
             _cf(None if r.get('airplane_mode') is None else ('t' if r['airplane_mode'] else 'f')),
             _cf(r.get('sim_state')),
+            _cf(r.get('environment')), _cf(r.get('environment_source')),
         )) + '\n')
     buf.seek(0)
     with connection.cursor() as cur:

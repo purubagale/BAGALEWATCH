@@ -10,7 +10,7 @@ import type {
   ProblemReport,
   SecuritySettings,
 } from './types'
-import type { DtPruneRun, DtPurpose, DtRecentResponse, DtRetentionSettings } from './types'
+import type { DtEnvironment, DtPruneRun, DtPurpose, DtRecentResponse, DtRetentionSettings } from './types'
 import type {
   CollectionSessionRow,
   CollectionSessionSample,
@@ -1837,10 +1837,12 @@ export function useDeleteTelemetryDtSession() {
   })
 }
 
-export function useTelemetryDtSessionSamples(id: number | null) {
+// `reload` (2026-10-26): bump it to read the session again from the start,
+// e.g. after its readings were tagged outdoors / indoors.
+export function useTelemetryDtSessionSamples(id: number | null, reload = 0) {
   return useDeltaSamples(
-    ['telemetry-dt-session-samples', id],
-    String(id),
+    ['telemetry-dt-session-samples', id, reload],
+    `${id}:${reload}`,
     (since) => {
       const qs = new URLSearchParams()
       if (since) qs.set('since', since)
@@ -2224,6 +2226,23 @@ export function useAlarmSummary() {
   })
 }
 
+// Outdoors / indoors / in a vehicle for a stretch of a session, set afterwards
+// (2026-10-26, core/environment.py). Refreshes the session's readings and sectors.
+export function useSetEnvironment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { collection_session?: string; telemetry_session?: number; from: string; to: string; environment: string }) =>
+      apiJson<{ updated: number; environment: string | null }>('/api/v2/telemetry/environment/', {
+        method: 'POST', body: JSON.stringify(input),
+      }),
+    onSuccess: () => {
+      for (const key of ['collection-session-samples', 'collection-session-sectors', 'telemetry-dt-session-samples', 'telemetry-dt-session-sectors']) {
+        qc.invalidateQueries({ queryKey: [key] })
+      }
+    },
+  })
+}
+
 // Where phones run the speed test (2026-10-26, core/speed_test.py). Superadmin.
 export function useSpeedTestSettings() {
   return useQuery({
@@ -2370,8 +2389,8 @@ export function useUpdateProblemReport() {
 export function useUpdateDtSessionRetention(sessionId: number | undefined) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { purpose?: DtPurpose; keep?: boolean; source_location?: string }) =>
-      apiJson<{ purpose: DtPurpose; keep: boolean; source_location: string }>(
+    mutationFn: (body: { purpose?: DtPurpose; keep?: boolean; source_location?: string; environment?: DtEnvironment }) =>
+      apiJson<{ purpose: DtPurpose; keep: boolean; source_location: string; environment: DtEnvironment }>(
         `/api/v2/dt-sessions/${sessionId}/retention/`,
         { method: 'PATCH', body: JSON.stringify(body) },
       ),

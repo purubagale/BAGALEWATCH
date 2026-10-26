@@ -430,6 +430,7 @@ class CollectionSessionSamplesView(APIView):
                     # the frontend's declusterPlot falls back to `pci` as
                     # its coarser same-cell signal for this branch only.
                     'serving_site_id': None, 'serving_sector': None,
+                    'environment': None, 'environment_source': None,
                 }
                 for r in rows
             ]
@@ -455,6 +456,8 @@ class CollectionSessionSamplesView(APIView):
                     # (2026-10-09, core/cqi.py).
                     **sample_cqi_fields(r.cqi, r.sinr_db, r.rsrq_db, r.network_type),
                     'serving_site_id': r.serving_site_id, 'serving_sector': r.serving_sector,
+                    # Outdoors / indoors / in a vehicle and who said so (2026-10-26).
+                    'environment': r.environment, 'environment_source': r.environment_source,
                 }
                 for r in rows
             ]

@@ -35,6 +35,9 @@ _TECH_OF = {'LTE': '4G', 'NR': '4G', 'UMTS': '3G', 'GSM': '2G'}
 _TEL_LEVEL = {'4G': 'rsrp_dbm', '3G': 'rscp_dbm', '2G': 'rssi_dbm'}
 
 
+INDOOR_LOSS_MIN = 10   # readings of each kind before an indoor loss is given (2026-10-26)
+
+
 def _r(v, digits=1):
     return round(v, digits) if v is not None else None
 
@@ -67,7 +70,14 @@ def _rows(qs, group, level, weak_q, good_q, with_level_q, extra):
                   sinr=Avg(extra['sinr']), cqi=Avg(extra['cqi']), dist=Avg('serving_dist_km'),
                   first=Min('ts'), last=Max('ts'), cell_name=Max('serving_cell_name'),
                   cell_id=Max('cell_id'), pci=Max('pci'), **({'tac': Max('tac')} if extra.get('tac') else {}),
-                  **({'dl': Avg('dl')} if extra.get('dl') else {}))
+                  **({'dl': Avg('dl')} if extra.get('dl') else {}),
+                  # Indoor and outdoor levels of phone readings (2026-10-26):
+                  # the gap is the building's loss for this sector.
+                  **({'n_in': Count('id', filter=with_level_q & Q(environment='indoor')),
+                      'lvl_in': Avg(level, filter=Q(environment='indoor')),
+                      'n_out': Count('id', filter=with_level_q & Q(environment__in=('outdoor', 'vehicle'))),
+                      'lvl_out': Avg(level, filter=Q(environment__in=('outdoor', 'vehicle')))}
+                     if extra.get('env') else {}))
         .order_by('-n')[:SECTORS_MAX]
     )
 
@@ -91,6 +101,12 @@ def _shape(rows, total, network_of, band_of):
             'no_level': r['n'] - r['with_level'], 'level_avg': _r(r['level']), 'rsrq_avg': _r(r['rsrq']),
             'sinr_avg': _r(r['sinr']), 'cqi_avg': _r(r['cqi']), 'dl_avg': _r(r.get('dl')),
             'dist_km_avg': _r(r['dist'], 2), 'first': _iso(r['first']), 'last': _iso(r['last']),
+            'indoor_readings': r.get('n_in'), 'outdoor_readings': r.get('n_out'),
+            'indoor_level_avg': _r(r.get('lvl_in')), 'outdoor_level_avg': _r(r.get('lvl_out')),
+            # Shown only with enough of both (INDOOR_LOSS_MIN each).
+            'indoor_loss_db': _r(r['lvl_out'] - r['lvl_in'])
+            if r.get('n_in', 0) and r.get('n_out', 0) and r['n_in'] >= INDOOR_LOSS_MIN and r['n_out'] >= INDOOR_LOSS_MIN
+            and r.get('lvl_in') is not None and r.get('lvl_out') is not None else None,
         })
     return {'sectors': out, 'total': total, 'matched': matched, 'unmatched': max(0, total - matched),
             'capped': len(rows) >= SECTORS_MAX, 'limits': {'weak_dbm': WEAK_DBM, 'good_dbm': GOOD_DBM}}
@@ -102,7 +118,7 @@ def telemetry_sectors(qs):
         qs, ('network_type',), _telemetry_level(), _telemetry_class(WEAK_DBM, True), _telemetry_class(GOOD_DBM, False),
         Q(network_type__in=('LTE', 'NR'), rsrp_dbm__isnull=False) | Q(network_type='UMTS', rscp_dbm__isnull=False)
         | Q(network_type='GSM', rssi_dbm__isnull=False),
-        {'rsrq': 'rsrq_db', 'sinr': 'sinr_db', 'cqi': 'cqi', 'tac': True},
+        {'rsrq': 'rsrq_db', 'sinr': 'sinr_db', 'cqi': 'cqi', 'tac': True, 'env': True},
     )
     bands = {}
     if rows:

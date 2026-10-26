@@ -48,6 +48,8 @@ export default function SectorBreakdown({ data, siteLink, showDl = false, title 
     return b.readings - a.readings
   }), [data, sort])
   if (!data) return null
+  // Indoor loss column (2026-10-26): only when some phone readings were tagged inside a building.
+  const showIndoor = rows.some((r) => (r.indoor_readings ?? 0) > 0)
   const maxShare = Math.max(1, ...rows.map((r) => r.readings))
   const shown = all ? rows : rows.slice(0, limitRows)
   const worst = [...rows].filter((r) => r.readings >= 10).sort((a, b) => pct(b.weak, b.readings) - pct(a.weak, a.readings))[0]
@@ -89,6 +91,7 @@ export default function SectorBreakdown({ data, siteLink, showDl = false, title 
                   {th('sinr', 'SINR')}
                   <th>CQI</th>
                   {showDl && <th>Download</th>}
+                  {showIndoor && <th title="Average level outdoors minus inside a building, from phone readings tagged by place; shown with at least 10 of each">Indoor loss</th>}
                   <th>Distance</th>
                   {th('last', 'Last served')}
                 </tr>
@@ -119,6 +122,11 @@ export default function SectorBreakdown({ data, siteLink, showDl = false, title 
                     <td className="secb-num">{num(s.sinr_avg, ' dB')}</td>
                     <td className="secb-num">{num(s.cqi_avg)}</td>
                     {showDl && <td className="secb-num">{num(s.dl_avg, ' Mbps')}</td>}
+                    {showIndoor && (
+                      <td className="secb-num" title={`Inside ${s.indoor_readings ?? 0} readings${s.indoor_level_avg != null ? `, ${s.indoor_level_avg} dBm` : ''} · outdoors ${s.outdoor_readings ?? 0}${s.outdoor_level_avg != null ? `, ${s.outdoor_level_avg} dBm` : ''}`}>
+                        {s.indoor_loss_db != null ? <b>{s.indoor_loss_db} dB</b> : <span className="secb-muted">{s.indoor_readings ? 'too few' : '—'}</span>}
+                      </td>
+                    )}
                     <td className="secb-num">{s.dist_km_avg != null ? `${s.dist_km_avg} km` : '—'}</td>
                     <td className="secb-small" title={`First ${fmt(s.first)}`}>{fmt(s.last)}</td>
                   </tr>

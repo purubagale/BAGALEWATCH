@@ -64,7 +64,7 @@ LATEST_ROWS = 300
 MAX_ROWS = 20000          # phone readings summarised per scope
 MAX_POINTS = 1500         # dots on a map per scope
 SQUARE_DEG = 0.0005       # about 50 m: one dot per square, the weakest
-_TELE_FIELDS = ('ts', 'received_at', 'service_state', 'cell_info_status', 'airplane_mode', 'sim_state', 'network_type', 'rsrp_dbm', 'rscp_dbm', 'rssi_dbm', 'rsrq_db', 'sinr_db', 'cqi',
+_TELE_FIELDS = ('ts', 'received_at', 'service_state', 'cell_info_status', 'airplane_mode', 'sim_state', 'environment', 'network_type', 'rsrp_dbm', 'rscp_dbm', 'rssi_dbm', 'rsrq_db', 'sinr_db', 'cqi',
                 'serving_site_id', 'serving_sector', 'lat', 'lng', 'device_id', 'band', 'band_mhz')
 
 
@@ -164,7 +164,9 @@ def _telemetry(qs, kind, *, show_sites=True, positions=None):
     limit = LATEST_ROWS if kind == 'latest' else MAX_ROWS
     rows = list(qs.order_by('-ts').values(*_TELE_FIELDS)[:limit])
     per_tech, sites, points, devices, delays = {}, {}, [], set(), []
+    envs = {}
     for r in rows:
+        envs[r['environment'] or ''] = envs.get(r['environment'] or '', 0) + 1
         # No network: say what it means (2026-10-26, core/telemetry_status.py).
         tech = _TECH.get(r['network_type']) or status_label(r)
         if r['received_at'] and r['ts']:
@@ -218,6 +220,8 @@ def _telemetry(qs, kind, *, show_sites=True, positions=None):
         },
         'points': _squares(points),
         'points_hidden': positions is not None and not points,
+        # Outdoors / indoors / in a vehicle of the readings analysed (2026-10-26); '' = not tagged.
+        'environments': envs,
         # How late readings reached the server: queued on the phone while it
         # had no data connection, or not let out in the background. Not
         # coverage (2026-10-26).

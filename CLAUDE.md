@@ -1394,6 +1394,25 @@ repo, not on prod):
   test page (paging, detail rows, size change, filter, removal), not on the
   real pages.
 
+- **Indoor / outdoor / vehicle tag** (2026-10-26, built, NOT committed in
+  either repo, not run on a phone). SDK `collector/Environment.kt`: a manual
+  choice (`NetTelemetry.setEnvironment`, cleared at drive stop and share
+  stop), otherwise an estimate (speed ≥ 4.2 m/s vehicle; GPS accuracy over
+  30 m while still indoor; else outdoor). Every sample carries `environment`
+  + `environment_source` (user/estimated); problem reports carry it too.
+  App Map tab: Outdoors/Indoors/Vehicle buttons and a "Where are you
+  starting?" question before a drive. Server: `TelemetrySample.environment`,
+  `environment_source`; `DriveTestSession.environment` (drive /
+  walk_outdoor / walk_indoor, chosen at upload and on Session History);
+  `ProblemReport.environment`; migration 0145 (AI migrations now
+  0146-0151). `core/environment.py` (`POST telemetry/environment/`, admin)
+  tags a stretch afterwards (source `edited`), from Collections and
+  Telemetry Drive Test (`EnvironmentTools.tsx`, also a place filter).
+  Sector table gains "Indoor loss" (outdoor minus indoor average, 10+ of
+  each). New problem cause `building_penetration` ("Weak indoors, good
+  outside") ahead of weak coverage. Profile, complaint and related data
+  show the indoor share. Release APKs on the Desktop.
+
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an
 identified device. It was declined; Area Sample is the agreed
