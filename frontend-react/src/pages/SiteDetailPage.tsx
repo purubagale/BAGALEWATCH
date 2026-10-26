@@ -16,9 +16,10 @@ import { isAllowed } from '../api/types'
 import type { Issue, IssueSeverity, IssueStatus, Sector, SectorWrite, SiteDetail, SiteDtSession, SiteWrite } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import SitePhotoCard from '../components/SitePhotoCard'
-import { DT_EXPLORE_PATH, DT_SESSION_HISTORY_PATH, RF_REPORTS_PATH, SITES_PATH } from '../constants/opaqueRoutes'
+import { DT_EXPLORE_PATH, DT_SESSION_HISTORY_PATH, OPAQUE_PATHS, RF_REPORTS_PATH, SITES_PATH } from '../constants/opaqueRoutes'
 import { useSearchModal } from '../contexts/SearchModalContext'
 import SiteLocationMiniMap from '../components/SiteLocationMiniMap'
+import ActiveAlarmsButton from '../components/ActiveAlarmsButton'
 import { ISSUE_SEVERITY_LABELS, ISSUE_STATUS_LABELS, ISSUE_STATUS_ORDER } from '../lib/issueLabels'
 
 const KPI_FIELDS: [keyof SiteWrite, string][] = [
@@ -249,6 +250,15 @@ export default function SiteDetailPage() {
   // this tab is on this exact site URL, and stripping it would mean a
   // page refresh silently reverting to "← Back to sites" instead.
   const fromSearch = searchParams.get('fromSearch') === '1'
+  // ?back= from the Problem Dashboard or the Subscriber Network Diagnosis
+  // Dashboard (2026-10-26): only an address on one of those two pages.
+  const backParam = searchParams.get('back') ?? ''
+  const backTarget = (() => {
+    const within = (p?: string) => !!p && (backParam === p || backParam.startsWith(`${p}?`))
+    if (within(OPAQUE_PATHS['/problem-reports'])) return { to: backParam, label: 'Back to the complaint' }
+    if (within(OPAQUE_PATHS['/subscriber-profile'])) return { to: backParam, label: 'Back to Subscriber Network Diagnosis' }
+    return null
+  })()
   // Set by DtExploreTab's "Open site detail →" quickview button
   // (2026-09-30, "back to site redirects to site topology home page, but
   // i need back to where i came from... explore of dtmanager"). Same URL-
@@ -539,6 +549,9 @@ export default function SiteDetailPage() {
         <Link to={DT_EXPLORE_PATH} className="back-link">
           ← Back to DT Explore
         </Link>
+      ) : backTarget ? (
+        // Opened from a complaint or the diagnosis dashboard (2026-10-26).
+        <Link to={backTarget.to} className="back-link">← {backTarget.label}</Link>
       ) : (
         <Link to={SITES_PATH} className="back-link">
           ← Back to sites
@@ -560,6 +573,8 @@ export default function SiteDetailPage() {
           <div className="site-detail-meta">
             {site.id} · {site.district}, {site.region} · {site.type} · {site.tech}
           </div>
+          {/* Live alarms from the alarm system (2026-10-26). */}
+          <div style={{ marginTop: 8 }}><ActiveAlarmsButton siteId={site.id} siteName={site.name} small /></div>
         </div>
         {(canUpdate || canDelete) && (
           <div className="site-detail-actions">

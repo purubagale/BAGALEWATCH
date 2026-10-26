@@ -101,16 +101,18 @@ function CallsSection() {
                   <td>{OUTCOME_LABEL[c.outcome]}</td>
                   <td>{c.voice_networks.replace(/,/g, ' → ') || '-'}</td>
                   <td>{c.data_network_before || '-'}</td>
-                  <td>{c.cell_id != null ? `${c.network_type} ${c.cell_id}${c.pci != null ? ` / PCI ${c.pci}` : ''}` : '-'}</td>
-                  <td>{c.level_dbm != null ? `${c.level_dbm} dBm` : '-'}</td>
-                  <td>{c.end_level_dbm != null ? `${c.end_level_dbm} dBm${c.end_network_type ? ` (${c.end_network_type})` : ''}` : '-'}</td>
+                  <td>{c.cell_id != null ? `${c.network_type} ${c.cell_id}${c.pci != null ? ` / PCI ${c.pci}` : ''}` : <NotRecorded />}</td>
+                  <td>{c.level_dbm != null ? `${c.level_dbm} dBm` : <NotRecorded />}</td>
+                  <td>{c.end_level_dbm != null ? `${c.end_level_dbm} dBm${c.end_network_type ? ` (${c.end_network_type})` : ''}` : <NotRecorded />}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           <p className="muted" style={{ fontSize: 11, marginTop: 6 }}>
             {total.toLocaleString()} call(s) in the last {days} day(s); the latest {data.calls.length} are listed.
-            Signal is RSRP on 4G/5G, RSCP on 3G and RSSI on 2G.
+            Signal is RSRP on 4G/5G, RSCP on 3G and RSSI on 2G. "Not recorded": during a call the dialer is in front, and
+            Android gives the app in the background no cell or signal unless it may use location in the background. The
+            Collector edition always records them; app builds from 26 October record the signal level without the cell.
           </p>
         </>
       )}
@@ -136,6 +138,15 @@ function CallsSection() {
 // with no published robustness factor) renders as muted text. Mixing
 // provisional and verified values with the same styling would misrepresent
 // how confident each number actually is.
+// A cell or level the phone could not give during the call (2026-10-26).
+function NotRecorded() {
+  return (
+    <span className="cell-missing" title="The phone gave no cell or signal while the call was on: the app was in the background without background location. See the note under the table.">
+      Not recorded
+    </span>
+  )
+}
+
 function MosCell({ mos, isProvisional }: { mos: number | null; isProvisional: boolean }) {
   if (mos == null) {
     return (

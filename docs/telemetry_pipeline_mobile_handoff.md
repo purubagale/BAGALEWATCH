@@ -165,6 +165,20 @@ Android ID or phone number.
 | `battery_pct` | integer | 0 to 100 |
 | `trigger_reason` | string | See 5.2. Anything else becomes `periodic` |
 | `drive_session_id` | string | Up to 36 characters. Groups the readings of one drive or one share window |
+| `service_state` | string | `in_service`, `out_of_service`, `emergency_only` or `radio_off`, from `TelephonyManager.getServiceState()` (phone-state permission, no location). Added 2026-10-26 |
+| `cell_info_status` | string | Why the cell is there or missing: `ok`, `background` (app in the background without background location), `location_off`, `no_permission` or `empty` (the phone returned no cell). Added 2026-10-26 |
+| `airplane_mode` | boolean | Flight mode on. Added 2026-10-26 |
+| `sim_state` | string | `ready`, `absent`, `locked` or `other`. Added 2026-10-26 |
+
+**Readings without a network (2026-10-26).** Always send a reading, even when
+the cell list is empty: `network_type` `UNKNOWN` plus the four fields above.
+The server only counts it as a coverage gap when `service_state` is
+`out_of_service` or `emergency_only`; flight mode, radio off or a missing SIM
+is "radio off", and anything else is "not measured" and stays out of every
+coverage share. When the cell list is empty, fill the level and `network_type`
+from `getSignalStrength()` (no location needed), as the reference SDK does.
+Older readings without these fields are judged by their position: no network
+and no GPS position means the phone withheld both, so "not measured".
 
 **Band.** Send `arfcn` on every reading; it is available from Android 7. The
 server works out the band from it when `band` is missing, and names it in MHz

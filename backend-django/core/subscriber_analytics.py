@@ -23,6 +23,7 @@ from . import radio_band
 from .models import Site, TelemetrySample
 from .problem_report import GOOD_DBM, WEAK_DBM
 from .sector_stats import telemetry_sectors
+from .telemetry_status import status_breakdown
 
 NEPAL = ZoneInfo('Asia/Kathmandu')
 CELLS_MAX = 60
@@ -174,6 +175,9 @@ def profile_analytics(ids, include_location=False, qs=None):
 
     return {
         'networks': networks, 'daily': daily, 'hours': hours, 'histograms': histograms, 'bands': bands,
+        # Readings without a network, split by what they mean (2026-10-26):
+        # no coverage, flight mode / no SIM, or not measured by the phone.
+        'no_network': status_breakdown(qs),
         # Sectors served are location history too: emergency only; the count always.
         'sectors': by_sector['sectors'] if include_location else [],
         'sectors_count': len(by_sector['sectors']), 'sectors_unmatched': by_sector['unmatched'],

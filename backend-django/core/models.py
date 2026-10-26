@@ -2444,6 +2444,13 @@ class TelemetrySample(models.Model):
     arfcn = models.IntegerField(null=True, blank=True)
     band = models.SmallIntegerField(null=True, blank=True)
     band_mhz = models.SmallIntegerField(null=True, blank=True)
+    # Why the reading has or lacks a cell, sent by app builds from 2026-10-26
+    # (SDK collector/RadioStatus.kt; core/telemetry_status.py reads them).
+    # Null on older readings, which are judged from the network and position.
+    service_state = models.CharField(max_length=16, null=True, blank=True)     # in_service / out_of_service / emergency_only / radio_off
+    cell_info_status = models.CharField(max_length=16, null=True, blank=True)  # ok / background / location_off / no_permission / empty
+    airplane_mode = models.BooleanField(null=True, blank=True)
+    sim_state = models.CharField(max_length=10, null=True, blank=True)         # ready / absent / locked / other
     battery_pct = models.SmallIntegerField(null=True, blank=True)
     trigger_reason = models.CharField(max_length=16, choices=TRIGGERS, default='periodic')
     # Groups a drive's fixes and markers (2026-10-04). Set by the phone, a UUID

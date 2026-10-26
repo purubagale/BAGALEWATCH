@@ -5,7 +5,9 @@ import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
   SiteMeasuredCoverage,
 } from './types'
 import type {
-  LinkedSystem, ProblemDashboard, ProblemLive, ProblemLiveTrace, ProblemNearbySites, ProblemNotificationRow, ProblemReport,
+  AlarmSummary, SiteActiveAlarms,
+  LinkedSystem, ProblemDashboard, ProblemLive, ProblemLiveTrace, ProblemNearbySites, ProblemNotificationRow, ProblemRelated,
+  ProblemReport,
   SecuritySettings,
 } from './types'
 import type { DtPruneRun, DtPurpose, DtRecentResponse, DtRetentionSettings } from './types'
@@ -2193,6 +2195,57 @@ export function useProblemLiveArea(id: number) {
       qc.invalidateQueries({ queryKey: ['problem-live', id] })
       qc.invalidateQueries({ queryKey: ['area-sample-requests'] })
     },
+  })
+}
+
+// Active alarms, read live through the server (2026-10-26, core/alarms.py).
+// The 502 of an unreachable alarm service still carries a body worth showing.
+async function alarmJson<T>(path: string): Promise<T> {
+  const res = await apiFetch(path)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok && !(body && 'configured' in body)) throw new ApiError(res.status, body)
+  return body as T
+}
+
+export function useSiteActiveAlarms(site: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['site-alarms', site],
+    queryFn: () => alarmJson<SiteActiveAlarms>(`/api/v2/alarms/active/?site=${encodeURIComponent(site)}`),
+    enabled: enabled && !!site,
+    refetchInterval: enabled ? 60_000 : false,
+  })
+}
+
+export function useAlarmSummary() {
+  return useQuery({
+    queryKey: ['alarm-summary'],
+    queryFn: () => alarmJson<AlarmSummary>('/api/v2/alarms/summary/'),
+    refetchInterval: 120_000,
+  })
+}
+
+// "Refresh" fetches from the alarm service now instead of the 60 s cache.
+export function useRefreshAlarms() {
+  const qc = useQueryClient()
+  return useMutation<SiteActiveAlarms | AlarmSummary, Error, string | undefined>({
+    mutationFn: (site) => site
+      ? alarmJson<SiteActiveAlarms>(`/api/v2/alarms/active/?site=${encodeURIComponent(site)}&refresh=1`)
+      : alarmJson<AlarmSummary>('/api/v2/alarms/summary/?refresh=1'),
+    onSuccess: (data, site) => {
+      if (site) qc.setQueryData(['site-alarms', site], data)
+      else qc.setQueryData(['alarm-summary'], data)
+      qc.invalidateQueries({ queryKey: site ? ['alarm-summary'] : ['site-alarms'] })
+    },
+  })
+}
+
+// Everything stored that relates to one complaint, for a time range (2026-10-26).
+export function useProblemRelated(id: number, params: Record<string, string>) {
+  const qs = new URLSearchParams(params).toString()
+  return useQuery({
+    queryKey: ['problem-related', id, qs],
+    queryFn: () => apiJson<ProblemRelated>(`/api/v2/problem-reports/${id}/related/?${qs}`),
+    placeholderData: (prev) => prev,
   })
 }
 

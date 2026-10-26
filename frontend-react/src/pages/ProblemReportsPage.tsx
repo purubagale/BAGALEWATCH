@@ -12,6 +12,9 @@ import {
 import type { ProblemCategory, ProblemCount, ProblemDashboard, ProblemHotspot, ProblemReport } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { telemetryLevel } from '../lib/telemetryLevel'
+import { RelatedCustomer, RelatedSiteAndArea, RelatedSummaryLine } from '../components/ProblemRelatedData'
+import { Band, CardHead, Tile, rate, rateLevel, round, techOfNet } from '../components/MetricTile'
+import { useSiteLinkBack } from '../lib/siteLinkBack'
 import { DT_SESSION_HISTORY_PATH, OPAQUE_PATHS } from '../constants/opaqueRoutes'
 
 // Problem Dashboard (2026-10-15; Problem Reports since 2026-10-14) --
@@ -92,13 +95,6 @@ function ClickToPick({ onPick }: { onPick: (lat: number, lng: number) => void })
   return null
 }
 
-function FlyTo({ lat, lng }: { lat: number; lng: number }) {
-  const map = useMap()
-  useEffect(() => {
-    map.setView([lat, lng], 14)
-  }, [map, lat, lng])
-  return null
-}
 
 function FitPoints({ points }: { points: [number, number][] }) {
   const map = useMap()
@@ -141,7 +137,11 @@ export default function ProblemReportsPage() {
         <div className="feat-tabs">
           {TABS.map((t) => (
             <button key={t.key} type="button" className={`feat-tab${tab === t.key ? ' active' : ''}`}
-              onClick={() => set({ tab: t.key })}>
+              onClick={() => set(t.key === 'reports'
+                // Opening Reports from the tab shows every report: filters
+                // set from Overview or Hotspots are cleared (2026-10-26).
+                ? { tab: 'reports', status: 'all', source: null, cause: null, site: null, area: null, q: null, enter: null }
+                : { tab: t.key })}>
               {t.label}
             </button>
           ))}
@@ -206,17 +206,17 @@ function Overview({ d, onCause, onHotspot }: {
         <p className="pd-empty">No reports in this period.</p>
       ) : (
         <div className="pd-grid">
-          <section className="pd-card pd-wide">
-            <h3>Reports per day</h3>
+          <section className="pd-card pd-half">
+            <CardHead icon="📈" title="Reports per day" sub="in the chosen period" />
             <DayChart d={d} />
           </section>
           <section className="pd-card">
-            <h3>Likely cause</h3>
+            <CardHead icon="🔎" title="Likely cause" sub="click one to list its reports" hue="cyan" />
             <Bars rows={d.by_cause} color={(k) => CAUSE_COLOR[k] ?? '#64748b'} onClick={onCause}
               hint="Click a cause to list its reports." />
           </section>
           <section className="pd-card">
-            <h3>Most reports</h3>
+            <CardHead icon="🏆" title="Most reports" sub="sites and areas" hue="amber" />
             {d.hotspots.length ? (
               <ol className="pd-top">
                 {d.hotspots.slice(0, 6).map((h) => (
@@ -231,19 +231,19 @@ function Overview({ d, onCause, onHotspot }: {
             ) : <p className="muted">None.</p>}
           </section>
           <section className="pd-card">
-            <h3>What people reported</h3>
+            <CardHead icon="📣" title="What people reported" sub="category" hue="violet" />
             <Bars rows={d.by_category} color={(k) => CATEGORY_COLOR[k] ?? '#64748b'} />
           </section>
           <section className="pd-card">
-            <h3>Where from</h3>
+            <CardHead icon="🧭" title="Where from" sub="app, staff, other systems" hue="slate" />
             <Bars rows={d.by_source} color={() => '#0891b2'} />
           </section>
           <section className="pd-card">
-            <h3>District</h3>
+            <CardHead icon="🗺️" title="District" sub="where the problems were" hue="green" />
             <Bars rows={d.by_district} color={() => '#4f46e5'} />
           </section>
           <section className="pd-card">
-            <h3>Network and band</h3>
+            <CardHead icon="📶" title="Network and band" sub="what the phones were on" hue="cyan" />
             <Bars rows={d.by_tech} color={() => '#0d9488'} />
             {d.by_band.length > 0 && <Bars rows={d.by_band} color={() => '#14b8a6'} />}
           </section>
@@ -291,10 +291,12 @@ function DayChart({ d }: { d: ProblemDashboard }) {
   const bw = (W - L0 - R) / series.length
   const y = (v: number) => T + (H - T - B) * (1 - v / max)
   const step = Math.max(1, Math.ceil(series.length / 8))
+  // Whole-number ticks only, so a peak of 1 does not print "1, 1, 0" (2026-10-26).
+  const ticks = [...new Set([0, Math.round(max / 2), max])]
   return (
     <>
       <svg viewBox={`0 0 ${W} ${H}`} className="pd-chart" role="img" aria-label="Reports per day">
-        {[0, max / 2, max].map((v) => (
+        {ticks.map((v) => (
           <g key={v}>
             <line x1={L0} x2={W - R} y1={y(v)} y2={y(v)} className="pd-grid-line" />
             <text x={L0 - 4} y={y(v) + 3} textAnchor="end" className="pd-axis">{Math.round(v)}</text>
@@ -331,7 +333,9 @@ function DayChart({ d }: { d: ProblemDashboard }) {
 function Reports({ params, set, days, statusAll }: {
   params: URLSearchParams; set: (c: Record<string, string | number | null>) => void; days: number; statusAll: boolean
 }) {
-  const status = statusAll ? '' : params.get('status') ?? 'new'
+  // No status in the address means every status (2026-10-26; was "new").
+  const status = statusAll ? '' : params.get('status') ?? ''
+  const siteLink = useSiteLinkBack()
   const source = params.get('source') ?? ''
   const cause = params.get('cause') ?? ''
   const site = params.get('site') ?? ''
@@ -381,9 +385,14 @@ function Reports({ params, set, days, statusAll }: {
         )}
         {(site || area) && (
           <span className="pd-chip">
-            {site ? <>Site <Link to={`/sites/${site}`}>{site}</Link></> : `Area ${area}`}
+            {site ? <>Site <Link to={siteLink(site)}>{site}</Link></> : `Area ${area}`}
             <button type="button" onClick={() => set({ site: null, area: null })} title="Remove">×</button>
           </span>
+        )}
+        {(cause || site || area || source || q || (status && status !== '')) && (
+          <button type="button" className="btn-secondary btn-small"
+            onClick={() => set({ status: 'all', source: null, cause: null, site: null, area: null, q: null })}>
+            Show all reports</button>
         )}
       </div>
 
@@ -523,6 +532,7 @@ function CopyText({ text, label }: { text: string; label?: string }) {
 
 function ReportDetail({ id }: { id: number }) {
   const { data: r, isLoading, error } = useProblemReport(id)
+  const siteLink = useSiteLinkBack()
   const update = useUpdateProblemReport()
   const { user } = useAuth()
   const location = useLocation()
@@ -585,9 +595,10 @@ function ReportDetail({ id }: { id: number }) {
       </div>
 
       <nav className="pdd-views" aria-label="Analysis">
-        <button type="button" className={view === 'site' ? 'on' : ''} onClick={() => setView('site')}>Site related analysis</button>
+        <button type="button" className={view === 'site' ? 'on' : ''} onClick={() => setView('site')}>
+          <span className="pdd-view-title">🗼 Site related analysis</span><span className="pdd-view-sub">site, area, live readings</span></button>
         <button type="button" className={view === 'subscriber' ? 'on' : ''} onClick={() => setView('subscriber')}>
-          Subscriber related analysis</button>
+          <span className="pdd-view-title">📱 Subscriber related analysis</span><span className="pdd-view-sub">customer's phone and data</span></button>
       </nav>
 
       {view === 'subscriber' && <SubscriberAnalysis r={r} isSuper={isSuper} profileLink={profileLink} />}
@@ -595,7 +606,7 @@ function ReportDetail({ id }: { id: number }) {
       {view === 'site' && <>
       <div className="pdd-grid">
         <section className="pdd-card">
-          <h3>Customer complaint details</h3>
+          <CardHead icon="👤" title="Customer complaint details" sub="who, where, what" />
           <dl className="pdd-kv">
             <dt>Mobile</dt>
             <dd>
@@ -609,10 +620,13 @@ function ReportDetail({ id }: { id: number }) {
             <dd>{r.source === 'app' ? 'Mobile app' : r.source === 'external' ? `${r.external_system}, ticket ${r.external_ref}` : `Entered by ${r.entered_by}`}</dd>
             <dt>Problem location</dt>
             <dd><span className="mono">{r.lat.toFixed(6)}, {r.lng.toFixed(6)}</span> <CopyText text={`${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}`} label="the location" />
+              {' '}<Link className="pdd-link" to={`${OPAQUE_PATHS['/sites']}?${new URLSearchParams({
+                at: `${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}`, back: `${location.pathname}${location.search}`,
+              })}`}>Show in Site Topology →</Link>
               {r.located_by === 'site' || r.located_by === 'cell' ? <span className="muted"> · from the {r.located_by}</span> : null}</dd>
             <dt>Issue</dt><dd><b>{r.category_label}</b></dd>
             {r.note && <><dt>Customer's words</dt><dd className="problem-note" style={{ margin: 0 }}>"{r.note}"</dd></>}
-            {r.site_id && <><dt>Serving site</dt><dd><Link to={`/sites/${r.site_id}`}>{r.site_id}</Link>{r.sector ? ` · sector ${r.sector}` : ''}</dd></>}
+            {r.site_id && <><dt>Serving site</dt><dd><Link to={siteLink(r.site_id)}>{r.site_id}</Link>{r.sector ? ` · sector ${r.sector}` : ''}</dd></>}
           </dl>
           {(r.located_by === 'site' || r.located_by === 'cell') && (
             <p className="pd-caution">
@@ -623,7 +637,7 @@ function ReportDetail({ id }: { id: number }) {
         </section>
 
         <section className="pdd-card pdd-diag">
-          <h3>Diagnostics</h3>
+          <CardHead icon="🩺" title="Diagnostics" sub="likely cause from measurements" hue="cyan" />
           {main ? (
             <div className="pdd-main-finding">
               <b>{main.title}</b>
@@ -631,25 +645,16 @@ function ReportDetail({ id }: { id: number }) {
               {main.evidence.length > 0 && <p className="muted">Measured: {main.evidence.slice(0, 3).join(' · ')}</p>}
             </div>
           ) : <p className="muted">Not checked yet.</p>}
+          <RelatedSummaryLine r={r} onOpen={setView} />
           <button type="button" className="btn-primary" onClick={() => setDiag('cause')}>⤢ Open full diagnostics</button>
           <p className="muted pdd-small">
             Likely cause and the measurements around the spot, the nearest sites and cells, the phone's own reading, and the
             reply to the customer.
           </p>
-          <div className="problem-map pdd-map">
-            <MapContainer center={[r.lat, r.lng]} zoom={14} style={{ height: '100%', width: '100%' }}>
-              <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-              <FlyTo lat={r.lat} lng={r.lng} />
-              <Circle center={[r.lat, r.lng]} radius={c?.radius_m ?? 500} pathOptions={{ color: '#2563eb', weight: 1, fillOpacity: 0.06 }} />
-              <CircleMarker center={[r.lat, r.lng]} radius={7} pathOptions={{ color: '#dc2626', fillColor: '#dc2626', fillOpacity: 0.9 }}>
-                <Tooltip>Where the problem was reported</Tooltip>
-              </CircleMarker>
-            </MapContainer>
-          </div>
         </section>
 
         <section className="pdd-card">
-          <h3>Status and engineer's note</h3>
+          <CardHead icon="📝" title="Status and note" sub="what was found and done" hue="violet" />
           <p className="muted" style={{ marginTop: 0 }}>Now: <b>{STATUS_LABEL[r.status]}</b>{r.checked_by ? ` (by ${r.checked_by}${r.checked_at ? `, ${when(r.checked_at)}` : ''})` : ''}</p>
           <textarea rows={4} style={{ width: '100%' }} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000}
             placeholder="What was found and done" />
@@ -661,6 +666,7 @@ function ReportDetail({ id }: { id: number }) {
           {r.notify && <SystemUpdates id={r.id} n={r.notify} />}
         </section>
       </div>
+      <RelatedSiteAndArea r={r} />
       <LiveAround r={r} />
       </>}
 
@@ -671,6 +677,7 @@ function ReportDetail({ id }: { id: number }) {
               <div>
                 <b>Full diagnostics</b>
                 <div className="muted pdd-small">{reference} · {r.category_label}{r.phone_number ? ` · ${r.phone_number}` : ''} · {r.lat.toFixed(5)}, {r.lng.toFixed(5)}</div>
+                <RelatedSummaryLine r={r} onOpen={(v) => { setDiag(null); setView(v) }} />
               </div>
               <button type="button" className="btn-secondary btn-small" onClick={() => setDiag(null)}>Close</button>
             </div>
@@ -745,7 +752,7 @@ function LiveAround({ r }: { r: ProblemReport }) {
 
   return (
     <section className="pdd-card pdd-live">
-      <h3>Live readings around this spot</h3>
+      <CardHead icon="📡" title="Live readings around this spot" sub="ask the phones sharing near the complaint" hue="green" />
       <p className="muted pdd-small" style={{ marginTop: 0 }}>
         Asks the phones that shared their signal near this spot in the last 24 hours, and are sharing now, for one fresh
         reading each. Answers arrive within 15 minutes and do not say which phone sent them.
@@ -822,7 +829,7 @@ function SubscriberAnalysis({ r, isSuper, profileLink }: { r: ProblemReport; isS
   return (
     <div className="pdd-grid pdd-grid-2">
       <section className="pdd-card">
-        <h3>Customer</h3>
+        <CardHead icon="🪪" title="Customer" sub="number, phone and app" />
         <dl className="pdd-kv">
           <dt>Mobile</dt>
           <dd>{r.phone_number ? <span className="mono">{r.phone_number}</span>
@@ -844,7 +851,7 @@ function SubscriberAnalysis({ r, isSuper, profileLink }: { r: ProblemReport; isS
       </section>
 
       <section className="pdd-card">
-        <h3>Live readings from the customer's phone</h3>
+        <CardHead icon="📲" title="Live readings from the customer's phone" sub="with the customer's consent" hue="amber" />
         {live.isLoading ? <p className="muted">…</p> : !phone?.has_number ? (
           <p className="muted">This complaint has no mobile number, so there is no phone to ask. Use "Live readings around this
             spot" under Site related analysis.</p>
@@ -902,9 +909,11 @@ function SubscriberAnalysis({ r, isSuper, profileLink }: { r: ProblemReport; isS
         )}
       </section>
 
+      <RelatedCustomer r={r} />
+
       {shown && (
         <section className="pdd-card pdd-span-2">
-          <h3>Readings from the customer's phone</h3>
+          <CardHead icon="📍" title="Live readings received" sub="signal and place, newest last" hue="amber" />
           {rows.length === 0 ? <p className="muted">No readings yet.</p> : <>
             <LiveMap r={r} points={points} />
             <table className="admin-table" style={{ marginTop: 10 }}>
@@ -931,6 +940,7 @@ function SubscriberAnalysis({ r, isSuper, profileLink }: { r: ProblemReport; isS
 }
 
 function CauseTab({ c }: { c: NonNullable<ProblemReport['check']>; reportId: number }) {
+  const siteLink = useSiteLinkBack()
   return (
     <>
       {c.findings.map((f, i) => (
@@ -941,16 +951,30 @@ function CauseTab({ c }: { c: NonNullable<ProblemReport['check']>; reportId: num
           {f.evidence.length > 0 && <p className="muted">Measured: {f.evidence.join(' · ')}</p>}
         </div>
       ))}
-      <h3>Measurements around the spot ({c.radius_m} m)</h3>
+      <Band icon="📶">Measurements around the spot ({c.radius_m} m)</Band>
+      <div className="pd-tiles">
+        <div className="pd-tile pd-tile-wide">
+          <div className="pd-tile-label">Serving site</div>
+          <div className="pd-tile-value">{c.serving ? <Link to={siteLink(c.serving.site_id)}>{c.serving.site_id}</Link> : '—'}</div>
+          <div className="pd-tile-foot muted">{c.serving
+            ? `${c.serving.cell_name} · ${fmt(c.serving.km, ' km')} away · found by ${c.serving.matched_by}`
+            : 'Not known from the report'}</div>
+        </div>
+        <Tile icon="📶" label="4G level now (other phones)" value={round(c.phones_at_time.rsrp_4g_mean)} unit="dBm"
+          verdict={rateLevel('LTE', c.phones_at_time.rsrp_4g_mean)}
+          hint={c.phones_at_time.readings ? `${c.phones_at_time.readings} readings, ${c.phones_at_time.share_4g_pct ?? 0}% on 4G` : 'no readings'} />
+        <Tile icon="🗓" label={`4G level, ${c.baseline_days} days before`} value={round(c.phones_before.rsrp_4g_mean)} unit="dBm"
+          verdict={rateLevel('LTE', c.phones_before.rsrp_4g_mean)}
+          hint={c.phones_before.readings ? `${c.phones_before.readings} readings` : 'no readings'} />
+        <Tile icon="〰" label="4G quality now (RSRQ)" value={round(c.phones_at_time.rsrq_4g_mean)} unit="dB" verdict={rate(c.phones_at_time.rsrq_4g_mean, -10, -15)}
+          hint={c.phones_before.rsrq_4g_mean != null ? `${round(c.phones_before.rsrq_4g_mean)} dB before` : undefined} />
+        {c.phones_at_time.rsrp_4g_mean != null && c.phones_before.rsrp_4g_mean != null && (
+          <Tile icon="↕" label="Change against before" value={`${c.phones_at_time.rsrp_4g_mean - c.phones_before.rsrp_4g_mean >= 0 ? '+' : ''}${round(c.phones_at_time.rsrp_4g_mean - c.phones_before.rsrp_4g_mean)}`} unit="dB"
+            verdict={c.phones_at_time.rsrp_4g_mean - c.phones_before.rsrp_4g_mean <= -6 ? { text: 'Worse than usual', tone: 'bad' } : { text: 'As usual', tone: 'good' }} />
+        )}
+      </div>
       <table className="problem-facts">
         <tbody>
-          <tr><th>Serving site</th><td>
-            {c.serving
-              ? <><Link to={`/sites/${c.serving.site_id}`}>{c.serving.site_id}</Link> {c.serving.cell_name} · {fmt(c.serving.km, ' km')} (found by {c.serving.matched_by})</>
-              : 'Not known from the report'}
-          </td></tr>
-          <tr><th>Phones at the time</th><td>{areaText(c.phones_at_time)}</td></tr>
-          <tr><th>Phones, {c.baseline_days} days before</th><td>{areaText(c.phones_before)}</td></tr>
           <tr><th>Drive tests</th><td>
             {c.drive_tests.readings
               ? <>
@@ -970,21 +994,36 @@ function CauseTab({ c }: { c: NonNullable<ProblemReport['check']>; reportId: num
 }
 
 function PhoneTab({ r }: { r: ProblemReport }) {
+  const tech = techOfNet(r.network_type)
+  const levelName = tech === '3G' ? 'RSCP' : tech === '2G' ? 'RxLev' : 'RSRP'
+  const hasSpeed = r.download_mbps != null || r.upload_mbps != null || r.ping_ms != null
   return (
-    <table className="problem-facts">
-      <tbody>
-        <tr><th>Phone's signal</th><td>
-          {r.network_type || '—'}{r.band ? ` ${r.band}` : ''} · level {fmt(r.level_dbm, ' dBm')}
-          {r.rsrq_db != null ? ` · RSRQ ${r.rsrq_db} dB` : ''}{r.sinr_db != null ? ` · SINR ${r.sinr_db} dB` : ''}
-          {r.pci != null ? ` · PCI ${r.pci}` : ''}{r.cell_id != null ? ` · cell ${r.cell_id}` : ''}
-        </td></tr>
-        <tr><th>Speed test</th><td>
-          download {fmt(r.download_mbps, ' Mbps')} · upload {fmt(r.upload_mbps, ' Mbps')} · ping {fmt(r.ping_ms, ' ms')}
-          {' '}· jitter {fmt(r.jitter_ms, ' ms')} · loss {fmt(r.packet_loss_pct, '%')}
-        </td></tr>
-        <tr><th>Phone</th><td>{r.phone_model || '—'}{r.android_version ? `, Android ${r.android_version}` : ''}{r.app_version ? ` · app ${r.app_version}` : ''}</td></tr>
-      </tbody>
-    </table>
+    <>
+      <Band icon="📶">Signal when the problem was reported</Band>
+      <div className="pd-tiles">
+        <Tile icon="📡" hue="blue" label="Network" value={[tech ?? r.network_type, r.band].filter(Boolean).join(' · ') || null} hint={r.network_type && tech ? r.network_type : undefined} />
+        <Tile icon="📶" label={`Level (${levelName})`} value={r.level_dbm} unit="dBm" verdict={rateLevel(r.network_type, r.level_dbm)} />
+        {tech === '4G' && <Tile icon="〰" label="Quality (RSRQ)" value={r.rsrq_db} unit="dB" verdict={rate(r.rsrq_db, -10, -15)} />}
+        {tech === '4G' && <Tile icon="🎚" label="Interference (SINR)" value={r.sinr_db} unit="dB" verdict={rate(r.sinr_db, 13, 0)} hint={r.sinr_db == null ? 'not reported by this phone' : undefined} />}
+        <Tile icon="🗼" hue="slate" label="Cell" value={r.cell_id} hint={r.pci != null ? `PCI ${r.pci}` : undefined} />
+      </div>
+      <Band icon="⚡">Speed test over mobile data</Band>
+      {hasSpeed ? (
+        <div className="pd-tiles">
+          <Tile icon="⬇" label="Download" value={round(r.download_mbps)} unit="Mbps" verdict={rate(r.download_mbps, 10, 2, true, ['Good', 'Fair', 'Slow'])} />
+          <Tile icon="⬆" label="Upload" value={round(r.upload_mbps)} unit="Mbps" verdict={rate(r.upload_mbps, 5, 1, true, ['Good', 'Fair', 'Slow'])} />
+          <Tile icon="⏱" label="Ping" value={round(r.ping_ms, 0)} unit="ms" verdict={rate(r.ping_ms, 50, 150, false, ['Good', 'Fair', 'High'])} />
+          <Tile icon="〽" label="Jitter" value={round(r.jitter_ms)} unit="ms" verdict={rate(r.jitter_ms, 20, 50, false, ['Good', 'Fair', 'High'])} />
+          <Tile icon="📉" label="Packet loss" value={round(r.packet_loss_pct)} unit="%" verdict={rate(r.packet_loss_pct, 1, 5, false, ['Good', 'Fair', 'High'])} />
+        </div>
+      ) : <p className="muted">No speed test came with this report.</p>}
+      <Band icon="📱">Phone</Band>
+      <div className="pd-tiles">
+        <Tile icon="📱" hue="slate" label="Model" value={r.phone_model || null} />
+        <Tile icon="🤖" hue="green" label="Android" value={r.android_version || null} />
+        <Tile icon="🧩" hue="violet" label="App" value={r.app_version || null} />
+      </div>
+    </>
   )
 }
 
@@ -1003,6 +1042,7 @@ function ReplyTab({ text }: { text: string }) {
 const TECH_COLOR: Record<string, string> = { '2G': '#d97706', '3G': '#4f46e5', '4G': '#0891b2', '5G': '#db2777' }
 
 function NearbySites({ r }: { r: ProblemReport }) {
+  const siteLink = useSiteLinkBack()
   const [radius, setRadius] = useState(1)
   const [filter, setFilter] = useState('')
   const [picked, setPicked] = useState<string | null>(null)
@@ -1030,11 +1070,15 @@ function NearbySites({ r }: { r: ProblemReport }) {
               <Tooltip>Problem location</Tooltip>
             </CircleMarker>
             {sites.map((s) => (
-              <CircleMarker key={s.site_id} center={[s.lat, s.lng]} radius={s.serving || picked === s.site_id ? 8 : 6}
+              // Only the picked site and the one that served the report carry a
+              // label; the rest show theirs on hover (2026-10-26). The key changes
+              // with the pick because Leaflet sets `permanent` only when created.
+              <CircleMarker key={`${s.site_id}-${picked === s.site_id ? 'on' : 'off'}`} center={[s.lat, s.lng]} radius={s.serving || picked === s.site_id ? 8 : 6}
                 eventHandlers={{ click: () => setPicked(s.site_id) }}
                 pathOptions={{ color: s.serving ? '#16a34a' : picked === s.site_id ? '#111827' : '#ffffff', weight: 2,
                   fillColor: TECH_COLOR[s.techs[s.techs.length - 1]] ?? '#64748b', fillOpacity: 0.95 }}>
-                <Tooltip permanent={sites.length <= 25} direction="right" className="pdd-site-label">{s.site_id}</Tooltip>
+                <Tooltip permanent={picked === s.site_id || s.serving} direction="right" className="pdd-site-label">
+                  {picked === s.site_id && s.name ? s.name : s.site_id}</Tooltip>
               </CircleMarker>
             ))}
           </MapContainer>
@@ -1043,7 +1087,7 @@ function NearbySites({ r }: { r: ProblemReport }) {
           {sites.map((s) => (
             <button key={s.site_id} type="button" className={`pdd-site${picked === s.site_id ? ' on' : ''}`} onClick={() => setPicked(s.site_id)}>
               <div className="pdd-site-top">
-                <b><Link to={`/sites/${s.site_id}`} onClick={(e) => e.stopPropagation()}>{s.site_id}</Link></b>
+                <b><Link to={siteLink(s.site_id)} onClick={(e) => e.stopPropagation()}>{s.site_id}</Link></b>
                 {s.site_id === nearest && <span className="pdd-chip pdd-chip-blue">Nearest</span>}
                 {s.serving && <span className="pdd-chip pdd-chip-green">Served the report</span>}
                 <span className="pdd-dist">{s.distance_m < 1000 ? `${s.distance_m} m` : `${(s.distance_m / 1000).toFixed(2)} km`}</span>
@@ -1108,11 +1152,6 @@ function SystemUpdates({ id, n }: { id: number; n: NonNullable<ProblemReport['no
   )
 }
 
-function areaText(a: { readings: number; share_4g_pct: number | null; rsrp_4g_mean: number | null; rsrq_4g_mean: number | null }) {
-  if (!a.readings) return 'None'
-  return `${a.readings} readings, ${fmt(a.share_4g_pct, '%')} on 4G; 4G ${fmt(a.rsrp_4g_mean, ' dBm')}` +
-    (a.rsrq_4g_mean != null ? `, RSRQ ${a.rsrq_4g_mean} dB` : '') + ' average'
-}
 
 function EnterComplaint({ onSaved }: { onSaved: (id: number) => void }) {
   const create = useCreateProblemReport()

@@ -1,6 +1,9 @@
 import { useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { apiErrorMessage } from '../api/client'
 import {
+  useAlarmSummary,
+  useRefreshAlarms,
   useCreateLiveSiteSource,
   useDeleteLiveSiteSource,
   useLiveSiteSources,
@@ -433,6 +436,71 @@ export default function LiveSiteSyncPage() {
           </form>
         )}
       </section>
+
+      <AlarmFeedSection />
     </div>
+  )
+}
+
+// Active alarms (2026-10-26, core/alarms.py). Unlike the site sources above
+// nothing is copied in: alarms are read live from the alarm system, kept for
+// a minute and shown per site ("Active alarms" on each site page). This card
+// shows whether the feed answers and what it holds now.
+function AlarmFeedSection() {
+  const { data: s, isLoading, error } = useAlarmSummary()
+  const refresh = useRefreshAlarms()
+  return (
+    <section>
+      <h2>Active alarms</h2>
+      <p className="muted">
+        Live alarms from NTC's alarm system. They are not copied into DT-WATCH: each site page asks for its own when
+        opened (button "Active alarms"), and the list is kept for {s?.cache_seconds ?? 60} seconds so every user shares
+        one fetch. The address and key are set by the server administrator.
+      </p>
+      {isLoading ? <p className="muted">Asking the alarm system…</p>
+        : error ? <p className="error">{apiErrorMessage(error)}</p>
+          : !s?.configured ? <p className="muted">Not set up on this server.</p>
+            : (
+              <>
+                <div className="admin-page-actions" style={{ justifyContent: 'flex-start', gap: 12, alignItems: 'center' }}>
+                  <span>{s.error ? <span className="error">{s.error}</span>
+                    : <>Connected · <b>{s.total}</b> active alarms on <b>{s.sites}</b> sites · fetched {s.fetched_at ? new Date(s.fetched_at).toLocaleString() : '-'}</>}</span>
+                  <button className="btn-secondary btn-small" disabled={refresh.isPending} onClick={() => refresh.mutate(undefined)}>
+                    {refresh.isPending ? 'Refreshing…' : '↻ Refresh now'}
+                  </button>
+                </div>
+                {!s.error && (
+                  <div className="alarm-summary-grid">
+                    <div>
+                      <h3>By severity</h3>
+                      <ul>{(s.by_severity ?? []).map(([k, n]) => <li key={k}>{k}: <b>{n}</b></li>)}</ul>
+                      <h3>By network element</h3>
+                      <ul>{(s.by_ne_type ?? []).map(([k, n]) => <li key={k}>{k}: <b>{n}</b></li>)}</ul>
+                      {(s.no_site ?? 0) > 0 && <p className="muted">{s.no_site} alarms name no site.</p>}
+                      {(s.unknown_sites ?? 0) > 0 && <p className="muted">{s.unknown_sites} sites with alarms are not in the site list.</p>}
+                    </div>
+                    <div>
+                      <h3>Most common alarms</h3>
+                      <ul>{(s.by_type ?? []).map(([k, n]) => <li key={k}>{k}: <b>{n}</b></li>)}</ul>
+                    </div>
+                    <div>
+                      <h3>Sites with the most alarms</h3>
+                      <table className="admin-table" data-pager="off">
+                        <thead><tr><th>Site</th><th>Alarms</th></tr></thead>
+                        <tbody>
+                          {(s.top_sites ?? []).map((t) => (
+                            <tr key={t.site_id}>
+                              <td>{t.known ? <Link to={`/sites/${t.site_id}`}>{t.site_id}</Link> : t.site_id}{t.name ? ` · ${t.name}` : ''}</td>
+                              <td>{t.count}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+    </section>
   )
 }

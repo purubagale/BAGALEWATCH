@@ -66,6 +66,10 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
   siteLink: (siteId: string) => string
 }) {
   const total = a.networks.reduce((s, n) => s + n.readings, 0)
+  // Readings that say nothing about the network (not measured by the phone,
+  // or radio off / no SIM) stay out of the shares (2026-10-26).
+  const unmeasured = (a.no_network ?? []).filter((g) => g.status !== 'no_coverage').reduce((s, g) => s + g.readings, 0)
+  const measuredTotal = total - unmeasured
   const on4g = a.networks.filter((n) => n.network_type === 'LTE' || n.network_type === 'NR').reduce((s, n) => s + n.readings, 0)
   const weak = a.networks.reduce((s, n) => s + n.weak, 0)
   const withLevel = a.networks.reduce((s, n) => s + n.readings - n.no_level, 0)
@@ -103,9 +107,11 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
     <>
       <Section id="sp-capability" icon="🧪" title="Measured network and quality"
         note={scope ? `Signal filter: ${scope}` : "From the phone's own readings"}>
-        <div className="spc-tiles">
-          <div className="spc-tile"><span>Time on 4G/5G</span><b>{pct(on4g, total)}%</b>
-            <div className="spc-meter"><i style={{ width: `${pct(on4g, total)}%`, background: netColor('LTE') }} /></div></div>
+        {/* Tiles and the per-network quality box share one row (2026-10-26). */}
+        <div className="spc-tiles spc-row">
+          <div className="spc-tile"><span>Time on 4G/5G</span><b>{measuredTotal ? `${pct(on4g, measuredTotal)}%` : '—'}</b>
+            <div className="spc-meter"><i style={{ width: `${pct(on4g, measuredTotal)}%`, background: netColor('LTE') }} /></div>
+            <small>of {measuredTotal.toLocaleString()} measured readings</small></div>
           <div className="spc-tile"><span>Weak signal</span><b>{pct(weak, withLevel)}%</b>
             <div className="spc-meter"><i style={{ width: `${pct(weak, withLevel)}%`, background: 'var(--sp-rose)' }} /></div>
             <small>of readings with a level</small></div>
@@ -118,23 +124,38 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
               {a.bands.length ? a.bands.map((b) => <em key={`${b.network_type}${b.band_label}`}>{b.band_label} · {pct(b.readings, bandTotal)}%</em>) : <small>None reported</small>}
             </div></div>
           <div className="spc-tile"><span>Phone</span><b className="spc-small">{phone ?? '—'}</b></div>
-        </div>
-        <div className="spc-quality">
-          {a.networks.filter((n) => n.network_type in NET_LABEL).map((n) => (
-            <div key={n.network_type} className="spc-quality-row">
-              <div className="spc-quality-head">
-                <i style={{ background: netColor(n.network_type) }} /><b>{techOf(n.network_type)}</b>
-                <span className="sp-muted"> · {n.readings.toLocaleString()} readings ({pct(n.readings, total)}%)</span>
-                <span className="sp-mono sp-muted spc-quality-avg">
-                  {[n.level_avg != null ? `level ${n.level_avg} dBm` : '', n.rsrq_avg != null ? `RSRQ ${n.rsrq_avg}` : '', n.sinr_avg != null ? `SINR ${n.sinr_avg}` : ''].filter(Boolean).join(' · ')}
+          {/* Every reading has a row, so the shares add up to 100% (2026-10-26):
+              readings where the phone reported no network are their own row. */}
+          <div className="spc-tile spc-quality spc-quality-box"
+            title={`Weak below ${a.limits.weak_dbm['4G']} dBm on 4G, ${a.limits.weak_dbm['3G']} on 3G, ${a.limits.weak_dbm['2G']} on 2G; good from ${a.limits.good_dbm['4G']}, ${a.limits.good_dbm['3G']} and ${a.limits.good_dbm['2G']} (the problem check's limits).`}>
+            <span>Readings by network · {total.toLocaleString()}</span>
+            {a.networks.filter((n) => n.network_type in NET_LABEL).map((n) => (
+              // One line per network (2026-10-26): name and share, the quality bar
+              // (weak / fair / good on hover), then the averages.
+              <div key={n.network_type} className="spc-qline"
+                title={QUALITY.filter((q) => n[q.key]).map((q) => `${q.label} ${pct(n[q.key], n.readings)}%`).join(' · ')}>
+                <span className="spc-qline-name"><i style={{ background: netColor(n.network_type) }} /><b>{techOf(n.network_type)}</b>
+                  <span className="sp-muted">{n.readings.toLocaleString()} · {pct(n.readings, total)}%</span></span>
+                <ShareBar compact parts={QUALITY.map((q) => ({ key: q.key, label: q.label, value: n[q.key], color: q.color }))} />
+                <span className="sp-mono sp-muted spc-qline-avg">
+                  {[n.level_avg != null ? `${n.level_avg} dBm` : '', n.rsrq_avg != null ? `RSRQ ${n.rsrq_avg}` : ''].filter(Boolean).join(' · ') || '—'}
                 </span>
               </div>
-              <ShareBar parts={QUALITY.map((q) => ({ key: q.key, label: q.label, value: n[q.key], color: q.color }))} />
-            </div>
-          ))}
-          <div className="sp-muted spc-foot">
-            Weak below {a.limits.weak_dbm['4G']} dBm on 4G, {a.limits.weak_dbm['3G']} on 3G, {a.limits.weak_dbm['2G']} on 2G;
-            good from {a.limits.good_dbm['4G']}, {a.limits.good_dbm['3G']} and {a.limits.good_dbm['2G']}: the problem check's limits.
+            ))}
+            {/* Readings without a network, by what they mean (2026-10-26,
+                core/telemetry_status.py): only "No coverage" is a network fault. */}
+            {(a.no_network ?? []).map((g) => (
+              <div key={g.status} className="spc-qline spc-qline-note" title={g.hint}>
+                <span className="spc-qline-name">
+                  <i style={{ background: g.status === 'no_coverage' ? '#e11d48' : g.status === 'radio_off' ? '#64748b' : '#cbd5e1' }} />
+                  <b>{g.label}</b><span className="sp-muted">{g.readings.toLocaleString()} · {pct(g.readings, total)}%</span></span>
+                <span className="sp-muted spc-qline-text">{
+                  g.status === 'not_measured' ? 'phone withheld the cell; not a network fault'
+                    : g.status === 'radio_off' ? 'flight mode, radio off or no SIM; not a network fault'
+                      : 'the phone found no network'}
+                  {Object.keys(g.reasons).length > 0 && ` · ${Object.entries(g.reasons).map(([k, v]) => `${k.replace(/_/g, ' ')} ${v}`).join(', ')}`}</span>
+              </div>
+            ))}
           </div>
         </div>
       </Section>

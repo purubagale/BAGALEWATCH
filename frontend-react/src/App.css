@@ -4705,6 +4705,49 @@ tr[hidden] { display: none !important; }
 @media (max-width: 760px) { .pdd-grid-2 { grid-template-columns: minmax(0, 1fr); } }
 .pdd-span-2 { grid-column: 1 / -1; }
 .pdd-live-go { display: inline-block; margin: 10px 0 4px; text-decoration: none; }
+/* Readable measure tiles on a complaint (2026-10-26). */
+.pd-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin: 6px 0 14px; }
+.pd-tiles-h { margin: 6px 0 2px; font-size: 13px; color: var(--muted, #64748b); text-transform: uppercase; letter-spacing: .04em; }
+.pd-tile { border: 1px solid var(--border, #e2e8f0); border-left: 4px solid var(--border, #cbd5e1); border-radius: 10px; padding: 8px 12px; background: var(--surface, #fff); }
+.pd-tile-wide { grid-column: span 2; }
+.pd-tile-good { border-left-color: #16a34a; }
+.pd-tile-fair { border-left-color: #eab308; }
+.pd-tile-bad { border-left-color: #dc2626; }
+.pd-tile-label { font-size: 11.5px; color: var(--muted, #64748b); }
+.pd-tile-value { font-size: 20px; font-weight: 700; line-height: 1.3; }
+.pd-tile-value small { font-size: 12px; font-weight: 500; color: var(--muted, #64748b); }
+.pd-tile-foot { font-size: 11.5px; margin-top: 2px; }
+.pd-verdict { font-weight: 600; }
+.pd-verdict-good { color: #15803d; }
+.pd-verdict-fair { color: #a16207; }
+.pd-verdict-bad { color: #b91c1c; }
+@media (max-width: 600px) { .pd-tile-wide { grid-column: span 1; } }
+.cell-missing { color: var(--muted, #94a3b8); font-style: italic; cursor: help; }
+/* Active alarms (2026-10-26, ActiveAlarmsButton.tsx and Live Site Sync). */
+.btn-alarm-on { border: 1px solid #f59e0b; background: #fff7ed; color: #9a3412; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-weight: 600; }
+.btn-alarm-on.btn-small { padding: 3px 10px; font-size: 12.5px; }
+.alarm-modal { max-width: 900px; height: auto !important; max-height: 85vh; display: flex; flex-direction: column; }
+.alarm-modal-body { padding: 12px 16px; overflow: auto; }
+.alarm-modal-foot { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-top: 1px solid var(--border, #e2e8f0); }
+.alarm-sev { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; border: 1px solid; }
+.alarm-sev-crit { color: #b91c1c; background: #fef2f2; border-color: #fca5a5; }
+.alarm-sev-major { color: #c2410c; background: #fff7ed; border-color: #fdba74; }
+.alarm-sev-minor { color: #a16207; background: #fefce8; border-color: #fde047; }
+.alarm-sev-warn, .alarm-sev-other { color: #475569; background: #f8fafc; border-color: #cbd5e1; }
+.alarm-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 10px; }
+.alarm-summary-grid h3 { font-size: 14px; margin: 8px 0 4px; }
+.alarm-summary-grid ul { margin: 0; padding-left: 18px; }
+/* Related data of a complaint (2026-10-26). */
+.pdd-rel-bar input[type="date"] { margin-left: 4px; padding: 3px 6px; border-radius: 8px; border: 1px solid var(--border, #cbd5e1); }
+.pdd-rel-cols { grid-template-columns: minmax(0, 1.2fr) minmax(280px, 1fr); }
+.pdd-rel-map { height: 420px !important; position: sticky; top: 12px; }
+.pdd-rel-h { margin: 12px 0 6px; font-size: 13.5px; }
+.pdd-rel-block { margin-bottom: 10px; }
+.pdd-rel-table { font-size: 12px; }
+.pdd-rel-table th, .pdd-rel-table td { padding: 4px 8px !important; }
+.pdd-rel-list { margin: 4px 0 0; padding-left: 18px; }
+.pdd-rel-summary { margin: 4px 0 8px; }
+.pdd-linkish { border: none; background: none; padding: 0; color: var(--brand, #0153a5); cursor: pointer; text-decoration: underline; font: inherit; }
 .pdd-site-top { display: flex; align-items: center; gap: 6px; }
 .pdd-dist { margin-left: auto; font-weight: 600; color: #0891b2; font-variant-numeric: tabular-nums; }
 .pdd-techs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
@@ -4715,3 +4758,290 @@ tr[hidden] { display: none !important; }
 .sp-from-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; padding: 8px 12px; border-radius: 10px;
   border: 1px solid var(--sp-border, rgba(127,127,127,.3)); background: var(--sp-card, transparent); font-size: 13px; }
 .sp-from-bar a { font-weight: 600; }
+
+/* ── Compact spacing on every page (2026-10-26) ─────────────────────────
+   Asked by the user: the page title, the intro and the gaps took most of
+   the first screen. The title bar at the top already names the page, so
+   the page heading is small; the intro shows one line and opens in full on
+   hover or keyboard focus; sections, cards, tables and charts are tighter.
+   Last block of the file, so it wins over the console styles above. */
+.ui-console .admin-page, .ui-console .dashboard-page, .ui-console .menu-section-page,
+.ui-console .site-detail-page { padding: 8px 16px 18px; }
+.ui-console .admin-page::before, .ui-console .dashboard-page::before,
+.ui-console .site-detail-page::before { height: 2px; margin-bottom: 6px; max-width: 120px; }
+.ui-console .admin-page > h1, .ui-console .admin-page h1:first-of-type, .ui-console .dashboard-header h1,
+.ui-console .site-detail-page h1, .ui-console .menu-section-banner h1 { font-size: 18px; line-height: 1.25; margin: 0 0 2px; }
+.ui-console .admin-page > p.muted:first-of-type { font-size: 12px; line-height: 1.4; margin: 0 0 8px; max-width: none;
+  display: -webkit-box; -webkit-line-clamp: 1; line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; cursor: help; }
+.ui-console .admin-page > p.muted:first-of-type:hover,
+.ui-console .admin-page > p.muted:first-of-type:focus { -webkit-line-clamp: unset; line-clamp: unset; }
+.ui-console .admin-page h2 { font-size: 15px; margin: 14px 0 6px; }
+.ui-console .admin-page h3 { margin: 10px 0 6px; }
+.ui-console .admin-page section { margin-bottom: 12px; }
+.ui-console .dashboard-header { margin-bottom: 8px; }
+.ui-console .dashboard-grid { gap: 10px; }
+.ui-console .site-detail-meta { margin-bottom: 8px; }
+.ui-console .site-form-section { margin: 10px 0 8px; }
+.ui-console .menu-section-banner { padding: 10px 14px; margin-bottom: 10px; }
+.ui-console .report-card { padding: 8px 12px; }
+.ui-console .admin-table th { padding: 6px 9px; }
+.ui-console .admin-table td { padding: 5px 9px; }
+.ui-console .feat-tabs { margin-bottom: 8px; }
+.ui-console .page-status { padding: 10px 12px; margin: 6px 0; }
+.sp-backbar { margin: 6px 16px 0; padding: 5px 12px; }
+/* Problem Dashboard */
+.pd-kpis { gap: 8px; margin-bottom: 8px; }
+.pd-kpi { padding: 7px 10px; }
+.pd-kpi b { font-size: 19px; }
+.pd-grid { gap: 10px; }
+.pd-card { padding: 8px 12px 10px; }
+.pd-card h3 { margin: 0 -12px 8px; padding: 0 12px 6px; font-size: 13.5px; }
+.pd-chart { max-height: 210px; }
+.pdd-grid { gap: 10px; }
+.pdd-card { padding: 10px 12px; }
+.pdd-card h3 { margin-bottom: 8px; }
+.pdd-views { margin: 2px 0 10px; }
+.pdd-views button { padding: 6px 12px; }
+
+/* ── Density like NTC's ticketing system (UTS), 2026-10-26 ──────────────
+   The user compared the two default screens: UTS fits far more on one
+   screen with smaller, even type. Base type 13 px, a 40 px top bar, a
+   one-line footer, a 17 px page title with the intro under a thin rule
+   (no gradient strip), 30 px form controls, smaller buttons and tabs,
+   8 px card corners. Last block of the file, so it wins. */
+.ui-console { font-size: 13px; }
+.app-topbar { min-height: 40px; padding: 4px 14px; }
+.app-breadcrumb { font-size: 12.5px; }
+.app-topbar-actions button { padding: 3px 9px; font-size: 12px; min-height: 28px; }
+.app-footer { padding: 2px 12px; font-size: 10px; display: flex; justify-content: center; align-items: center; gap: 4px 14px; flex-wrap: wrap; }
+.app-footer-line + .app-footer-line { margin-top: 0; }
+.ui-console .admin-page::before, .ui-console .dashboard-page::before, .ui-console .site-detail-page::before { display: none; }
+.ui-console .admin-page > h1, .ui-console .admin-page h1:first-of-type, .ui-console .dashboard-header h1,
+.ui-console .site-detail-page h1, .ui-console .menu-section-banner h1 {
+  font-size: 17px; font-weight: 600; color: var(--brand, #0153a5); margin: 2px 0 1px; }
+:root[data-theme='dark'] .ui-console .admin-page > h1, :root[data-theme='dark'] .ui-console .admin-page h1:first-of-type { color: var(--ui-text); }
+.ui-console .admin-page > p.muted:first-of-type { padding-bottom: 8px; border-bottom: 1px solid var(--ui-border, var(--border)); margin-bottom: 10px; }
+.ui-console .admin-page h2 { font-size: 14px; }
+.ui-console .admin-page h3 { font-size: 13px; }
+.ui-console .admin-page label { font-size: 12.5px; }
+.ui-console .admin-page input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+.ui-console .admin-page select, .ui-console .admin-page textarea {
+  padding: 4px 8px; font-size: 12.5px; min-height: 30px; border-radius: 6px; }
+.ui-console .admin-page textarea { min-height: 60px; }
+.ui-console .btn-primary, .ui-console .btn-secondary, .ui-console .btn-danger { padding: 5px 12px; font-size: 12.5px; border-radius: 6px; }
+.ui-console .btn-small { padding: 3px 9px; font-size: 12px; }
+.ui-console .admin-table { font-size: 12.5px; border-radius: 8px; }
+.ui-console .feat-tab { padding: 4px 10px; font-size: 11px; }
+.ui-console .report-card, .ui-console .site-card, .ui-console .site-sidebar-card, .ui-console .dash-card { border-radius: 8px; }
+/* Problem Dashboard and a complaint */
+.pd-card, .pd-kpi, .pdd-card, .pd-tile, .pdd-site, .pdd-modal { border-radius: 8px; }
+.pdd-head { margin-bottom: 8px; }
+.pdd-head h2 { font-size: 16px; }
+.pdd-card h3 { font-size: 13px; margin: 0 0 8px; }
+.pdd-kv { font-size: 12.5px; gap: 5px 12px; }
+.pdd-kv dt { font-size: 11px; }
+.pdd-kv dd { font-weight: 500; }
+.pdd-main-finding b { font-size: 14px; }
+.pdd-main-finding p { font-size: 12.5px; }
+.pdd-small { font-size: 11.5px; }
+.pd-tile { padding: 6px 10px; }
+.pd-tile-value { font-size: 17px; }
+.pd-tile-label, .pd-tile-foot { font-size: 11px; }
+.pdd-views button { font-size: 12.5px; }
+
+/* ── A livelier look, after UTS (2026-10-26) ──────────────────────────────
+   Page title and a short description on one line (the description is cut
+   with "…" and opens in full on hover); card headers with a coloured icon
+   chip, a title and a one-line subtitle; tiles with an icon chip and a
+   coloured value; soft blue bands heading groups; tabs with a subtitle;
+   cards with a light shadow. */
+.ui-console .admin-page > h1:first-child, .ui-console .admin-page > h1:first-of-type { display: inline-block; vertical-align: baseline; margin-right: 12px; }
+.ui-console .admin-page > h1:first-of-type + p.muted {
+  display: inline-block; vertical-align: baseline; max-width: calc(100% - 260px); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; padding-bottom: 0; border-bottom: 0; margin: 0; }
+.ui-console .admin-page > h1:first-of-type + p.muted:hover { white-space: normal; display: block; max-width: none; margin: 2px 0 0; }
+.ui-console .admin-page > h1:first-of-type + p.muted + * { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--ui-border, var(--border)); }
+@media (max-width: 760px) { .ui-console .admin-page > h1:first-of-type + p.muted { display: block; max-width: none; } }
+
+.pd-ic { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; font-size: 14px; line-height: 1; flex-shrink: 0; }
+.pd-ic-blue { background: #e0ecff; } .pd-ic-cyan { background: #d9f5fb; } .pd-ic-green { background: #dcfce7; }
+.pd-ic-amber { background: #fef3c7; } .pd-ic-red { background: #fee2e2; } .pd-ic-violet { background: #ede9fe; }
+.pd-ic-slate { background: #e2e8f0; }
+:root[data-theme='dark'] .pd-ic { background: rgba(148, 163, 184, .16); }
+
+.pd-cardhead { display: flex; align-items: center; gap: 10px; margin: -2px 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--ui-border, var(--border)); min-width: 0; }
+.pd-cardhead-text { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1; flex-wrap: wrap; }
+.pd-cardhead-title { font-size: 13.5px; font-weight: 600; color: var(--brand, #0153a5); white-space: nowrap; }
+:root[data-theme='dark'] .pd-cardhead-title { color: var(--ui-text); }
+.pd-cardhead-sub { font-size: 11.5px; color: var(--ui-muted, #64748b); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pd-cardhead-right { margin-left: auto; }
+
+.pd-band { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 0 8px; padding: 6px 10px;
+  border-radius: 6px; background: linear-gradient(90deg, #e8f0fb, #f4f8fd); color: var(--brand, #0153a5); font-size: 12.5px; font-weight: 600; }
+:root[data-theme='dark'] .pd-band { background: rgba(56, 189, 248, .10); color: var(--ui-text); }
+.pd-band:first-child { margin-top: 0; }
+.pd-band-right { font-weight: 400; }
+
+.pd-tile-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.pd-tile .pd-ic { width: 22px; height: 22px; font-size: 12px; border-radius: 6px; }
+.pd-tile { box-shadow: 0 1px 2px rgba(15, 23, 42, .04); }
+.pd-val-good { color: #15803d; } .pd-val-fair { color: #b45309; } .pd-val-bad { color: #b91c1c; }
+.pd-tiles-sm { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin: 4px 0 8px; }
+.pd-tiles-sm .pd-tile-value { font-size: 15px; }
+
+.pdd-card, .pd-card { box-shadow: 0 1px 3px rgba(15, 23, 42, .05); }
+.pd-card h3 { border-bottom: 0; }
+.pdd-views button { display: flex; flex-direction: column; align-items: flex-start; gap: 0; padding: 6px 16px; }
+.pdd-view-title { font-weight: 600; font-size: 12.5px; }
+.pdd-view-sub { font-size: 10.5px; color: var(--ui-muted, #64748b); font-weight: 400; }
+.pdd-views button.on { background: var(--ui-cyan-soft, #ecfeff); border-radius: 6px 6px 0 0; }
+
+/* ── Fixes after the user looked (2026-10-26) ─────────────────────────────
+   1. Hovering the page description flickered: it turned into a block and
+      moved away from the mouse. It now opens over the page in the same
+      spot (absolute), so nothing moves.
+   2. Inside cards, information sits in light inner panels with small
+      uppercase labels, like the profile's "Last known location" card. The
+      card headers stay as they are. */
+.ui-console .admin-page { position: relative; }
+.ui-console .admin-page > h1:first-of-type + p.muted:hover {
+  display: inline-block; position: absolute; z-index: 30; max-width: min(900px, calc(100% - 40px)); white-space: normal;
+  margin: 0; padding: 8px 12px; border-radius: 8px; background: var(--ui-card, #fff); color: var(--ui-text, inherit);
+  border: 1px solid var(--ui-border, #e2e8f0); box-shadow: 0 8px 24px rgba(15, 23, 42, .14); }
+
+.pdd-card .pdd-kv, .pdd-main-finding, .pdd-rel-summary, .pdd-rel-block, .pdd-card .pdd-live-bar, .problem-finding,
+.pdd-card .problem-facts {
+  background: #f5f8fc; border: 1px solid #e6edf6; border-radius: 8px; padding: 8px 10px; }
+:root[data-theme='dark'] .pdd-card .pdd-kv, :root[data-theme='dark'] .pdd-main-finding,
+:root[data-theme='dark'] .pdd-rel-summary, :root[data-theme='dark'] .pdd-rel-block,
+:root[data-theme='dark'] .pdd-card .pdd-live-bar, :root[data-theme='dark'] .problem-finding,
+:root[data-theme='dark'] .pdd-card .problem-facts { background: rgba(148, 163, 184, .07); border-color: rgba(148, 163, 184, .18); }
+.pdd-main-finding { margin-bottom: 8px; }
+.pdd-rel-summary { margin: 0 0 8px; }
+.pdd-rel-block { margin-bottom: 8px; }
+.pdd-rel-block .admin-table { background: var(--ui-card, #fff); }
+.pdd-kv dt { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ui-faint, #64748b); align-self: center; }
+.pdd-kv dd { font-size: 12.5px; }
+.problem-finding { margin-bottom: 8px; border-left: 3px solid #f59e0b; }
+.pdd-card textarea { background: #f9fbfd; }
+.btn-alarm-on, .pd-band .btn-secondary, .pd-band button { white-space: nowrap; }
+.pd-band > span:first-child { min-width: 0; }
+
+/* ── Page name and summary in the top bar; one card style everywhere ──────
+   (2026-10-26) The top bar shows the page and its one-line summary (the
+   menu description); the page's own title and long intro are hidden while
+   the top bar names the page, and the ⓘ button shows them again. Every
+   page's sections are cards with the same header line as the Problem
+   Dashboard cards. */
+.app-breadcrumb { flex: 1; }
+.app-topbar-summary { margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--border, #cbd5e1); color: var(--text-muted, #64748b);
+  font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.app-topbar-info { margin-left: 6px; border: 1px solid transparent; background: none; color: var(--text-muted, #64748b); border-radius: 999px;
+  width: 24px; height: 24px; padding: 0; cursor: pointer; font-size: 14px; line-height: 1; flex-shrink: 0; }
+.app-topbar-info:hover, .app-topbar-info.on { border-color: var(--border, #cbd5e1); color: var(--brand, #0153a5); background: var(--bg-surface, #fff); }
+
+.ui-console.has-crumb:not(.show-intro) .admin-page > h1:first-of-type,
+.ui-console.has-crumb:not(.show-intro) .admin-page > h1:first-of-type + p.muted { display: none; }
+.ui-console.has-crumb:not(.show-intro) .admin-page > h1:first-of-type + p.muted + * { border-top: 0; margin-top: 0; padding-top: 0; }
+.ui-console.show-intro .admin-page > h1:first-of-type + p.muted,
+.ui-console.show-intro .admin-page > h1:first-of-type + p.muted:hover {
+  display: block; position: static; white-space: normal; max-width: 1000px; margin: 4px 0 10px; padding: 8px 12px; box-shadow: none;
+  background: #f5f8fc; border: 1px solid #e6edf6; border-radius: 8px; color: var(--ui-text, inherit); }
+
+/* Problem Dashboard: tabs, period and filters closer together */
+.pd-bar { margin-bottom: 6px; gap: 8px; }
+.problem-toolbar { margin: 0 0 8px; gap: 8px; }
+
+/* Every page: a section is a card, its heading the card header */
+.ui-console .admin-page > section, .ui-console .admin-page > div > section {
+  background: var(--ui-card, #fff); border: 1px solid var(--ui-border, #e2e8f0); border-radius: 8px; padding: 10px 12px 12px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .05); margin-bottom: 12px; }
+.ui-console .admin-page > section > h2:first-child, .ui-console .admin-page > div > section > h2:first-child {
+  display: flex; align-items: center; gap: 8px; margin: -2px 0 10px; padding-bottom: 8px; font-size: 13.5px; font-weight: 600;
+  color: var(--brand, #0153a5); border-bottom: 1px solid var(--ui-border, #e2e8f0); }
+.ui-console .admin-page > section > h2:first-child::before, .ui-console .admin-page > div > section > h2:first-child::before {
+  content: ''; width: 8px; height: 8px; border-radius: 2px; background: linear-gradient(135deg, #0891b2, #4f46e5); flex-shrink: 0; }
+:root[data-theme='dark'] .ui-console .admin-page > section > h2:first-child { color: var(--ui-text); }
+.ui-console .admin-page > section > p.muted { background: #f5f8fc; border: 1px solid #e6edf6; border-radius: 8px; padding: 6px 10px; font-size: 12px; }
+:root[data-theme='dark'] .ui-console .admin-page > section > p.muted { background: rgba(148, 163, 184, .07); border-color: rgba(148, 163, 184, .18); }
+
+/* ── Subscriber Network Diagnosis: one-row network card, location facts ──
+   (2026-10-26) "Measured network and quality": the six tiles and the
+   per-network box share one row; the box lists every reading, including the
+   readings with no network, so the shares add up. "Last known location":
+   each fact in its own light inner box, label over value. */
+.spc-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.spc-row > .spc-tile { flex: 1 1 110px; min-width: 110px; padding: 8px 10px; }
+.spc-row > .spc-tile b { font-size: 20px; }
+.spc-row > .spc-quality-box { flex: 3 1 360px; display: flex; flex-direction: column; gap: 4px; margin: 0; }
+.spc-quality-box .spc-quality-row { margin: 0; }
+.spc-quality-box .spc-quality-head { font-size: 11.5px; }
+.spc-quality-box .spc-quality-avg { font-size: 10.5px; }
+
+.sp-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin: 0; }
+.sp-fact { background: var(--sp-card-2, #f5f8fc); border: 1px solid var(--sp-border, #e6edf6); border-radius: 8px; padding: 6px 10px; min-width: 0; }
+.sp-fact dt { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--sp-faint, #64748b); margin-bottom: 2px; }
+.sp-fact dd { margin: 0; font-size: 12.5px; color: var(--sp-text, inherit); overflow-wrap: anywhere; }
+.sp-fact-wide { grid-column: span 2; }
+@media (max-width: 760px) { .sp-fact-wide { grid-column: span 1; } }
+
+/* What a reading without a network means (2026-10-26, core/telemetry_status.py). */
+.sp-sh-st-not_measured { stroke: #cbd5e1 !important; }
+.sp-sh-st-no_coverage { stroke: #e11d48 !important; }
+.sp-sh-st-radio_off { stroke: #64748b !important; }
+i.sp-sh-st-not_measured { background: #cbd5e1 !important; }
+i.sp-sh-st-no_coverage { background: #e11d48 !important; }
+i.sp-sh-st-radio_off { background: #64748b !important; }
+tr.rel-st-not_measured td, tr.rel-st-radio_off td { color: var(--ui-muted, #64748b); font-style: italic; }
+tr.rel-st-no_coverage td:first-child { color: #be123c; font-weight: 600; }
+
+/* ── Problem Dashboard fixes (2026-10-26, after the user looked) ─────────
+   Icon chips centre their emoji; a card header's subtitle stays on the
+   title's line and is cut with "…" in a narrow card; the "Reports per day"
+   chart takes half the row. (The icon chip class is .pd-ic; .pd-chip is
+   the filter tag on the Reports tab.) */
+.pd-ic { display: inline-flex; align-items: center; justify-content: center; text-align: center; line-height: 1; padding: 0;
+  font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif; }
+.pd-cardhead { align-items: center; }
+.pd-cardhead-text { flex-wrap: nowrap; align-items: center; overflow: hidden; }
+.pd-cardhead-title { flex-shrink: 0; }
+.pd-cardhead-sub { flex: 1; min-width: 0; }
+.pd-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.pd-half { grid-column: span 2; }
+@media (max-width: 700px) { .pd-half { grid-column: span 1; } }
+.pd-half .pd-chart { max-height: 180px; }
+
+/* ── Less crowded profile and complaint cards (2026-10-26) ──────────────
+   Related data in Diagnostics as wrapping pills; the network box one line
+   per network (quality split on hover); shorter tiles; a lower signal chart
+   and map, the reading's details in two columns. */
+.pdd-rel-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 6px 8px; }
+.pdd-rel-pills-label { width: 100%; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ui-faint, #64748b); }
+.pdd-rel-pill { border: 1px solid #d6e2f0; background: #fff; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; cursor: pointer;
+  color: var(--brand, #0153a5); white-space: nowrap; }
+.pdd-rel-pill:hover { border-color: var(--brand, #0153a5); background: #eef4fc; }
+.pdd-rel-pill-subscriber { color: #6d28d9; border-color: #e4dcfb; }
+:root[data-theme='dark'] .pdd-rel-pill { background: transparent; border-color: rgba(148, 163, 184, .3); color: var(--ui-text); }
+
+.spc-row > .spc-tile { padding: 6px 9px; min-height: 0; }
+.spc-row > .spc-tile b { font-size: 17px; line-height: 1.2; }
+.spc-row > .spc-tile span { font-size: 10px; }
+.spc-row > .spc-tile small { font-size: 10.5px; line-height: 1.3; }
+.spc-row > .spc-tile .spc-meter { margin: 3px 0; height: 4px; }
+.spc-row > .spc-quality-box { gap: 3px; padding: 6px 10px; }
+.spc-qline { display: grid; grid-template-columns: minmax(120px, max-content) minmax(60px, 1fr) max-content; align-items: center; gap: 8px; font-size: 11.5px; }
+.spc-qline-name { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.spc-qline-name i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.spc-qline-name b { font-size: 12px; font-weight: 600; }
+.spc-qline-avg { font-size: 10.5px; white-space: nowrap; }
+.spc-qline-note { grid-template-columns: minmax(120px, max-content) 1fr; }
+.spc-qline-text { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spc-share-compact { height: 8px; margin: 0; }
+
+.sp-sh-map { height: 210px; }
+.sp-sh-info { min-height: 0; padding: 5px 9px; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0 14px; font-size: 11.5px; }
+.sp-sh-info > .sp-sh-info-head { grid-column: 1 / -1; }
+.sp-sh-controls { gap: 6px 10px; margin-bottom: 4px; }
+
+/* Count line under the signal chart, in the chart column (2026-10-26). */
+.sp-sh-foot { margin-top: 4px; font-size: 11px; }

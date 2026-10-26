@@ -46,6 +46,7 @@ from .operators import operator_name
 from .rescue import _clean_msisdn
 from .serving_site_lookup import lookup_serving_site
 from .subscriber_analytics import profile_analytics
+from .telemetry_status import status_of
 from .views import IsSuperadminOnly
 
 AUDIT_ACTION = 'SUBSCRIBER_PROFILE.VIEWED'
@@ -579,6 +580,7 @@ class SubscriberSignalView(APIView):
             'ts', 'device_id', 'network_type', 'rsrp_dbm', 'rsrq_db', 'sinr_db', 'cqi', 'rscp_dbm', 'ecio_db',
             'rssi_dbm', 'rx_qual', 'pci', 'cell_id', 'tac', 'arfcn', 'band', 'band_mhz', 'trigger_reason',
             'serving_site_id', 'serving_sector', 'serving_dist_km', 'gps_accuracy_m', 'lat', 'lng',
+            'received_at', 'service_state', 'cell_info_status', 'airplane_mode', 'sim_state',
         )[:limit])[::-1]
 
         emergency = active_emergency() is not None
@@ -609,6 +611,12 @@ class SubscriberSignalView(APIView):
                 'gps_accuracy_m': r['gps_accuracy_m'] if show else None,
                 # The problem report whose window released this position.
                 'complaint_report_id': report,
+                # What a reading without a network means (2026-10-26,
+                # core/telemetry_status.py), and how late it reached the server.
+                'status': status_of(r['network_type'], r['lat'], r['service_state'], r['cell_info_status'],
+                                    r['airplane_mode'], r['sim_state']),
+                'status_reason': r['cell_info_status'] or r['service_state'] or None,
+                'delay_s': int((r['received_at'] - r['ts']).total_seconds()) if r['received_at'] and r['ts'] else None,
             })
         for report in sorted(released):
             log_audit_event(request, COMPLAINT_AUDIT_ACTION, resource='problem_report', resource_id=str(report),

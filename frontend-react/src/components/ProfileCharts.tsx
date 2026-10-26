@@ -93,9 +93,20 @@ export function HBars({ rows, unit = '' }: {
 }
 
 /** One 100% bar split into parts, each labelled underneath. */
-export function ShareBar({ parts }: { parts: { key: string; label: string; value: number; color: string }[] }) {
+export function ShareBar({ parts, compact }: { parts: { key: string; label: string; value: number; color: string }[]; compact?: boolean }) {
   const total = parts.reduce((a, p) => a + p.value, 0)
   if (!total) return null
+  // `compact`: the bar alone, its parts named on hover (2026-10-26).
+  if (compact) {
+    return (
+      <div className="spc-share spc-share-compact">
+        {parts.filter((p) => p.value > 0).map((p) => (
+          <i key={p.key} style={{ width: `${(100 * p.value) / total}%`, background: p.color }}
+            title={`${p.label}: ${p.value.toLocaleString()} (${Math.round((100 * p.value) / total)}%)`} />
+        ))}
+      </div>
+    )
+  }
   return (
     <div>
       <div className="spc-share">

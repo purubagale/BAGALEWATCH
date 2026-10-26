@@ -217,6 +217,14 @@ def geohash_center(gh):
 
 _NET_TYPES = {'LTE', 'NR', 'UMTS', 'GSM', 'UNKNOWN'}
 _TRIGGERS = {'periodic', 'handover', 'manual', 'drive', 'drive_start', 'drive_stop', 'on_demand'}
+_SERVICE_STATES = {'in_service', 'out_of_service', 'emergency_only', 'radio_off'}
+_CELL_INFO_STATUSES = {'ok', 'background', 'location_off', 'no_permission', 'empty'}
+_SIM_STATES = {'ready', 'absent', 'locked', 'other'}
+
+
+def _choice(value, allowed):
+    value = str(value or '').strip().lower()
+    return value if value in allowed else None
 
 
 def _f(v):
@@ -345,6 +353,11 @@ def coerce_sample(raw, received_at):
         'trigger_reason': tr if tr in _TRIGGERS else 'periodic',
         # drive_session_id (2026-10-04): groups a drive's fixes and markers.
         'drive_session_id': str(raw.get('drive_session_id') or '').strip()[:36],
+        # Why the reading has or lacks a cell (2026-10-26, core/telemetry_status.py).
+        'service_state': _choice(raw.get('service_state'), _SERVICE_STATES),
+        'cell_info_status': _choice(raw.get('cell_info_status'), _CELL_INFO_STATUSES),
+        'airplane_mode': raw.get('airplane_mode') if isinstance(raw.get('airplane_mode'), bool) else None,
+        'sim_state': _choice(raw.get('sim_state'), _SIM_STATES),
         'region': '',
         # Filled by attach_telemetry_serving_cells() before the COPY insert.
         'serving_site_id': '',
@@ -403,6 +416,7 @@ _COPY_COLS = (
     'scrambling_code', 'bcch', 'bsic', 'arfcn', 'band', 'band_mhz',
     'serving_site_id', 'serving_cell_name', 'serving_sector', 'serving_local_cell_id', 'serving_dist_km',
     'drive_session_id',
+    'service_state', 'cell_info_status', 'airplane_mode', 'sim_state',
 )
 _COPY_SQL = 'COPY v2_telemetry_samples (' + ', '.join(_COPY_COLS) + ') FROM STDIN WITH (FORMAT text)'
 
@@ -496,6 +510,9 @@ def bulk_insert_samples(rows):
             _cf(r.get('serving_sector') or ''), _cf(r.get('serving_local_cell_id')),
             _cf(r.get('serving_dist_km')),
             _cf(r.get('drive_session_id') or ''),
+            _cf(r.get('service_state')), _cf(r.get('cell_info_status')),
+            _cf(None if r.get('airplane_mode') is None else ('t' if r['airplane_mode'] else 'f')),
+            _cf(r.get('sim_state')),
         )) + '\n')
     buf.seek(0)
     with connection.cursor() as cur:
