@@ -15,6 +15,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkRequest
 import androidx.work.workDataOf
 import np.nepaltelecom.telemetry.collector.DriveShare
+import np.nepaltelecom.telemetry.collector.Environment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -219,6 +220,7 @@ object NetTelemetry {
     fun stopShare() {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before stopShare()" }
         cancelShareExpiry()
+        Environment.setManual(appContext, null)  // a choice holds only for its session (2026-10-26)
         scope.launch {
             if (isOptedIn()) {
                 // The stored ID survives the window's end, so an expiry still closes the session.
@@ -404,8 +406,20 @@ object NetTelemetry {
     /** Id of the drive test being recorded right now, or null when none is running. */
     fun currentDriveSessionId(): String? = DriveTestService.activeSessionId
 
+    /**
+     * Where the person is now (2026-10-26): [Environment.OUTDOOR],
+     * [Environment.INDOOR], [Environment.VEHICLE], or null to let the SDK
+     * estimate it. Applies to every reading from now until the next call or
+     * until the drive or sharing session ends.
+     */
+    fun setEnvironment(context: Context, value: String?) = Environment.setManual(context.applicationContext, value)
+
+    /** The person's current choice, or null when it is estimated. */
+    fun environment(context: Context): String? = Environment.manual(context.applicationContext)
+
     /** Ends drive-test tracking started by [startDriveTest]. Safe to call when it isn't running. */
     fun stopDriveTest(context: Context) {
+        Environment.setManual(context.applicationContext, null)
         context.startService(
             Intent(context, DriveTestService::class.java).setAction(DriveTestService.ACTION_STOP),
         )

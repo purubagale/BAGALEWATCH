@@ -71,6 +71,10 @@ data class Sample(
     val cellInfoStatus: String? = null,
     val airplaneMode: Boolean? = null,
     val simState: String? = null,
+    // Outdoors, inside a building or in a vehicle, and whether the person
+    // said so or it was estimated (2026-10-26, collector/Environment.kt).
+    val environment: String? = null,
+    val environmentSource: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("device_id", deviceId)
@@ -104,6 +108,8 @@ data class Sample(
         putOpt("cell_info_status", cellInfoStatus)
         putOpt("airplane_mode", airplaneMode)
         putOpt("sim_state", simState)
+        putOpt("environment", environment)
+        putOpt("environment_source", environmentSource)
     }
 
     companion object {
@@ -139,6 +145,8 @@ data class Sample(
             cellInfoStatus = o.optString("cell_info_status", "").takeIf { it.isNotEmpty() },
             airplaneMode = if (o.has("airplane_mode") && !o.isNull("airplane_mode")) o.getBoolean("airplane_mode") else null,
             simState = o.optString("sim_state", "").takeIf { it.isNotEmpty() },
+            environment = o.optString("environment", "").takeIf { it.isNotEmpty() },
+            environmentSource = o.optString("environment_source", "").takeIf { it.isNotEmpty() },
         )
     }
 }

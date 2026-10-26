@@ -18,6 +18,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import np.nepaltelecom.telemetry.NetTelemetry
+import np.nepaltelecom.telemetry.collector.Environment
 import np.nepaltelecom.telemetry.collector.RouteTrail
 import np.nepaltelecom.telemetry.model.DriveSession
 import org.osmdroid.config.Configuration
@@ -120,6 +121,23 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         view.findViewById<TextView>(R.id.mapLegend).text = RouteColor.legend()
         deleteButton = view.findViewById(R.id.mapDeleteDrive)
 
+        // Where the person is (2026-10-26): a tap tags every reading from now
+        // on; tapping the chosen one again goes back to automatic.
+        envButtons = listOf(
+            Environment.OUTDOOR to view.findViewById<Button>(R.id.envOutdoor),
+            Environment.INDOOR to view.findViewById<Button>(R.id.envIndoor),
+            Environment.VEHICLE to view.findViewById<Button>(R.id.envVehicle),
+        )
+        envButtons.forEach { (value, button) ->
+            button.setOnClickListener {
+                val next = if (NetTelemetry.environment(requireContext()) == value) null else value
+                NetTelemetry.setEnvironment(requireContext(), next)
+                paintEnvironment()
+                toast(if (next == null) getString(R.string.env_cleared) else getString(R.string.env_set, envLabel(value)))
+            }
+        }
+        paintEnvironment()
+
         startButton = view.findViewById(R.id.mapDriveStart)
         stopButton = view.findViewById(R.id.mapDriveStop)
         startButton.setOnClickListener { startDrive() }
@@ -128,6 +146,7 @@ class MapFragment : Fragment(R.layout.fragment_map) {
             val wasRunning = driveRunning
             driveRunning = false
             paintDriveButtons()
+            paintEnvironment()
             toast(getString(
                 when {
                     !wasRunning -> R.string.map_drive_stopped
@@ -222,6 +241,37 @@ class MapFragment : Fragment(R.layout.fragment_map) {
 
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+    private var envButtons: List<Pair<String, Button>> = emptyList()
+
+    private fun envLabel(value: String?): String = when (value) {
+        Environment.OUTDOOR -> getString(R.string.env_outdoor)
+        Environment.INDOOR -> getString(R.string.env_indoor)
+        Environment.VEHICLE -> getString(R.string.env_vehicle)
+        else -> getString(R.string.env_auto)
+    }
+
+    /** The chosen place carries a tick; the others are dimmed. With none chosen all look alike (automatic). */
+    private fun paintEnvironment() {
+        val current = NetTelemetry.environment(requireContext())
+        envButtons.forEach { (value, button) ->
+            button.text = if (value == current) "✓ ${envLabel(value)}" else envLabel(value)
+            button.alpha = if (current == null || value == current) 1f else 0.6f
+        }
+    }
+
+    /** "Where are you starting?" once per drive; the buttons change it later. */
+    private fun askEnvironmentThen(then: () -> Unit) {
+        val values = listOf(Environment.OUTDOOR, Environment.INDOOR, Environment.VEHICLE, null)
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.env_start_title)
+            .setItems(values.map { envLabel(it) }.toTypedArray()) { _, which ->
+                NetTelemetry.setEnvironment(requireContext(), values[which])
+                paintEnvironment()
+                then()
+            }
+            .setNegativeButton(R.string.map_share_cancel, null)
+            .show()
+    }
 
     /** Start is green and Stop red while a drive runs. Both go back to their defaults when it stops. */
     private fun paintDriveButtons() {
@@ -246,7 +296,7 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         }
         val remembered = StaffMode.rememberedDriveShare(requireContext())
         if (remembered != null) {
-            beginDrive(remembered)
+            askEnvironmentThen { beginDrive(remembered) }
             return
         }
         val employee = StaffMode.isEmployee(requireContext())
@@ -261,7 +311,7 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         }
         fun answer(share: Boolean) {
             if (employee && remember.isChecked) StaffMode.setRememberedDriveShare(requireContext(), share)
-            beginDrive(share)
+            askEnvironmentThen { beginDrive(share) }
         }
         AlertDialog.Builder(requireContext())
             .setTitle(R.string.map_share_title)

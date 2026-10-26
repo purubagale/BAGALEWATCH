@@ -176,6 +176,15 @@
     <string name="map_location_off_open">Open settings</string>
     <string name="map_location_off_skip">Not now</string>
     <string name="map_share_title">Share this drive with NTC?</string>
+    <!-- Where the person is (2026-10-26): outdoors, inside a building or in a vehicle. -->
+    <string name="env_label">Where:</string>
+    <string name="env_outdoor">Outdoors</string>
+    <string name="env_indoor">Inside a building</string>
+    <string name="env_vehicle">In a vehicle</string>
+    <string name="env_auto">Decide for me</string>
+    <string name="env_start_title">Where are you starting?</string>
+    <string name="env_set">Readings are now tagged: %1$s.</string>
+    <string name="env_cleared">Back to automatic: the app works it out from movement and GPS.</string>
     <string name="map_share_message">Share: the signal readings and route of this drive are sent to Nepal Telecom when you stop, and sharing is switched off again afterwards. Keep on phone: the drive is saved on this phone only and nothing is sent.</string>
     <string name="map_share_yes">Share</string>
     <string name="map_share_no">Keep on phone</string>

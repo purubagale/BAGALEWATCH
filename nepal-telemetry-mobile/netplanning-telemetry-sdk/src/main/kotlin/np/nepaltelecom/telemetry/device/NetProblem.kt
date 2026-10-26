@@ -82,6 +82,9 @@ object NetProblem {
             ProblemHints.level(s)?.let { put("level_dbm", it) }
             s.rsrqDb?.let { put("rsrq_db", it) }
             s.sinrDb?.let { put("sinr_db", it) }
+            // Outdoors, indoors or in a vehicle when reported (2026-10-26, collector/Environment.kt).
+            s.environment?.let { put("environment", it) }
+            s.environmentSource?.let { put("environment_source", it) }
             if (speed != null && speed.error == null) {
                 speed.downloadMbps?.let { put("download_mbps", it) }
                 speed.uploadMbps?.let { put("upload_mbps", it) }

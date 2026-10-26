@@ -100,6 +100,8 @@ internal class CellSampleCollector(
         // overall signal reading (2026-10-26, RadioStatus).
         val status = RadioStatus.read(context, telephonyManager, cell != null)
         val signal = if (cell == null) RadioStatus.signalOnly(telephonyManager) else null
+        // Outdoors, indoors or in a vehicle (2026-10-26, Environment).
+        val (environment, environmentSource) = Environment.forSample(context, location)
 
         return Sample(
             deviceId = identity.deviceId,
@@ -133,6 +135,8 @@ internal class CellSampleCollector(
             cellInfoStatus = status.cellInfoStatus,
             airplaneMode = status.airplaneMode,
             simState = status.simState,
+            environment = environment,
+            environmentSource = environmentSource,
         )
     }
 
