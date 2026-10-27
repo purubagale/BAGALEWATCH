@@ -4,7 +4,7 @@
 
 **From:** Puru (RAN O&M, owner of the DT-WATCH server and web application)
 
-**Last updated:** 2026-10-27 (10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
+**Last updated:** 2026-10-27 (neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
 
 ## 1. Summary
 
@@ -173,6 +173,7 @@ Android ID or phone number.
 | `sim_state` | string | `ready`, `absent`, `locked` or `other`. Added 2026-10-26 |
 | `environment` | string | Where the person is: `outdoor`, `indoor` or `vehicle`; leave it out when unknown. Added 2026-10-26 |
 | `environment_source` | string | `user` (tapped in the app) or `estimated` (from movement and GPS accuracy). Sent only with `environment`. Added 2026-10-26 |
+| `neighbours` | array of objects | The other cells heard at the same moment, at most 8 (see below). Leave it out when there are none. Added 2026-10-27 |
 
 **Readings without a network (2026-10-26).** Always send a reading, even when
 the cell list is empty: `network_type` `UNKNOWN` plus the four fields above.
@@ -199,6 +200,31 @@ carriers and the number of carriers, and shows "20 MHz" or "20 MHz (3 carriers,
 45 MHz)". Values outside 1 MHz to 400 MHz are treated as the modem's no-value
 code and dropped; at most 16 carriers are read. If `bandwidth_khz` is missing,
 the first carrier of the list stands in. 2G and 3G readings have no bandwidth.
+
+**Neighbour cells (2026-10-27).** With each reading, send the other cells of
+the same `getAllCellInfo()` call as `neighbours`. Leave out every entry flagged
+registered (the serving cell, sometimes listed twice) and every cell without an
+identity or a level. Order and cap: cells of the serving technology first,
+strongest first, at most 6; then at most 3 of each other technology; at most 8
+in all. Each object carries only what identifies the cell and its level:
+
+| Key | Meaning |
+|---|---|
+| `net` | `LTE`, `UMTS` or `GSM` (5G neighbours are not sent yet) |
+| `pci` / `psc` / `bcch`, `bsic` | Identity: PCI on 4G, scrambling code on 3G, BCCH and BSIC on 2G. Required |
+| `arfcn`, `band` | Channel (EARFCN, UARFCN, BCCH ARFCN) and 3GPP band, when known |
+| `cell_id`, `tac` | Only if the phone reports them for the neighbour (most do not) |
+| `rsrp`, `rsrq`, `sinr` | 4G level and quality; `rsrp` is required on 4G |
+| `rscp`, `ecio` | 3G level and quality; `rscp` is required on 3G |
+| `rssi` | 2G level; required on 2G |
+
+Example: `"neighbours": [{"net":"LTE","pci":95,"arfcn":6200,"band":20,"rsrp":-91,"rsrq":-11}]`.
+The server keeps at most 8, drops unknown keys and values out of range, and
+names each cell (site, sector, distance) from the reading's position with the
+same rule as the serving cell, so a reading without a position keeps unnamed
+neighbours. The neighbours are stored on the reading and deleted with it. The
+web pages show them per reading and, per session, which cells were heard and
+how often one was 3 dB or more stronger than the serving cell.
 
 **SINR matters.** On the live server on 12 October 2026, none of 2,099 4G
 readings carried `sinr_db`. Without it the server falls back to a rougher CQI

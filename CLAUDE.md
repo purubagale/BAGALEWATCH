@@ -1468,6 +1468,33 @@ repo, not on prod):
   10-digit number field, Cells tab site names; not pushed). Handoff
   `.md`/`.docx` (number format, Cells tab lookup), the three manuals' app
   sections and management slide `app` notes updated the same day.
+- **Neighbour cells with every phone reading** (2026-10-27, built, NOT
+  committed in either repo, app 1.2.3 not run on a phone). SDK
+  `model/NeighbourCells.kt`: from the same cell read as the serving cell,
+  no registered entry, only cells with an identity (PCI/PSC/BCCH) and a
+  level; serving technology first (6), 3 per other technology, 8 in all;
+  sent as `neighbours` (`net`, `pci|psc|bcch`, `bsic`, `arfcn`, `band`,
+  `cell_id`, `tac`, levels). Server `core/neighbour_cells.py`: `coerce`
+  (known keys, ranges, at most 8), `attach_sites` names each at upload
+  with the serving-cell matcher on the reading's position (`site`,
+  `sector`, `km`), stored as `TelemetrySample.neighbours` JSON (migration
+  0147, pruned with the partitions; AI migrations now 0148-0153, local
+  history renamed, column added by hand). Neighbours column (count, opens
+  to the list) on Live Samples, Collections, Telemetry Drive Test and Area
+  Sample; "Neighbour cells heard" under the sector table on Collections and
+  Telemetry Drive Test (`session_summary`: heard, average/best level, share
+  3 dB or more above the serving cell of the same technology, distance,
+  serving sector it was mostly heard beside; newest 50,000 readings). Not
+  on the Subscriber Profile. SDK tests `NeighbourCellsTest`, server
+  `tests_neighbour_cells.py`.
+- **Sector table CQI and Collections scroll** (2026-10-27, after the
+  user's prod screenshots). The sector table's CQI averaged only the
+  phone-reported `cqi`, which phones almost never send, so it showed "—";
+  phone readings now average `cqi.sample_cqi_sql()` (reported, else SINR,
+  else RSRQ), as the reading list does. Clicking a Collections session
+  scrolls to its route map.
+- **Committed and pushed 2026-10-27** (neighbours, CQI, scroll, app
+  1.2.3): see the git log of both repos. Prod needs migration 0147.
 
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an

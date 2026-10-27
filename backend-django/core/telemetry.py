@@ -35,7 +35,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import radio_band
+from . import neighbour_cells, radio_band
 from .models import TelemetryBatch, TelemetryIngestKey, _point_or_none
 
 from .subscriber_device import touch_seen
@@ -368,6 +368,8 @@ def coerce_sample(raw, received_at):
         'environment': _choice(raw.get('environment'), _ENVIRONMENTS),
         'environment_source': _choice(raw.get('environment_source'), {'user', 'estimated'})
         if _choice(raw.get('environment'), _ENVIRONMENTS) else None,
+        # The other cells heard, capped and checked (2026-10-27, core/neighbour_cells.py).
+        'neighbours': neighbour_cells.coerce(raw.get('neighbours')),
         'region': '',
         # Filled by attach_telemetry_serving_cells() before the COPY insert.
         'serving_site_id': '',
@@ -429,6 +431,7 @@ _COPY_COLS = (
     'service_state', 'cell_info_status', 'airplane_mode', 'sim_state',
     'environment', 'environment_source',
     'bandwidth_khz', 'total_bandwidth_khz', 'carrier_count',
+    'neighbours',
 )
 _COPY_SQL = 'COPY v2_telemetry_samples (' + ', '.join(_COPY_COLS) + ') FROM STDIN WITH (FORMAT text)'
 
@@ -527,6 +530,7 @@ def bulk_insert_samples(rows):
             _cf(r.get('sim_state')),
             _cf(r.get('environment')), _cf(r.get('environment_source')),
             _cf(r.get('bandwidth_khz')), _cf(r.get('total_bandwidth_khz')), _cf(r.get('carrier_count')),
+            _cf(json.dumps(r['neighbours'], separators=(',', ':')) if r.get('neighbours') else None),
         )) + '\n')
     buf.seek(0)
     with connection.cursor() as cur:
@@ -630,6 +634,7 @@ class TelemetryIngestView(APIView):
                 r['device_id'] = ingest_row_device_id(device)
 
         attach_telemetry_serving_cells(rows)
+        neighbour_cells.attach_sites(rows)
 
         _batch, created = TelemetryBatch.objects.get_or_create(
             batch_hash=digest,

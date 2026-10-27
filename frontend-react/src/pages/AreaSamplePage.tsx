@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css'
 import { apiErrorMessage } from '../api/client'
 import { useAreaSampleRequests, useAreaSampleResults, useCreateAreaSampleRequest, useSites } from '../api/queries'
 import type { AreaSampleReading } from '../api/types'
+import NeighbourCellsCell from '../components/NeighbourCellsCell'
 import { RSRP_BANDS, RSRQ_BANDS, SINR_BANDS, bandColor, type Band } from '../lib/dtBands'
 import { telemetryLevel } from '../lib/telemetryLevel'
 import { declusterForPlot } from '../lib/declusterPlot'
@@ -291,6 +292,7 @@ export default function AreaSamplePage() {
                   <th>Network</th>
                   <th title="Operating band the phone was on: band number and MHz. Empty for readings sent by an older app">Band</th>
                   <th title="Channel width of the serving cell; with more than one carrier in use, how many and their total. Empty on 2G/3G, older phones and older app versions">Bandwidth</th>
+                  <th title="Other cells the phone heard with this reading, and the site each was matched to. Click to list them. Empty on older app versions">Neighbours</th>
                   <th>Serving site</th>
                   <th>PCI</th>
                   <th title="Signal level: RSRP on 4G, RSCP on 3G, RxLev on 2G">Level (dBm)</th>
@@ -310,6 +312,7 @@ export default function AreaSamplePage() {
                     <td>{s.network_type}</td>
                     <td>{s.band_label || '—'}</td>
                     <td>{s.bandwidth_label || '—'}</td>
+                    <td><NeighbourCellsCell cells={s.neighbours} /></td>
                     <td>{s.serving_site_id ? `${s.serving_site_id}${s.serving_sector ? ` / ${s.serving_sector}` : ''}` : '—'}</td>
                     <td>{s.pci ?? '—'}</td>
                     <td>{levelCell(s)}</td>

@@ -12,19 +12,24 @@ Only readings matched to a sector count; the rest are reported as a number.
     GET /api/v2/collection-sessions/<id>/sectors/         drive.view
     GET /api/v2/telemetry/dt-sessions/<id>/sectors/       admin, superadmin
 
+The two phone-reading answers also carry `neighbours`: the other cells the
+phones heard, one row per cell (core/neighbour_cells.py, 2026-10-27).
+
 Sectors are masts, not people, so these pages show them as they show the
 readings themselves. On the Subscriber Profile they are the customer's
 location history and follow its rule (emergency only), see
 subscriber_analytics.py.
 """
+from django.db.models.expressions import RawSQL
 from django.db.models import Avg, Case, Count, F, FloatField, IntegerField, Max, Min, Q, When
 from django.shortcuts import get_object_or_404
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import radio_band
+from . import neighbour_cells, radio_band
 from .access import CanViewDrives
+from .cqi import sample_cqi_sql
 from .models import CollectionSession, DriveTestSample, DriveTestSession, Site, TelemetrySample, TelemetryDriveTestSession
 from .problem_report import GOOD_DBM, WEAK_DBM
 from .views import IsAdminOrSuperadmin
@@ -39,7 +44,7 @@ INDOOR_LOSS_MIN = 10   # readings of each kind before an indoor loss is given (2
 
 
 def _r(v, digits=1):
-    return round(v, digits) if v is not None else None
+    return round(float(v), digits) if v is not None else None
 
 
 def _iso(v):
@@ -118,7 +123,9 @@ def telemetry_sectors(qs):
         qs, ('network_type',), _telemetry_level(), _telemetry_class(WEAK_DBM, True), _telemetry_class(GOOD_DBM, False),
         Q(network_type__in=('LTE', 'NR'), rsrp_dbm__isnull=False) | Q(network_type='UMTS', rscp_dbm__isnull=False)
         | Q(network_type='GSM', rssi_dbm__isnull=False),
-        {'rsrq': 'rsrq_db', 'sinr': 'sinr_db', 'cqi': 'cqi', 'tac': True, 'env': True},
+        # CQI as the reading lists show it (2026-10-27): the phone's own, else
+        # estimated from SINR, else from RSRQ. Phones almost never report one.
+        {'rsrq': 'rsrq_db', 'sinr': 'sinr_db', 'cqi': RawSQL(sample_cqi_sql(), []), 'tac': True, 'env': True},
     )
     bands = {}
     if rows:
@@ -168,7 +175,7 @@ class CollectionSessionSectorsView(APIView):
         else:
             qs = TelemetrySample.objects.filter(device_id=session.device_hash,
                                                 drive_session_id=session.drive_session_id or '__none__')
-        return Response(telemetry_sectors(qs))
+        return Response({**telemetry_sectors(qs), 'neighbours': neighbour_cells.session_summary(qs)})
 
 
 class TelemetryDriveTestSessionSectorsView(APIView):
@@ -180,4 +187,4 @@ class TelemetryDriveTestSessionSectorsView(APIView):
         from .telemetry_admin import _auto_end_if_due, session_samples_qs
         session = _auto_end_if_due(get_object_or_404(TelemetryDriveTestSession, pk=pk))
         qs, _ = session_samples_qs(session, request.user)
-        return Response(telemetry_sectors(qs))
+        return Response({**telemetry_sectors(qs), 'neighbours': neighbour_cells.session_summary(qs)})

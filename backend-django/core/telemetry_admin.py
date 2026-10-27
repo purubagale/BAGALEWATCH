@@ -41,7 +41,7 @@ from .models import (
     TelemetrySample,
     TelemetrySpeedResult,
 )
-from . import radio_band
+from . import neighbour_cells, radio_band
 from .audit import log_audit_event
 from .cqi import sample_cqi_fields
 from .telemetry_level import sample_level
@@ -517,6 +517,7 @@ class TelemetryLiveSamplesView(APIView):
                 # Operating band (2026-10-13), see core/radio_band.py.
                 **radio_band.fields(s.network_type, s.arfcn, s.band, s.band_mhz,
                                   s.bandwidth_khz, s.total_bandwidth_khz, s.carrier_count),
+                **neighbour_cells.fields(s.neighbours),
                 'region': s.region,
                 'serving_site_id': s.serving_site_id,
                 'serving_cell_name': s.serving_cell_name,
@@ -957,6 +958,7 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 'environment': s.environment, 'environment_source': s.environment_source,
                 **radio_band.fields(s.network_type, s.arfcn, s.band, s.band_mhz,
                                   s.bandwidth_khz, s.total_bandwidth_khz, s.carrier_count),
+                **neighbour_cells.fields(s.neighbours),
                 # Serving-cell identity (2026-10-07) -- same fields
                 # TelemetryLiveSamplesView already returns above; this view
                 # had never picked them up. Lets the frontend's declusterPlot

@@ -2470,6 +2470,10 @@ class TelemetrySample(models.Model):
     # (set afterwards on the web). Null on readings before then.
     environment = models.CharField(max_length=10, null=True, blank=True)       # outdoor / indoor / vehicle
     environment_source = models.CharField(max_length=10, null=True, blank=True)
+    # The other cells heard at this moment (2026-10-27, core/neighbour_cells.py):
+    # a list of at most 8 {net, pci|psc|bcch, arfcn, level..., site, sector, km},
+    # named at upload. Null when the phone sent none (older app builds).
+    neighbours = models.JSONField(null=True, blank=True)
     battery_pct = models.SmallIntegerField(null=True, blank=True)
     trigger_reason = models.CharField(max_length=16, choices=TRIGGERS, default='periodic')
     # Groups a drive's fixes and markers (2026-10-04). Set by the phone, a UUID

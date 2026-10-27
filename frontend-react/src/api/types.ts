@@ -2635,6 +2635,18 @@ export interface SampleBandFields {
   total_bandwidth_khz?: number | null
   carrier_count?: number | null
   bandwidth_label?: string
+  // The other cells heard with the reading (2026-10-27, core/neighbour_cells.py).
+  neighbours?: NeighbourCell[] | null
+  neighbour_count?: number
+}
+
+// One neighbour cell as stored: identity, level, and the site it was matched to at upload.
+export interface NeighbourCell {
+  net: 'LTE' | 'UMTS' | 'GSM'
+  pci?: number; psc?: number; bcch?: number; bsic?: number; arfcn?: number; band?: number
+  cell_id?: number; tac?: number
+  rsrp?: number; rsrq?: number; sinr?: number; rscp?: number; ecio?: number; rssi?: number
+  site?: string; sector?: string; km?: number
 }
 
 export interface CollectionSessionSample extends SampleCqiFields, SampleBandFields {
@@ -3268,6 +3280,23 @@ export interface SectorStat {
 
 export interface SectorBreakdownData {
   sectors: SectorStat[]; total: number; matched: number; unmatched: number; capped: boolean
+  // Phone readings only (2026-10-27): the other cells heard, one row per cell.
+  neighbours?: NeighbourSummary
+}
+
+export interface NeighbourSummaryRow {
+  network_type: string; tech: string; cell: string
+  pci: number | null; psc: number | null; bcch: number | null; bsic: number | null
+  arfcn: number | null; band: number | null
+  site_id: string | null; site_name: string | null; sector: string | null
+  heard: number; level_avg: number; level_best: number
+  stronger: number; same_tech: number; stronger_pct: number | null
+  dist_km_avg: number | null; mostly_beside: string | null
+}
+
+export interface NeighbourSummary {
+  cells: NeighbourSummaryRow[]; readings: number; with_neighbours: number
+  capped_readings: boolean; capped_rows: boolean; stronger_db: number
 }
 
 export type ReadingStatus = 'measured' | 'no_coverage' | 'radio_off' | 'not_measured'
