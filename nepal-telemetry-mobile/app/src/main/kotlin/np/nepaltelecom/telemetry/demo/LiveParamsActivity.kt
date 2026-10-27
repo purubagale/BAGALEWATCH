@@ -67,6 +67,7 @@ class LiveParamsActivity : AppCompatActivity() {
                     section("PCI", s.pci.orDash())
                     section("Band", RadioBand.label(s.networkType, s.band, s.arfcn).orDash())
                     section("Channel (EARFCN)", s.arfcn.orDash())
+                    section("Bandwidth", RadioBand.bandwidthLabel(s.bandwidthKhz, s.cellBandwidthsKhz).orDash())
                     section("TAC", s.tac.orDash())
                     section("RSRP", s.rsrpDbm.withUnit("dBm"))
                     section("RSRQ", s.rsrqDb.withUnit("dB"))

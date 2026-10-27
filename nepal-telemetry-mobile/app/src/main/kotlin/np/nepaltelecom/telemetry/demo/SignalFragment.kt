@@ -235,10 +235,12 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
 
         valOperator.text = Operators.name(s.mcc, s.mnc) ?: DASH
         showServingSite(s)
-        // The technology with the band the phone is on: "LTE · B3 · 1800".
+        // The technology with the band the phone is on and its bandwidth:
+        // "LTE · B3 · 1800 · 20 MHz".
         valNetwork.text = listOfNotNull(
             s.networkType,
             RadioBand.label(s.networkType, s.band, if (s.networkType == "GSM") s.bcch ?: s.arfcn else s.arfcn),
+            RadioBand.bandwidthLabel(s.bandwidthKhz, s.cellBandwidthsKhz),
         ).joinToString(" · ")
         valCell.text = cellLabel(s)
         valTac.text = s.tac?.toString() ?: DASH

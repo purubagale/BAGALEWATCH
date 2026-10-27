@@ -65,4 +65,22 @@ object RadioBand {
         val name = if (networkType == "NR") "n$b" else "B$b"
         return mhzOfBand[b]?.let { "$name · $it" } ?: name
     }
+
+    /**
+     * Channel bandwidth (2026-10-27): "20 MHz", or "20 MHz (3 carriers,
+     * 45 MHz)" when more than one carrier is in use; null when not reported.
+     * Same text as the server's radio_band.bandwidth_label.
+     */
+    fun bandwidthLabel(bandwidthKhz: Int?, carriersKhz: List<Int>?): String? {
+        val bw = bandwidthKhz ?: carriersKhz?.firstOrNull() ?: return null
+        val text = "${mhz(bw)} MHz"
+        val list = carriersKhz.orEmpty()
+        return if (list.size > 1) "$text (${list.size} carriers, ${mhz(list.sum())} MHz)" else text
+    }
+
+    private fun mhz(khz: Int): String =
+        if (khz % 1000 == 0) (khz / 1000).toString() else "%.1f".format(java.util.Locale.US, khz / 1000.0)
+
+    /** Bandwidths in kHz from 1 MHz (4G's 1.4 MHz) to 400 MHz (5G); anything else is a no-value code. */
+    fun bandwidthOrNull(khz: Int?): Int? = khz?.takeIf { it in 1_000..400_000 }
 }

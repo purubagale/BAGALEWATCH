@@ -1,5 +1,6 @@
 package np.nepaltelecom.telemetry.model
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -56,6 +57,12 @@ data class Sample(
     // 2G, where the server names the band from the channel.
     val arfcn: Int? = null,
     val band: Int? = null,
+    // Channel bandwidth in kHz (2026-10-27): [bandwidthKhz] is the serving
+    // 4G cell's (Android 9+), [cellBandwidthsKhz] the bandwidth of every
+    // carrier in use, primary first, from the service state (more than one =
+    // carrier aggregation, or 4G + 5G). Null where the phone gives none.
+    val bandwidthKhz: Int? = null,
+    val cellBandwidthsKhz: List<Int>? = null,
     val batteryPct: Int?,
     val triggerReason: String,      // "periodic" | "handover" | "manual" | "drive" | "drive_start" | "drive_stop"
     // Set on fixes and markers taken during a drive test (2026-10-04). One UUID
@@ -100,6 +107,8 @@ data class Sample(
         putOpt("bsic", bsic)
         putOpt("arfcn", arfcn)
         putOpt("band", band)
+        putOpt("bandwidth_khz", bandwidthKhz)
+        cellBandwidthsKhz?.takeIf { it.isNotEmpty() }?.let { put("cell_bandwidths_khz", JSONArray(it)) }
         putOpt("battery_pct", batteryPct)
         put("trigger_reason", triggerReason)
         putOpt("drive_session_id", driveSessionId)
@@ -137,6 +146,8 @@ data class Sample(
             bsic = o.optIntOrNull("bsic"),
             arfcn = o.optIntOrNull("arfcn"),
             band = o.optIntOrNull("band"),
+            bandwidthKhz = o.optIntOrNull("bandwidth_khz"),
+            cellBandwidthsKhz = o.optJSONArray("cell_bandwidths_khz")?.let { a -> List(a.length()) { a.getInt(it) } },
             batteryPct = o.optIntOrNull("battery_pct"),
             triggerReason = o.optString("trigger_reason", "periodic"),
             driveSessionId = o.optString("drive_session_id", "").takeIf { it.isNotEmpty() },

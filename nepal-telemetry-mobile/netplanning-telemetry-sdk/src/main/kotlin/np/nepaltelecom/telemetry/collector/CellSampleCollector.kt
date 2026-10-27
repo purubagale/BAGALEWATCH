@@ -128,6 +128,8 @@ internal class CellSampleCollector(
             bsic = cell?.bsic,
             arfcn = cell?.arfcn,
             band = cell?.band,
+            bandwidthKhz = cell?.bandwidthKhz,
+            cellBandwidthsKhz = status.cellBandwidthsKhz,
             batteryPct = readBatteryPct(),
             triggerReason = triggerReason,
             driveSessionId = driveSessionId,
@@ -238,6 +240,12 @@ internal class CellSampleCollector(
             ecioDb = null,
             arfcn = info.cellIdentity.earfcn.toIntOrNull(),
             band = lteBand(info.cellIdentity),
+            // Channel bandwidth in kHz, Android 9+ (2026-10-27).
+            bandwidthKhz = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                RadioBand.bandwidthOrNull(info.cellIdentity.bandwidth.toIntOrNull())
+            } else {
+                null
+            },
         )
         // rscp/ecNo (2026-09-03, "for 3g rscp and ec/io"). Only getEcNo()
         // is public SDK API (added in API 30, R) -- getRscp() exists on
@@ -573,6 +581,8 @@ internal class CellSampleCollector(
         // 2026-10-13 -- channel number and operating band, see Sample.kt.
         val arfcn: Int? = null,
         val band: Int? = null,
+        // 2026-10-27 -- serving 4G cell's channel bandwidth, kHz.
+        val bandwidthKhz: Int? = null,
     )
 }
 

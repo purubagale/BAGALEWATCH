@@ -15,6 +15,7 @@ import android.telephony.ServiceState
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
+import np.nepaltelecom.telemetry.model.RadioBand
 
 /**
  * Why a reading has (or lacks) a cell, sent with every sample (2026-10-26).
@@ -37,6 +38,8 @@ internal object RadioStatus {
         val cellInfoStatus: String,
         val airplaneMode: Boolean?,
         val simState: String?,
+        // Bandwidth of every carrier in use, kHz, primary first (2026-10-27).
+        val cellBandwidthsKhz: List<Int>? = null,
     )
 
     /** Level read from getSignalStrength(), which needs no location permission. */
@@ -57,7 +60,8 @@ internal object RadioStatus {
             inBackground(context) && !hasBackgroundLocation(context) -> "background"
             else -> "empty"
         }
-        return Status(serviceState(context, tm), cellStatus, airplaneMode(context), simState(tm))
+        val state = readServiceState(context, tm)
+        return Status(serviceStateName(state), cellStatus, airplaneMode(context), simState(tm), cellBandwidths(state))
     }
 
     fun signalOnly(tm: TelephonyManager?): SignalOnly? {
@@ -95,9 +99,24 @@ internal object RadioStatus {
         return info.importance > ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE
     }
 
-    private fun serviceState(context: Context, tm: TelephonyManager?): String? {
+    private fun readServiceState(context: Context, tm: TelephonyManager?): ServiceState? {
         if (tm == null || !has(context, Manifest.permission.READ_PHONE_STATE)) return null
-        val state = runCatching { tm.serviceState?.state }.getOrNull() ?: return null
+        return runCatching { tm.serviceState }.getOrNull()
+    }
+
+    /**
+     * Bandwidths of the carriers in use (ServiceState.getCellBandwidths(),
+     * Android 9+), kHz, primary first. Several = carrier aggregation or
+     * 4G + 5G. Null when the phone reports none.
+     */
+    private fun cellBandwidths(ss: ServiceState?): List<Int>? {
+        if (ss == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
+        val list = runCatching { ss.cellBandwidths }.getOrNull() ?: return null
+        return list.toList().mapNotNull { RadioBand.bandwidthOrNull(it) }.take(16).ifEmpty { null }
+    }
+
+    private fun serviceStateName(ss: ServiceState?): String? {
+        val state = ss?.state ?: return null
         return when (state) {
             ServiceState.STATE_IN_SERVICE -> "in_service"
             ServiceState.STATE_OUT_OF_SERVICE -> "out_of_service"
