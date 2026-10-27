@@ -2,8 +2,8 @@ package np.nepaltelecom.telemetry.model
 
 /**
  * One cell the phone can currently see: the serving cell or a neighbour.
- * Local display only. Nothing here is uploaded through this type, so the
- * neighbour list is never sent to the server.
+ * Shown on the phone's own screens; since 2026-10-27 a capped list of the
+ * neighbours also travels with each shared reading (see NeighbourCells).
  *
  * Fields are nullable for the same reason as [Sample]: not every radio and
  * not every device reports every value.

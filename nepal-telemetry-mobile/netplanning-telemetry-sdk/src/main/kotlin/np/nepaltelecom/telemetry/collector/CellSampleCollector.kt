@@ -23,6 +23,7 @@ import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.suspendCancellableCoroutine
 import np.nepaltelecom.telemetry.model.CellReading
+import np.nepaltelecom.telemetry.model.NeighbourCells
 import np.nepaltelecom.telemetry.model.Sample
 import np.nepaltelecom.telemetry.model.RadioBand
 import np.nepaltelecom.telemetry.storage.DeviceIdentity
@@ -95,7 +96,7 @@ internal class CellSampleCollector(
         if (requireOptIn && !identity.optedIn) return null
         if (!hasLocationPermission()) return null
 
-        val cell = readServingCell()
+        val (cell, neighbours) = readServingAndNeighbours()
         // Why there is or is not a cell, and the level without a cell from the
         // overall signal reading (2026-10-26, RadioStatus).
         val status = RadioStatus.read(context, telephonyManager, cell != null)
@@ -139,6 +140,7 @@ internal class CellSampleCollector(
             simState = status.simState,
             environment = environment,
             environmentSource = environmentSource,
+            neighbours = neighbours.takeIf { it.isNotEmpty() },
         )
     }
 
@@ -179,16 +181,23 @@ internal class CellSampleCollector(
             }
         }
 
+    /**
+     * The serving cell and the neighbours worth sending (2026-10-27), from
+     * one cell read so both describe the same moment.
+     */
     @SuppressLint("MissingPermission")
-    private fun readServingCell(): ParsedCell? {
+    private fun readServingAndNeighbours(): Pair<ParsedCell?, List<CellReading>> {
         val (tm, cells) = readTelephonyCellsWithSim()
         val allCellInfo: List<CellInfo> = cells.ifEmpty { CellInfoCache.fresh() }
         // Prefer the registered (serving) cell; if none is flagged registered
         // (seen on a few OEMs), fall back to the first entry rather than
         // reporting nothing.
         val serving = allCellInfo.firstOrNull { it.isRegistered } ?: allCellInfo.firstOrNull()
-        val parsed = serving?.let { parseCellInfo(it) } ?: return null
-        return if (parsed.networkType == "LTE" && tm != null) withServingLteQuality(parsed, tm) else parsed
+        val parsed = serving?.let { parseCellInfo(it) }
+            ?.let { if (it.networkType == "LTE" && tm != null) withServingLteQuality(it, tm) else it }
+        // A modem can list the serving cell twice; every registered entry is left out.
+        val others = dedupeCells(allCellInfo.filter { it !== serving && !it.isRegistered }.mapNotNull { cellReadingFrom(it) })
+        return parsed to NeighbourCells.select(others, parsed?.networkType)
     }
 
     /**

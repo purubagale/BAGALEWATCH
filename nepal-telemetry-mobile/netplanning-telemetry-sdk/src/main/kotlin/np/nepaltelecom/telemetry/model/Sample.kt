@@ -82,6 +82,9 @@ data class Sample(
     // said so or it was estimated (2026-10-26, collector/Environment.kt).
     val environment: String? = null,
     val environmentSource: String? = null,
+    // The other cells heard at this moment, capped and ordered by
+    // NeighbourCells (2026-10-27). Null or empty when none qualify.
+    val neighbours: List<CellReading>? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("device_id", deviceId)
@@ -119,6 +122,7 @@ data class Sample(
         putOpt("sim_state", simState)
         putOpt("environment", environment)
         putOpt("environment_source", environmentSource)
+        neighbours?.takeIf { it.isNotEmpty() }?.let { put("neighbours", NeighbourCells.toJson(it)) }
     }
 
     companion object {
@@ -158,6 +162,7 @@ data class Sample(
             simState = o.optString("sim_state", "").takeIf { it.isNotEmpty() },
             environment = o.optString("environment", "").takeIf { it.isNotEmpty() },
             environmentSource = o.optString("environment_source", "").takeIf { it.isNotEmpty() },
+            neighbours = o.optJSONArray("neighbours")?.let { NeighbourCells.fromJson(it) },
         )
     }
 }
