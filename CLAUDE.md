@@ -1413,8 +1413,9 @@ repo, not on prod):
   outside") ahead of weak coverage. Profile, complaint and related data
   show the indoor share. Release APKs on the Desktop. Committed and
   pushed 2026-10-26: dtwatch `17537be`, mobile `90246dc`.
-- **Channel bandwidth on phone readings** (2026-10-27, built, NOT
-  committed in either repo, not on prod, not run on a phone). SDK sends
+- **Channel bandwidth on phone readings** (2026-10-27, committed and
+  pushed: dtwatch `fda1dde`, mobile `5db2471`; not on prod, not run on a
+  phone). SDK sends
   `bandwidth_khz` (serving 4G cell, `CellIdentityLte.getBandwidth()`,
   Android 9+) and `cell_bandwidths_khz` (every carrier in use, primary
   first, `ServiceState.getCellBandwidths()`; several = carrier aggregation
@@ -1430,6 +1431,43 @@ repo, not on prod):
   map does not show it. Old readings stay empty. Release APKs on the
   Desktop (previous in `old-apks\*_before_bandwidth.apk`), SDK
   republished.
+- **Documents brought up to date on 2026-10-27** for the work of 26-27
+  October (AI still left out): the four manuals ("Updated 27 October"
+  paragraph plus sections: related data, active alarms, reading status,
+  speed test, session districts, indoor/outdoor, bandwidth, deploy steps
+  and `ALARM_*` settings in Technical), management deck slides `live`,
+  `complaints`, `status`, technical deck slides `telemetry-flow`,
+  `complaints-flow`, `deploy` (notes only there). No slide added, so no
+  renumbering. Standing rule from the user: every commit also updates
+  these documents and the APKs, and lists them.
+- **APK names carry the version** (user's rule, 2026-10-27): Desktop
+  holds `dtwatchTelemetry_v<version>.apk` and
+  `dtwatchTelemetry_Collector_v<version>.apk`; raise `appVersionName` in
+  `app/build.gradle.kts` for every APK update. Now 1.2.0 (code 10200,
+  built 2026-10-27, everything since 1.1.0 of 16 October); the 1.1.0 pair
+  is in `old-apks` as `*_v1.1.0_2026-10-27.apk`. The version bump is NOT
+  committed in the mobile repo.
+- **10-digit number field** (2026-10-27, app 1.2.1, built, NOT committed,
+  not run on a phone). `NumberField.kt` serves the registration pop-up and
+  the Settings form: digits only, at most 10, no 977 typed (the server's
+  `_clean_msisdn` adds it; a pasted +977 number keeps its last 10 digits),
+  border grey while empty, red while incomplete, green at 10; Register
+  refuses anything but 10 digits. Hint "10-digit mobile number,
+  9XXXXXXXXX" (NTC has 98, 97 and other prefixes, so no prefix check).
+- **Site names on the Cells tab** (2026-10-27, app 1.2.2, built, NOT
+  committed, not run on a phone). Each cell card gets a bold "KTM856_NAME ·
+  J3" line once NTC's server answers (`ServingSiteLookup`, same signed
+  `device/serving-site/` call as the Signal tab); no answer (server not
+  reachable, phone not registered, cell unknown) leaves the card as before.
+  The serving cell is matched by its cell number; a neighbour known only by
+  PCI/code sends Android's last known position (no GPS fix), and its answer
+  is cached per ~1 km (key rounded to 0.01 degree). Several cells can be
+  asked at once (`inFlight` is a set). Checked on the local server: PCI 65
+  near CDR001 gives CDR001 J3; a PCI with no position gives nothing.
+- **Committed 2026-10-27:** mobile `bb37bd6` (app 1.2.2: version bump,
+  10-digit number field, Cells tab site names; not pushed). Handoff
+  `.md`/`.docx` (number format, Cells tab lookup), the three manuals' app
+  sections and management slide `app` notes updated the same day.
 
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an

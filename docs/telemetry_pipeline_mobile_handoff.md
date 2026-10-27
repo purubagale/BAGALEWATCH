@@ -4,7 +4,7 @@
 
 **From:** Puru (RAN O&M, owner of the DT-WATCH server and web application)
 
-**Last updated:** 2026-10-24 (signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
+**Last updated:** 2026-10-27 (10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
 
 ## 1. Summary
 
@@ -284,7 +284,7 @@ Registration is needed for trace requests, site photos and device identity.
   "public_key": "<PEM, EC P-256>",
   "challenge": "...",
   "play_integrity_token": "",
-  "msisdn": "+97798...",
+  "msisdn": "98XXXXXXXX",
   "fcm_token": "...",
   "app_version": "0.1",
   "manufacturer": "HUAWEI",
@@ -646,6 +646,19 @@ ID, else by PCI, scrambling code or BCCH/BSIC near the position. Nothing is
 stored. The reference app asks once per serving cell and waits 30 s after a
 failure. Before the answer, it shows the site and sector worked out on the
 phone from NTC's numbering (`model/NtcCellName.kt`).
+
+Since app 1.2.2 (2026-10-27) the reference app's Cells tab asks the same
+call for every cell it lists. A cell with a cell number is sent without a
+position; a neighbour known only by PCI, scrambling code or BCCH/BSIC is sent
+with Android's last known position (no GPS fix), and its answer is kept per
+area of about 1 km. Without an answer the card shows no site line.
+
+**Number format for registration.** Ask for the 10-digit NT mobile number
+(9XXXXXXXXX: 98, 97 and other prefixes), digits only, no 977 or +977; the
+server adds the country code (a number sent with 977 is also accepted). The
+reference app's field (`NumberField.kt`) takes digits only, at most 10, keeps
+the last 10 digits of a pasted +977 number, and shows a red border while
+incomplete and a green one at 10 digits; Register is refused otherwise.
 
 **Drive-test consent** (`POST drive-test-consent/`) with
 `{"device_id": "...", "consent": true}` returns `{"consent": true}`. It decides
