@@ -193,8 +193,14 @@ internal class CellSampleCollector(
         // (seen on a few OEMs), fall back to the first entry rather than
         // reporting nothing.
         val serving = allCellInfo.firstOrNull { it.isRegistered } ?: allCellInfo.firstOrNull()
-        val parsed = serving?.let { parseCellInfo(it) }
-            ?.let { if (it.networkType == "LTE" && tm != null) withServingLteQuality(it, tm) else it }
+        val parsed = serving?.let { parseCellInfo(it) }?.let { cell ->
+            when {
+                tm == null -> cell
+                cell.networkType == "LTE" -> withServingLteQuality(cell, tm)
+                cell.networkType == "UMTS" || cell.networkType == "GSM" -> withServingLevel(cell, tm)
+                else -> cell
+            }
+        }
         // A modem can list the serving cell twice; every registered entry is left out.
         val others = dedupeCells(allCellInfo.filter { it !== serving && !it.isRegistered }.mapNotNull { cellReadingFrom(it) })
         return parsed to NeighbourCells.select(others, parsed?.networkType)
@@ -220,6 +226,37 @@ internal class CellSampleCollector(
             sinrDb = cell.sinrDb ?: lte.rssnr.toIntOrNull()?.takeIf { it in -20..40 },
             cqi = cell.cqi ?: lte.cqi.toIntOrNull()?.takeIf { it in 0..15 },
         )
+    }
+
+    /**
+     * The serving 3G or 2G cell's level from the phone's overall signal
+     * reading (2026-10-27). On prod, 3G readings arrived with a cell and a
+     * band but no level: the cell list held none, or the modem's no-value
+     * code, and the overall reading was only used when there was no cell at
+     * all. Used only to fill a blank; a value from the cell list wins.
+     */
+    private fun withServingLevel(cell: ParsedCell, tm: TelephonyManager): ParsedCell {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return cell
+        return try {
+            if (cell.networkType == "UMTS") {
+                if (cell.rscpDbm != null && cell.ecioDb != null) return cell
+                val w = tm.signalStrength?.getCellSignalStrengths(android.telephony.CellSignalStrengthWcdma::class.java)
+                    ?.firstOrNull() ?: return cell
+                val level = cell.rscpDbm ?: w.dbm.wcdmaLevelOrNull()
+                cell.copy(
+                    rscpDbm = level,
+                    rssiDbm = cell.rssiDbm ?: level,
+                    ecioDb = cell.ecioDb ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) w.ecNo.wcdmaEcNoOrNull(level) else null,
+                )
+            } else {
+                if (cell.rssiDbm != null) return cell
+                val g = tm.signalStrength?.getCellSignalStrengths(android.telephony.CellSignalStrengthGsm::class.java)
+                    ?.firstOrNull() ?: return cell
+                cell.copy(rssiDbm = g.dbm.toIntOrNull())
+            }
+        } catch (e: Exception) {
+            cell
+        }
     }
 
     private fun parseCellInfo(info: CellInfo): ParsedCell? = when (info) {
@@ -393,6 +430,15 @@ internal class CellSampleCollector(
         if (tm == null) return readings
         // The serving LTE row gets the same SINR/CQI fill as samples (withServingLteQuality).
         return readings.map { r ->
+            // A 3G or 2G serving row with no level gets the same fill as samples (withServingLevel).
+            if (r.isServing && (r.networkType == "UMTS" || r.networkType == "GSM")) {
+                val filled = withServingLevel(
+                    ParsedCell(r.cellId, r.pci, r.tac, r.mcc, r.mnc, r.networkType, null, null, r.rssiDbm, null,
+                        null, r.rscpDbm, r.ecioDb),
+                    tm,
+                )
+                return@map r.copy(rssiDbm = filled.rssiDbm, rscpDbm = filled.rscpDbm, ecioDb = filled.ecioDb)
+            }
             if (!r.isServing || r.networkType != "LTE" || (r.sinrDb != null && r.cqi != null)) return@map r
             val filled = withServingLteQuality(
                 ParsedCell(r.cellId, r.pci, r.tac, r.mcc, r.mnc, "LTE", r.rsrpDbm, r.rsrqDb, r.rssiDbm, r.sinrDb,
