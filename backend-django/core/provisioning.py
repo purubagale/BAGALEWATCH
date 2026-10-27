@@ -27,9 +27,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .audit import log_audit_event
-from .emergency import active_emergency
 from .rescue import _clean_msisdn
-from .views import IsSuperadminOnly
+from .views import IsAdminOrSuperadmin
 
 log = logging.getLogger(__name__)
 
@@ -214,7 +213,7 @@ def status_summary():
 
 class SubscriberProvisioningView(APIView):
     """`GET /api/v2/subscriber-profile/provisioning/?msisdn=&reason=`."""
-    permission_classes = [IsAuthenticated, IsSuperadminOnly]
+    permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
 
     def get(self, request):
         canonical = _clean_msisdn(request.query_params.get('msisdn'))
@@ -226,9 +225,7 @@ class SubscriberProvisioningView(APIView):
             return Response({'enabled': False, 'data': None, 'error': None, 'ntc_bands': NTC_BANDS})
         log_audit_event(request, AUDIT_ACTION, resource='subscriber_profile', resource_id=canonical, detail=reason)
         data, error = lookup(canonical)
-        emergency = active_emergency() is not None
-        if data is not None and not emergency:
-            # The cached answer keeps it; this response does not.
-            data = {**data, **{name: None for name in LOCATION_FIELDS}}
+        # The cells the other system lists carry no position, so they are
+        # shown to NTC staff at all times (2026-10-27, the user's decision).
         return Response({'enabled': True, 'data': data, 'error': error, 'ntc_bands': NTC_BANDS,
-                         'location_shown': emergency})
+                         'location_shown': True})

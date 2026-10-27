@@ -8,7 +8,7 @@ import { ColumnChart, ShareBar } from './ProfileCharts'
 // What NTC's other systems hold for the number (2026-10-16), as two cards
 // since 2026-10-19, after the user's UTS screenshots:
 //   BI system   - usage per day, the network split and the cells the
-//                 customer used (location history: emergency only).
+//                 customer used (shown to NTC staff since 2026-10-27; no position).
 //   OSS & Core  - HSS/SPR provisioning (4G, VoLTE, SIM, plan) and the
 //                 device with its bands, set against what the phone measured.
 // Both come from one source, asked only when a window is opened. On the
@@ -51,7 +51,7 @@ export default function ProfileProvisioning({ kind, msisdn, reason, analytics, c
   }, [open])
 
   const blurb = kind === 'bi'
-    ? `Daily data, voice and SMS, the 2G/3G/4G split and the cell sites used by ${msisdn}${emergency ? '' : ' (cell sites only in an emergency)'}.`
+    ? `Daily data, voice and SMS, the 2G/3G/4G split and the cell sites used by ${msisdn}.`
     : 'HSS profile, 4G and VoLTE provisioning, SIM, SPR package and quota, and the device with its bands, set against what the phone measured.'
 
   return (
@@ -82,7 +82,7 @@ export default function ProfileProvisioning({ kind, msisdn, reason, analytics, c
             <div className="spo-tabs" role="tablist">
               {k.tabs.map(([t, label]) => (
                 <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
-                  {label}{t === 'location' && !emergency ? ' 🔒' : ''}
+                  {label}
                 </button>
               ))}
             </div>

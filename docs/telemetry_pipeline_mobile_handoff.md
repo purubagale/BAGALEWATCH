@@ -4,7 +4,7 @@
 
 **From:** Puru (RAN O&M, owner of the DT-WATCH server and web application)
 
-**Last updated:** 2026-10-24 (signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
+**Last updated:** 2026-10-27 (3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
 
 ## 1. Summary
 
@@ -173,6 +173,7 @@ Android ID or phone number.
 | `sim_state` | string | `ready`, `absent`, `locked` or `other`. Added 2026-10-26 |
 | `environment` | string | Where the person is: `outdoor`, `indoor` or `vehicle`; leave it out when unknown. Added 2026-10-26 |
 | `environment_source` | string | `user` (tapped in the app) or `estimated` (from movement and GPS accuracy). Sent only with `environment`. Added 2026-10-26 |
+| `neighbours` | array of objects | The other cells heard at the same moment, at most 8 (see below). Leave it out when there are none. Added 2026-10-27 |
 
 **Readings without a network (2026-10-26).** Always send a reading, even when
 the cell list is empty: `network_type` `UNKNOWN` plus the four fields above.
@@ -183,6 +184,14 @@ coverage share. When the cell list is empty, fill the level and `network_type`
 from `getSignalStrength()` (no location needed), as the reference SDK does.
 Older readings without these fields are judged by their position: no network
 and no GPS position means the phone withheld both, so "not measured".
+
+**3G and 2G level with a cell (2026-10-27).** On the live server, 3G readings
+arrived with a cell and a band but no `rscp_dbm`: the phone's cell list held
+no level, or the no-value code -24, and the overall reading was only used when
+there was no cell at all. Fill a blank serving 3G level (and Ec/Io) or 2G
+level from `getSignalStrength()` of the same SIM, as is already done for 4G
+SINR and CQI; a value from the cell list wins. The reference SDK does this
+from app 1.2.4.
 
 **Band.** Send `arfcn` on every reading; it is available from Android 7. The
 server works out the band from it when `band` is missing, and names it in MHz
@@ -199,6 +208,31 @@ carriers and the number of carriers, and shows "20 MHz" or "20 MHz (3 carriers,
 45 MHz)". Values outside 1 MHz to 400 MHz are treated as the modem's no-value
 code and dropped; at most 16 carriers are read. If `bandwidth_khz` is missing,
 the first carrier of the list stands in. 2G and 3G readings have no bandwidth.
+
+**Neighbour cells (2026-10-27).** With each reading, send the other cells of
+the same `getAllCellInfo()` call as `neighbours`. Leave out every entry flagged
+registered (the serving cell, sometimes listed twice) and every cell without an
+identity or a level. Order and cap: cells of the serving technology first,
+strongest first, at most 6; then at most 3 of each other technology; at most 8
+in all. Each object carries only what identifies the cell and its level:
+
+| Key | Meaning |
+|---|---|
+| `net` | `LTE`, `UMTS` or `GSM` (5G neighbours are not sent yet) |
+| `pci` / `psc` / `bcch`, `bsic` | Identity: PCI on 4G, scrambling code on 3G, BCCH and BSIC on 2G. Required |
+| `arfcn`, `band` | Channel (EARFCN, UARFCN, BCCH ARFCN) and 3GPP band, when known |
+| `cell_id`, `tac` | Only if the phone reports them for the neighbour (most do not) |
+| `rsrp`, `rsrq`, `sinr` | 4G level and quality; `rsrp` is required on 4G |
+| `rscp`, `ecio` | 3G level and quality; `rscp` is required on 3G |
+| `rssi` | 2G level; required on 2G |
+
+Example: `"neighbours": [{"net":"LTE","pci":95,"arfcn":6200,"band":20,"rsrp":-91,"rsrq":-11}]`.
+The server keeps at most 8, drops unknown keys and values out of range, and
+names each cell (site, sector, distance) from the reading's position with the
+same rule as the serving cell, so a reading without a position keeps unnamed
+neighbours. The neighbours are stored on the reading and deleted with it. The
+web pages show them per reading and, per session, which cells were heard and
+how often one was 3 dB or more stronger than the serving cell.
 
 **SINR matters.** On the live server on 12 October 2026, none of 2,099 4G
 readings carried `sinr_db`. Without it the server falls back to a rougher CQI
@@ -284,7 +318,7 @@ Registration is needed for trace requests, site photos and device identity.
   "public_key": "<PEM, EC P-256>",
   "challenge": "...",
   "play_integrity_token": "",
-  "msisdn": "+97798...",
+  "msisdn": "98XXXXXXXX",
   "fcm_token": "...",
   "app_version": "0.1",
   "manufacturer": "HUAWEI",
@@ -646,6 +680,19 @@ ID, else by PCI, scrambling code or BCCH/BSIC near the position. Nothing is
 stored. The reference app asks once per serving cell and waits 30 s after a
 failure. Before the answer, it shows the site and sector worked out on the
 phone from NTC's numbering (`model/NtcCellName.kt`).
+
+Since app 1.2.2 (2026-10-27) the reference app's Cells tab asks the same
+call for every cell it lists. A cell with a cell number is sent without a
+position; a neighbour known only by PCI, scrambling code or BCCH/BSIC is sent
+with Android's last known position (no GPS fix), and its answer is kept per
+area of about 1 km. Without an answer the card shows no site line.
+
+**Number format for registration.** Ask for the 10-digit NT mobile number
+(9XXXXXXXXX: 98, 97 and other prefixes), digits only, no 977 or +977; the
+server adds the country code (a number sent with 977 is also accepted). The
+reference app's field (`NumberField.kt`) takes digits only, at most 10, keeps
+the last 10 digits of a pasted +977 number, and shows a red border while
+incomplete and a green one at 10 digits; Register is refused otherwise.
 
 **Drive-test consent** (`POST drive-test-consent/`) with
 `{"device_id": "...", "consent": true}` returns `{"consent": true}`. It decides

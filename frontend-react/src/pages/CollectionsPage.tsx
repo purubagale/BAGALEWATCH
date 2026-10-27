@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -9,6 +9,7 @@ import { telemetryLevel } from '../lib/telemetryLevel'
 import { declusterForPlot } from '../lib/declusterPlot'
 import { useCollectionSectors, useCollectionSessionSamples, useCollectionSessions } from '../api/queries'
 import SectorBreakdown from '../components/SectorBreakdown'
+import NeighbourCellsCell from '../components/NeighbourCellsCell'
 import EnvironmentTools, { environmentText, filterByEnvironment, type EnvFilter } from '../components/EnvironmentTools'
 import { useAuth } from '../auth/AuthContext'
 import { CQI_COLUMN_HINT, CQI_MODULATION_HINT, cqiLabel, cqiModulationLabel } from '../lib/cqiDisplay'
@@ -52,6 +53,12 @@ export default function CollectionsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const samples = useCollectionSessionSamples(selectedId)
   const sectors = useCollectionSectors(selectedId)
+  // Clicking a session brings its route map into view (2026-10-27), instead
+  // of leaving it below the whole list.
+  const routeRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (selectedId) routeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [selectedId])
 
   // Filters beyond source (2026-10-07) -- client-side over the <=200 rows
   // the list endpoint already caps, same reasoning as the Telemetry Drive
@@ -216,9 +223,9 @@ export default function CollectionsPage() {
       )}
 
       {selected && (
-        <section style={{ marginTop: 20 }}>
+        <section ref={routeRef} style={{ marginTop: 20, scrollMarginTop: 56 }}>
           <h2>
-            Route — {SOURCE_LABEL[selected.source] ?? selected.source}, started{' '}
+            Route —{SOURCE_LABEL[selected.source] ?? selected.source}, started{' '}
             {new Date(selected.started_at).toLocaleString()}
           </h2>
           {samples.isLoading && <p className="page-status">Loading route…</p>}
@@ -291,6 +298,7 @@ export default function CollectionsPage() {
                     <th>Network</th>
                     <th title="Operating band the phone was on: band number and MHz. Empty for readings sent by an older app">Band</th>
                     <th title="Channel width of the serving cell; with more than one carrier in use, how many and their total. Empty on 2G/3G, older phones and older app versions">Bandwidth</th>
+                    <th title="Other cells the phone heard with this reading, and the site each was matched to. Click to list them. Empty on older app versions">Neighbours</th>
                     <th title="Signal level: RSRP on 4G, RSCP on 3G, RxLev on 2G">Level (dBm)</th>
                     <th>RSRQ</th>
                     <th>SINR</th>
@@ -308,6 +316,7 @@ export default function CollectionsPage() {
                       <td>{s.network_type || '—'}</td>
                       <td>{s.band_label || '—'}</td>
                       <td>{s.bandwidth_label || '—'}</td>
+                      <td><NeighbourCellsCell cells={s.neighbours} /></td>
                       <td>{levelText(s)}</td>
                       <td>{s.rsrq_db ?? '—'}</td>
                       <td>{s.sinr_db ?? '—'}</td>

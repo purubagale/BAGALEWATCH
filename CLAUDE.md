@@ -1413,8 +1413,9 @@ repo, not on prod):
   outside") ahead of weak coverage. Profile, complaint and related data
   show the indoor share. Release APKs on the Desktop. Committed and
   pushed 2026-10-26: dtwatch `17537be`, mobile `90246dc`.
-- **Channel bandwidth on phone readings** (2026-10-27, built, NOT
-  committed in either repo, not on prod, not run on a phone). SDK sends
+- **Channel bandwidth on phone readings** (2026-10-27, committed and
+  pushed: dtwatch `fda1dde`, mobile `5db2471`; not on prod, not run on a
+  phone). SDK sends
   `bandwidth_khz` (serving 4G cell, `CellIdentityLte.getBandwidth()`,
   Android 9+) and `cell_bandwidths_khz` (every carrier in use, primary
   first, `ServiceState.getCellBandwidths()`; several = carrier aggregation
@@ -1430,6 +1431,116 @@ repo, not on prod):
   map does not show it. Old readings stay empty. Release APKs on the
   Desktop (previous in `old-apks\*_before_bandwidth.apk`), SDK
   republished.
+- **Documents brought up to date on 2026-10-27** for the work of 26-27
+  October (AI still left out): the four manuals ("Updated 27 October"
+  paragraph plus sections: related data, active alarms, reading status,
+  speed test, session districts, indoor/outdoor, bandwidth, deploy steps
+  and `ALARM_*` settings in Technical), management deck slides `live`,
+  `complaints`, `status`, technical deck slides `telemetry-flow`,
+  `complaints-flow`, `deploy` (notes only there). No slide added, so no
+  renumbering. Standing rule from the user: every commit also updates
+  these documents and the APKs, and lists them.
+- **APK names carry the version** (user's rule, 2026-10-27): Desktop
+  holds `dtwatchTelemetry_v<version>.apk` and
+  `dtwatchTelemetry_Collector_v<version>.apk`; raise `appVersionName` in
+  `app/build.gradle.kts` for every APK update. Now 1.2.0 (code 10200,
+  built 2026-10-27, everything since 1.1.0 of 16 October); the 1.1.0 pair
+  is in `old-apks` as `*_v1.1.0_2026-10-27.apk`. The version bump is NOT
+  committed in the mobile repo.
+- **10-digit number field** (2026-10-27, app 1.2.1, built, NOT committed,
+  not run on a phone). `NumberField.kt` serves the registration pop-up and
+  the Settings form: digits only, at most 10, no 977 typed (the server's
+  `_clean_msisdn` adds it; a pasted +977 number keeps its last 10 digits),
+  border grey while empty, red while incomplete, green at 10; Register
+  refuses anything but 10 digits. Hint "10-digit mobile number,
+  9XXXXXXXXX" (NTC has 98, 97 and other prefixes, so no prefix check).
+- **Site names on the Cells tab** (2026-10-27, app 1.2.2, built, NOT
+  committed, not run on a phone). Each cell card gets a bold "KTM856_NAME ·
+  J3" line once NTC's server answers (`ServingSiteLookup`, same signed
+  `device/serving-site/` call as the Signal tab); no answer (server not
+  reachable, phone not registered, cell unknown) leaves the card as before.
+  The serving cell is matched by its cell number; a neighbour known only by
+  PCI/code sends Android's last known position (no GPS fix), and its answer
+  is cached per ~1 km (key rounded to 0.01 degree). Several cells can be
+  asked at once (`inFlight` is a set). Checked on the local server: PCI 65
+  near CDR001 gives CDR001 J3; a PCI with no position gives nothing.
+- **Committed 2026-10-27:** mobile `bb37bd6` (app 1.2.2: version bump,
+  10-digit number field, Cells tab site names; not pushed). Handoff
+  `.md`/`.docx` (number format, Cells tab lookup), the three manuals' app
+  sections and management slide `app` notes updated the same day.
+- **Neighbour cells with every phone reading** (2026-10-27, built, NOT
+  committed in either repo, app 1.2.3 not run on a phone). SDK
+  `model/NeighbourCells.kt`: from the same cell read as the serving cell,
+  no registered entry, only cells with an identity (PCI/PSC/BCCH) and a
+  level; serving technology first (6), 3 per other technology, 8 in all;
+  sent as `neighbours` (`net`, `pci|psc|bcch`, `bsic`, `arfcn`, `band`,
+  `cell_id`, `tac`, levels). Server `core/neighbour_cells.py`: `coerce`
+  (known keys, ranges, at most 8), `attach_sites` names each at upload
+  with the serving-cell matcher on the reading's position (`site`,
+  `sector`, `km`), stored as `TelemetrySample.neighbours` JSON (migration
+  0147, pruned with the partitions; AI migrations now 0148-0153, local
+  history renamed, column added by hand). Neighbours column (count, opens
+  to the list) on Live Samples, Collections, Telemetry Drive Test and Area
+  Sample; "Neighbour cells heard" under the sector table on Collections and
+  Telemetry Drive Test (`session_summary`: heard, average/best level, share
+  3 dB or more above the serving cell of the same technology, distance,
+  serving sector it was mostly heard beside; newest 50,000 readings). Not
+  on the Subscriber Profile. SDK tests `NeighbourCellsTest`, server
+  `tests_neighbour_cells.py`.
+- **Sector table CQI and Collections scroll** (2026-10-27, after the
+  user's prod screenshots). The sector table's CQI averaged only the
+  phone-reported `cqi`, which phones almost never send, so it showed "—";
+  phone readings now average `cqi.sample_cqi_sql()` (reported, else SINR,
+  else RSRQ), as the reading list does. Clicking a Collections session
+  scrolls to its route map.
+- **Committed and pushed 2026-10-27** (neighbours, CQI, scroll, app
+  1.2.3): dtwatch `3f009a7`, mobile `04ea39f`. Prod needs migration 0147.
+- **After that push** (2026-10-27, built, NOT committed; app 1.2.4 not
+  run on a phone):
+  - 3G level blank on prod (rows with band B1 and no RSCP; nothing on
+    Explore's RSCP:3G tab): the cell list held no level and the overall
+    signal reading was used only when there was no cell. SDK
+    `withServingLevel` fills a blank 3G/2G level (and Ec/Io) from
+    `getSignalStrength()`, for samples and the Cells tab. Unverified on a
+    phone; if 1.2.4 readings still lack it, the modem gives no 3G level
+    at all.
+  - Explore: Sessions/Recent/Change work on team drive tests only; the
+    note says so with the count, phone dots are hidden in Recent and
+    Change, and Change says it needs two drive tests.
+  - Neighbours in the Problem Dashboard: `_neighbours_near` (500 m, 7 days
+    before to 1 h after) and two causes ahead of the interference guess:
+    `stronger_neighbour` (a cell 3 dB above serving in 30%+ of 5+
+    readings) and `no_dominant_cell` (3+ cells within 5 dB in 30%+);
+    labels, replies, colours; "Other cells phones heard here" table in
+    Likely cause (`ProblemReportsPage.tsx`, mixed with AI lines: stage by
+    hunk, the new block sits beside `ProblemAiDraft`). No migration
+    (`cause` is free text). Existing reports get them on their next check.
+  - Diagnosis dashboard: `analytics.neighbours` (full in an emergency,
+    `counts_only` otherwise: cells heard per reading, stronger share, no
+    dominant share), shown under Sectors served or as a line on the locked
+    card; signal hover "Other cells heard: N, strongest PCI x · -88 dBm"
+    (site only where the position shows, `point_fields`).
+  - **Staff see everything but positions** (the user's decision,
+    2026-10-27, for the Problem Dashboard and the diagnosis dashboard
+    only; it replaces the 2026-10-19 "location history in an emergency"
+    rule). Admin and superadmin: the diagnosis dashboard
+    (`SubscriberProfileView`, `SubscriberSignalView`,
+    `SubscriberProvisioningView` now `IsAdminOrSuperadmin`; menu `/s7p2nd`
+    access `admin`, migration 0148, AI migrations now 0149-0154, local
+    history renamed and menu row updated by hand), cells/sites/sectors/
+    neighbours and the OSS "cells visited" always; Problem Dashboard list
+    number and number search (`is_staff` in `problem_report.py`), link to
+    the diagnosis dashboard, Related data's sites served always. Exact
+    positions: superadmin always (no emergency needed, the user's follow-up
+    the same day); admin only in an emergency or a complaint window
+    (`open_positions` in `subscriber_profile.py`, `location_rule`
+    'superadmin' in `problem_related.py`).
+    For admins the diagnosis page hides links to pages that plot the phone's
+    route or change links (Live Samples, Collections, Telemetry Drive Test,
+    Trace Requests, VoLTE, Registered/Rescue lists, "Find earlier
+    readings"); those stay superadmin. Checked in a rolled-back transaction
+    with a throwaway admin: profile 200, sites shown, 0 of 81 points with a
+    position, problem list number shown, viewer 403. Not seen in a browser.
 
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an

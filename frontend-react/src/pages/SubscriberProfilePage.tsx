@@ -14,6 +14,7 @@ import ProfileProvisioning from '../components/ProfileProvisioning'
 import FitToPoints from '../components/FitToPoints'
 import { NET_LABEL, netColor } from '../lib/netColors'
 import { useRowsPerPage } from '../lib/rowsPerPage'
+import { useAuth } from '../auth/AuthContext'
 
 // Subscriber Profile (2026-10-15, core/subscriber_profile.py). Superadmin:
 // everything the server already holds about one mobile number, to help solve
@@ -203,7 +204,8 @@ function SiteMap({ loc }: { loc: NonNullable<SubscriberProfile['last_location']>
   const own: [number, number] | null = loc.lat != null && loc.lng != null ? [loc.lat, loc.lng]
     : loc.earlier_position ? [loc.earlier_position.lat, loc.earlier_position.lng] : null
   const ownLabel = loc.lat != null
-    ? (loc.position_basis === 'complaint' ? "Last position (customer's problem report)" : 'Last position (emergency)')
+    ? (loc.position_basis === 'complaint' ? "Last position (customer's problem report)"
+      : loc.position_basis === 'emergency' ? 'Last position (emergency)' : 'Last position')
     : loc.earlier_position ? `Last known position, ${fmt(loc.earlier_position.ts)}` : ''
   const site: [number, number] | null = loc.site_lat != null && loc.site_lng != null ? [loc.site_lat, loc.site_lng] : null
   if (!site && !own) return null
@@ -231,9 +233,13 @@ function SiteMap({ loc }: { loc: NonNullable<SubscriberProfile['last_location']>
   )
 }
 
-function Profile({ p, out, siteLink, reason, onChanged }: {
+function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
   p: SubscriberProfile; out: (key: string, extra?: Record<string, string>) => string
   siteLink: (siteId: string) => string; reason: string; onChanged: () => void
+  // Admins see every detail here except positions (2026-10-27), so links to
+  // pages that plot this phone's route or tools that change links stay
+  // superadmin-only.
+  isSuper: boolean
 }) {
   const s = p.summary
   const loc = p.last_location
@@ -262,7 +268,7 @@ function Profile({ p, out, siteLink, reason, onChanged }: {
   // Each phone's own list page: Registered Devices only for a registered
   // number, Rescue Enrolled for a rescue beacon; nothing when neither applies.
   // Opened with ?msisdn=, those pages show this number's phones only (2026-10-15).
-  const phonesLink = s.registered ? { to: out('/registered-devices', { msisdn: p.msisdn }), label: 'Registered Devices' }
+  const phonesLink = !isSuper ? null : s.registered ? { to: out('/registered-devices', { msisdn: p.msisdn }), label: 'Registered Devices' }
     : s.rescue_beacon ? { to: out('/rescue-enrolled', { msisdn: p.msisdn }), label: 'Rescue Enrolled Devices' } : null
 
   const nav: [string, string, number | null][] = [
@@ -320,7 +326,7 @@ function Profile({ p, out, siteLink, reason, onChanged }: {
                   ? <span className="sp-mono">{loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}{loc.gps_accuracy_m != null ? ` · ±${Math.round(loc.gps_accuracy_m)} m` : ''}
                       {loc.position_basis === 'complaint' && <span className="sp-muted"> · shown for the customer's problem report #{loc.complaint_report_id}</span>}</span>
                   : loc.position_withheld
-                    ? <span className="sp-locked">🔒 Only in an emergency{p.complaint_windows?.length ? ", or near the customer's own problem report" : ''}</span>
+                    ? <span className="sp-locked">🔒 For admins only in an emergency{p.complaint_windows?.length ? ", or near the customer's own problem report" : ''}</span>
                     : loc.earlier_position
                       ? <span className="sp-mono">
                           {loc.earlier_position.lat.toFixed(5)}, {loc.earlier_position.lng.toFixed(5)}
@@ -379,16 +385,16 @@ function Profile({ p, out, siteLink, reason, onChanged }: {
                   {d.registered_at && <div><span>Registered</span>{fmt(d.registered_at)}</div>}
                   {d.linked_via.length > 0 && <div><span>Tied to this number by</span>{d.linked_via.map((v) => LINKED_BY[v] ?? v.replace(/_/g, ' ')).join(', ')}</div>}
                 </div>
-                {d.readings > 0 && <Link className="sp-device-link" to={readings(d.device_id)}>Open all {d.readings.toLocaleString()} readings →</Link>}
+                {isSuper && d.readings > 0 && <Link className="sp-device-link" to={readings(d.device_id)}>Open all {d.readings.toLocaleString()} readings →</Link>}
               </div>
             ))}
           </div>
-          <LinkEarlierReadings msisdn={p.msisdn} reason={reason} onChanged={onChanged}
-            manualIds={p.devices.filter((d) => d.linked_via.includes('manual_link')).map((d) => d.device_id)} />
+          {isSuper && <LinkEarlierReadings msisdn={p.msisdn} reason={reason} onChanged={onChanged}
+            manualIds={p.devices.filter((d) => d.linked_via.includes('manual_link')).map((d) => d.device_id)} />}
         </Card>
 
         <Card id="sp-speed" icon="⚡" title="Speed tests" count={speedCount} empty={speedCount === 0}
-          link={speedDevice ? { to: readings(speedDevice), label: 'Speed tests in Live Samples' } : null} wide>
+          link={isSuper && speedDevice ? { to: readings(speedDevice), label: 'Speed tests in Live Samples' } : null} wide>
           <SpeedChart tests={p.speed_tests} />
           <Paged
             rows={[...p.speed_tests.map((r) => ({ ...r, trace: false })), ...p.trace_speed_tests.map((r) => ({ ...r, bearer: 'trace', jitter_ms: null, packet_loss_pct: null, rsrp_dbm: null, device_id: '', trace: true }))]}
@@ -408,27 +414,27 @@ function Profile({ p, out, siteLink, reason, onChanged }: {
         <Card id="sp-sessions" icon="🛰️" title="Sessions" count={sessions} empty={sessions === 0} wide>
           {p.collections.length > 0 && (
             <>
-              <div className="sp-sub-head">Shares and phone drives · {p.collections.length} <Link to={out('/collections', { device: p.collections[0].device_id })}>Collections →</Link></div>
+              <div className="sp-sub-head">Shares and phone drives · {p.collections.length} {isSuper && <Link to={out('/collections', { device: p.collections[0].device_id })}>Collections →</Link>}</div>
               <Paged rows={p.collections}
                 head={<tr><th>Session</th><th>Started</th><th>Last reading</th><th>Ended</th><th>Readings</th><th>Phone</th><th></th><th></th></tr>}
                 row={(c) => (
-                  <tr key={c.id}><td>{c.name ?? c.source}</td><td>{fmt(c.started_at)}</td><td>{fmt(c.last_sample_at)}</td><td>{fmt(c.ended_at)}</td><td className="mono">{c.samples}</td><td className="mono" title={c.device_id}>{short(c.device_id)}</td><td>{c.samples ? showBtn(`collection:${c.id}`) : null}</td><td><Link to={out('/collections', { device: c.device_id })}>Open →</Link></td></tr>
+                  <tr key={c.id}><td>{c.name ?? c.source}</td><td>{fmt(c.started_at)}</td><td>{fmt(c.last_sample_at)}</td><td>{fmt(c.ended_at)}</td><td className="mono">{c.samples}</td><td className="mono" title={c.device_id}>{short(c.device_id)}</td><td>{c.samples ? showBtn(`collection:${c.id}`) : null}</td><td>{isSuper && <Link to={out('/collections', { device: c.device_id })}>Open →</Link>}</td></tr>
                 )} />
             </>
           )}
           {p.drive_test_sessions.length > 0 && (
             <>
-              <div className="sp-sub-head">Telemetry drive tests · {p.drive_test_sessions.length} <Link to={out('/telemetry-dt-sessions')}>Telemetry Drive Test →</Link></div>
+              <div className="sp-sub-head">Telemetry drive tests · {p.drive_test_sessions.length} {isSuper && <Link to={out('/telemetry-dt-sessions')}>Telemetry Drive Test →</Link>}</div>
               <Paged rows={p.drive_test_sessions}
                 head={<tr><th>Name</th><th>Status</th><th>Started</th><th>Ended</th><th>Phones</th><th></th></tr>}
                 row={(d) => (
-                  <tr key={d.id}><td><Link to={out('/telemetry-dt-sessions', { name: d.name })}>{d.name}</Link></td><td><span className={`sp-chip ${d.status === 'active' ? 'ok' : 'plain'}`}>{d.status}</span></td><td>{fmt(d.started_at)}</td><td>{fmt(d.ended_at)}</td><td className="mono">{d.devices}</td><td>{showBtn(`drive:${d.id}`)}</td></tr>
+                  <tr key={d.id}><td>{isSuper ? <Link to={out('/telemetry-dt-sessions', { name: d.name })}>{d.name}</Link> : d.name}</td><td><span className={`sp-chip ${d.status === 'active' ? 'ok' : 'plain'}`}>{d.status}</span></td><td>{fmt(d.started_at)}</td><td>{fmt(d.ended_at)}</td><td className="mono">{d.devices}</td><td>{showBtn(`drive:${d.id}`)}</td></tr>
                 )} />
             </>
           )}
           {p.trace_requests.length > 0 && (
             <>
-              <div className="sp-sub-head">Trace requests · {p.trace_requests.length} <Link to={out('/trace-requests')}>Trace Requests →</Link></div>
+              <div className="sp-sub-head">Trace requests · {p.trace_requests.length} {isSuper && <Link to={out('/trace-requests')}>Trace Requests →</Link>}</div>
               <Paged rows={p.trace_requests}
                 head={<tr><th>Created</th><th>Kind</th><th>Status</th><th>Case</th><th>By</th><th>Positions</th><th>Ended</th></tr>}
                 row={(t) => (
@@ -453,7 +459,7 @@ function Profile({ p, out, siteLink, reason, onChanged }: {
         </Card>
 
         <Card id="sp-calls" icon="📞" title="Calls" count={callTotal} empty={callTotal === 0 && p.volte.length === 0}
-          link={{ to: out('/telemetry-volte-samples', { days: '90' }), label: 'VoLTE Quality' }}>
+          link={isSuper ? { to: out('/telemetry-volte-samples', { days: '90' }), label: 'VoLTE Quality' } : null}>
           {callTotal > 0 && (
             <>
               <div className="sp-stack">
@@ -523,6 +529,7 @@ function LookupsList({ lookups }: { lookups: SubscriberProfile['lookups'] }) {
 }
 
 export default function SubscriberProfilePage() {
+  const { user } = useAuth()
   const location = useLocation()
   const [params, setParams] = useSearchParams()
   const msisdn = params.get('msisdn') ?? ''
@@ -596,7 +603,7 @@ export default function SubscriberProfilePage() {
         <div className="sp-hero-band" />
         <div className="sp-hero-body">
           <div className="sp-hero-title">
-            <div className="sp-eyebrow">Customer diagnostics · superadmin</div>
+            <div className="sp-eyebrow">Customer diagnostics · NTC staff</div>
             <h1 className="sp-title">Subscriber Network Diagnosis Dashboard</h1>
             <p className="sp-sub">Stored data only · every search needs a reference and is logged with your name.</p>
           </div>
@@ -636,7 +643,7 @@ export default function SubscriberProfilePage() {
               {isFetching ? 'Refreshing…' : '↻ Refresh'}
             </button>
           </div>
-          <Profile p={data} out={out} reason={reason} onChanged={() => void refetch()}
+          <Profile p={data} out={out} reason={reason} onChanged={() => void refetch()} isSuper={user?.role === 'superadmin'}
             siteLink={(id) => `/sites/${encodeURIComponent(id)}?${new URLSearchParams({ back: here })}`} />
         </>
       )}

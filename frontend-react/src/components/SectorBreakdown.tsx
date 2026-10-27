@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { SectorBreakdownData, SectorStat } from '../api/types'
+import NeighbourBreakdown from './NeighbourBreakdown'
 
 // Readings per serving sector (2026-10-19), the same table on the Subscriber
 // Profile, a drive-test session, a phone drive on Collections and a
@@ -89,7 +90,7 @@ export default function SectorBreakdown({ data, siteLink, showDl = false, title 
                   {th('level', 'Level')}
                   <th>RSRQ</th>
                   {th('sinr', 'SINR')}
-                  <th>CQI</th>
+                  <th title="Average CQI. For phone readings: the phone's own value, else estimated from SINR, else from RSRQ, as in the reading list">CQI</th>
                   {showDl && <th>Download</th>}
                   {showIndoor && <th title="Average level outdoors minus inside a building, from phone readings tagged by place; shown with at least 10 of each">Indoor loss</th>}
                   <th>Distance</th>
@@ -141,6 +142,7 @@ export default function SectorBreakdown({ data, siteLink, showDl = false, title 
           )}
         </>
       )}
+      {data.neighbours && <NeighbourBreakdown data={data.neighbours} siteLink={siteLink} limitRows={limitRows} />}
     </div>
   )
 }

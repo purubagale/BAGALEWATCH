@@ -27,7 +27,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import radio_band
+from . import neighbour_cells, radio_band
 from .access import PERM_VIEW_IDENTITY, CanViewDrives, user_has
 from .mfa import decrypt_secret, encrypt_secret
 from .cqi import cqi_from_sinr, sample_cqi_fields
@@ -451,6 +451,7 @@ class CollectionSessionSamplesView(APIView):
                     'rscp_dbm': r.rscp_dbm, 'ecio_db': r.ecio_db, 'rssi_dbm': r.rssi_dbm, 'rx_qual': r.rx_qual,
                     **radio_band.fields(r.network_type, r.arfcn, r.band, r.band_mhz,
                                       r.bandwidth_khz, r.total_bandwidth_khz, r.carrier_count),
+                    **neighbour_cells.fields(r.neighbours),
                     'cqi': r.cqi, 'cqi_derived': r.cqi_derived,
                     # Shown value, where it came from (reported / sinr /
                     # rsrq) and its 3GPP modulation and efficiency

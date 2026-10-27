@@ -17,6 +17,7 @@ import { Band, CardHead, Tile, rate, rateLevel, round, techOfNet } from '../comp
 import { ENV_LABEL } from '../components/EnvironmentTools'
 import { useSiteLinkBack } from '../lib/siteLinkBack'
 import { DT_SESSION_HISTORY_PATH, OPAQUE_PATHS } from '../constants/opaqueRoutes'
+import NeighbourBreakdown from '../components/NeighbourBreakdown'
 
 // Problem Dashboard (2026-10-15; Problem Reports since 2026-10-14) --
 // problems people report from the mobile app, ones an engineer enters from a
@@ -40,6 +41,8 @@ const CATEGORY_COLOR: Record<string, string> = {
 const CAUSE_COLOR: Record<string, string> = {
   weak_coverage: '#ef4444',
   interference: '#f97316',
+  stronger_neighbour: '#0d9488',
+  no_dominant_cell: '#a16207',
   busy_cell: '#eab308',
   lower_tech: '#0ea5e9',
   lower_tech_weak_4g: '#6366f1',
@@ -517,7 +520,7 @@ function Hotspots({ d, onOpen }: { d: ProblemDashboard; onOpen: (h: ProblemHotsp
 // details of the complaint, a diagnostics summary that opens the full
 // diagnostics (likely cause and measurements, nearest sites, the phone's
 // reading, the reply), and status with the engineer's note. The customer's
-// number (superadmin only) opens the Subscriber Profile with this report as
+// number (admin and superadmin) opens the Subscriber Profile with this report as
 // its reference, and the profile leads back here.
 type DiagTab = 'cause' | 'sites' | 'phone' | 'reply'
 
@@ -563,10 +566,12 @@ function ReportDetail({ id }: { id: number }) {
   if (error || !r) return <p className="error">{apiErrorMessage(error)}</p>
   const c = r.check
   const reference = r.reference ?? `PR-${r.id}`
-  const isSuper = user?.role === 'superadmin'
+  // NTC staff (admin and superadmin) see every subscriber detail but the
+  // position here and on the diagnosis dashboard (2026-10-27).
+  const isSuper = user?.role === 'superadmin' || user?.role === 'admin'
   // The profile opens on this number with this report as its reference, and
   // carries the way back to this report (2026-10-19).
-  // The dashboard itself is for superadmins; others see the number here only.
+  // The dashboard itself is for NTC staff; others see the number here only.
   const profileLink = isSuper && r.phone_number ? `${OPAQUE_PATHS['/subscriber-profile']}?${new URLSearchParams({
     msisdn: r.phone_number, reason: `Complaint ${reference}`, from: `${location.pathname}${location.search}`,
   })}` : null
@@ -614,7 +619,7 @@ function ReportDetail({ id }: { id: number }) {
               {r.phone_number
                 ? <><span className="mono">{r.phone_number}</span> <CopyText text={r.phone_number} label="the number" />
                   {profileLink && <Link className="pdd-link" to={profileLink}>Open Subscriber Network Diagnosis →</Link>}</>
-                : r.has_number && !isSuper ? <span className="muted">Held; shown to superadmin only</span>
+                : r.has_number && !isSuper ? <span className="muted">Held; shown to admin and superadmin only</span>
                   : <span className="muted">Not given</span>}
             </dd>
             <dt>Source</dt>
@@ -843,7 +848,7 @@ function SubscriberAnalysis({ r, isSuper, profileLink }: { r: ProblemReport; isS
           ? <Link className="btn-primary pdd-live-go" to={profileLink}>Open Subscriber Network Diagnosis Dashboard →</Link>
           : <p className="muted pdd-small">
             {isSuper ? 'Add the customer\'s mobile number to the complaint to open the Subscriber Network Diagnosis Dashboard.'
-              : 'The Subscriber Network Diagnosis Dashboard is for superadmins.'}
+              : 'The Subscriber Network Diagnosis Dashboard is for admins and superadmins.'}
           </p>}
         <p className="muted pdd-small">
           The dashboard shows the number's phones, signal over time, sessions, speed tests and complaints. Where the customer
@@ -990,6 +995,12 @@ function CauseTab({ c }: { c: NonNullable<ProblemReport['check']>; reportId: num
           </td></tr>
         </tbody>
       </table>
+      {c.neighbours && (
+        <>
+          <Band icon="🛰">Other cells phones heard here</Band>
+          <NeighbourBreakdown data={c.neighbours} siteLink={siteLink} limitRows={8} />
+        </>
+      )}
     </>
   )
 }

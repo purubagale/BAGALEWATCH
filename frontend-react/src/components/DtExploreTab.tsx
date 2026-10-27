@@ -1513,9 +1513,11 @@ export default function DtExploreTab() {
               <span className="muted" style={{ fontSize: 12 }}>
                 {recent.isLoading ? 'Loading…'
                   : recent.error ? apiErrorMessage(recent.error)
-                    : exploreView === 'recent'
+                    : `${exploreView === 'recent'
                       ? `The most recent value in each 50 m square, from any drive; faded when older than ${RECENT_FADE_MONTHS} months.`
-                      : 'Green: better than the drive before; red: worse; grey: about the same. Only squares measured at least twice.'}
+                      : 'Green: better than the drive before; red: worse; grey: about the same. Only squares measured at least twice.'}`
+                      + ` Team drive tests only (${nearSessions.length} here); phone readings are hidden in this view.`
+                      + (exploreView === 'change' && nearSessions.length < 2 ? ' Change needs two drive tests over the same streets.' : '')}
               </span>
             )}
           </div>
@@ -1667,7 +1669,7 @@ export default function DtExploreTab() {
               ) : (
                 <NearSamplesLayer sessions={nearSessions} metric={metric} servingCells={servingCells} />
               )}
-              {telemetryShown && <TelemetryNearLayer points={telemetryPoints} names={telemetryNames} colorOf={telemetryColorOf} />}
+              {telemetryShown && exploreView === 'sessions' && <TelemetryNearLayer points={telemetryPoints} names={telemetryNames} colorOf={telemetryColorOf} />}
               <ViewWatcher onView={setViewBox} />
               <FullscreenSync isFullscreen={isFullscreen} bounds={currentBounds} />
               <InvalidateOnResize />

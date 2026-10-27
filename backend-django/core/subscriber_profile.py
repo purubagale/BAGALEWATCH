@@ -16,8 +16,9 @@ gathered for every device id of those phones.
 
 Location follows the rules the location lookups already have (agreed when
 they were built): the last serving cell, network and signal are always shown,
-the exact coordinates only while an emergency is declared, and nothing about
-location for a phone whose owner withdrew rescue consent.
+the exact coordinates to a superadmin at any time and to an admin only while
+an emergency is declared (2026-10-27), and nothing about location for a phone
+whose owner withdrew rescue consent.
 """
 import uuid
 from collections import Counter
@@ -31,7 +32,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import radio_band
+from . import neighbour_cells, radio_band
 from .audit import log_audit_event
 from .collection import NEPAL_TZ, decrypted_identity, msisdn_lookup_key
 from .cqi import sample_cqi_fields
@@ -47,7 +48,7 @@ from .rescue import _clean_msisdn
 from .serving_site_lookup import lookup_serving_site
 from .subscriber_analytics import profile_analytics
 from .telemetry_status import status_of
-from .views import IsSuperadminOnly
+from .views import IsAdminOrSuperadmin
 
 AUDIT_ACTION = 'SUBSCRIBER_PROFILE.VIEWED'
 LIST_CAP = 50
@@ -184,7 +185,7 @@ def devices_of_number(canonical):
 
 class SubscriberProfileView(APIView):
     """`GET /api/v2/subscriber-profile/?msisdn=<number>&reason=<ticket>`."""
-    permission_classes = [IsAuthenticated, IsSuperadminOnly]
+    permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
 
     def get(self, request):
         canonical = _clean_msisdn(request.query_params.get('msisdn'))
@@ -216,7 +217,10 @@ class SubscriberProfileView(APIView):
         on_demand = TelemetrySample.objects.filter(device_id__in=ids, trigger_reason='on_demand').count()
 
         emergency = active_emergency()
-        windows = [] if emergency else complaint_windows(canonical, credentials)
+        # Positions (2026-10-27, the user's rule): a superadmin always sees
+        # them; an admin only in an emergency or a complaint window.
+        open_positions = emergency is not None or request.user.role == 'superadmin'
+        windows = [] if open_positions else complaint_windows(canonical, credentials)
         last = (TelemetrySample.objects.filter(device_id__in=[i for i in ids if i not in withdrawn])
                 .order_by('-ts').first())
         last_location = None
@@ -258,8 +262,8 @@ class SubscriberProfileView(APIView):
                 'trigger_reason': last.trigger_reason,
                 # Exact position only while an emergency is declared, or
                 # (when switched on) near the customer's own complaint.
-                'lat': last.lat if (emergency or complaint_report) else None,
-                'lng': last.lng if (emergency or complaint_report) else None,
+                'lat': last.lat if (open_positions or complaint_report) else None,
+                'lng': last.lng if (open_positions or complaint_report) else None,
             }
             # A reading stored without a serving site (2026-10-19): matched now
             # with the same rule, else the newest reading that has one, so the
@@ -297,7 +301,7 @@ class SubscriberProfileView(APIView):
                 last_location.update(site_name=site['name'] or None, site_district=site['district'] or None,
                                      site_lat=site['lat'], site_lng=site['lng'])
         consented_rescue = [r for r in rescue_rows if r.rescue_consent and r.last_seen_ts]
-        if emergency and consented_rescue:
+        if open_positions and consented_rescue:
             r = max(consented_rescue, key=lambda x: x.last_seen_ts)
             if last_location is None or (last_location['ts'] or '') < r.last_seen_ts.isoformat():
                 last_location = {'source': 'rescue', 'ts': _iso(r.last_seen_ts), 'lat': r.last_lat, 'lng': r.last_lng}
@@ -306,11 +310,11 @@ class SubscriberProfileView(APIView):
         # without a GPS fix, a rescue beacon that has not reported one). In an
         # emergency the newest reading that does carry a position is offered.
         if last_location is not None:
-            last_location['position_withheld'] = not emergency and not complaint_report
-            last_location['position_basis'] = ('emergency' if emergency else
+            last_location['position_withheld'] = not open_positions and not complaint_report
+            last_location['position_basis'] = ('emergency' if emergency else 'superadmin' if open_positions else
                                                'complaint' if complaint_report else None)
             last_location['complaint_report_id'] = complaint_report
-            if emergency and last_location.get('lat') is None:
+            if open_positions and last_location.get('lat') is None:
                 fix = (TelemetrySample.objects.filter(device_id__in=[i for i in ids if i not in withdrawn],
                                                       lat__isnull=False, lng__isnull=False)
                        .order_by('-ts').values('ts', 'lat', 'lng', 'gps_accuracy_m').first())
@@ -477,7 +481,7 @@ class SubscriberProfileView(APIView):
             'last_location': last_location,
             'signal_series': signal_series,
             # Cells and sites served, shares, daily trend, histograms (2026-10-16).
-            'analytics': profile_analytics([i for i in ids if i not in withdrawn], include_location=emergency is not None),
+            'analytics': profile_analytics([i for i in ids if i not in withdrawn], include_location=True),
             'devices': devices,
             'collections': collections,
             'drive_test_sessions': drive_test_sessions,
@@ -508,12 +512,12 @@ class SubscriberSignalView(APIView):
     `range` is `newest` (300, the default), `all` (up to SIGNAL_MAX) or
     `session` with `session=collection:<id>` or `session=drive:<id>`, or
     `day` / `week` / `month` (the last span of readings, up to SIGNAL_MAX); `tech`
-    is 4G, 3G or 2G. Same rules as the profile: superadmin, a reason, logged;
-    phones with withdrawn rescue consent left out; the exact position of a
-    reading only while an emergency is declared. Serving sites are masts and
+    is 4G, 3G or 2G. Same rules as the profile: admin or superadmin, a reason,
+    logged; phones with withdrawn rescue consent left out; the exact position
+    of a reading to a superadmin, or to an admin in an emergency. Serving sites are masts and
     are always given, so the map can show where the phone was served from.
     """
-    permission_classes = [IsAuthenticated, IsSuperadminOnly]
+    permission_classes = [IsAuthenticated, IsAdminOrSuperadmin]
 
     def get(self, request):
         canonical = _clean_msisdn(request.query_params.get('msisdn'))
@@ -584,9 +588,12 @@ class SubscriberSignalView(APIView):
             'serving_site_id', 'serving_sector', 'serving_dist_km', 'gps_accuracy_m', 'lat', 'lng',
             'received_at', 'service_state', 'cell_info_status', 'airplane_mode', 'sim_state',
             'environment', 'environment_source', 'bandwidth_khz', 'total_bandwidth_khz', 'carrier_count',
+            'neighbours',
         )[:limit])[::-1]
 
-        emergency = active_emergency() is not None
+        # A superadmin always sees positions; an admin in an emergency or a
+        # complaint window (2026-10-27).
+        emergency = active_emergency() is not None or request.user.role == 'superadmin'
         windows = [] if emergency else complaint_windows(canonical, found['credentials'])
         released = set()
         points = []
@@ -608,6 +615,10 @@ class SubscriberSignalView(APIView):
                 'band_label': radio_band.label(r['network_type'], r['band'], r['band_mhz']) or None,
                 'bandwidth_label': radio_band.bandwidth_label(
                     r['bandwidth_khz'], r['total_bandwidth_khz'], r['carrier_count']) or None,
+                # Neighbour cells heard (2026-10-27): the count and the
+                # strongest of the same technology; its site only where the
+                # position may be shown.
+                **neighbour_cells.point_fields(r['neighbours'], r['network_type'], with_site=show),
                 'trigger_reason': r['trigger_reason'],
                 'serving_site_id': r['serving_site_id'] or None, 'serving_sector': r['serving_sector'] or None,
                 'serving_dist_km': r['serving_dist_km'],
@@ -633,7 +644,7 @@ class SubscriberSignalView(APIView):
         shown_qs = qs
         if scope == 'newest' and rows and total > len(rows):
             shown_qs = qs.filter(ts__gte=rows[0]['ts'])
-        analytics = profile_analytics(ids, include_location=emergency, qs=shown_qs)
+        analytics = profile_analytics(ids, include_location=True, qs=shown_qs)
 
         site_ids = {p['serving_site_id'] for p in points if p['serving_site_id']}
         sites = {s['id']: {'name': s['name'] or None, 'lat': s['lat'], 'lng': s['lng']}
