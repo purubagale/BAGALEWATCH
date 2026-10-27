@@ -188,6 +188,7 @@ def profile_analytics(ids, include_location=False, qs=None):
         # Sectors served: with include_location; the count always.
         'sectors': by_sector['sectors'] if include_location else [],
         'sectors_count': len(by_sector['sectors']), 'sectors_unmatched': by_sector['unmatched'],
+        'sectors_calls_total': by_sector.get('calls_total', 0),
         'neighbours': heard if include_location else neighbour_cells.counts_only(heard),
         'limits': {'weak_dbm': WEAK_DBM, 'good_dbm': GOOD_DBM},
         # Cells and sites served: with include_location; the counts always.

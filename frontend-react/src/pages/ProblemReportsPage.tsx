@@ -43,6 +43,8 @@ const CAUSE_COLOR: Record<string, string> = {
   interference: '#f97316',
   stronger_neighbour: '#0d9488',
   no_dominant_cell: '#a16207',
+  call_fallback: '#7c3aed',
+  call_weak_end: '#be123c',
   busy_cell: '#eab308',
   lower_tech: '#0ea5e9',
   lower_tech_weak_4g: '#6366f1',
@@ -761,7 +763,8 @@ function LiveAround({ r }: { r: ProblemReport }) {
       <CardHead icon="📡" title="Live readings around this spot" sub="ask the phones sharing near the complaint" hue="green" />
       <p className="muted pdd-small" style={{ marginTop: 0 }}>
         Asks the phones that shared their signal near this spot in the last 24 hours, and are sharing now, for one fresh
-        reading each. Answers arrive within 15 minutes and do not say which phone sent them.
+        reading each. The phones show no notification: they take the reading quietly. Answers arrive within 15 minutes
+        and do not say which phone sent them.
       </p>
       <div className="pdd-live-bar">
         <label>Within <select value={radius} onChange={(e) => setRadius(Number(e.target.value))}>
@@ -887,6 +890,11 @@ function SubscriberAnalysis({ r, isSuper, profileLink }: { r: ProblemReport; isS
                 {ask.isPending ? 'Sending…' : 'Send request to the customer\'s phone'}
               </button>
             </div>
+            {phone.push_ready === false && (
+              <p className="pd-caution pdd-small">This phone has not sent its notification address to DT-WATCH yet, so no
+                notification will appear on it. The customer sees the request only when they open the app (Settings, Requests).
+                Opening the app while it can reach DT-WATCH sends the address.</p>
+            )}
             {ask.data && ask.data.push_sent === false && (
               <p className="muted pdd-small">The phone could not be reached right now; it will see the request the next time the
                 app checks.</p>

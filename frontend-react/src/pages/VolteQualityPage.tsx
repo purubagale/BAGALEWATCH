@@ -101,9 +101,9 @@ function CallsSection() {
                   <td>{OUTCOME_LABEL[c.outcome]}</td>
                   <td>{c.voice_networks.replace(/,/g, ' → ') || '-'}</td>
                   <td>{c.data_network_before || '-'}</td>
-                  <td>{c.cell_id != null ? `${c.network_type} ${c.cell_id}${c.pci != null ? ` / PCI ${c.pci}` : ''}` : <NotRecorded />}</td>
+                  <td>{c.cell_id != null ? <>{c.start_site && <b>{c.start_site} </b>}<span className="muted">{`${c.network_type} ${c.cell_id}${c.pci != null ? ` / PCI ${c.pci}` : ''}`}</span></> : <NotRecorded />}</td>
                   <td>{c.level_dbm != null ? `${c.level_dbm} dBm` : <NotRecorded />}</td>
-                  <td>{c.end_level_dbm != null ? `${c.end_level_dbm} dBm${c.end_network_type ? ` (${c.end_network_type})` : ''}` : <NotRecorded />}</td>
+                  <td>{c.end_level_dbm != null ? `${c.end_level_dbm} dBm${c.end_network_type ? ` (${c.end_network_type})` : ''}${c.end_site && c.end_site !== c.start_site ? ` · ${c.end_site}` : ''}` : <NotRecorded />}</td>
                 </tr>
               ))}
             </tbody>

@@ -1495,8 +1495,8 @@ repo, not on prod):
   scrolls to its route map.
 - **Committed and pushed 2026-10-27** (neighbours, CQI, scroll, app
   1.2.3): dtwatch `3f009a7`, mobile `04ea39f`. Prod needs migration 0147.
-- **After that push** (2026-10-27, built, NOT committed; app 1.2.4 not
-  run on a phone):
+- **After that push** (2026-10-27; committed and pushed as dtwatch
+  `281d607`, mobile `ae6ccff`; app 1.2.4 not run on a phone):
   - 3G level blank on prod (rows with band B1 and no RSCP; nothing on
     Explore's RSCP:3G tab): the cell list held no level and the overall
     signal reading was used only when there was no cell. SDK
@@ -1535,6 +1535,20 @@ repo, not on prod):
     the same day); admin only in an emergency or a complaint window
     (`open_positions` in `subscriber_profile.py`, `location_rule`
     'superadmin' in `problem_related.py`).
+- **Calls in analysis, push address** (2026-10-27, committed and pushed;
+  app 1.2.5 not run on a phone). `core/call_cells.py`: `name_calls` names
+  a call's start/end cell ("KTM856 J3", same matcher as readings) on VoLTE
+  Quality and the diagnosis Calls card; `sector_calls` adds Calls and "fell
+  back" to the phone sector tables (`_add_calls` in `sector_stats.py`, from
+  the same phones and time span); `call_findings` gives the problem check
+  `call_fallback` and `call_weak_end` from the customer's calls within 3 h
+  (categories call_drop, no_signal, other; `_customer_devices`); the old
+  "cannot be seen" finding stays when there are no such calls. Push: an
+  area request is silent on the phone by design. A trace request's
+  Accept/Reject needs `DeviceCredential.fcm_token`, which the app sent once
+  and lost when DT-WATCH was unreachable; app 1.2.5 sends it with a
+  retrying job (`FcmTokenUploadWorker`), and the complaint page warns when
+  the phone has no push address (`push_ready`).
     For admins the diagnosis page hides links to pages that plot the phone's
     route or change links (Live Samples, Collections, Telemetry Drive Test,
     Trace Requests, VoLTE, Registered/Rescue lists, "Find earlier

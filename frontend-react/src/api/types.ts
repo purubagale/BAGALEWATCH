@@ -2008,6 +2008,9 @@ export interface CallContextRow {
   end_level_dbm: number | null
   lat: number | null
   lng: number | null
+  // Site and sector of the start and end cell, e.g. "KTM856 J3" (2026-10-27).
+  start_site?: string | null
+  end_site?: string | null
 }
 
 export interface CallContextCell {
@@ -2903,6 +2906,8 @@ export interface ProblemLive {
     has_number: boolean; registered: boolean; can_request: boolean
     // True for a superadmin while an emergency is declared: no Accept needed.
     skips_accept: boolean
+    // The phone has sent its push address (2026-10-27); without it no notification reaches it.
+    push_ready?: boolean
     ttl_minutes: number[]; traces: ProblemLiveTrace[]
   }
 }
@@ -3283,10 +3288,13 @@ export interface SectorStat {
   // Phone readings inside a building against outdoors (2026-10-26); loss once 10 of each.
   indoor_readings?: number | null; outdoor_readings?: number | null
   indoor_level_avg?: number | null; outdoor_level_avg?: number | null; indoor_loss_db?: number | null
+  // Calls the phones started on this sector, and how many fell back to 2G/3G (2026-10-27).
+  calls?: number; calls_fallback?: number
 }
 
 export interface SectorBreakdownData {
   sectors: SectorStat[]; total: number; matched: number; unmatched: number; capped: boolean
+  calls_total?: number; calls_unplaced?: number
   // Phone readings only (2026-10-27): the other cells heard, one row per cell.
   neighbours?: NeighbourSummary
 }
@@ -3352,6 +3360,7 @@ export interface SubscriberAnalytics {
   sectors?: SectorStat[]
   sectors_count?: number
   sectors_unmatched?: number
+  sectors_calls_total?: number
   // Neighbour cells heard (2026-10-27): names in an emergency, counts always.
   neighbours?: NeighbourSummary
   // Location history (cells, sites) only in an emergency (2026-10-19); counts always.
@@ -3478,7 +3487,7 @@ export interface SubscriberProfile {
   speed_tests: { ts: string | null; device_id: string; bearer: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; jitter_ms: number | null; packet_loss_pct: number | null; network_type: string; rsrp_dbm: number | null }[]
   trace_speed_tests: { ts: string | null; trace_id: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; network_type: string }[]
   problem_reports: { id: number; category: string; status: string; happened_at: string | null; network_type: string; level_dbm: number | null; download_mbps: number | null; note: string; source: string; external_system: string; external_ref: string; cause: string }[]
-  calls: { by_outcome: Record<string, number>; latest: { started_at: string | null; duration_s: number | null; outcome: string; voice_networks: string; cell_id: number | null; level_dbm: number | null }[] }
+  calls: { by_outcome: Record<string, number>; latest: { started_at: string | null; duration_s: number | null; outcome: string; voice_networks: string; cell_id: number | null; level_dbm: number | null; end_level_dbm?: number | null; start_site?: string | null; end_site?: string | null }[] }
   volte: { ts: string | null; codec: string; mos_estimate: number | null; packet_loss_pct: number | null }[]
   site_photos: { id: number; site_id: string | null; status: string; taken_at: string | null }[]
   lookups: { tool: string; by: string | null; at: string | null; reference: string; found: boolean | null }[]

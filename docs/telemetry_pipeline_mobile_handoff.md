@@ -4,7 +4,7 @@
 
 **From:** Puru (RAN O&M, owner of the DT-WATCH server and web application)
 
-**Last updated:** 2026-10-27 (3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
+**Last updated:** 2026-10-27 (push address retried until accepted, 3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
 
 ## 1. Summary
 
@@ -451,7 +451,14 @@ The two push addresses are stored separately on purpose.
   sharing starts. Send an empty `fcm_token` when sharing stops; the server then
   deletes the row. A phone that is not sharing is never asked for a reading.
 - `PUT device/fcm-token/` with `{"fcm_token": "..."}` whenever Firebase rotates
-  the token of a registered phone.
+  the token of a registered phone, after registering, and on each app start.
+  Retry it until the server accepts it (2026-10-27): the reference app sent it
+  once, and a phone that could not reach DT-WATCH at that moment had no push
+  address, so no request notification could reach it. App 1.2.5 queues the
+  send as a background job with a network condition and backoff. A
+  `sample_request` shows nothing on the phone; only `trace_request` shows a
+  notification, so the app needs the notification permission (Android 13 and
+  later).
 
 A reading on request (Area Sample in the web application): staff pick an area;
 the server asks the phones that shared there in the last 24 hours and are

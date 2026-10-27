@@ -51,6 +51,8 @@ export default function SectorBreakdown({ data, siteLink, showDl = false, title 
   if (!data) return null
   // Indoor loss column (2026-10-26): only when some phone readings were tagged inside a building.
   const showIndoor = rows.some((r) => (r.indoor_readings ?? 0) > 0)
+  // Calls column (2026-10-27): only when the phones made calls in this span.
+  const showCalls = (data.calls_total ?? 0) > 0
   const maxShare = Math.max(1, ...rows.map((r) => r.readings))
   const shown = all ? rows : rows.slice(0, limitRows)
   const worst = [...rows].filter((r) => r.readings >= 10).sort((a, b) => pct(b.weak, b.readings) - pct(a.weak, a.readings))[0]
@@ -93,6 +95,7 @@ export default function SectorBreakdown({ data, siteLink, showDl = false, title 
                   <th title="Average CQI. For phone readings: the phone's own value, else estimated from SINR, else from RSRQ, as in the reading list">CQI</th>
                   {showDl && <th>Download</th>}
                   {showIndoor && <th title="Average level outdoors minus inside a building, from phone readings tagged by place; shown with at least 10 of each">Indoor loss</th>}
+                  {showCalls && <th title="Calls the phones started on this sector, and how many moved to 2G/3G during the call">Calls</th>}
                   <th>Distance</th>
                   {th('last', 'Last served')}
                 </tr>
@@ -126,6 +129,11 @@ export default function SectorBreakdown({ data, siteLink, showDl = false, title 
                     {showIndoor && (
                       <td className="secb-num" title={`Inside ${s.indoor_readings ?? 0} readings${s.indoor_level_avg != null ? `, ${s.indoor_level_avg} dBm` : ''} · outdoors ${s.outdoor_readings ?? 0}${s.outdoor_level_avg != null ? `, ${s.outdoor_level_avg} dBm` : ''}`}>
                         {s.indoor_loss_db != null ? <b>{s.indoor_loss_db} dB</b> : <span className="secb-muted">{s.indoor_readings ? 'too few' : '—'}</span>}
+                      </td>
+                    )}
+                    {showCalls && (
+                      <td className="secb-num">
+                        {s.calls ? <>{s.calls}{s.calls_fallback ? <b style={{ color: '#b91c1c' }}> · {s.calls_fallback} fell back</b> : null}</> : '—'}
                       </td>
                     )}
                     <td className="secb-num">{s.dist_km_avg != null ? `${s.dist_km_avg} km` : '—'}</td>

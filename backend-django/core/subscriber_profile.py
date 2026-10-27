@@ -34,6 +34,7 @@ from rest_framework.views import APIView
 
 from . import neighbour_cells, radio_band
 from .audit import log_audit_event
+from .call_cells import name_calls
 from .collection import NEPAL_TZ, decrypted_identity, msisdn_lookup_key
 from .cqi import sample_cqi_fields
 from .emergency import active_emergency
@@ -423,12 +424,15 @@ class SubscriberProfileView(APIView):
         } for p in ProblemReport.objects.filter(Q(device__in=credentials) | Q(msisdn__in=variants))
             .order_by('-happened_at')[:LIST_CAP]]
         call_qs = CallContextSample.objects.filter(device_id__in=ids)
+        latest_calls = list(call_qs.order_by('-started_at')[:20])
+        call_names = name_calls(latest_calls)   # "KTM856 J3" at start and end (2026-10-27)
         calls = {
             'by_outcome': dict(Counter(call_qs.values_list('outcome', flat=True))),
             'latest': [{
                 'started_at': _iso(c.started_at), 'duration_s': c.duration_s, 'outcome': c.outcome,
                 'voice_networks': c.voice_networks, 'cell_id': c.cell_id, 'level_dbm': c.level_dbm,
-            } for c in call_qs.order_by('-started_at')[:20]],
+                'end_level_dbm': c.end_level_dbm, 'start_site': n[0], 'end_site': n[1],
+            } for c, n in zip(latest_calls, call_names)],
         }
         volte = [{
             'ts': _iso(v.ts), 'codec': v.codec, 'mos_estimate': v.mos_estimate, 'packet_loss_pct': v.packet_loss_pct,

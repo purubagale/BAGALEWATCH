@@ -39,6 +39,7 @@ from .models import DriveTestSample, ProblemReport, Site, TelemetrySample
 from .problem_notify import queue_update, report_notify_info
 from .telemetry import TELEMETRY_MATCH_MAX_KM, _scope_by_operator
 from . import neighbour_cells
+from .call_cells import call_findings
 from .telemetry_level import sample_level
 from rest_framework.permissions import BasePermission
 
@@ -245,6 +246,22 @@ def _neighbour_findings(heard, site_name):
     return out
 
 
+def _customer_devices(report):
+    """Every phone id of the complainant: the reporting phone's readings id
+    and every phone tied to the number (same rule as the diagnosis dashboard)."""
+    from .rescue import _clean_msisdn
+    from .subscriber_profile import devices_of_number
+    ids = set()
+    device = report.device if report.device_id else None
+    if device is not None and getattr(device, 'sdk_device_hash', ''):
+        ids.add(device.sdk_device_hash)
+    msisdn = _clean_msisdn((device.msisdn if device is not None else None) or report.msisdn)
+    if msisdn:
+        found = devices_of_number(msisdn)
+        ids |= set(found['ids'])
+    return ids
+
+
 def _finding(kind, title, cause, action, evidence):
     return {'kind': kind, 'title': title, 'cause': cause, 'action': action, 'evidence': evidence}
 
@@ -368,10 +385,18 @@ def check_report(report, user):
             [f'4G {at_time["rsrp_4g_mean"]} dBm at the time against {before["rsrp_4g_mean"]} dBm in the week before'],
         ))
 
-    if report.category == 'call_drop':
+    # The customer's own calls around the problem time (2026-10-27,
+    # core/call_cells.py): a fallback to 2G/3G or a weak signal at the end.
+    call_found, calls_near = ([], 0)
+    if report.category in ('call_drop', 'no_signal', 'other'):
+        call_found, calls_near = call_findings(_customer_devices(report), report.happened_at, _finding)
+        findings.extend(call_found)
+    if report.category == 'call_drop' and not call_found:
         findings.append(_finding(
             'call_drop', 'Call drops cannot be seen in phone readings',
-            'Phone readings show the signal, not why a call ended.',
+            (f'The phone recorded {calls_near} call{"" if calls_near == 1 else "s"} around that time; none fell back '
+             'to 2G/3G or ended on a weak signal. ' if calls_near else '')
+            + 'Phone readings show the signal, not why a call ended.',
             f'Check the call drop counters of the serving cell of {site_name} for that hour.',
             [],
         ))
@@ -430,6 +455,10 @@ CUSTOMER_REPLY = {
                           'looking at how to improve it.',
     'worse_than_usual': 'Thank you for telling us. We found a change in the network near you and our engineers '
                         'are checking it.',
+    'call_fallback': 'Thank you for telling us. Your calls moved from 4G to an older network at your location; '
+                     'our engineers are checking the towers there.',
+    'call_weak_end': 'Thank you for telling us. The signal was weak where your calls ended; our engineers are '
+                     'looking at the coverage there.',
     'call_drop': 'Thank you for telling us. Our engineers are checking the call records of the tower serving '
                  'your area.',
     'no_data': 'Thank you for telling us. Our engineers will measure the network at your location.',
@@ -452,6 +481,8 @@ CAUSE_LABELS = {
     'lower_tech_weak_4g': 'Little 4G here',
     'worse_than_usual': 'Worse than usual',
     'call_drop': 'Call drops (needs KPI)',
+    'call_fallback': 'Calls fell back to 2G/3G',
+    'call_weak_end': 'Calls ended on a weak signal',
     'no_data': 'No measurements nearby',
     'no_fault_found': 'No fault found',
 }
