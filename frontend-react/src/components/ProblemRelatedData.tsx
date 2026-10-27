@@ -290,9 +290,10 @@ export function RelatedSiteAndArea({ r }: { r: ProblemReport }) {
 }
 
 const RULE_TEXT: Record<string, string> = {
-  emergency: 'An emergency is declared, so positions and serving sites are shown.',
+  emergency: 'An emergency is declared, so positions are shown.',
+  superadmin: 'Positions are shown to superadmins; admins see them only in an emergency.',
   complaint_windows: 'Positions are shown only for readings near the times of this number\'s complaints (Security page setting).',
-  hidden: 'Where the customer was is not shown: positions and the sites of each reading need a declared emergency.',
+  hidden: 'Exact positions are not shown: they need a declared emergency. Serving sites are shown.',
 }
 
 // Subscriber related analysis: every phone tied to the complaint's number.

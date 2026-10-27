@@ -207,10 +207,18 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
               🔒 {a.cells_count ?? 0} cells, {a.sectors_count ?? 0} sectors at {a.sites_count ?? 0} sites; shown only while an emergency is declared
             </span>
           </div>
+          {/* Neighbour cells (2026-10-27): counts only outside an emergency. */}
+          {a.neighbours && a.neighbours.with_neighbours > 0 && (
+            <div className="sp-muted spc-foot">
+              Other cells heard: {a.neighbours.cells_count ?? 0} cells in {a.neighbours.with_neighbours} readings
+              {a.neighbours.avg_cells_heard != null ? `, ${a.neighbours.avg_cells_heard} per reading` : ''}
+              {a.neighbours.same_tech_readings ? `; a cell ${a.neighbours.stronger_db} dB or more stronger than the serving one in ${a.neighbours.stronger_readings_pct ?? 0}% of readings, no dominant cell in ${a.neighbours.crowded_readings_pct ?? 0}%` : ''}.
+            </div>
+          )}
         </section>
       ) : (
       <Section id="sp-cells" icon="🗼" title="Location history: sites, sectors and cells"
-        note={`Serving cells${a.cells_capped ? ', busiest 60' : ''} · emergency declared${scope ? ` · ${scope}` : ''}`}>
+        note={`Serving cells${a.cells_capped ? ', busiest 60' : ''}${scope ? ` · ${scope}` : ''}`}>
         <div className="spc-sites">
           <div>
             <div className="spc-mini-title">Readings per site <span className="sp-muted">· colour: share of weak readings</span></div>
@@ -248,6 +256,7 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
             sectors: a.sectors ?? [], total,
             matched: (a.sectors ?? []).reduce((x, r) => x + r.readings, 0),
             unmatched: a.sectors_unmatched ?? 0, capped: (a.sectors ?? []).length >= 80,
+            neighbours: a.neighbours,
           }} />
         </div>
         {unknownCells.length > 0 && (

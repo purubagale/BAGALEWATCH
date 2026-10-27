@@ -81,3 +81,40 @@ class StoredNeighbourTests(TestCase):
         self.assertEqual((row['cell'], row['heard'], row['stronger'], row['same_tech']), ('PCI 65', 2, 1, 2))
         self.assertEqual(row['site_name'], 'CDR002_TEST')
         self.assertEqual(row['mostly_beside'], 'CDR001 J3')
+
+
+class SharesAndFindingsTests(TestCase):
+    def setUp(self):
+        site = Site.objects.create(id='CDR001', name='CDR001_TEST', lat=27.70, lng=85.30)
+        Sector.objects.create(site=site, cell_name='CDR001_J3', sector='J3', pci=301)
+
+    def _reading(self, serving, levels):
+        TelemetrySample.objects.create(
+            device_id='d', ts=timezone.now(), received_at=timezone.now(), lat=27.701, lng=85.301,
+            network_type='LTE', pci=301, rsrp_dbm=serving, serving_site_id='CDR001', serving_sector='J3',
+            neighbours=[{'net': 'LTE', 'pci': 60 + i, 'rsrp': v} for i, v in enumerate(levels)])
+
+    def test_stronger_and_crowded_shares(self):
+        self._reading(-100, [-95, -99, -102])   # one stronger, three within 5 dB: crowded
+        self._reading(-80, [-100])              # neither
+        s = neighbour_cells.session_summary(TelemetrySample.objects.all())
+        self.assertEqual((s['same_tech_readings'], s['stronger_readings'], s['crowded_readings']), (2, 1, 1))
+        self.assertEqual(s['avg_cells_heard'], 2.0)
+        hidden = neighbour_cells.counts_only(s)
+        self.assertEqual((hidden['cells'], hidden['names_hidden'], hidden['stronger_readings']), ([], True, 1))
+
+    def test_problem_findings(self):
+        from .problem_report import _neighbour_findings
+        for _ in range(6):
+            self._reading(-100, [-95, -99, -102])
+        kinds = [f['kind'] for f in _neighbour_findings(
+            neighbour_cells.session_summary(TelemetrySample.objects.all()), 'CDR001')]
+        self.assertEqual(kinds, ['stronger_neighbour', 'no_dominant_cell'])
+        self.assertEqual(_neighbour_findings({'same_tech_readings': 2, 'cells': []}, 'CDR001'), [])
+
+    def test_signal_point_fields(self):
+        f = neighbour_cells.point_fields([{'net': 'LTE', 'pci': 95, 'rsrp': -88, 'site': 'KTM361', 'sector': 'J20'},
+                                          {'net': 'GSM', 'bcch': 42, 'rssi': -60}], 'LTE')
+        self.assertEqual((f['neighbour_count'], f['neighbour_best']), (2, 'PCI 95 · -88 dBm'))
+        self.assertIn('KTM361 J20', neighbour_cells.point_fields(
+            [{'net': 'LTE', 'pci': 95, 'rsrp': -88, 'site': 'KTM361', 'sector': 'J20'}], 'LTE', with_site=True)['neighbour_best'])

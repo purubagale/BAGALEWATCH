@@ -2804,6 +2804,8 @@ export interface ProblemCheck {
   }
   serving: { site_id: string; name: string; cell_name: string; km: number | null; matched_by: string } | null
   nearest_sites: { site_id: string; name: string; km: number }[]
+  // Neighbour cells phones heard around the spot (2026-10-27).
+  neighbours?: NeighbourSummary
   findings: ProblemFinding[]
   customer_reply: string
 }
@@ -2878,7 +2880,7 @@ export interface RelatedComplaints {
 export interface ProblemRelated {
   range: { kind: string; start: string | null; end: string | null; hours: number | null; hours_options: number[]; radii_km: number[] }
   customer: null | {
-    phones: number; withdrawn: number; location_rule: 'emergency' | 'complaint_windows' | 'hidden'
+    phones: number; withdrawn: number; location_rule: 'emergency' | 'superadmin' | 'complaint_windows' | 'hidden'
     telemetry: RelatedTelemetry | null
     speed_tests: { count: number; download_mean: number | null; upload_mean: number | null; ping_mean: number | null
       recent: { ts: string; network_type: string; bearer: string; download_mbps: number | null; upload_mbps: number | null
@@ -3245,6 +3247,11 @@ export interface SubscriberSignalPoint {
   tac: number | null
   band_label: string | null
   bandwidth_label?: string | null
+  // Neighbour cells heard (2026-10-27): how many, and the strongest of the
+  // same technology ("PCI 95 · -88 dBm", its site only where the position shows).
+  neighbour_count?: number
+  neighbour_best_dbm?: number | null
+  neighbour_best?: string | null
   trigger_reason: string
   serving_site_id: string | null
   serving_sector: string | null
@@ -3297,6 +3304,13 @@ export interface NeighbourSummaryRow {
 export interface NeighbourSummary {
   cells: NeighbourSummaryRow[]; readings: number; with_neighbours: number
   capped_readings: boolean; capped_rows: boolean; stronger_db: number
+  // Per reading, against the serving cell of the same technology (2026-10-27).
+  crowd_db?: number; crowd_cells?: number
+  cells_count?: number; avg_cells_heard?: number | null; same_tech_readings?: number
+  stronger_readings?: number; stronger_readings_pct?: number | null
+  crowded_readings?: number; crowded_readings_pct?: number | null
+  // Diagnosis dashboard outside an emergency: counts only, no cells or sites.
+  names_hidden?: boolean
 }
 
 export type ReadingStatus = 'measured' | 'no_coverage' | 'radio_off' | 'not_measured'
@@ -3338,6 +3352,8 @@ export interface SubscriberAnalytics {
   sectors?: SectorStat[]
   sectors_count?: number
   sectors_unmatched?: number
+  // Neighbour cells heard (2026-10-27): names in an emergency, counts always.
+  neighbours?: NeighbourSummary
   // Location history (cells, sites) only in an emergency (2026-10-19); counts always.
   location_shown?: boolean
   cells_count?: number
@@ -3414,7 +3430,7 @@ export interface SubscriberProfile {
     position_withheld?: boolean
     earlier_position?: { ts: string | null; lat: number; lng: number; gps_accuracy_m: number | null }
     // Why a position is shown (2026-10-16): an emergency, or the customer's own complaint.
-    position_basis?: 'emergency' | 'complaint' | null
+    position_basis?: 'emergency' | 'superadmin' | 'complaint' | null
     complaint_report_id?: number | null
     network_type?: string
     band_mhz?: number | null

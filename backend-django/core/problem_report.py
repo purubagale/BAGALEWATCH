@@ -38,6 +38,7 @@ from .dt_serving_cell import _candidate_sectors, choose_sector, sectors_by_cell_
 from .models import DriveTestSample, ProblemReport, Site, TelemetrySample
 from .problem_notify import queue_update, report_notify_info
 from .telemetry import TELEMETRY_MATCH_MAX_KM, _scope_by_operator
+from . import neighbour_cells
 from .telemetry_level import sample_level
 from rest_framework.permissions import BasePermission
 
@@ -196,6 +197,54 @@ def _outdoor_4g_mean(report):
     return round(agg['avg'], 1) if agg['n'] and agg['n'] >= MIN_READINGS else None
 
 
+NEIGHBOUR_SHARE_PCT = 30            # share of readings before a neighbour finding is made
+
+
+def _neighbours_near(report, user):
+    """The neighbour cells phones heard within RADIUS_M, from BASELINE_DAYS
+    before the problem to AT_TIME_HOURS after (2026-10-27,
+    core/neighbour_cells.py). Only readings from app 1.2.3 on carry them."""
+    point = Point(report.lng, report.lat, srid=4326)
+    start = report.happened_at - timedelta(days=BASELINE_DAYS)
+    qs = TelemetrySample.objects.filter(
+        received_at__gte=start, ts__gte=start, ts__lte=report.happened_at + timedelta(hours=AT_TIME_HOURS),
+        location__dwithin=(point, D(m=RADIUS_M)),
+    )
+    return neighbour_cells.session_summary(_scope_by_operator(qs, user) if user is not None else qs)
+
+
+def _neighbour_findings(heard, site_name):
+    """A stronger cell the phones did not move to, and no dominant cell."""
+    out = []
+    if (heard.get('same_tech_readings') or 0) < MIN_READINGS:
+        return out
+    stronger = [c for c in heard['cells'] if c['same_tech'] >= MIN_READINGS
+                and (c['stronger_pct'] or 0) >= NEIGHBOUR_SHARE_PCT]
+    if stronger:
+        c = max(stronger, key=lambda c: c['stronger_pct'])
+        where = f"{c['site_id']}{' ' + c['sector'] if c['sector'] else ''}" if c['site_id'] else 'an unplaced cell'
+        beside = c['mostly_beside'] or site_name
+        out.append(_finding(
+            'stronger_neighbour', 'A stronger cell was not used',
+            f"Phones here often heard {c['tech']} {c['cell']} of {where} clearly stronger than the cell they were on, "
+            'so the handover to it comes late or the neighbour relation is missing.',
+            f'Check the neighbour relation and handover settings between {beside} and {where}.',
+            [f"{c['cell']} ({where}) {heard['stronger_db']} dB or more above the serving cell in "
+             f"{c['stronger_pct']}% of {c['same_tech']} readings", f"best {c['level_best']} dBm, average {c['level_avg']} dBm"],
+        ))
+    if (heard.get('crowded_readings_pct') or 0) >= NEIGHBOUR_SHARE_PCT:
+        names = [f"{c['cell']}{' (' + c['site_id'] + ')' if c['site_id'] else ''}" for c in heard['cells'][:4]]
+        out.append(_finding(
+            'no_dominant_cell', 'No dominant cell',
+            f"Phones here hear {heard['crowd_cells']} or more other cells within {heard['crowd_db']} dB of the one "
+            'they use, so no cell dominates and they interfere with each other.',
+            f'Make one cell dominant here: review tilt and power of the cells heard ({", ".join(names)}).',
+            [f"{heard['crowded_readings_pct']}% of {heard['same_tech_readings']} readings",
+             f"{heard['avg_cells_heard']} cells heard per reading on average"],
+        ))
+    return out
+
+
 def _finding(kind, title, cause, action, evidence):
     return {'kind': kind, 'title': title, 'cause': cause, 'action': action, 'evidence': evidence}
 
@@ -251,6 +300,11 @@ def check_report(report, user):
             'is indoors, an indoor solution may be needed. Plan a drive test if there is none recent.',
             [shown],
         ))
+
+    # Neighbour cells heard by phones around (2026-10-27): measured, so ahead
+    # of the quality-based interference guess below.
+    heard = _neighbours_near(report, user)
+    findings.extend(_neighbour_findings(heard, site_name))
 
     if good_here and ((report.rsrq_db is not None and report.rsrq_db <= BAD_RSRQ_DB) or
                       (report.sinr_db is not None and report.sinr_db < BAD_SINR_DB)):
@@ -349,6 +403,7 @@ def check_report(report, user):
         'drive_tests': dt,
         'serving': serving,
         'nearest_sites': nearest,
+        'neighbours': heard,
         'findings': findings,
         'customer_reply': CUSTOMER_REPLY.get(findings[0]['kind'], CUSTOMER_REPLY['no_fault_found']),
     }
@@ -363,6 +418,10 @@ CUSTOMER_REPLY = {
                             'calling, or ask NTC about an indoor solution.',
     'interference': 'Thank you for telling us. We found a signal quality problem at your location and our '
                     'engineers are adjusting the nearby towers.',
+    'stronger_neighbour': 'Thank you for telling us. Phones at your location stay on a weaker tower when a '
+                          'stronger one is available; our engineers are adjusting how phones move between them.',
+    'no_dominant_cell': 'Thank you for telling us. Several towers overlap at your location and disturb each other; '
+                        'our engineers are adjusting them.',
     'busy_cell': 'Thank you for telling us. The network at your location is busy at this time of day; we are '
                  'working to add capacity.',
     'lower_tech': 'Thank you for telling us. 4G is available at your location. Please set your phone\'s network '
@@ -386,6 +445,8 @@ CAUSE_LABELS = {
     'weak_coverage': 'Weak signal',
     'building_penetration': 'Weak indoors, good outside',
     'interference': 'Good signal, poor quality',
+    'stronger_neighbour': 'Stronger cell not used',
+    'no_dominant_cell': 'No dominant cell',
     'busy_cell': 'Good signal, slow (busy cell)',
     'lower_tech': 'Phone on 2G/3G where 4G is usable',
     'lower_tech_weak_4g': 'Little 4G here',
@@ -457,6 +518,13 @@ def classify_pending(seconds, since=None):
     return done
 
 
+def is_staff(user):
+    """NTC staff (admin and superadmin): on the Problem Dashboard and the
+    diagnosis dashboard they see every subscriber detail except positions
+    (decided by the user on 2026-10-27)."""
+    return getattr(user, 'role', '') in ('admin', 'superadmin')
+
+
 def _unrestricted(user):
     return not getattr(user, 'operator_mncs', None)
 
@@ -524,10 +592,11 @@ def _row(report, user, with_check=False):
         'reference': f'{report.external_system} {report.external_ref}' if report.external_ref else f'PR-{report.pk}',
         'has_number': bool((report.device_id and report.device.msisdn) or report.msisdn),
     }
-    # The list shows the number to a superadmin only. One complaint opened on
-    # the Problem Dashboard shows it to everyone who may use the dashboard,
-    # to deal with that complaint (2026-10-24); the detail view logs it.
-    if user.role == 'superadmin' or with_check:
+    # The list shows the number to NTC staff (admin and superadmin; widened
+    # from superadmin by the user on 2026-10-27). One complaint opened on the
+    # Problem Dashboard shows it to everyone who may use the dashboard, to
+    # deal with that complaint (2026-10-24); the detail view logs it.
+    if is_staff(user) or with_check:
         out['phone_number'] = (report.device.msisdn if report.device_id else None) or report.msisdn or None
     if with_check:
         out['notify'] = report_notify_info(report)
@@ -604,7 +673,7 @@ def _search_q(q, user):
     digits = q.upper().removeprefix('PR-').removeprefix('PR').strip()
     if digits.isdigit() and len(digits) <= 9:
         cond |= Q(pk=int(digits))
-    canonical = _clean_msisdn(q) if user.role == 'superadmin' else None
+    canonical = _clean_msisdn(q) if is_staff(user) else None
     if canonical:
         variants = number_variants(canonical)
         cond |= Q(msisdn__in=variants) | Q(device__msisdn__in=variants)

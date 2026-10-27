@@ -4,7 +4,7 @@
 
 **From:** Puru (RAN O&M, owner of the DT-WATCH server and web application)
 
-**Last updated:** 2026-10-27 (neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
+**Last updated:** 2026-10-27 (3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
 
 ## 1. Summary
 
@@ -184,6 +184,14 @@ coverage share. When the cell list is empty, fill the level and `network_type`
 from `getSignalStrength()` (no location needed), as the reference SDK does.
 Older readings without these fields are judged by their position: no network
 and no GPS position means the phone withheld both, so "not measured".
+
+**3G and 2G level with a cell (2026-10-27).** On the live server, 3G readings
+arrived with a cell and a band but no `rscp_dbm`: the phone's cell list held
+no level, or the no-value code -24, and the overall reading was only used when
+there was no cell at all. Fill a blank serving 3G level (and Ec/Io) or 2G
+level from `getSignalStrength()` of the same SIM, as is already done for 4G
+SINR and CQI; a value from the cell list wins. The reference SDK does this
+from app 1.2.4.
 
 **Band.** Send `arfcn` on every reading; it is available from Android 7. The
 server works out the band from it when `band` is missing, and names it in MHz

@@ -21,6 +21,12 @@ export default function NeighbourBreakdown({ data, siteLink, limitRows = 15 }: {
   const rows = data.cells
   const shown = all ? rows : rows.slice(0, limitRows)
   const flagged = rows.filter((r) => r.same_tech >= STRONG_MIN && (r.stronger_pct ?? 0) >= STRONG_SHARE)
+  // Per reading, against the serving cell of the same technology (2026-10-27).
+  const shares = data.same_tech_readings ? [
+    data.avg_cells_heard != null ? `${data.avg_cells_heard} cells heard per reading` : '',
+    `a stronger cell in ${data.stronger_readings_pct ?? 0}% of readings`,
+    `no dominant cell in ${data.crowded_readings_pct ?? 0}%`,
+  ].filter(Boolean).join(' · ') : ''
 
   return (
     <div className="secb" style={{ marginTop: 12 }}>
@@ -28,10 +34,19 @@ export default function NeighbourBreakdown({ data, siteLink, limitRows = 15 }: {
         <b>Neighbour cells heard</b>
         <span className="secb-muted">
           {data.with_neighbours.toLocaleString()} of {data.readings.toLocaleString()} readings carry neighbours
-          {data.capped_readings ? ' (newest shown)' : ''} · {rows.length} cell{rows.length === 1 ? '' : 's'}{data.capped_rows ? ' (most heard shown)' : ''}
+          {data.capped_readings ? ' (newest shown)' : ''} · {(data.cells_count ?? rows.length)} cell{(data.cells_count ?? rows.length) === 1 ? '' : 's'}{data.capped_rows ? ' (most heard shown)' : ''}
         </span>
       </div>
-      {rows.length === 0 ? (
+      {shares && (
+        <div className="secb-muted secb-small" title={`Stronger: ${data.stronger_db} dB or more above the serving cell. No dominant cell: ${data.crowd_cells ?? 3} or more other cells within ${data.crowd_db ?? 5} dB of it.`}>
+          {shares}
+        </div>
+      )}
+      {data.names_hidden ? (
+        <div className="secb-muted">
+          Which cells and sites were heard is location history: it is shown while an emergency is declared.
+        </div>
+      ) : rows.length === 0 ? (
         <div className="secb-muted">
           No neighbour cells were recorded. Phones send them from app version 1.2.3; earlier readings have none.
         </div>

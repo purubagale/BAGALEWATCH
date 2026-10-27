@@ -1494,7 +1494,53 @@ repo, not on prod):
   else RSRQ), as the reading list does. Clicking a Collections session
   scrolls to its route map.
 - **Committed and pushed 2026-10-27** (neighbours, CQI, scroll, app
-  1.2.3): see the git log of both repos. Prod needs migration 0147.
+  1.2.3): dtwatch `3f009a7`, mobile `04ea39f`. Prod needs migration 0147.
+- **After that push** (2026-10-27, built, NOT committed; app 1.2.4 not
+  run on a phone):
+  - 3G level blank on prod (rows with band B1 and no RSCP; nothing on
+    Explore's RSCP:3G tab): the cell list held no level and the overall
+    signal reading was used only when there was no cell. SDK
+    `withServingLevel` fills a blank 3G/2G level (and Ec/Io) from
+    `getSignalStrength()`, for samples and the Cells tab. Unverified on a
+    phone; if 1.2.4 readings still lack it, the modem gives no 3G level
+    at all.
+  - Explore: Sessions/Recent/Change work on team drive tests only; the
+    note says so with the count, phone dots are hidden in Recent and
+    Change, and Change says it needs two drive tests.
+  - Neighbours in the Problem Dashboard: `_neighbours_near` (500 m, 7 days
+    before to 1 h after) and two causes ahead of the interference guess:
+    `stronger_neighbour` (a cell 3 dB above serving in 30%+ of 5+
+    readings) and `no_dominant_cell` (3+ cells within 5 dB in 30%+);
+    labels, replies, colours; "Other cells phones heard here" table in
+    Likely cause (`ProblemReportsPage.tsx`, mixed with AI lines: stage by
+    hunk, the new block sits beside `ProblemAiDraft`). No migration
+    (`cause` is free text). Existing reports get them on their next check.
+  - Diagnosis dashboard: `analytics.neighbours` (full in an emergency,
+    `counts_only` otherwise: cells heard per reading, stronger share, no
+    dominant share), shown under Sectors served or as a line on the locked
+    card; signal hover "Other cells heard: N, strongest PCI x · -88 dBm"
+    (site only where the position shows, `point_fields`).
+  - **Staff see everything but positions** (the user's decision,
+    2026-10-27, for the Problem Dashboard and the diagnosis dashboard
+    only; it replaces the 2026-10-19 "location history in an emergency"
+    rule). Admin and superadmin: the diagnosis dashboard
+    (`SubscriberProfileView`, `SubscriberSignalView`,
+    `SubscriberProvisioningView` now `IsAdminOrSuperadmin`; menu `/s7p2nd`
+    access `admin`, migration 0148, AI migrations now 0149-0154, local
+    history renamed and menu row updated by hand), cells/sites/sectors/
+    neighbours and the OSS "cells visited" always; Problem Dashboard list
+    number and number search (`is_staff` in `problem_report.py`), link to
+    the diagnosis dashboard, Related data's sites served always. Exact
+    positions: superadmin always (no emergency needed, the user's follow-up
+    the same day); admin only in an emergency or a complaint window
+    (`open_positions` in `subscriber_profile.py`, `location_rule`
+    'superadmin' in `problem_related.py`).
+    For admins the diagnosis page hides links to pages that plot the phone's
+    route or change links (Live Samples, Collections, Telemetry Drive Test,
+    Trace Requests, VoLTE, Registered/Rescue lists, "Find earlier
+    readings"); those stay superadmin. Checked in a rolled-back transaction
+    with a throwaway admin: profile 200, sites shown, 0 of 81 points with a
+    position, problem list number shown, viewer 403. Not seen in a browser.
 
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an

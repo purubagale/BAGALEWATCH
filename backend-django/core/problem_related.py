@@ -17,10 +17,9 @@ Three scopes, each from phone telemetry and drive tests:
   customer  the readings of every phone tied to the complaint's number
             (same devices and rules as the Subscriber Network Diagnosis
             Dashboard), its speed tests, calls, sessions and other complaints.
-            Where the customer was follows the existing rules: the sites of
-            each reading and exact positions only while an emergency is
-            declared, or inside a complaint window when that switch is on;
-            the newest reading's serving site always.
+            Sites served are always shown (2026-10-27: only the position is
+            withheld); exact positions only while an emergency is declared,
+            or inside a complaint window when that switch is on.
   site      the readings the complaint's site served (all phones, counts and
             averages only), its drive tests and its other complaints.
   area      phone and drive-test readings within the radius of the spot,
@@ -294,7 +293,10 @@ def _customer(report, kind, start, end, user):
         return None
     found = devices_of_number(msisdn)
     ids = [i for i in found['ids'] if i not in found['withdrawn']]
-    emergency = active_emergency() is not None
+    # A superadmin always sees positions; others in an emergency or a
+    # complaint window (2026-10-27).
+    declared = active_emergency() is not None
+    emergency = declared or getattr(user, 'role', '') == 'superadmin'
     windows = complaint_windows(msisdn, found['credentials'])
 
     def positions(ts):
@@ -303,7 +305,7 @@ def _customer(report, kind, start, end, user):
     tele = None
     if ids:
         tele = _telemetry(_tele_range(TelemetrySample.objects.filter(device_id__in=ids), start, end), kind,
-                          show_sites=emergency, positions=positions)
+                          show_sites=True, positions=positions)
     speed = TelemetrySpeedResult.objects.filter(device_id__in=ids)
     calls = CallContextSample.objects.filter(device_id__in=ids)
     sessions = CollectionSession.objects.filter(device_hash__in=ids)
@@ -319,7 +321,8 @@ def _customer(report, kind, start, end, user):
     return {
         'phones': len(ids),
         'withdrawn': len(found['withdrawn']),
-        'location_rule': 'emergency' if emergency else ('complaint_windows' if windows else 'hidden'),
+        'location_rule': 'emergency' if declared else 'superadmin' if emergency else (
+            'complaint_windows' if windows else 'hidden'),
         'telemetry': tele,
         'speed_tests': {
             'count': speed_total,

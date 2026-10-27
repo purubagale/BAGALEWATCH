@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 MAX_STORED = 8
 STRONGER_DB = 3          # a neighbour this much above the serving cell counts as "stronger"
+CROWD_DB = 5             # neighbours within this of the serving cell (or above) compete with it
+CROWD_CELLS = 3          # this many competing neighbours: no dominant cell (pilot pollution)
 SUMMARY_MAX_READINGS = 50_000
 SUMMARY_MAX_ROWS = 60
 
@@ -125,6 +127,22 @@ def level(cell):
     return cell.get(_LEVEL_KEY.get(cell.get('net'), 'rsrp'))
 
 
+def point_fields(neighbours, network_type, with_site=False):
+    """For one reading on a chart: how many cells were heard and the
+    strongest of the serving technology ('PCI 95 · -88 dBm', with its site
+    when `with_site`)."""
+    cells = neighbours or []
+    same = [c for c in cells if c.get('net') == network_type and level(c) is not None]
+    best = max(same, key=level) if same else None
+    text = None
+    if best is not None:
+        text = f'{label(best)} · {level(best)} dBm'
+        if with_site and best.get('site'):
+            text += f" ({best['site']}{' ' + best['sector'] if best.get('sector') else ''})"
+    return {'neighbour_count': len(cells), 'neighbour_best_dbm': level(best) if best else None,
+            'neighbour_best': text}
+
+
 def fields(neighbours):
     """The keys every reading list returns."""
     cells = neighbours or []
@@ -141,8 +159,17 @@ def session_summary(qs):
                      'neighbours')[:SUMMARY_MAX_READINGS]
     )
     agg = {}
+    # Per reading: cells heard, and against the serving cell of the same
+    # technology whether any was clearly stronger and how many competed.
+    heard_total = same_tech_readings = any_stronger = crowded = 0
     for net, rsrp, rscp, rssi, srv_site, srv_sector, cells in rows:
         serving_level = {'LTE': rsrp, 'NR': rsrp, 'UMTS': rscp, 'GSM': rssi}.get(net)
+        heard_total += len(cells or ())
+        same = [level(c) for c in cells or () if c.get('net') == net and level(c) is not None]
+        if serving_level is not None and same:
+            same_tech_readings += 1
+            any_stronger += max(same) >= serving_level + STRONGER_DB
+            crowded += sum(1 for v in same if v >= serving_level - CROWD_DB) >= CROWD_CELLS
         for cell in cells or ():
             lvl = level(cell)
             if lvl is None or cell.get('net') not in _NETS:
@@ -186,5 +213,24 @@ def session_summary(qs):
     return {
         'cells': out, 'readings': total, 'with_neighbours': len(rows),
         'capped_readings': len(rows) >= SUMMARY_MAX_READINGS, 'capped_rows': len(agg) > SUMMARY_MAX_ROWS,
-        'stronger_db': STRONGER_DB,
+        'stronger_db': STRONGER_DB, 'crowd_db': CROWD_DB, 'crowd_cells': CROWD_CELLS,
+        **_shares(len(rows), heard_total, same_tech_readings, any_stronger, crowded, len(agg)),
     }
+
+
+def _shares(with_neighbours, heard_total, same_tech, any_stronger, crowded, cells):
+    pct = lambda a: round(100.0 * a / same_tech, 1) if same_tech else None  # noqa: E731
+    return {
+        'cells_count': cells,
+        'avg_cells_heard': round(heard_total / with_neighbours, 1) if with_neighbours else None,
+        'same_tech_readings': same_tech,
+        'stronger_readings': any_stronger, 'stronger_readings_pct': pct(any_stronger),
+        'crowded_readings': crowded, 'crowded_readings_pct': pct(crowded),
+    }
+
+
+def counts_only(summary):
+    """The summary without any cell, site or sector: for pages where which
+    sites reached a person is location history (the diagnosis dashboard
+    outside an emergency)."""
+    return {k: v for k, v in summary.items() if k != 'cells'} | {'cells': [], 'names_hidden': True}

@@ -113,7 +113,9 @@ function details(p: SubscriberSignalPoint, siteName: string | null, hiddenWhy: s
     measured
       ? `${p.network_type}${p.band_label ? ` ${p.band_label}` : ''}${p.bandwidth_label ? `, ${p.bandwidth_label}` : ''} · ${level.name} ${p.level_dbm ?? '—'} dBm`
       : `${STATUS_TEXT[p.status as string] ?? 'No network'}${p.status_reason ? ` (${REASON_TEXT[p.status_reason] ?? p.status_reason.replace(/_/g, ' ')})` : ''}`,
-    quality, cell, site, pos, environmentText(p), p.trigger_reason ? `Taken: ${p.trigger_reason.replace(/_/g, ' ')}` : '',
+    quality, cell, site,
+    p.neighbour_count ? `Other cells heard: ${p.neighbour_count}${p.neighbour_best ? `, strongest ${p.neighbour_best}` : ''}` : '',
+    pos, environmentText(p), p.trigger_reason ? `Taken: ${p.trigger_reason.replace(/_/g, ' ')}` : '',
     p.delay_s != null && p.delay_s > 600 ? `Reached the server ${delayText(p.delay_s)} later` : '',
   ].filter(Boolean)
 }
@@ -415,8 +417,8 @@ export default function ProfileSignalHistory({ msisdn, reason, total, emergency,
             <div className="sp-muted sp-sh-mapnote">
               {mapDots.length
                 ? `Positions of ${sel ? 'the picked' : 'these'} readings${step > 1 ? ` (every ${step}th)` : ''}` +
-                  (data.positions_shown ? ' (emergency declared).' : ` near the customer's problem report (${withPos.length} of ${picked.length}).`)
-                : `Serving sites of ${sel ? 'the picked' : 'these'} readings. Positions show only in an emergency${windows.length ? " or near the customer's problem report (shaded)" : ''}.`}
+                  (data.positions_shown ? '.' : ` near the customer's problem report (${withPos.length} of ${picked.length}).`)
+                : `Serving sites of ${sel ? 'the picked' : 'these'} readings. Positions show to admins only in an emergency${windows.length ? " or near the customer's problem report (shaded)" : ''}.`}
               {sel && <> {' '}<button type="button" className="sp-linkbtn" onClick={() => setSel(null)}>Show all again</button></>}
             </div>
             {typeof aside === 'function'

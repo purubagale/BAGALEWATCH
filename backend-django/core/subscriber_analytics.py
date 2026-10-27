@@ -22,6 +22,7 @@ from django.db.models.functions import Cast, ExtractHour, Floor, TruncDate
 from . import radio_band
 from .models import Site, TelemetrySample
 from .problem_report import GOOD_DBM, WEAK_DBM
+from . import neighbour_cells
 from .sector_stats import telemetry_sectors
 from .telemetry_status import status_breakdown
 
@@ -62,10 +63,10 @@ def _round(v, digits=1):
 def profile_analytics(ids, include_location=False, qs=None):
     """The analysis block of the profile for these device ids.
 
-    The cells and sites served are the customer's location history, so
-    (decided by the user on 2026-10-19) they are given only with
-    `include_location`, i.e. while an emergency is declared; otherwise only
-    their counts are. `qs` narrows it to the readings the signal history
+    The cells, sites and neighbour cells come with `include_location`; the
+    diagnosis dashboard always passes it since 2026-10-27 (the user's
+    decision: NTC staff see everything except the subscriber's position).
+    Without it only their counts are given. `qs` narrows it to the readings the signal history
     shows (same range, session and technology; 2026-10-19)."""
     if qs is None:
         qs = TelemetrySample.objects.filter(device_id__in=ids)
@@ -172,6 +173,9 @@ def profile_analytics(ids, include_location=False, qs=None):
 
     # ── Per serving sector (2026-10-19, core/sector_stats.py) ─────────────
     by_sector = telemetry_sectors(qs)
+    # Neighbour cells heard (2026-10-27), with names under the same switch as
+    # the sectors; the counts always.
+    heard = neighbour_cells.session_summary(qs)
 
     return {
         'networks': networks, 'daily': daily, 'hours': hours, 'histograms': histograms, 'bands': bands,
@@ -181,11 +185,12 @@ def profile_analytics(ids, include_location=False, qs=None):
         # Outdoors / indoors / in a vehicle (2026-10-26); '' = not tagged.
         'environments': {(r['environment'] or ''): r['n'] for r in
                          qs.values('environment').annotate(n=Count('id')).order_by()},
-        # Sectors served are location history too: emergency only; the count always.
+        # Sectors served: with include_location; the count always.
         'sectors': by_sector['sectors'] if include_location else [],
         'sectors_count': len(by_sector['sectors']), 'sectors_unmatched': by_sector['unmatched'],
+        'neighbours': heard if include_location else neighbour_cells.counts_only(heard),
         'limits': {'weak_dbm': WEAK_DBM, 'good_dbm': GOOD_DBM},
-        # Location history: in an emergency only; the counts always.
+        # Cells and sites served: with include_location; the counts always.
         'location_shown': include_location,
         'cells': cells if include_location else [],
         'sites': sites if include_location else [],
