@@ -45,7 +45,41 @@ object FcmToken {
     fun uploadIfRegistered(context: Context, token: String) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(KEY_REGISTERED, false)) return
-        Thread { runCatching { DeviceApi.putFcmToken(token) } }.start()
+        // Sent by a job that retries until DT-WATCH accepts it (2026-10-27).
+        // A single try failed silently whenever the server could not be
+        // reached (e.g. mobile data), and then no request notification could
+        // ever reach this phone.
+        val work = androidx.work.OneTimeWorkRequestBuilder<FcmTokenUploadWorker>()
+            .setInputData(androidx.work.workDataOf(FcmTokenUploadWorker.KEY_TOKEN to token))
+            .setConstraints(
+                androidx.work.Constraints.Builder()
+                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build(),
+            )
+            .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 1, java.util.concurrent.TimeUnit.MINUTES)
+            .build()
+        androidx.work.WorkManager.getInstance(context.applicationContext)
+            .enqueueUniqueWork(FcmTokenUploadWorker.NAME, androidx.work.ExistingWorkPolicy.REPLACE, work)
+    }
+}
+
+/** Sends this phone's push address to DT-WATCH; tries again later while the server cannot be reached. */
+class FcmTokenUploadWorker(context: Context, params: androidx.work.WorkerParameters) :
+    androidx.work.Worker(context, params) {
+
+    override fun doWork(): Result {
+        val token = inputData.getString(KEY_TOKEN) ?: return Result.success()
+        return try {
+            DeviceApi.putFcmToken(token)
+            Result.success()
+        } catch (e: Exception) {
+            // Give up after a day of tries; the next app start queues it again.
+            if (runAttemptCount >= 12) Result.failure() else Result.retry()
+        }
+    }
+
+    companion object {
+        const val NAME = "dtwatch_fcm_token_upload"
+        const val KEY_TOKEN = "token"
     }
 }
 
