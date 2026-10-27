@@ -844,6 +844,7 @@ export default function TelemetryDriveTestSessionsPage() {
                 <th>Sample time (ts)</th>
                 <th>Network</th>
                 <th title="Operating band the phone was on: band number and MHz. Empty for readings sent by an older app">Band</th>
+                <th title="Channel width of the serving cell; with more than one carrier in use, how many and their total. Empty on 2G/3G, older phones and older app versions">Bandwidth</th>
                 <th>Operator (MCC/MNC)</th>
                 <th>Signal</th>
                 <th>Lat</th>
@@ -857,6 +858,7 @@ export default function TelemetryDriveTestSessionsPage() {
                   <td>{new Date(s.ts).toLocaleTimeString()}</td>
                   <td>{s.network_type}</td>
                   <td>{s.band_label || '-'}</td>
+                  <td>{s.bandwidth_label || '-'}</td>
                   <td>{s.mcc || s.mnc ? `${s.mcc || '-'}/${s.mnc || '-'}` : '-'}</td>
                   {/* formatSignal (see above): RSRP for LTE/NR, RxLevel+RxQual
                       for GSM, RSCP+Ec/Io for WCDMA (falling back to RSSI on

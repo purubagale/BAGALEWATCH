@@ -250,6 +250,8 @@ class SubscriberProfileView(APIView):
                 'rssi_dbm': last.rssi_dbm,
                 'arfcn': last.arfcn,
                 'band': last.band,
+                'bandwidth_label': radio_band.bandwidth_label(
+                    last.bandwidth_khz, last.total_bandwidth_khz, last.carrier_count) or None,
                 'mcc': last.mcc,
                 'operator': operator_name(last.mcc, last.mnc),
                 'gps_accuracy_m': last.gps_accuracy_m,
@@ -581,7 +583,7 @@ class SubscriberSignalView(APIView):
             'rssi_dbm', 'rx_qual', 'pci', 'cell_id', 'tac', 'arfcn', 'band', 'band_mhz', 'trigger_reason',
             'serving_site_id', 'serving_sector', 'serving_dist_km', 'gps_accuracy_m', 'lat', 'lng',
             'received_at', 'service_state', 'cell_info_status', 'airplane_mode', 'sim_state',
-            'environment', 'environment_source',
+            'environment', 'environment_source', 'bandwidth_khz', 'total_bandwidth_khz', 'carrier_count',
         )[:limit])[::-1]
 
         emergency = active_emergency() is not None
@@ -604,6 +606,8 @@ class SubscriberSignalView(APIView):
                 'ecio_db': r['ecio_db'], 'rx_qual': r['rx_qual'],
                 'pci': r['pci'], 'cell_id': r['cell_id'], 'tac': r['tac'],
                 'band_label': radio_band.label(r['network_type'], r['band'], r['band_mhz']) or None,
+                'bandwidth_label': radio_band.bandwidth_label(
+                    r['bandwidth_khz'], r['total_bandwidth_khz'], r['carrier_count']) or None,
                 'trigger_reason': r['trigger_reason'],
                 'serving_site_id': r['serving_site_id'] or None, 'serving_sector': r['serving_sector'] or None,
                 'serving_dist_km': r['serving_dist_km'],

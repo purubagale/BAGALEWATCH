@@ -111,7 +111,7 @@ function details(p: SubscriberSignalPoint, siteName: string | null, hiddenWhy: s
   return [
     fmt(p.ts),
     measured
-      ? `${p.network_type}${p.band_label ? ` ${p.band_label}` : ''} · ${level.name} ${p.level_dbm ?? '—'} dBm`
+      ? `${p.network_type}${p.band_label ? ` ${p.band_label}` : ''}${p.bandwidth_label ? `, ${p.bandwidth_label}` : ''} · ${level.name} ${p.level_dbm ?? '—'} dBm`
       : `${STATUS_TEXT[p.status as string] ?? 'No network'}${p.status_reason ? ` (${REASON_TEXT[p.status_reason] ?? p.status_reason.replace(/_/g, ' ')})` : ''}`,
     quality, cell, site, pos, environmentText(p), p.trigger_reason ? `Taken: ${p.trigger_reason.replace(/_/g, ' ')}` : '',
     p.delay_s != null && p.delay_s > 600 ? `Reached the server ${delayText(p.delay_s)} later` : '',

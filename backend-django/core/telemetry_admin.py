@@ -515,7 +515,8 @@ class TelemetryLiveSamplesView(APIView):
                 'bcch': s.bcch,
                 'bsic': s.bsic,
                 # Operating band (2026-10-13), see core/radio_band.py.
-                **radio_band.fields(s.network_type, s.arfcn, s.band, s.band_mhz),
+                **radio_band.fields(s.network_type, s.arfcn, s.band, s.band_mhz,
+                                  s.bandwidth_khz, s.total_bandwidth_khz, s.carrier_count),
                 'region': s.region,
                 'serving_site_id': s.serving_site_id,
                 'serving_cell_name': s.serving_cell_name,
@@ -954,7 +955,8 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 'drive_session_id': s.drive_session_id,
                 # Outdoors / indoors / in a vehicle and who said so (2026-10-26).
                 'environment': s.environment, 'environment_source': s.environment_source,
-                **radio_band.fields(s.network_type, s.arfcn, s.band, s.band_mhz),
+                **radio_band.fields(s.network_type, s.arfcn, s.band, s.band_mhz,
+                                  s.bandwidth_khz, s.total_bandwidth_khz, s.carrier_count),
                 # Serving-cell identity (2026-10-07) -- same fields
                 # TelemetryLiveSamplesView already returns above; this view
                 # had never picked them up. Lets the frontend's declusterPlot

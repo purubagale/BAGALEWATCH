@@ -302,7 +302,7 @@ function Profile({ p, out, siteLink, reason, onChanged }: {
               <SiteMap loc={loc} />
               <dl className="sp-facts">
                 <div className="sp-fact"><dt>Time</dt><dd>{fmt(loc.ts)} <span className="sp-muted">· {loc.source === 'rescue' ? 'rescue beacon' : (loc.trigger_reason || 'reading')}</span></dd></div>
-                {loc.network_type && <div className="sp-fact"><dt>Network</dt><dd>{loc.network_type}{loc.band_mhz ? ` · ${loc.band_mhz} MHz` : ''}{loc.arfcn != null ? ` · ch ${loc.arfcn}` : ''}</dd></div>}
+                {loc.network_type && <div className="sp-fact"><dt>Network</dt><dd>{loc.network_type}{loc.band_mhz ? ` · ${loc.band_mhz} MHz` : ''}{loc.arfcn != null ? ` · ch ${loc.arfcn}` : ''}{loc.bandwidth_label ? ` · ${loc.bandwidth_label} wide` : ''}</dd></div>}
                 {(loc.operator || loc.mnc) && <div className="sp-fact"><dt>Operator</dt><dd title={loc.mnc ? `${loc.mcc}/${loc.mnc}` : undefined}>{loc.operator ?? `${loc.mcc}/${loc.mnc}`}</dd></div>}
                 {loc.cell_id != null && <div className="sp-fact"><dt>Cell</dt><dd className="sp-mono">{loc.cell_id}{loc.pci != null ? ` · PCI ${loc.pci}` : ''}{loc.tac != null ? ` · TAC ${loc.tac}` : ''}</dd></div>}
                 {loc.serving_site_id && <div className="sp-fact"><dt>{loc.serving_site_basis === 'earlier' ? 'Last attached site' : 'Serving site'}</dt><dd>

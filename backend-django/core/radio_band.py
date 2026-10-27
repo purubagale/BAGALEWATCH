@@ -71,13 +71,65 @@ def label(network_type, band, band_mhz):
     return f'{name} ({band_mhz})' if band_mhz else name
 
 
-def fields(network_type, arfcn, band, band_mhz):
-    """The band keys every sample list returns."""
+# Channel bandwidth (2026-10-27). The phone reports the serving 4G cell's
+# bandwidth (Android 9 and later) and the bandwidth of every carrier it is
+# using at that moment, primary first: more than one is carrier aggregation,
+# or 4G + 5G together. All in kHz. 4G uses 1.4 to 20 MHz, 5G up to 400 MHz;
+# anything outside 1 MHz to 400 MHz is a modem's no-value code.
+_BW_MIN_KHZ, _BW_MAX_KHZ, _MAX_CARRIERS = 1000, 400_000, 16
+
+
+def _bw_ok(value):
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return None
+    return v if _BW_MIN_KHZ <= v <= _BW_MAX_KHZ else None
+
+
+def resolve_bandwidth(bandwidth_khz=None, carriers_khz=None):
+    """(bandwidth_khz, total_bandwidth_khz, carrier_count) for one reading.
+
+    bandwidth_khz is the serving (primary) cell's; when the phone gave none,
+    the first carrier of the list stands in. The total and count cover the
+    carriers in use; both None when the phone sent no list."""
+    carriers = []
+    if isinstance(carriers_khz, (list, tuple)):
+        carriers = [v for v in (_bw_ok(c) for c in carriers_khz[:_MAX_CARRIERS]) if v is not None]
+    bw = _bw_ok(bandwidth_khz)
+    if bw is None and carriers:
+        bw = carriers[0]
+    if not carriers:
+        return bw, None, None
+    return bw, sum(carriers), len(carriers)
+
+
+def _mhz(khz):
+    return f'{khz / 1000:g}'
+
+
+def bandwidth_label(bandwidth_khz, total_bandwidth_khz=None, carrier_count=None):
+    """'20 MHz', or '20 MHz (3 carriers, 45 MHz)' with aggregation, or ''."""
+    if bandwidth_khz is None and not total_bandwidth_khz:
+        return ''
+    text = f'{_mhz(bandwidth_khz)} MHz' if bandwidth_khz is not None else ''
+    if carrier_count and carrier_count > 1 and total_bandwidth_khz:
+        extra = f'{carrier_count} carriers, {_mhz(total_bandwidth_khz)} MHz'
+        text = f'{text} ({extra})' if text else extra
+    return text
+
+
+def fields(network_type, arfcn, band, band_mhz, bandwidth_khz=None, total_bandwidth_khz=None, carrier_count=None):
+    """The band and bandwidth keys every sample list returns."""
     return {
         'arfcn': arfcn,
         'band': band,
         'band_mhz': band_mhz,
         'band_label': label(network_type, band, band_mhz),
+        'bandwidth_khz': bandwidth_khz,
+        'total_bandwidth_khz': total_bandwidth_khz,
+        'carrier_count': carrier_count,
+        'bandwidth_label': bandwidth_label(bandwidth_khz, total_bandwidth_khz, carrier_count),
     }
 
 

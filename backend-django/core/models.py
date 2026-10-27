@@ -2450,6 +2450,13 @@ class TelemetrySample(models.Model):
     arfcn = models.IntegerField(null=True, blank=True)
     band = models.SmallIntegerField(null=True, blank=True)
     band_mhz = models.SmallIntegerField(null=True, blank=True)
+    # Channel bandwidth (2026-10-27, core/radio_band.py resolve_bandwidth),
+    # all in kHz: the serving cell's, the sum over every carrier in use, and
+    # how many carriers (more than one = carrier aggregation or 4G + 5G).
+    # Null on 2G/3G, on phones before Android 9 and on older readings.
+    bandwidth_khz = models.IntegerField(null=True, blank=True)
+    total_bandwidth_khz = models.IntegerField(null=True, blank=True)
+    carrier_count = models.SmallIntegerField(null=True, blank=True)
     # Why the reading has or lacks a cell, sent by app builds from 2026-10-26
     # (SDK collector/RadioStatus.kt; core/telemetry_status.py reads them).
     # Null on older readings, which are judged from the network and position.

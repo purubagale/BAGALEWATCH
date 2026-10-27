@@ -71,3 +71,34 @@ class CoerceTests(SimpleTestCase):
     def test_nonsense_channel_is_dropped(self):
         r = self.row(network_type='LTE', arfcn=-5)
         self.assertEqual((r['arfcn'], r['band']), (None, None))
+
+
+class BandwidthTests(SimpleTestCase):
+    NOW = datetime(2026, 10, 27, tzinfo=timezone.utc)
+
+    def test_serving_cell_only(self):
+        self.assertEqual(radio_band.resolve_bandwidth(20000), (20000, None, None))
+
+    def test_carrier_aggregation(self):
+        self.assertEqual(radio_band.resolve_bandwidth(20000, [20000, 15000, 10000]), (20000, 45000, 3))
+
+    def test_first_carrier_stands_in(self):
+        self.assertEqual(radio_band.resolve_bandwidth(None, [10000, 5000]), (10000, 15000, 2))
+
+    def test_no_value_codes_dropped(self):
+        self.assertEqual(radio_band.resolve_bandwidth(2147483647, [0, 20000, -1]), (20000, 20000, 1))
+        self.assertEqual(radio_band.resolve_bandwidth('x', 'not a list'), (None, None, None))
+
+    def test_label(self):
+        self.assertEqual(radio_band.bandwidth_label(20000), '20 MHz')
+        self.assertEqual(radio_band.bandwidth_label(1400), '1.4 MHz')
+        self.assertEqual(radio_band.bandwidth_label(20000, 20000, 1), '20 MHz')
+        self.assertEqual(radio_band.bandwidth_label(20000, 45000, 3), '20 MHz (3 carriers, 45 MHz)')
+        self.assertEqual(radio_band.bandwidth_label(None), '')
+
+    def test_coerce(self):
+        r = coerce_sample({'device_id': 'd', 'ts': 1760000000000, 'network_type': 'LTE',
+                           'bandwidth_khz': 15000, 'cell_bandwidths_khz': [15000, 100000]}, self.NOW)
+        self.assertEqual((r['bandwidth_khz'], r['total_bandwidth_khz'], r['carrier_count']), (15000, 115000, 2))
+        r = coerce_sample({'device_id': 'd', 'ts': 1760000000000, 'network_type': 'LTE'}, self.NOW)
+        self.assertEqual((r['bandwidth_khz'], r['total_bandwidth_khz'], r['carrier_count']), (None, None, None))

@@ -154,6 +154,8 @@ Android ID or phone number.
 | `bcch`, `bsic` | integer | 2G only: ARFCN 0 to 1023, BSIC 0 to 63 |
 | `arfcn` | integer | Channel number of the serving cell: EARFCN on 4G, UARFCN on 3G, NR-ARFCN on 5G, BCCH ARFCN on 2G. Added 2026-10-13 |
 | `band` | integer | 3GPP band number (3 for 1800 MHz, 20 for 800 MHz). Send what the phone reports (`getBands()`, Android 11 and later). Leave it out on 2G, or when unknown. Added 2026-10-13 |
+| `bandwidth_khz` | integer | Channel bandwidth of the serving 4G cell in kHz (`CellIdentityLte.getBandwidth()`, Android 9 and later): 1400, 3000, 5000, 10000, 15000 or 20000. Leave it out when the phone gives none. Added 2026-10-27 |
+| `cell_bandwidths_khz` | array of integers | Bandwidth of every carrier in use, primary first, in kHz (`ServiceState.getCellBandwidths()`, Android 9 and later, needs phone-state permission). More than one value means carrier aggregation, or 4G and 5G together. Added 2026-10-27 |
 | `tac` | integer | Tracking area code, or location area code on 2G and 3G |
 | `mcc`, `mnc` | string | For example `"429"`, `"01"` |
 | `network_type` | string | `LTE`, `NR`, `UMTS`, `GSM` or `UNKNOWN`. Anything else becomes `UNKNOWN` |
@@ -190,6 +192,13 @@ table covers 4G bands 1, 2, 3, 4, 5, 7, 8, 20, 28, 38, 39, 40, 41, 3G bands 1,
 phone reports one. Readings from an app built before 13 October 2026 carry no
 channel, so they show no band; 2G readings are the exception, since `bcch`
 already is the channel.
+
+**Bandwidth.** Send `bandwidth_khz` and `cell_bandwidths_khz` when the phone
+has them. The server stores the serving cell's bandwidth, the total over all
+carriers and the number of carriers, and shows "20 MHz" or "20 MHz (3 carriers,
+45 MHz)". Values outside 1 MHz to 400 MHz are treated as the modem's no-value
+code and dropped; at most 16 carriers are read. If `bandwidth_khz` is missing,
+the first carrier of the list stands in. 2G and 3G readings have no bandwidth.
 
 **SINR matters.** On the live server on 12 October 2026, none of 2,099 4G
 readings carried `sinr_db`. Without it the server falls back to a rougher CQI

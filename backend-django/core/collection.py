@@ -449,7 +449,8 @@ class CollectionSessionSamplesView(APIView):
                     # Levels for the stretches of a drive spent on 3G or 2G
                     # (2026-10-12): without them those points had no level.
                     'rscp_dbm': r.rscp_dbm, 'ecio_db': r.ecio_db, 'rssi_dbm': r.rssi_dbm, 'rx_qual': r.rx_qual,
-                    **radio_band.fields(r.network_type, r.arfcn, r.band, r.band_mhz),
+                    **radio_band.fields(r.network_type, r.arfcn, r.band, r.band_mhz,
+                                      r.bandwidth_khz, r.total_bandwidth_khz, r.carrier_count),
                     'cqi': r.cqi, 'cqi_derived': r.cqi_derived,
                     # Shown value, where it came from (reported / sinr /
                     # rsrq) and its 3GPP modulation and efficiency

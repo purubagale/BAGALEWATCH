@@ -1394,8 +1394,8 @@ repo, not on prod):
   test page (paging, detail rows, size change, filter, removal), not on the
   real pages.
 
-- **Indoor / outdoor / vehicle tag** (2026-10-26, built, NOT committed in
-  either repo, not run on a phone). SDK `collector/Environment.kt`: a manual
+- **Indoor / outdoor / vehicle tag** (2026-10-26, committed, not on prod,
+  not run on a phone). SDK `collector/Environment.kt`: a manual
   choice (`NetTelemetry.setEnvironment`, cleared at drive stop and share
   stop), otherwise an estimate (speed ≥ 4.2 m/s vehicle; GPS accuracy over
   30 m while still indoor; else outdoor). Every sample carries `environment`
@@ -1411,7 +1411,25 @@ repo, not on prod):
   Sector table gains "Indoor loss" (outdoor minus indoor average, 10+ of
   each). New problem cause `building_penetration` ("Weak indoors, good
   outside") ahead of weak coverage. Profile, complaint and related data
-  show the indoor share. Release APKs on the Desktop.
+  show the indoor share. Release APKs on the Desktop. Committed and
+  pushed 2026-10-26: dtwatch `17537be`, mobile `90246dc`.
+- **Channel bandwidth on phone readings** (2026-10-27, built, NOT
+  committed in either repo, not on prod, not run on a phone). SDK sends
+  `bandwidth_khz` (serving 4G cell, `CellIdentityLte.getBandwidth()`,
+  Android 9+) and `cell_bandwidths_khz` (every carrier in use, primary
+  first, `ServiceState.getCellBandwidths()`; several = carrier aggregation
+  or 4G + 5G). `RadioBand.bandwidthLabel` / `bandwidthOrNull` in the SDK
+  and `radio_band.resolve_bandwidth` / `bandwidth_label` on the server
+  (keep in step; 1-400 MHz kept, 16 carriers max). `TelemetrySample`
+  gained `bandwidth_khz`, `total_bandwidth_khz`, `carrier_count`
+  (migration 0146; AI migrations now 0147-0152, local history renamed,
+  columns added locally by hand). Shown as "20 MHz (3 carriers, 45 MHz)":
+  Bandwidth column on Live Samples, Telemetry Drive Test, Area Sample and
+  Collections; diagnosis dashboard location card and signal hover; app
+  Signal network line and full parameters (4G). Route popup on the phone
+  map does not show it. Old readings stay empty. Release APKs on the
+  Desktop (previous in `old-apks\*_before_bandwidth.apk`), SDK
+  republished.
 
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an

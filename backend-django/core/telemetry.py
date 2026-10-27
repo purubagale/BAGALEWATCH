@@ -309,6 +309,8 @@ def coerce_sample(raw, received_at):
     if arfcn is not None and not 0 <= arfcn <= 4_000_000:
         arfcn = None
     band, band_mhz = radio_band.resolve(nt, arfcn, _i16(raw.get('band')), _i16(raw.get('bcch')))
+    # Channel bandwidth (2026-10-27): the serving cell's and every carrier's, in kHz.
+    bw, bw_total, carriers = radio_band.resolve_bandwidth(raw.get('bandwidth_khz'), raw.get('cell_bandwidths_khz'))
     rscp, ecio, rssi = _wcdma_levels(nt, _i16(raw.get('rscp_dbm')), _i16(raw.get('ecio_db')),
                                      _i16(raw.get('rssi_dbm')))
     return {
@@ -350,6 +352,9 @@ def coerce_sample(raw, received_at):
         'arfcn': arfcn,
         'band': band,
         'band_mhz': band_mhz,
+        'bandwidth_khz': bw,
+        'total_bandwidth_khz': bw_total,
+        'carrier_count': carriers,
         'battery_pct': _i16(raw.get('battery_pct')),
         'trigger_reason': tr if tr in _TRIGGERS else 'periodic',
         # drive_session_id (2026-10-04): groups a drive's fixes and markers.
@@ -423,6 +428,7 @@ _COPY_COLS = (
     'drive_session_id',
     'service_state', 'cell_info_status', 'airplane_mode', 'sim_state',
     'environment', 'environment_source',
+    'bandwidth_khz', 'total_bandwidth_khz', 'carrier_count',
 )
 _COPY_SQL = 'COPY v2_telemetry_samples (' + ', '.join(_COPY_COLS) + ') FROM STDIN WITH (FORMAT text)'
 
@@ -520,6 +526,7 @@ def bulk_insert_samples(rows):
             _cf(None if r.get('airplane_mode') is None else ('t' if r['airplane_mode'] else 'f')),
             _cf(r.get('sim_state')),
             _cf(r.get('environment')), _cf(r.get('environment_source')),
+            _cf(r.get('bandwidth_khz')), _cf(r.get('total_bandwidth_khz')), _cf(r.get('carrier_count')),
         )) + '\n')
     buf.seek(0)
     with connection.cursor() as cur:

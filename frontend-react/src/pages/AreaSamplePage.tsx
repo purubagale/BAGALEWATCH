@@ -290,6 +290,7 @@ export default function AreaSamplePage() {
                   <th>Time</th>
                   <th>Network</th>
                   <th title="Operating band the phone was on: band number and MHz. Empty for readings sent by an older app">Band</th>
+                  <th title="Channel width of the serving cell; with more than one carrier in use, how many and their total. Empty on 2G/3G, older phones and older app versions">Bandwidth</th>
                   <th>Serving site</th>
                   <th>PCI</th>
                   <th title="Signal level: RSRP on 4G, RSCP on 3G, RxLev on 2G">Level (dBm)</th>
@@ -308,6 +309,7 @@ export default function AreaSamplePage() {
                     <td>{new Date(s.ts).toLocaleTimeString()}</td>
                     <td>{s.network_type}</td>
                     <td>{s.band_label || '—'}</td>
+                    <td>{s.bandwidth_label || '—'}</td>
                     <td>{s.serving_site_id ? `${s.serving_site_id}${s.serving_sector ? ` / ${s.serving_sector}` : ''}` : '—'}</td>
                     <td>{s.pci ?? '—'}</td>
                     <td>{levelCell(s)}</td>

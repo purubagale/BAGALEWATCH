@@ -2628,6 +2628,13 @@ export interface SampleBandFields {
   band?: number | null
   band_mhz?: number | null
   band_label?: string
+  // Channel bandwidth (2026-10-27), kHz: the serving cell's, the sum over
+  // every carrier in use, and how many. `bandwidth_label` is the text:
+  // "20 MHz", "20 MHz (3 carriers, 45 MHz)", or "" when not reported.
+  bandwidth_khz?: number | null
+  total_bandwidth_khz?: number | null
+  carrier_count?: number | null
+  bandwidth_label?: string
 }
 
 export interface CollectionSessionSample extends SampleCqiFields, SampleBandFields {
@@ -3225,6 +3232,7 @@ export interface SubscriberSignalPoint {
   cell_id: number | null
   tac: number | null
   band_label: string | null
+  bandwidth_label?: string | null
   trigger_reason: string
   serving_site_id: string | null
   serving_sector: string | null
@@ -3403,6 +3411,7 @@ export interface SubscriberProfile {
     rssi_dbm?: number | null
     arfcn?: number | null
     band?: number | null
+    bandwidth_label?: string | null
     mcc?: string
     gps_accuracy_m?: number | null
     trigger_reason?: string
