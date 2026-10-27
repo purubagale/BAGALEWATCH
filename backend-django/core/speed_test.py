@@ -26,6 +26,7 @@ from rest_framework.views import APIView
 from .auth_log import _client_ip
 from .models import TelemetrySpeedResult
 from .telemetry import hash_device_id, ingest_row_device_id, resolve_ingest_caller
+from .views import IsSuperadminOnly
 
 MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -191,3 +192,57 @@ class TelemetrySpeedResultIngestView(APIView):
             bearer=_bearer(data.get('bearer')),
         )
         return Response({'stored': True}, status=status.HTTP_201_CREATED)
+
+
+# ── Where phones run the test (2026-10-26) ────────────────────────────────
+
+def speedtest_base_url():
+    """The address phones test against, or None for this server's own
+    /speedtest/ (served by nginx, see frontend-react/nginx.conf)."""
+    from .models import SpeedTestSettings
+    row = SpeedTestSettings.load()
+    return (row.base_url or None) if row else None
+
+
+class SpeedTestConfigView(APIView):
+    """`GET /api/telemetry/v1/speedtest/config/` -- `{"base_url": "https://…/speedtest/" | null}`.
+    Public: the address of a speed-test server is not a secret, and the app
+    asks before each test (null = this server's /speedtest/). It remembers
+    the answer, so after a move to a public machine phones follow without a
+    new app."""
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response({'base_url': speedtest_base_url()})
+
+
+class SpeedTestSettingsView(APIView):
+    """`GET/PUT /api/v2/speedtest/settings/` -- superadmin. PUT `{"base_url": ""}`
+    (blank = this server) or an http(s) address ending in /speedtest/."""
+    permission_classes = [IsSuperadminOnly]
+
+    def _view(self, row):
+        return {'base_url': row.base_url if row else '',
+                'updated_by': row.updated_by.username if row and row.updated_by else None,
+                'updated_at': row.updated_at if row else None}
+
+    def get(self, request):
+        from .models import SpeedTestSettings
+        return Response(self._view(SpeedTestSettings.load()))
+
+    def put(self, request):
+        from .audit import log_audit_event
+        from .models import SpeedTestSettings
+        url = str((request.data or {}).get('base_url') or '').strip()
+        if url:
+            if not (url.startswith('https://') or url.startswith('http://')):
+                return Response({'detail': 'The address must start with https:// (or http:// for testing).'}, status=400)
+            if not url.endswith('/'):
+                url += '/'
+        row = SpeedTestSettings.load() or SpeedTestSettings()
+        row.base_url, row.updated_by = url[:300], request.user
+        row.save()
+        log_audit_event(request, 'SPEEDTEST.SERVER_SET', resource='speedtest_settings', resource_id='1',
+                        detail=url or '(this server)')
+        return Response(self._view(row))

@@ -9,6 +9,8 @@ import { telemetryLevel } from '../lib/telemetryLevel'
 import { declusterForPlot } from '../lib/declusterPlot'
 import { useCollectionSectors, useCollectionSessionSamples, useCollectionSessions } from '../api/queries'
 import SectorBreakdown from '../components/SectorBreakdown'
+import EnvironmentTools, { environmentText, filterByEnvironment, type EnvFilter } from '../components/EnvironmentTools'
+import { useAuth } from '../auth/AuthContext'
 import { CQI_COLUMN_HINT, CQI_MODULATION_HINT, cqiLabel, cqiModulationLabel } from '../lib/cqiDisplay'
 
 // Collections (2026-10-06, detail+plot added 2026-10-07): every drive and
@@ -83,16 +85,19 @@ export default function CollectionsPage() {
   // with no overlapping ... manage this in all telemetry sessions") -- see
   // lib/declusterPlot.ts's own header. `pci` is the fallback site key for
   // trace rows, which have no serving_site_id resolution of their own.
+  // Outdoors / indoors / in a vehicle (2026-10-26): the dots follow the filter.
+  const [envFilter, setEnvFilter] = useState<EnvFilter>('')
+  const { user } = useAuth()
   const plotPoints = useMemo(
     () =>
-      declusterForPlot(samples.data?.results ?? [], (s) => ({
+      declusterForPlot(filterByEnvironment(samples.data?.results ?? [], envFilter), (s) => ({
         lat: s.lat,
         lng: s.lng,
         siteKey: s.serving_site_id ? `${s.serving_site_id}|${s.serving_sector ?? ''}` : `pci:${s.pci ?? ''}`,
         // The level of whatever technology the phone was on at this fix.
         score: telemetryLevel({ network_type: s.network_type, rsrp: s.rsrp_dbm, rscp: s.rscp_dbm, rssi: s.rssi_dbm }).value,
       })),
-    [samples.data],
+    [samples.data, envFilter],
   )
 
   return (
@@ -223,6 +228,8 @@ export default function CollectionsPage() {
           )}
           {samples.data && samples.data.results.length > 0 && (
             <>
+              <EnvironmentTools items={samples.data.results} filter={envFilter} onFilter={setEnvFilter}
+                session={{ collection_session: selected.id }} canEdit={user?.role === 'admin' || user?.role === 'superadmin'} />
               <div style={{ height: 360, marginBottom: 12 }}>
                 <MapContainer
                   center={[samples.data.results[0].lat, samples.data.results[0].lng]}
@@ -261,6 +268,7 @@ export default function CollectionsPage() {
                           {new Date(p.item.ts).toLocaleTimeString()} · {level.tech ?? p.item.network_type} ·{' '}
                           {level.value != null ? `${level.name} ${level.value} dBm` : 'no data'}
                           {p.collapsedCount > 1 ? ` (${p.role} of ${p.collapsedCount} here)` : ''}
+                          {p.item.environment ? ` · ${environmentText(p.item)}` : ''}
                         </Tooltip>
                       </CircleMarker>
                     )
@@ -282,6 +290,7 @@ export default function CollectionsPage() {
                     <th>Accuracy (m)</th>
                     <th>Network</th>
                     <th title="Operating band the phone was on: band number and MHz. Empty for readings sent by an older app">Band</th>
+                    <th title="Channel width of the serving cell; with more than one carrier in use, how many and their total. Empty on 2G/3G, older phones and older app versions">Bandwidth</th>
                     <th title="Signal level: RSRP on 4G, RSCP on 3G, RxLev on 2G">Level (dBm)</th>
                     <th>RSRQ</th>
                     <th>SINR</th>
@@ -298,6 +307,7 @@ export default function CollectionsPage() {
                       <td>{s.accuracy_m != null ? Math.round(s.accuracy_m) : '—'}</td>
                       <td>{s.network_type || '—'}</td>
                       <td>{s.band_label || '—'}</td>
+                      <td>{s.bandwidth_label || '—'}</td>
                       <td>{levelText(s)}</td>
                       <td>{s.rsrq_db ?? '—'}</td>
                       <td>{s.sinr_db ?? '—'}</td>

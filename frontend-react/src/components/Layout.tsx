@@ -307,6 +307,13 @@ export default function Layout({ children }: { children: ReactNode }) {
 
   const location = useLocation()
   const breadcrumb = findBreadcrumbTrail(menuTree ?? [], location.pathname)
+  // The page's name and its one-line summary (the menu item's description,
+  // the same text as its Dashboard card) sit in the top bar (2026-10-26), so
+  // pages no longer spend a row on their own title and long intro; the ⓘ
+  // button shows that intro again. Closed on every page change.
+  const currentCrumb = breadcrumb[breadcrumb.length - 1]
+  const [showIntro, setShowIntro] = useState(false)
+  useEffect(() => { setShowIntro(false) }, [location.pathname])
 
   // Reset-on-menu-change (2026-08-07 request: "at every menu change reset
   // previous menu"). Layout is the one thing that stays mounted across
@@ -481,6 +488,13 @@ export default function Layout({ children }: { children: ReactNode }) {
                   </span>
                 )
               })}
+              {currentCrumb?.description && (
+                <span className="app-topbar-summary" title={currentCrumb.description}>{currentCrumb.description}</span>
+              )}
+              {currentCrumb && (
+                <button type="button" className={`app-topbar-info${showIntro ? ' on' : ''}`} onClick={() => setShowIntro((v) => !v)}
+                  title={showIntro ? 'Hide the page description' : 'About this page'} aria-pressed={showIntro}>ⓘ</button>
+              )}
             </div>
             <div className="app-topbar-actions">
               <button type="button" onClick={() => setSearchOpen(true)} title="Advanced Site Search">
@@ -500,7 +514,9 @@ export default function Layout({ children }: { children: ReactNode }) {
           </header>
         )}
         {/* `ui-console`: the profile-style design on every page (2026-10-15, App.css). */}
-        <main className={user ? "app-main ui-console" : "app-main"}>
+        <main className={user
+          ? `app-main ui-console${currentCrumb ? ' has-crumb' : ''}${showIntro ? ' show-intro' : ''}`
+          : 'app-main'}>
           {user && <BackToProfileBar />}
           <DtExploreStateProvider>{children}</DtExploreStateProvider>
         </main>

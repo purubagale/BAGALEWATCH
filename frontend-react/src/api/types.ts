@@ -940,6 +940,8 @@ export interface DtSessionListItem {
   file_hash?: string
   source_location?: string
   readings_pruned?: number
+  // Drive, walk outdoors or walk indoors (2026-10-26); '' = not said.
+  environment?: DtEnvironment
 }
 
 export type DtPurpose = 'yearly' | 'complaint' | 'optimization' | 'other'
@@ -1405,6 +1407,13 @@ export interface DtSessionCreate {
   purpose?: DtPurpose
   file_hash?: string
   source_location?: string
+  environment?: DtEnvironment
+}
+
+// How a drive test was measured (2026-10-26, DriveTestSession.environment).
+export type DtEnvironment = '' | 'drive' | 'walk_outdoor' | 'walk_indoor'
+export const DT_ENVIRONMENT_LABEL: Record<string, string> = {
+  drive: 'Drive (in a vehicle)', walk_outdoor: 'Walk test outdoors', walk_indoor: 'Walk test inside a building',
 }
 
 // GET/PUT /permissions-matrix/ shape — excludes superadmin (see
@@ -1894,6 +1903,9 @@ export interface TelemetryCoverageParams {
 }
 
 export interface TelemetryLiveSample extends SampleBandFields {
+  // Outdoors / indoors / in a vehicle and who said so (2026-10-26).
+  environment?: string | null
+  environment_source?: string | null
   device_id: string
   ts: number
   received_at: string
@@ -2616,9 +2628,19 @@ export interface SampleBandFields {
   band?: number | null
   band_mhz?: number | null
   band_label?: string
+  // Channel bandwidth (2026-10-27), kHz: the serving cell's, the sum over
+  // every carrier in use, and how many. `bandwidth_label` is the text:
+  // "20 MHz", "20 MHz (3 carriers, 45 MHz)", or "" when not reported.
+  bandwidth_khz?: number | null
+  total_bandwidth_khz?: number | null
+  carrier_count?: number | null
+  bandwidth_label?: string
 }
 
 export interface CollectionSessionSample extends SampleCqiFields, SampleBandFields {
+  // Outdoors / indoors / in a vehicle and who said so (2026-10-26).
+  environment?: string | null
+  environment_source?: string | null
   ts: string
   lat: number
   lng: number
@@ -2790,6 +2812,76 @@ export interface ProblemLiveTrace {
   requested_by: string | null; sample_count: number; push_sent?: boolean
 }
 
+// Active alarms from the alarm middleware, read live (2026-10-26) -- core/alarms.py.
+export interface ActiveAlarm {
+  id: number; csn: string; site_id: string; severity: string; alarm: string; device: string; ne_type: string
+  occurred_at: string | null
+}
+export interface SiteActiveAlarms {
+  configured: boolean; site: string; alarms: ActiveAlarm[]; fetched_at?: string; error?: string
+}
+// The alarm connection set on Live Site Sync (2026-10-26). The key is never returned.
+export interface AlarmSource {
+  api_url: string; auth_scheme: 'Bearer' | 'Token'; has_key: boolean; cache_seconds: number; enabled: boolean
+  origin: 'page' | 'env' | 'none'; env_url: string | null; updated_by: string | null; updated_at: string | null
+}
+export interface AlarmSourceInput {
+  api_url?: string; api_key?: string; clear_key?: boolean; auth_scheme?: 'Bearer' | 'Token'; cache_seconds?: number; enabled?: boolean
+}
+
+export interface AlarmSummary {
+  configured: boolean; url: string | null; cache_seconds: number; error?: string
+  fetched_at?: string; took_ms?: number; total?: number; received?: number
+  by_severity?: [string, number][]; by_type?: [string, number][]; by_ne_type?: [string, number][]
+  sites?: number; unknown_sites?: number; no_site?: number
+  top_sites?: { site_id: string; name: string | null; count: number; known: boolean }[]
+}
+
+// Everything stored that relates to one complaint (2026-10-26) -- core/problem_related.py.
+export interface RelatedPoint { lat: number; lng: number; tech: string; level: number | null; ts: string | null; site_id: string | null }
+export interface RelatedTelemetry {
+  total: number; summarised: number; devices: number; first: string; last: string
+  by_tech: { tech: string; readings: number; weak: number; fair: number; good: number; status?: ReadingStatus
+    level_mean: number | null; rsrq_mean: number | null; sinr_mean: number | null; cqi_mean: number | null }[]
+  // How late readings reached the server (2026-10-26).
+  delay?: { median_s: number | null; late_pct: number | null; late_after_s: number }
+  environments?: Record<string, number>
+  sites_count: number
+  sites: { site_id: string; sector: string; tech: string; readings: number; weak: number; level_mean: number | null }[] | null
+  newest: { ts: string; network_type: string; tech: string | null; level: number | null; rsrq: number | null
+    sinr: number | null; cqi: number | null; site_id: string | null; sector: string | null }
+  points: RelatedPoint[]; points_hidden: boolean
+}
+export interface RelatedDriveTests {
+  readings: number; quality: { weak: number; fair: number; good: number }
+  sessions: { id: number; name: string; tech: string; date: string | null; readings: number
+    level_mean: number | null; rsrq_mean: number | null; sinr_mean: number | null; dl_mean: number | null }[]
+  points: RelatedPoint[]
+}
+export interface RelatedComplaints {
+  count: number
+  by_cause: { cause: string; label: string; count: number }[]
+  recent: { id: number; reference: string; category: string; happened_at: string; status: string; cause_label: string }[]
+}
+export interface ProblemRelated {
+  range: { kind: string; start: string | null; end: string | null; hours: number | null; hours_options: number[]; radii_km: number[] }
+  customer: null | {
+    phones: number; withdrawn: number; location_rule: 'emergency' | 'complaint_windows' | 'hidden'
+    telemetry: RelatedTelemetry | null
+    speed_tests: { count: number; download_mean: number | null; upload_mean: number | null; ping_mean: number | null
+      recent: { ts: string; network_type: string; bearer: string; download_mbps: number | null; upload_mbps: number | null
+        ping_ms: number | null; packet_loss_pct: number | null; rsrp_dbm: number | null }[] }
+    calls: { count: number; by_outcome: { outcome: string; label: string; count: number }[] }
+    sessions: { id: string; name: string; source: string; readings: number; started_at: string; last_sample_at: string | null }[]
+    complaints: RelatedComplaints
+  }
+  site: null | {
+    site_id: string; name: string | null; district: string | null; lat: number | null; lng: number | null; why: string
+    telemetry: RelatedTelemetry | null; drive_tests: RelatedDriveTests | null; complaints: RelatedComplaints
+  }
+  area: { radius_km: number; telemetry: RelatedTelemetry | null; drive_tests: RelatedDriveTests | null; complaints: RelatedComplaints }
+}
+
 export interface ProblemLive {
   reference: string
   area: { radii_km: number[]; requests: AreaSampleRequest[] }
@@ -2842,6 +2934,8 @@ export interface ProblemReport {
   external_ref: string
   // 'site' or 'cell': the other system named only the site or cell.
   located_by: '' | 'point' | 'site' | 'cell'
+  // Where the phone was when the customer reported (2026-10-26): outdoor / indoor / vehicle.
+  environment?: string
   // Name on screens and the Subscriber Profile reference; whether a number is held (2026-10-19).
   reference?: string
   has_number?: boolean
@@ -3138,6 +3232,7 @@ export interface SubscriberSignalPoint {
   cell_id: number | null
   tac: number | null
   band_label: string | null
+  bandwidth_label?: string | null
   trigger_reason: string
   serving_site_id: string | null
   serving_sector: string | null
@@ -3147,6 +3242,13 @@ export interface SubscriberSignalPoint {
   lng: number | null
   gps_accuracy_m: number | null
   complaint_report_id: number | null
+  // What a reading without a network means, and how late it reached the
+  // server (2026-10-26, core/telemetry_status.py).
+  status?: ReadingStatus
+  status_reason?: string | null
+  delay_s?: number | null
+  environment?: string | null
+  environment_source?: string | null
 }
 
 // The profile's analysis block (2026-10-16, core/subscriber_analytics.py).
@@ -3159,13 +3261,25 @@ export interface SectorStat {
   readings: number; share_pct: number | null; weak: number; fair: number; good: number; no_level: number
   level_avg: number | null; rsrq_avg: number | null; sinr_avg: number | null; cqi_avg: number | null
   dl_avg: number | null; dist_km_avg: number | null; first: string | null; last: string | null
+  // Phone readings inside a building against outdoors (2026-10-26); loss once 10 of each.
+  indoor_readings?: number | null; outdoor_readings?: number | null
+  indoor_level_avg?: number | null; outdoor_level_avg?: number | null; indoor_loss_db?: number | null
 }
 
 export interface SectorBreakdownData {
   sectors: SectorStat[]; total: number; matched: number; unmatched: number; capped: boolean
 }
 
+export type ReadingStatus = 'measured' | 'no_coverage' | 'radio_off' | 'not_measured'
+export interface NoNetworkGroup {
+  status: Exclude<ReadingStatus, 'measured'>; label: string; hint: string; readings: number; reasons: Record<string, number>
+}
+
 export interface SubscriberAnalytics {
+  // Readings without a network, by what they mean (2026-10-26).
+  no_network?: NoNetworkGroup[]
+  // Readings by place the phone was in: outdoor / indoor / vehicle / none (2026-10-26).
+  environments?: Record<string, number>
   networks: {
     network_type: string; readings: number; weak: number; fair: number; good: number; no_level: number
     level_avg: number | null; rsrq_avg: number | null; sinr_avg: number | null
@@ -3297,6 +3411,7 @@ export interface SubscriberProfile {
     rssi_dbm?: number | null
     arfcn?: number | null
     band?: number | null
+    bandwidth_label?: string | null
     mcc?: string
     gps_accuracy_m?: number | null
     trigger_reason?: string

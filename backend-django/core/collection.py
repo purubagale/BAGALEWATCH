@@ -135,9 +135,67 @@ def district_at(rows):
     return ''
 
 
+# Every district a session passes through (2026-10-26). A drive that starts
+# in Lalitpur and ends in Bhaktapur used to be named after Lalitpur alone.
+# `CollectionSession.district` now holds the districts in the order first
+# reached, comma-separated ("Lalitpur, Kathmandu, Bhaktapur"); the name shows
+# the first three and "+N" for the rest. District search still matches any.
+MAX_NEAREST_LOOKUPS = 20     # per batch, for readings with no serving site
+NAME_DISTRICTS = 3
+
+
+def districts_in(rows, max_lookups=MAX_NEAREST_LOOKUPS):
+    """Districts of these readings in the order first reached: the serving
+    site's district, else that of the site nearest the position (within
+    NEAREST_SITE_KM). Readings without a serving site are sampled so a long
+    batch costs at most `max_lookups` map queries."""
+    from django.contrib.gis.db.models.functions import Distance
+    from django.contrib.gis.geos import Point
+    from django.contrib.gis.measure import D
+    from .models import Site
+    site_ids = {r['serving_site_id'] for r in rows if r.get('serving_site_id')}
+    by_site = dict(Site.objects.filter(pk__in=site_ids).exclude(district='').values_list('pk', 'district')) if site_ids else {}
+    positioned = [r for r in rows if not by_site.get(r.get('serving_site_id')) and r.get('lat') is not None and r.get('lng') is not None]
+    step = max(1, len(positioned) // max_lookups) if positioned else 1
+    sampled = {id(r) for r in positioned[::step][:max_lookups]}
+    order = []
+    for r in rows:
+        d = by_site.get(r.get('serving_site_id'))
+        if not d and id(r) in sampled:
+            point = Point(r['lng'], r['lat'], srid=4326)
+            d = (Site.objects.filter(location__distance_lte=(point, D(km=NEAREST_SITE_KM))).exclude(district='')
+                 .annotate(dist=Distance('location', point)).order_by('dist').values_list('district', flat=True).first())
+        if d and d not in order:
+            order.append(d)
+    return order
+
+
+def merge_districts(stored, new):
+    """The stored comma list with any new districts added at the end, kept
+    within the field's 100 characters."""
+    order = [d.strip() for d in (stored or '').split(',') if d.strip()]
+    for d in new:
+        if d not in order:
+            order.append(d)
+    text = ''
+    for d in order:
+        candidate = f'{text}, {d}' if text else d
+        if len(candidate) > 100:
+            break
+        text = candidate
+    return text
+
+
+def districts_label(stored):
+    order = [d.strip() for d in (stored or '').split(',') if d.strip()]
+    if len(order) <= NAME_DISTRICTS:
+        return ', '.join(order)
+    return f"{', '.join(order[:NAME_DISTRICTS])} +{len(order) - NAME_DISTRICTS}"
+
+
 def session_name(source, district, started_at):
     label = dict(CollectionSession.SOURCE_CHOICES).get(source, source)
-    return f'{district or "Unknown area"} · {label} · {timezone.localtime(started_at, NEPAL_TZ):%Y-%m-%d %H:%M}'
+    return f'{districts_label(district) or "Unknown area"} · {label} · {timezone.localtime(started_at, NEPAL_TZ):%Y-%m-%d %H:%M}'
 
 
 def record_collection_sessions(rows):
@@ -177,14 +235,16 @@ def record_collection_sessions(rows):
             },
         )
         extra = {}
-        if created or not session.district:
-            # Named at the start; the district is filled in by the first
-            # batch that carries a position or a serving site.
-            mine = [r for r in rows if r['device_id'] == device_hash and r.get('drive_session_id') == dsid]
-            district = district_at(mine)
-            extra = {'district': district, 'name': session_name(session.source, district, session.started_at)}
-            if created or not session.msisdn:
-                extra['msisdn'] = session_number(device_hash)
+        # Every batch adds the districts its readings were in (2026-10-26);
+        # the name follows while it is still the generated one.
+        mine = [r for r in rows if r['device_id'] == device_hash and r.get('drive_session_id') == dsid]
+        district = merge_districts(session.district, districts_in(mine))
+        if created or district != session.district:
+            extra['district'] = district
+            if created or not session.name or session.name == session_name(session.source, session.district, session.started_at):
+                extra['name'] = session_name(session.source, district, session.started_at)
+        if created or not session.msisdn:
+            extra['msisdn'] = session_number(device_hash)
         CollectionSession.objects.filter(pk=session.pk).update(
             sample_count=F('sample_count') + n,
             last_sample_at=now,
@@ -370,6 +430,7 @@ class CollectionSessionSamplesView(APIView):
                     # the frontend's declusterPlot falls back to `pci` as
                     # its coarser same-cell signal for this branch only.
                     'serving_site_id': None, 'serving_sector': None,
+                    'environment': None, 'environment_source': None,
                 }
                 for r in rows
             ]
@@ -388,13 +449,16 @@ class CollectionSessionSamplesView(APIView):
                     # Levels for the stretches of a drive spent on 3G or 2G
                     # (2026-10-12): without them those points had no level.
                     'rscp_dbm': r.rscp_dbm, 'ecio_db': r.ecio_db, 'rssi_dbm': r.rssi_dbm, 'rx_qual': r.rx_qual,
-                    **radio_band.fields(r.network_type, r.arfcn, r.band, r.band_mhz),
+                    **radio_band.fields(r.network_type, r.arfcn, r.band, r.band_mhz,
+                                      r.bandwidth_khz, r.total_bandwidth_khz, r.carrier_count),
                     'cqi': r.cqi, 'cqi_derived': r.cqi_derived,
                     # Shown value, where it came from (reported / sinr /
                     # rsrq) and its 3GPP modulation and efficiency
                     # (2026-10-09, core/cqi.py).
                     **sample_cqi_fields(r.cqi, r.sinr_db, r.rsrq_db, r.network_type),
                     'serving_site_id': r.serving_site_id, 'serving_sector': r.serving_sector,
+                    # Outdoors / indoors / in a vehicle and who said so (2026-10-26).
+                    'environment': r.environment, 'environment_source': r.environment_source,
                 }
                 for r in rows
             ]

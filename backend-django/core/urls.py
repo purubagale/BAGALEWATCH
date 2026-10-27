@@ -2,10 +2,10 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import (api_auth, area_sample, audit, auth_log, backup, call_context, collection, consent, dashboard, device_identity,
-               device_lookup, device_trace, drive_test, dt_retention, emergency,
-               exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_live, problem_notify, problem_report, problem_sites, provisioning, reports, rescue, rf_audit,
-               rf_reports, roles, sector_stats, site_import, site_coverage, site_photo, sso_views, subscriber_link, subscriber_profile, system_doc,
+from . import (alarms, api_auth, area_sample, audit, auth_log, backup, call_context, collection, consent, dashboard, device_identity,
+               device_lookup, device_trace, drive_test, dt_retention, emergency, environment,
+               exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_live, problem_notify, problem_related, problem_report, problem_sites, provisioning, reports, rescue, rf_audit,
+               rf_reports, roles, sector_stats, site_import, site_coverage, site_photo, speed_test, sso_views, subscriber_link, subscriber_profile, system_doc,
                telemetry_admin, telemetry_near, views, volte_quality)
 
 router = DefaultRouter()
@@ -236,6 +236,14 @@ urlpatterns = [
     path('problem-reports/<int:pk>/notify/', problem_notify.ProblemReportNotifyView.as_view(), name='problem-report-notify'),
     # Live readings for a complaint: around the spot, or from the customer's phone (2026-10-24).
     path('problem-reports/<int:pk>/live/', problem_live.ProblemLiveView.as_view(), name='problem-live'),
+    # Active alarms from the alarm middleware, read live (2026-10-26) -- see core/alarms.py.
+    path('alarms/active/', alarms.SiteActiveAlarmsView.as_view(), name='alarms-active'),
+    path('alarms/summary/', alarms.AlarmSummaryView.as_view(), name='alarms-summary'),
+    path('alarms/source/', alarms.AlarmSourceView.as_view(), name='alarms-source'),
+    # Where phones run the speed test (2026-10-26) -- see core/speed_test.py.
+    path('speedtest/settings/', speed_test.SpeedTestSettingsView.as_view(), name='speedtest-settings'),
+    # Everything stored that relates to a complaint, for a chosen time range (2026-10-26).
+    path('problem-reports/<int:pk>/related/', problem_related.ProblemRelatedView.as_view(), name='problem-related'),
     path('problem-reports/<int:pk>/live/area/', problem_live.ProblemLiveAreaView.as_view(), name='problem-live-area'),
     path('problem-reports/<int:pk>/live/area/<int:req_id>/', problem_live.ProblemLiveAreaResultsView.as_view(),
          name='problem-live-area-results'),
@@ -274,6 +282,8 @@ urlpatterns = [
     path('site-photos/<int:pk>/review/', site_photo.SitePhotoReviewView.as_view(), name='site-photo-review'),
     # On-demand area sample (2026-10-08) -- see core/area_sample.py.
     path('telemetry/area-samples/', area_sample.AreaSampleRequestListCreateView.as_view(), name='telemetry-area-samples'),
+    # Outdoors / indoors / in a vehicle for a stretch of a session, set afterwards (2026-10-26).
+    path('telemetry/environment/', environment.EnvironmentEditView.as_view(), name='telemetry-environment'),
     path('telemetry/area-samples/<int:pk>/samples/', area_sample.AreaSampleRequestSamplesView.as_view(),
          name='telemetry-area-sample-results'),
     # Telemetry sessions around a point, for DT Explore (2026-10-12) -- see core/telemetry_near.py.

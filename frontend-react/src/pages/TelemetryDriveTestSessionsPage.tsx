@@ -13,6 +13,7 @@ import {
   useTelemetryLiveSamples,
 } from '../api/queries'
 import SectorBreakdown from '../components/SectorBreakdown'
+import EnvironmentTools, { filterByEnvironment, type EnvFilter } from '../components/EnvironmentTools'
 import type { TelemetryLiveSample } from '../api/types'
 import { resolveAreaQuery, type ResolvedAreaPoint } from '../lib/resolveDeviceAreaQuery'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
@@ -585,7 +586,11 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
 export default function TelemetryDriveTestSessionsPage() {
   const { data: sessions, isLoading } = useTelemetryDtSessions()
   const [selectedId, setSelectedId] = useState<number | null>(null)
-  const { data: samplesData } = useTelemetryDtSessionSamples(selectedId)
+  // Outdoors / indoors / in a vehicle (2026-10-26): filter, and a reload
+  // after a stretch is tagged so the loaded readings show their new place.
+  const [envFilter, setEnvFilter] = useState<EnvFilter>('')
+  const [envReload, setEnvReload] = useState(0)
+  const { data: samplesData } = useTelemetryDtSessionSamples(selectedId, envReload)
   const { data: sectorStats } = useTelemetryDtSessionSectors(selectedId)
   const endSession = useEndTelemetryDtSession()
   const deleteSession = useDeleteTelemetryDtSession()
@@ -641,7 +646,7 @@ export default function TelemetryDriveTestSessionsPage() {
   }, [presentTechs, tech])
   const metrics = metricsForLiveTech(tech)
   const metric = metrics.find((m) => m.key === metricKey) ?? metrics[0]
-  const techSamples = useMemo(() => samples.filter((s) => techOf(s) === tech), [samples, tech])
+  const techSamples = useMemo(() => filterByEnvironment(samples.filter((s) => techOf(s) === tech), envFilter), [samples, tech, envFilter])
 
   return (
     <div className="admin-page" style={{ maxWidth: 1200 }}>
@@ -813,6 +818,10 @@ export default function TelemetryDriveTestSessionsPage() {
                 ))}
               </div>
               <MetricLegend bands={metric.bands} />
+              {selectedId != null && (
+                <EnvironmentTools items={samples} filter={envFilter} onFilter={setEnvFilter}
+                  session={{ telemetry_session: selectedId }} canEdit onTagged={() => setEnvReload((n) => n + 1)} />
+              )}
               <MapContainer key={mapKey} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
                 <InvalidateOnResize />
                 <FitToSamples samples={samples} fitKey={mapKey} />
@@ -835,6 +844,7 @@ export default function TelemetryDriveTestSessionsPage() {
                 <th>Sample time (ts)</th>
                 <th>Network</th>
                 <th title="Operating band the phone was on: band number and MHz. Empty for readings sent by an older app">Band</th>
+                <th title="Channel width of the serving cell; with more than one carrier in use, how many and their total. Empty on 2G/3G, older phones and older app versions">Bandwidth</th>
                 <th>Operator (MCC/MNC)</th>
                 <th>Signal</th>
                 <th>Lat</th>
@@ -848,6 +858,7 @@ export default function TelemetryDriveTestSessionsPage() {
                   <td>{new Date(s.ts).toLocaleTimeString()}</td>
                   <td>{s.network_type}</td>
                   <td>{s.band_label || '-'}</td>
+                  <td>{s.bandwidth_label || '-'}</td>
                   <td>{s.mcc || s.mnc ? `${s.mcc || '-'}/${s.mnc || '-'}` : '-'}</td>
                   {/* formatSignal (see above): RSRP for LTE/NR, RxLevel+RxQual
                       for GSM, RSCP+Ec/Io for WCDMA (falling back to RSSI on

@@ -916,6 +916,137 @@ repo, not on prod):
   cancel go through the complaint (`live/phone/<trace>/`), so no trace
   permission is needed. The diagnosis dashboard link stays superadmin-only.
   A local emergency "test1" is declared until 2026-10-25 17:56 UTC.
+  Committed and pushed as `85e5e67`. Documents updated 2026-10-25: Technical,
+  Admin and combined manuals (rename, two views, live readings, who may use
+  the dashboard; the Viewer manual has no Problem Dashboard), management
+  slide `complaints` and technical slide `complaints-flow`. No APK change:
+  the app already shows Accept/Reject for trace requests.
+- **Related data of a complaint** (2026-10-26, built, NOT committed, not
+  seen in a browser). The check looks only within 500 m around the problem
+  time, so PR-28 said "no measurements" while its number had 81 phone
+  readings (4 September, elsewhere). `core/problem_related.py`,
+  `GET problem-reports/<id>/related/?range=latest|around|7d|30d|90d|all|custom
+  &hours=&from=&to=&radius_km=`: customer (every phone of the number, as
+  the diagnosis dashboard: readings per technology, newest reading and its
+  serving site, speed tests, calls, sessions, other complaints; sites per
+  reading and positions only in an emergency or a complaint window), site
+  (phone readings and drive tests it served, its complaints) and area (phone
+  and drive-test readings within 0.5-5 km, complaints). `latest` = newest
+  300 phone readings and the newest drive test per scope (the default).
+  Maps draw the weakest reading per 50 m square. Web:
+  `components/ProblemRelatedData.tsx` (range in the address: rr, rh, rf, rt,
+  rk), a site/area card on Site related analysis, the customer card on
+  Subscriber related analysis, and a summary line in Diagnostics and the
+  full-diagnostics window. Non-superadmin views logged
+  `PROBLEM_REPORT.RELATED_VIEWED` once an hour.
+- **Active alarms** (2026-10-26, built, NOT committed, not seen in a
+  browser). NTC's alarm middleware (`GET .../api/v1/alarms/active`, Bearer
+  token, `limit`/`offset` pages, no site filter; 674 alarms on 320 sites on
+  26 October) is read live by `core/alarms.py`: all pages fetched, cached
+  `ALARM_CACHE_SECONDS` (60) in Redis for every user, filtered by site on
+  the server, nothing stored. `GET alarms/active/?site=` (signed-in users),
+  `GET alarms/summary/` (admin), `refresh=1` (6 a minute per user). A record
+  without `siteId` takes it from the device name. `ALARM_API_URL` /
+  `ALARM_API_TOKEN` are in the local `.env` only (never commit the token);
+  prod `.env` needs them and the django container needs a route to the
+  middleware. Web: `components/ActiveAlarmsButton.tsx` (count on the button,
+  window like the user's reference) on Site Detail and on the complaint's
+  site in Related data; an "Active alarms" card on Live Site Sync (status,
+  by severity/type/NE type, sites with the most alarms, Refresh now).
+  Later the same day (not committed): the connection is set on that card
+  ("Edit connection": address, Bearer/Token, key, keep-for time, on/off),
+  `AlarmSourceSettings` singleton (migration 0143; AI migrations now
+  0144-0149, local history renamed, table created by hand), key encrypted
+  with `mfa.encrypt_secret` and never returned; .env applies only when no
+  address is saved. The user had tried adding the alarm API as a site
+  source; a site source overwrites site fields, so never do that.
+- **Blank cell and signal on phone calls** (2026-10-26, mobile built, NOT
+  committed, not run on a phone). On prod only the Collector edition's calls
+  had cell and level: during a call the dialer is in front, and Android
+  gives a background app no cell list or position without
+  ACCESS_BACKGROUND_LOCATION (commented out in the SDK manifest) or a
+  foreground location service. `CallListener.snapshot()` now falls back to
+  the voice network and `getSignalStrength()` (no location needed) for the
+  level; the cell stays blank. VoLTE Quality shows "Not recorded" with the
+  reason. Release APKs (both editions) on the Desktop, older ones in
+  `Desktop\old-apks\*_before_2026-10-26.apk`; SDK republished.
+- **What "no service" readings mean** (2026-10-26, built, NOT committed,
+  not on prod; the new app not run on a phone). Locally every reading
+  without a network (62) also had no GPS position, mostly periodic
+  background readings: the phone withheld cell and position (background
+  without ACCESS_BACKGROUND_LOCATION, or location off), so they are not
+  coverage gaps. `core/telemetry_status.py` groups them: measured /
+  no_coverage (out of service or emergency only; on old readings no network
+  but a position) / radio_off (flight mode, radio off, no SIM) /
+  not_measured. `TelemetrySample` gained `service_state`,
+  `cell_info_status`, `airplane_mode`, `sim_state` (migration 0142,
+  nullable; AI migrations now 0143-0148, local history renamed, columns
+  added locally by hand). SDK `collector/RadioStatus.kt` sends them and
+  fills level + network from `getSignalStrength()` when the cell list is
+  empty. Profile: network card rows per group, "Time on 4G/5G" over measured
+  readings, doughnut and chart ticks by group, hover says why and how late
+  the reading arrived. Related data: groups in the table, "Reached the
+  server late" tile (> 10 min). Handoff doc lists the four fields. Release
+  APKs on the Desktop (previous in `old-apks\*_before_status_*`).
+- **Speed test like LibreSpeed / Ookla** (2026-10-26, built, NOT committed,
+  not run on a phone). The old test was one connection, a fixed 6 MB / 2 MB
+  file through Django, so it read below Ookla. Now nginx serves
+  `/speedtest/empty` (204), `/speedtest/garbage` (32 MB random file baked
+  into the frontend image) and `/speedtest/upload` (body dropped, 64 MB
+  max), `limit_conn` 16 per address, no Django worker used. SDK
+  `device/SpeedTest.kt`: parallel streams for a fixed time, first 1-1.5 s
+  left out, sustained rate; Profile FULL (6 down / 4 up, 10 s, caps 150 MB /
+  60 MB) for a tap, LIGHT (3/2, 5 s, caps 15 MB / 6 MB) for Collector and
+  problem reports; falls back to the old Django test on a 404. Phones on
+  mobile data still cannot reach prod (172.16.41.201) until NTC routes the
+  APN to it. Ookla itself can only come through Ookla's licensed SDK or
+  data products.
+  Then (same day, NOT committed): `SpeedTestSettings` singleton (migration
+  0144; AI migrations now 0145-0150, local history renamed, table created
+  by hand) set on Security, card "Speed test server" (superadmin; blank =
+  this server); phones read `GET /api/telemetry/v1/speedtest/config/`
+  before each test and remember it. Speed results are held on the phone
+  (`storage/SpeedResultQueue.kt`, `upload/SpeedResultUploadWorker.kt`)
+  until DT-WATCH can be reached; an unreachable server on mobile data says
+  so in plain words. `docs/speedtest-server/` = nginx config, Dockerfile
+  and guide for a public test machine (tested in Docker). Public exposure
+  checklist (Claude Docs, private to the user):
+  `claude.ai/artifact/WudWv2TDh1GmRFM73tDrF2`.
+- **Session names with every district** (2026-10-26, built, NOT committed).
+  `CollectionSession.district` is now a comma list of the districts in the
+  order first reached (`districts_in`, `merge_districts` in
+  `core/collection.py`; serving site's district, else nearest site, at most
+  20 map lookups a batch); every batch adds to it and the generated name
+  follows ("Lalitpur, Kathmandu, Bhaktapur +2 · Crowd drive · …"). No
+  migration. **After deploying, run `manage.py refresh_session_districts`
+  on prod once** (`--dry-run` first) to rename stored sessions.
+- **Readable complaint tiles** (same day): Phone's reading and the
+  measurements of Likely cause are tiles with rounded values and a plain
+  verdict (Good/Fair/Weak, Slow, High) from the check's limits.
+- **Compact pages and Site Topology from a complaint** (same day, built,
+  NOT committed, not seen in a browser). Last block of `App.css` tightens
+  every page under `ui-console`: 18 px page heading, the intro one line
+  (full on hover), smaller gaps, tighter cards and tables, Problem
+  Dashboard charts at most 210 px high. Site Topology opens on
+  `?at=lat,lng` (search box filled, map flies there, nearest site);
+  `BackToProfileBar` also accepts a Problem Dashboard `back=` address
+  ("← Back to the complaint"). The complaint's location has "Show in Site
+  Topology →". Then, after the user compared with UTS's screen, a second
+  last block "Density like UTS": 13 px base, 40 px top bar, one-line
+  footer, 17 px brand-blue title over a thin rule (no gradient strip), 30 px
+  controls, smaller buttons/tabs, 8 px corners, tighter complaint cards.
+  The map in the complaint's Diagnostics card was removed (Related data has
+  the map). Third block "A livelier look, after UTS": page title and its
+  description on one line (cut with "…", full on hover, a rule under
+  them), and `components/MetricTile.tsx` (Tile with icon chip and coloured
+  value, CardHead = icon chip + title + subtitle, Band = soft blue group
+  header, rate/rateLevel helpers) used across the Problem Dashboard and
+  Related data; the analysis tabs carry a subtitle. Then: the top bar shows
+  the page and its one-line summary (the menu item's description) with an
+  ⓘ button; while the top bar names the page (`has-crumb` on `<main>`) the
+  page's own h1 and intro are hidden, ⓘ (`show-intro`) shows the intro in a
+  light box. Every `.admin-page > section` is a card with the h2 as its
+  header line. Card contents use light inner panels (`#f5f8fc`).
 - **Session History "slow"** (same day): the 16-18 s seen in the browser
   came while containers were rebuilt and tests ran on the same 2-CPU
   Docker; the list itself answers in about 0.45 s (`sample_count` subquery
@@ -1262,6 +1393,43 @@ repo, not on prod):
   Sites table, the Subscriber Profile tables. Checked in headless Edge on a
   test page (paging, detail rows, size change, filter, removal), not on the
   real pages.
+
+- **Indoor / outdoor / vehicle tag** (2026-10-26, committed, not on prod,
+  not run on a phone). SDK `collector/Environment.kt`: a manual
+  choice (`NetTelemetry.setEnvironment`, cleared at drive stop and share
+  stop), otherwise an estimate (speed ≥ 4.2 m/s vehicle; GPS accuracy over
+  30 m while still indoor; else outdoor). Every sample carries `environment`
+  + `environment_source` (user/estimated); problem reports carry it too.
+  App Map tab: Outdoors/Indoors/Vehicle buttons and a "Where are you
+  starting?" question before a drive. Server: `TelemetrySample.environment`,
+  `environment_source`; `DriveTestSession.environment` (drive /
+  walk_outdoor / walk_indoor, chosen at upload and on Session History);
+  `ProblemReport.environment`; migration 0145 (AI migrations now
+  0146-0151). `core/environment.py` (`POST telemetry/environment/`, admin)
+  tags a stretch afterwards (source `edited`), from Collections and
+  Telemetry Drive Test (`EnvironmentTools.tsx`, also a place filter).
+  Sector table gains "Indoor loss" (outdoor minus indoor average, 10+ of
+  each). New problem cause `building_penetration` ("Weak indoors, good
+  outside") ahead of weak coverage. Profile, complaint and related data
+  show the indoor share. Release APKs on the Desktop. Committed and
+  pushed 2026-10-26: dtwatch `17537be`, mobile `90246dc`.
+- **Channel bandwidth on phone readings** (2026-10-27, built, NOT
+  committed in either repo, not on prod, not run on a phone). SDK sends
+  `bandwidth_khz` (serving 4G cell, `CellIdentityLte.getBandwidth()`,
+  Android 9+) and `cell_bandwidths_khz` (every carrier in use, primary
+  first, `ServiceState.getCellBandwidths()`; several = carrier aggregation
+  or 4G + 5G). `RadioBand.bandwidthLabel` / `bandwidthOrNull` in the SDK
+  and `radio_band.resolve_bandwidth` / `bandwidth_label` on the server
+  (keep in step; 1-400 MHz kept, 16 carriers max). `TelemetrySample`
+  gained `bandwidth_khz`, `total_bandwidth_khz`, `carrier_count`
+  (migration 0146; AI migrations now 0147-0152, local history renamed,
+  columns added locally by hand). Shown as "20 MHz (3 carriers, 45 MHz)":
+  Bandwidth column on Live Samples, Telemetry Drive Test, Area Sample and
+  Collections; diagnosis dashboard location card and signal hover; app
+  Signal network line and full parameters (4G). Route popup on the phone
+  map does not show it. Old readings stay empty. Release APKs on the
+  Desktop (previous in `old-apks\*_before_bandwidth.apk`), SDK
+  republished.
 
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an

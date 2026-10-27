@@ -601,6 +601,15 @@ LIVE_SITE_API_KEY = os.environ.get('LIVE_SITE_API_KEY', '')
 # longer even costs a DB write, just a wasted round trip to NetBox.
 LIVE_SITE_SYNC_INTERVAL_SECONDS = int(os.environ.get('LIVE_SITE_SYNC_INTERVAL_SECONDS', 86400))
 
+# Active alarms from NTC's alarm middleware (2026-10-26, core/alarms.py).
+# Read live, never stored: the list is fetched in pages, kept in the cache
+# for ALARM_CACHE_SECONDS and filtered by site on the server (the API has
+# no site filter). Empty URL = the feature is off.
+ALARM_API_URL = os.environ.get('ALARM_API_URL', '')          # e.g. http://host:3000/api/v1/alarms/active
+ALARM_API_TOKEN = os.environ.get('ALARM_API_TOKEN', '')      # sent as "Authorization: Bearer <token>"
+ALARM_CACHE_SECONDS = int(os.environ.get('ALARM_CACHE_SECONDS', '60'))
+ALARM_PAGE_SIZE = int(os.environ.get('ALARM_PAGE_SIZE', '500'))
+
 # Crowdsourced-telemetry raw-sample retention (2026-08-30). After this
 # many days a monthly partition of v2_telemetry_samples is aggregated
 # into TelemetryCoverageBin and dropped — see prune_telemetry.py and the

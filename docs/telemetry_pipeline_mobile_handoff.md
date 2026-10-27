@@ -154,6 +154,8 @@ Android ID or phone number.
 | `bcch`, `bsic` | integer | 2G only: ARFCN 0 to 1023, BSIC 0 to 63 |
 | `arfcn` | integer | Channel number of the serving cell: EARFCN on 4G, UARFCN on 3G, NR-ARFCN on 5G, BCCH ARFCN on 2G. Added 2026-10-13 |
 | `band` | integer | 3GPP band number (3 for 1800 MHz, 20 for 800 MHz). Send what the phone reports (`getBands()`, Android 11 and later). Leave it out on 2G, or when unknown. Added 2026-10-13 |
+| `bandwidth_khz` | integer | Channel bandwidth of the serving 4G cell in kHz (`CellIdentityLte.getBandwidth()`, Android 9 and later): 1400, 3000, 5000, 10000, 15000 or 20000. Leave it out when the phone gives none. Added 2026-10-27 |
+| `cell_bandwidths_khz` | array of integers | Bandwidth of every carrier in use, primary first, in kHz (`ServiceState.getCellBandwidths()`, Android 9 and later, needs phone-state permission). More than one value means carrier aggregation, or 4G and 5G together. Added 2026-10-27 |
 | `tac` | integer | Tracking area code, or location area code on 2G and 3G |
 | `mcc`, `mnc` | string | For example `"429"`, `"01"` |
 | `network_type` | string | `LTE`, `NR`, `UMTS`, `GSM` or `UNKNOWN`. Anything else becomes `UNKNOWN` |
@@ -165,6 +167,22 @@ Android ID or phone number.
 | `battery_pct` | integer | 0 to 100 |
 | `trigger_reason` | string | See 5.2. Anything else becomes `periodic` |
 | `drive_session_id` | string | Up to 36 characters. Groups the readings of one drive or one share window |
+| `service_state` | string | `in_service`, `out_of_service`, `emergency_only` or `radio_off`, from `TelephonyManager.getServiceState()` (phone-state permission, no location). Added 2026-10-26 |
+| `cell_info_status` | string | Why the cell is there or missing: `ok`, `background` (app in the background without background location), `location_off`, `no_permission` or `empty` (the phone returned no cell). Added 2026-10-26 |
+| `airplane_mode` | boolean | Flight mode on. Added 2026-10-26 |
+| `sim_state` | string | `ready`, `absent`, `locked` or `other`. Added 2026-10-26 |
+| `environment` | string | Where the person is: `outdoor`, `indoor` or `vehicle`; leave it out when unknown. Added 2026-10-26 |
+| `environment_source` | string | `user` (tapped in the app) or `estimated` (from movement and GPS accuracy). Sent only with `environment`. Added 2026-10-26 |
+
+**Readings without a network (2026-10-26).** Always send a reading, even when
+the cell list is empty: `network_type` `UNKNOWN` plus the four fields above.
+The server only counts it as a coverage gap when `service_state` is
+`out_of_service` or `emergency_only`; flight mode, radio off or a missing SIM
+is "radio off", and anything else is "not measured" and stays out of every
+coverage share. When the cell list is empty, fill the level and `network_type`
+from `getSignalStrength()` (no location needed), as the reference SDK does.
+Older readings without these fields are judged by their position: no network
+and no GPS position means the phone withheld both, so "not measured".
 
 **Band.** Send `arfcn` on every reading; it is available from Android 7. The
 server works out the band from it when `band` is missing, and names it in MHz
@@ -174,6 +192,13 @@ table covers 4G bands 1, 2, 3, 4, 5, 7, 8, 20, 28, 38, 39, 40, 41, 3G bands 1,
 phone reports one. Readings from an app built before 13 October 2026 carry no
 channel, so they show no band; 2G readings are the exception, since `bcch`
 already is the channel.
+
+**Bandwidth.** Send `bandwidth_khz` and `cell_bandwidths_khz` when the phone
+has them. The server stores the serving cell's bandwidth, the total over all
+carriers and the number of carriers, and shows "20 MHz" or "20 MHz (3 carriers,
+45 MHz)". Values outside 1 MHz to 400 MHz are treated as the modem's no-value
+code and dropped; at most 16 carriers are read. If `bandwidth_khz` is missing,
+the first carrier of the list stands in. 2G and 3G readings have no bandwidth.
 
 **SINR matters.** On the live server on 12 October 2026, none of 2,099 4G
 readings carried `sinr_db`. Without it the server falls back to a rougher CQI
@@ -440,7 +465,33 @@ A request lasts 120 minutes by default.
 ## 10. Speed test
 
 The test runs when the user taps a test button (and every 30 minutes in the
-Collector edition, section 14). It takes about 20 seconds and about 8 MB of data.
+Collector edition, section 14).
+
+**How it measures (since 26 October 2026).** The way LibreSpeed and Ookla do,
+so the numbers can be compared with theirs: several connections at once, each
+for a fixed time, the first second or so left out while TCP speeds up, and
+the sustained rate reported. The far end is served by nginx at the root of the
+dtwatch server (not under `/api/`), so parallel streams never hold up the web
+application:
+
+| Call | Detail |
+|---|---|
+| `GET /speedtest/empty` | 204, no body. Ping; add a `?r=<random>` so nothing caches it |
+| `GET /speedtest/garbage` | A 32 MB random file. Each download stream requests it again and again until its time is up |
+| `POST /speedtest/upload` | Any body up to 64 MB, read and dropped; returns 200. Chunked bodies are accepted |
+
+At most 16 open connections per address. Two profiles:
+
+| Profile | When | Download | Upload | Data at most |
+|---|---|---|---|---|
+| Full | the user taps a test button | 6 connections, 10 s | 4 connections, 10 s | 150 MB down, 60 MB up |
+| Light | Collector every 30 min, a problem report's test | 3 connections, 5 s | 2 connections, 5 s | 15 MB down, 6 MB up |
+
+On a fast 4G cell a full test uses roughly 50 to 90 MB; tell the user before
+running it on a metered plan. A server without `/speedtest/empty` (404) gets
+the old single-connection test below, which reads lower than Ookla.
+
+The old endpoints stay for older app builds:
 
 Since 15 October 2026 the reference app offers two tests: **Test mobile
 data** and **Test Wi-Fi**. Both results are sent, tagged with `bearer`
@@ -497,6 +548,9 @@ that moment. `POST device/problem-reports/`, signed (section 7):
 
 `category` is one of `no_signal`, `slow_data`, `call_drop`, `stuck_2g3g`,
 `other`; `lat` and `lon` are required, everything else is optional. Returns
+Optional `environment` and `environment_source` as in 5.1: a report made
+inside a building lets the server tell "weak indoors, good outside" from a
+coverage gap.
 `201 {"id": N, "stored": true}`. At most 10 a day per phone; the 11th gets 429.
 The server checks the report against stored measurements; staff see the
 result on the Problem Reports page. The reference app also shows hints from
@@ -756,6 +810,8 @@ NetTelemetry.answerSampleRequest()         // on a sample_request push
 NetTelemetry.reportSpeedTest(...)
 NetTelemetry.enrollForRescue(msisdn); NetTelemetry.optOutOfRescue()
 NetTelemetry.setDriveTestConsent(true)
+NetTelemetry.setEnvironment(context, "indoor")   // "outdoor", "indoor", "vehicle" or null; cleared at stop
+NetTelemetry.environment(context)
 ```
 
 ### 14.3 Configuration (`TelemetryConfig`)

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { apiErrorMessage } from '../api/client'
 import { useUpdateDtSessionRetention } from '../api/queries'
-import type { DtSessionListItem } from '../api/types'
+import { DT_ENVIRONMENT_LABEL } from '../api/types'
+import type { DtEnvironment, DtSessionListItem } from '../api/types'
 import { PurposeSelect, purposeLabel } from '../lib/dtPurpose'
 
 // Retention details of one drive-test session (2026-10-14,
@@ -21,6 +22,11 @@ export default function DtSessionRetentionPanel({ session, canEdit }: { session:
       {canEdit ? (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
           <PurposeSelect value={session.purpose ?? 'other'} onChange={(purpose) => update.mutate({ purpose })} />
+          <select value={session.environment ?? ''} title="How the test was measured"
+            onChange={(e) => update.mutate({ environment: e.target.value as DtEnvironment })}>
+            <option value="">Kind of test not said</option>
+            {Object.entries(DT_ENVIRONMENT_LABEL).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
           <label title="Old readings of a kept session are never reduced or erased">
             <input
               type="checkbox"
@@ -46,7 +52,7 @@ export default function DtSessionRetentionPanel({ session, canEdit }: { session:
         </div>
       ) : (
         <p className="muted">
-          {purposeLabel(session.purpose)}{session.keep ? ' · kept' : ''}
+          {purposeLabel(session.purpose)}{session.environment ? ` · ${DT_ENVIRONMENT_LABEL[session.environment]}` : ''}{session.keep ? ' · kept' : ''}
           {session.source_location ? ` · original: ${session.source_location}` : ''}
         </p>
       )}

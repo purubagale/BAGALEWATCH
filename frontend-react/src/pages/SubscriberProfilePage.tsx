@@ -8,7 +8,7 @@ import type { SubscriberProfile } from '../api/types'
 import { OPAQUE_PATHS } from '../constants/opaqueRoutes'
 import RowsPerPageSelect from '../components/RowsPerPageSelect'
 import LinkEarlierReadings from '../components/LinkEarlierReadings'
-import ProfileSignalHistory, { type SignalSelection } from '../components/ProfileSignalHistory'
+import ProfileSignalHistory, { STATUS_SHORT, STATUS_TEXT, type SignalSelection } from '../components/ProfileSignalHistory'
 import ProfileAnalytics from '../components/ProfileAnalytics'
 import ProfileProvisioning from '../components/ProfileProvisioning'
 import FitToPoints from '../components/FitToPoints'
@@ -138,6 +138,11 @@ function PhonesSummary({ devices, phones, registeredLink }: {
 }
 
 // Share of readings per network, as a ring.
+// Readings without a network get their own colour by what they mean (2026-10-26):
+// no coverage in rose, not measured light grey, radio off / no SIM slate.
+const STATUS_COLOR: Record<string, string> = { no_coverage: '#e11d48', not_measured: '#cbd5e1', radio_off: '#64748b' }
+function ringColor(k: string) { return STATUS_COLOR[k] ?? netColor(k) }
+
 function NetworkRing({ counts }: { counts: Record<string, number> }) {
   const entries = Object.entries(counts).filter(([, v]) => v > 0)
   const total = entries.reduce((a, [, v]) => a + v, 0)
@@ -150,7 +155,7 @@ function NetworkRing({ counts }: { counts: Record<string, number> }) {
         <circle cx={55} cy={55} r={R} className="sp-ring-track" />
         {entries.map(([k, v]) => {
           const len = (v / total) * C
-          const el = <circle key={k} cx={55} cy={55} r={R} fill="none" style={{ stroke: netColor(k) }} strokeWidth={14}
+          const el = <circle key={k} cx={55} cy={55} r={R} fill="none" style={{ stroke: ringColor(k) }} strokeWidth={14}
             strokeDasharray={`${len} ${C - len}`} strokeDashoffset={-offset} transform="rotate(-90 55 55)"><title>{`${k || 'unknown'}: ${v}`}</title></circle>
           offset += len
           return el
@@ -159,7 +164,7 @@ function NetworkRing({ counts }: { counts: Record<string, number> }) {
         <text x={55} y={67} textAnchor="middle" className="sp-axis">readings</text>
       </svg>
       <div className="sp-ring-legend">
-        {entries.map(([k, v]) => <div key={k}><i style={{ background: netColor(k) }} />{NET_LABEL[k] ?? (k === 'UNKNOWN' || !k ? 'No service' : k)} <b className="sp-mono">{Math.round((100 * v) / total)}%</b></div>)}
+        {entries.map(([k, v]) => <div key={k} title={STATUS_TEXT[k]}><i style={{ background: ringColor(k) }} />{NET_LABEL[k] ?? STATUS_SHORT[k] ?? (k === 'UNKNOWN' || !k ? 'No network' : k)} <b className="sp-mono">{Math.round((100 * v) / total)}%</b></div>)}
       </div>
     </div>
   )
@@ -295,22 +300,22 @@ function Profile({ p, out, siteLink, reason, onChanged }: {
           {loc && (
             <div className={(loc.site_lat != null && loc.site_lng != null) || loc.lat != null || loc.earlier_position ? 'sp-loc' : 'sp-loc sp-loc-nomap'}>
               <SiteMap loc={loc} />
-              <dl className="sp-kv sp-kv-2">
-                <dt>Time</dt><dd>{fmt(loc.ts)} <span className="sp-muted">· {loc.source === 'rescue' ? 'rescue beacon' : (loc.trigger_reason || 'reading')}</span></dd>
-                {loc.network_type && <><dt>Network</dt><dd>{loc.network_type}{loc.band_mhz ? ` · ${loc.band_mhz} MHz` : ''}{loc.arfcn != null ? ` · ch ${loc.arfcn}` : ''}</dd></>}
-                {(loc.operator || loc.mnc) && <><dt>Operator</dt><dd title={loc.mnc ? `${loc.mcc}/${loc.mnc}` : undefined}>{loc.operator ?? `${loc.mcc}/${loc.mnc}`}</dd></>}
-                {loc.cell_id != null && <><dt>Cell</dt><dd className="sp-mono">{loc.cell_id}{loc.pci != null ? ` · PCI ${loc.pci}` : ''}{loc.tac != null ? ` · TAC ${loc.tac}` : ''}</dd></>}
-                {loc.serving_site_id && <><dt>{loc.serving_site_basis === 'earlier' ? 'Last attached site' : 'Serving site'}</dt><dd>
+              <dl className="sp-facts">
+                <div className="sp-fact"><dt>Time</dt><dd>{fmt(loc.ts)} <span className="sp-muted">· {loc.source === 'rescue' ? 'rescue beacon' : (loc.trigger_reason || 'reading')}</span></dd></div>
+                {loc.network_type && <div className="sp-fact"><dt>Network</dt><dd>{loc.network_type}{loc.band_mhz ? ` · ${loc.band_mhz} MHz` : ''}{loc.arfcn != null ? ` · ch ${loc.arfcn}` : ''}{loc.bandwidth_label ? ` · ${loc.bandwidth_label} wide` : ''}</dd></div>}
+                {(loc.operator || loc.mnc) && <div className="sp-fact"><dt>Operator</dt><dd title={loc.mnc ? `${loc.mcc}/${loc.mnc}` : undefined}>{loc.operator ?? `${loc.mcc}/${loc.mnc}`}</dd></div>}
+                {loc.cell_id != null && <div className="sp-fact"><dt>Cell</dt><dd className="sp-mono">{loc.cell_id}{loc.pci != null ? ` · PCI ${loc.pci}` : ''}{loc.tac != null ? ` · TAC ${loc.tac}` : ''}</dd></div>}
+                {loc.serving_site_id && <div className="sp-fact"><dt>{loc.serving_site_basis === 'earlier' ? 'Last attached site' : 'Serving site'}</dt><dd>
                   <Link to={siteLink(loc.serving_site_id)}>{loc.serving_site_id}</Link>{loc.site_name ? ` · ${loc.site_name}` : ''}{loc.site_district ? <span className="sp-muted"> · {loc.site_district}</span> : null}
                   {loc.serving_site_basis === 'earlier' && <span className="sp-muted"> · from the reading of {fmt(loc.serving_site_ts ?? null)}; the latest one names no known cell</span>}
-                  {loc.serving_site_basis === 'matched_now' && <span className="sp-muted"> · matched from the cell just now</span>}</dd></>}
-                {(loc.serving_sector || loc.serving_cell_name || loc.serving_dist_km != null) && <><dt>Sector</dt><dd>
+                  {loc.serving_site_basis === 'matched_now' && <span className="sp-muted"> · matched from the cell just now</span>}</dd></div>}
+                {(loc.serving_sector || loc.serving_cell_name || loc.serving_dist_km != null) && <div className="sp-fact"><dt>Sector</dt><dd>
                   {loc.serving_sector ? `Sector ${loc.serving_sector}` : '—'}{loc.serving_cell_name ? <span className="sp-mono"> · {loc.serving_cell_name}</span> : null}
-                  {loc.serving_dist_km != null ? <span className="sp-muted"> · {loc.serving_dist_km.toFixed(2)} km from the site</span> : null}</dd></>}
-                {loc.level_dbm != null && <><dt>Level</dt><dd className="sp-mono">{loc.level_dbm} dBm</dd></>}
-                {(loc.rsrq_db != null || loc.sinr_db != null || loc.cqi != null) && <><dt>Quality</dt><dd className="sp-mono">{[loc.rsrq_db != null ? `RSRQ ${loc.rsrq_db} dB` : '', loc.sinr_db != null ? `SINR ${loc.sinr_db} dB` : '', loc.cqi != null ? `CQI ${loc.cqi}` : ''].filter(Boolean).join(' · ')}</dd></>}
-                {(loc.ecio_db != null) && <><dt>Ec/Io</dt><dd className="sp-mono">{loc.ecio_db} dB</dd></>}
-                <dt>Position</dt>
+                  {loc.serving_dist_km != null ? <span className="sp-muted"> · {loc.serving_dist_km.toFixed(2)} km from the site</span> : null}</dd></div>}
+                {loc.level_dbm != null && <div className="sp-fact"><dt>Level</dt><dd className="sp-mono">{loc.level_dbm} dBm</dd></div>}
+                {(loc.rsrq_db != null || loc.sinr_db != null || loc.cqi != null) && <div className="sp-fact"><dt>Quality</dt><dd className="sp-mono">{[loc.rsrq_db != null ? `RSRQ ${loc.rsrq_db} dB` : '', loc.sinr_db != null ? `SINR ${loc.sinr_db} dB` : '', loc.cqi != null ? `CQI ${loc.cqi}` : ''].filter(Boolean).join(' · ')}</dd></div>}
+                {(loc.ecio_db != null) && <div className="sp-fact"><dt>Ec/Io</dt><dd className="sp-mono">{loc.ecio_db} dB</dd></div>}
+                <div className="sp-fact sp-fact-wide"><dt>Position</dt>
                 <dd>{loc.lat != null && loc.lng != null
                   ? <span className="sp-mono">{loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}{loc.gps_accuracy_m != null ? ` · ±${Math.round(loc.gps_accuracy_m)} m` : ''}
                       {loc.position_basis === 'complaint' && <span className="sp-muted"> · shown for the customer's problem report #{loc.complaint_report_id}</span>}</span>
@@ -322,8 +327,8 @@ function Profile({ p, out, siteLink, reason, onChanged }: {
                           {loc.earlier_position.gps_accuracy_m != null ? ` · ±${Math.round(loc.earlier_position.gps_accuracy_m)} m` : ''}
                           <span className="sp-muted"> · not in this record; from the reading of {fmt(loc.earlier_position.ts)}</span>
                         </span>
-                      : <span className="sp-muted">Not recorded: this {loc.source === 'rescue' ? 'rescue beacon report' : 'reading'} has no GPS position, and no stored reading has one</span>}</dd>
-                {loc.device_id && <><dt>Phone</dt><dd className="sp-mono" title={loc.device_id}>{short(loc.device_id)}</dd></>}
+                      : <span className="sp-muted">Not recorded: this {loc.source === 'rescue' ? 'rescue beacon report' : 'reading'} has no GPS position, and no stored reading has one</span>}</dd></div>
+                {loc.device_id && <div className="sp-fact"><dt>Phone</dt><dd className="sp-mono" title={loc.device_id}>{short(loc.device_id)}</dd></div>}
               </dl>
             </div>
           )}
@@ -332,11 +337,9 @@ function Profile({ p, out, siteLink, reason, onChanged }: {
         <Card id="sp-signal" icon="📶" title="Signal analytics" count={s.readings} empty={s.readings === 0} emptyText="No readings shared" wide>
           <ProfileSignalHistory msisdn={p.msisdn} reason={reason} total={s.readings} emergency={p.emergency_declared}
             onSelection={onSelection} pick={pick}
-            aside={<NetworkRing counts={s.readings_by_network} />} />
-          <div className="sp-muted" style={{ marginTop: 2 }}>
-            {s.first_reading ? `First reading ${fmt(s.first_reading)}` : ''}
-            {s.on_demand_readings ? ` · ${s.on_demand_readings} taken on request` : ''}
-          </div>
+            aside={(counts) => <NetworkRing counts={counts} />}
+            footer={[s.first_reading ? `first reading ${fmt(s.first_reading)}` : '',
+              s.on_demand_readings ? `${s.on_demand_readings} taken on request` : ''].filter(Boolean).join(' · ') || null} />
         </Card>
 
         {analytics && (

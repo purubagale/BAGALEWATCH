@@ -429,12 +429,18 @@ class DriveTestSessionViewSet(
         if 'source_location' in data:
             session.source_location = str(data['source_location'] or '')[:255]
             fields.append('source_location')
+        # Drive, walk outdoors or walk indoors (2026-10-26); '' = not said.
+        if 'environment' in data:
+            if data['environment'] and data['environment'] not in dict(DriveTestSession.ENVIRONMENTS):
+                return Response({'environment': ['Unknown kind of test.']}, status=400)
+            session.environment = data['environment'] or ''
+            fields.append('environment')
         if fields:
             session.save(update_fields=fields)
             log_audit_event(request, 'DT_SESSION.RETENTION', resource='dt_session', resource_id=session.pk,
-                            detail=f'purpose={session.purpose}, keep={session.keep}')
+                            detail=f'purpose={session.purpose}, keep={session.keep}, environment={session.environment or "-"}')
         return Response({'purpose': session.purpose, 'keep': session.keep,
-                         'source_location': session.source_location})
+                         'source_location': session.source_location, 'environment': session.environment})
 
     @action(detail=True, methods=['get', 'post'], url_path='attachments')
     def attachments(self, request, pk=None):

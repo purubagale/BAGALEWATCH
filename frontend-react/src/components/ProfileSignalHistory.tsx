@@ -8,6 +8,7 @@ import { CQI_BANDS, RSRP_BANDS, RSRQ_BANDS, RXLEV_BANDS, SINR_BANDS, bandColor, 
 import { netHex } from '../lib/netColors'
 import { telemetryLevel } from '../lib/telemetryLevel'
 import FitToPoints from './FitToPoints'
+import { environmentText } from './EnvironmentTools'
 
 // Signal history on the Subscriber Profile (2026-10-16). Newest 300
 // readings by default, or every stored one, or one session, for all
@@ -42,7 +43,8 @@ const METRICS: Record<MetricKey, {
 }
 
 const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '—')
-const W = 760, H = 200, L = 38, R = 8, T = 10, B = 30
+// 160 high since 2026-10-26 (was 200): the user asked for a shorter card.
+const W = 760, H = 160, L = 38, R = 8, T = 8, B = 28
 
 // Time axis (2026-10-19): readings sit at their time, not evenly spaced, and
 // the ticks follow the span shown (minutes for one drive, days for a month).
@@ -105,18 +107,44 @@ function details(p: SubscriberSignalPoint, siteName: string | null, hiddenWhy: s
     ? `Position ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}${p.gps_accuracy_m != null ? ` ±${Math.round(p.gps_accuracy_m)} m` : ''}` +
       (p.complaint_report_id != null ? ` · shown for problem report #${p.complaint_report_id}` : '')
     : p.has_position ? `Position stored but not shown: ${hiddenWhy}` : 'No GPS position in this reading'
+  const measured = !p.status || p.status === 'measured'
   return [
     fmt(p.ts),
-    `${p.network_type}${p.band_label ? ` ${p.band_label}` : ''} · ${level.name} ${p.level_dbm ?? '—'} dBm`,
-    quality, cell, site, pos, p.trigger_reason ? `Taken: ${p.trigger_reason.replace(/_/g, ' ')}` : '',
+    measured
+      ? `${p.network_type}${p.band_label ? ` ${p.band_label}` : ''}${p.bandwidth_label ? `, ${p.bandwidth_label}` : ''} · ${level.name} ${p.level_dbm ?? '—'} dBm`
+      : `${STATUS_TEXT[p.status as string] ?? 'No network'}${p.status_reason ? ` (${REASON_TEXT[p.status_reason] ?? p.status_reason.replace(/_/g, ' ')})` : ''}`,
+    quality, cell, site, pos, environmentText(p), p.trigger_reason ? `Taken: ${p.trigger_reason.replace(/_/g, ' ')}` : '',
+    p.delay_s != null && p.delay_s > 600 ? `Reached the server ${delayText(p.delay_s)} later` : '',
   ].filter(Boolean)
+}
+
+// What a reading without a network means (2026-10-26, core/telemetry_status.py).
+export const STATUS_TEXT: Record<string, string> = {
+  not_measured: 'Not measured: the phone did not let the app read the cell',
+  no_coverage: 'No coverage: the phone found no network',
+  radio_off: 'Flight mode, radio off or no SIM',
+}
+export const STATUS_SHORT: Record<string, string> = {
+  not_measured: 'Not measured', no_coverage: 'No coverage', radio_off: 'Radio off / no SIM',
+}
+const REASON_TEXT: Record<string, string> = {
+  background: 'app in the background', location_off: 'location off', no_permission: 'no location permission',
+  empty: 'phone gave no cell', out_of_service: 'out of service', emergency_only: 'emergency calls only',
+}
+function delayText(s: number) {
+  return s >= 86400 ? `${Math.round(s / 86400)} d` : s >= 3600 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 60)} min`
 }
 
 /** What the signal filter shows, handed to the analysis cards (2026-10-19). */
 export interface SignalSelection { analytics: SubscriberAnalytics | null; label: string; loading: boolean }
 
-export default function ProfileSignalHistory({ msisdn, reason, total, emergency, aside, onSelection, pick }: {
-  msisdn: string; reason: string; total: number; emergency?: boolean; aside?: ReactNode
+export default function ProfileSignalHistory({ msisdn, reason, total, emergency, aside, footer, onSelection, pick }: {
+  msisdn: string; reason: string; total: number; emergency?: boolean
+  // A function gets the readings shown, counted by network, so a side chart
+  // follows the session, range, technology and the picked span (2026-10-26).
+  aside?: ReactNode | ((countsByNetwork: Record<string, number>) => ReactNode)
+  // Extra words for the count line under the chart, e.g. the first reading.
+  footer?: ReactNode
   onSelection?: (s: SignalSelection) => void
   // A session chosen elsewhere on the profile; `n` changes on every pick.
   pick?: { session: string; n: number } | null
@@ -305,7 +333,8 @@ export default function ProfileSignalHistory({ msisdn, reason, total, emergency,
                 <circle key={i} cx={x(i)} cy={y(m.value(p) as number)} r={n > 1500 ? 1.6 : 2.6} fill={m.color(p)} />
               ))}
               {noLevel.map((p, i) => (
-                <line key={`n${i}`} x1={xt(Date.parse(p.ts))} x2={xt(Date.parse(p.ts))} y1={H - B - 7} y2={H - B - 1} className="sp-sh-noservice" />
+                <line key={`n${i}`} x1={xt(Date.parse(p.ts))} x2={xt(Date.parse(p.ts))} y1={H - B - 7} y2={H - B - 1}
+                  className={`sp-sh-noservice sp-sh-st-${p.status ?? 'measured'}`} />
               ))}
               {shown && (() => {
                 const i = pts.indexOf(shown)
@@ -327,7 +356,16 @@ export default function ProfileSignalHistory({ msisdn, reason, total, emergency,
               {metric === 'network'
                 ? [...new Set(pts.map((p) => p.network_type))].map((k) => <span key={k}><i style={{ background: netColor(k) }} />{k || 'unknown'}</span>)
                 : (m.bands ?? []).map((b) => <span key={b.label}><i style={{ background: b.color }} />{b.label}</span>)}
-              {noLevel.length > 0 && <span><i className="sp-sh-noservice-key" />No service or no level ({noLevel.length})</span>}
+              {(() => {
+                // Readings with no level, by what they mean (2026-10-26).
+                const by: Record<string, number> = {}
+                for (const p of noLevel) { const k = p.status && p.status !== 'measured' ? p.status : 'no_level'; by[k] = (by[k] ?? 0) + 1 }
+                return Object.entries(by).map(([k, v]) => (
+                  <span key={k} title={STATUS_TEXT[k] ?? 'The phone named its network but gave no level'}>
+                    <i className={`sp-sh-noservice-key sp-sh-st-${k}`} />{STATUS_SHORT[k] ?? 'No level'} ({v})
+                  </span>
+                ))
+              })()}
               {metric === 'level' && tech !== '4G' && tech !== '3G' && pts.some((p) => p.network_type === 'GSM') && (
                 <span className="sp-muted">2G on the RxLev scale ({RXLEV_BANDS.map((b) => b.label).join(', ')})</span>
               )}
@@ -337,6 +375,16 @@ export default function ProfileSignalHistory({ msisdn, reason, total, emergency,
                 ? details(shown, shown.serving_site_id ? sites[shown.serving_site_id]?.name ?? null : null, hiddenWhy)
                   .map((line, i) => <div key={i} className={i === 0 ? 'sp-sh-info-head' : ''}>{line}</div>)
                 : <div className="sp-muted">Point at a reading for its details. Click one, or drag across a stretch, to see it on the map.</div>}
+            </div>
+            {/* The counts sit under the chart, not under both columns, so no
+                gap opens below the shorter chart column (2026-10-26). */}
+            <div className="sp-muted sp-sh-foot">
+              {data.range === 'session' ? `${data.session_label}: ` : ''}
+              {data.limited ? `newest ${data.shown.toLocaleString()} of ${data.total.toLocaleString()} readings` : `${data.shown.toLocaleString()} readings`}
+              {tech ? ` on ${tech}` : ''}
+              {n < data.shown ? ` · ${(data.shown - n).toLocaleString()} without ${m.label}` : ''}
+              {sel ? ` · ${picked.length.toLocaleString()} picked` : ''}
+              {footer ? <> · {footer}</> : null}
             </div>
           </div>
 
@@ -371,18 +419,14 @@ export default function ProfileSignalHistory({ msisdn, reason, total, emergency,
                 : `Serving sites of ${sel ? 'the picked' : 'these'} readings. Positions show only in an emergency${windows.length ? " or near the customer's problem report (shaded)" : ''}.`}
               {sel && <> {' '}<button type="button" className="sp-linkbtn" onClick={() => setSel(null)}>Show all again</button></>}
             </div>
-            {aside}
+            {typeof aside === 'function'
+              ? aside(picked.reduce<Record<string, number>>((acc, p) => {
+                const k = p.status && p.status !== 'measured' ? p.status : (p.network_type || 'UNKNOWN')
+                acc[k] = (acc[k] ?? 0) + 1
+                return acc
+              }, {}))
+              : aside}
           </div>
-        </div>
-      )}
-
-      {data && (
-        <div className="sp-muted" style={{ marginTop: 4 }}>
-          {data.range === 'session' ? `${data.session_label}: ` : ''}
-          {data.limited ? `newest ${data.shown.toLocaleString()} of ${data.total.toLocaleString()} readings` : `${data.shown.toLocaleString()} readings`}
-          {tech ? ` on ${tech}` : ''}
-          {n < data.shown ? ` · ${(data.shown - n).toLocaleString()} without ${m.label}` : ''}
-          {sel ? ` · ${picked.length.toLocaleString()} picked` : ''}
         </div>
       )}
     </div>

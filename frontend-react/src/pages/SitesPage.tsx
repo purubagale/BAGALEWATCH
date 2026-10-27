@@ -1,5 +1,5 @@
-import { useNavigate } from 'react-router-dom'
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useDeleteSite, useSite, useSites, useSitesPage } from '../api/queries'
 import { isAllowed } from '../api/types'
 import type { SiteListItem, SitesPageParams } from '../api/types'
@@ -204,8 +204,16 @@ export default function SitesPage() {
 
   const [view, setView] = useState<'table' | 'map'>('map')
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
-  const [searchInput, setSearchInput] = useState('')
-  const [focusPoint, setFocusPoint] = useState<{ lat: number; lng: number } | null>(null)
+  // ?at=lat,lng (2026-10-26, e.g. from a complaint on the Problem Dashboard)
+  // opens the map on that position with its nearest site, like the search box.
+  const [urlParams] = useSearchParams()
+  const atPoint = useMemo(() => parseLatLng(urlParams.get('at') ?? ''), [urlParams])
+  const [searchInput, setSearchInput] = useState(() => urlParams.get('at') ?? '')
+  const [focusPoint, setFocusPoint] = useState<{ lat: number; lng: number } | null>(atPoint)
+  useEffect(() => {
+    if (atPoint) { setFocusPoint(atPoint); setView('map'); setSearchInput(urlParams.get('at') ?? '') }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atPoint?.lat, atPoint?.lng])
   // The nearest site to a searched position, named on its marker.
   const focusNearest = useMemo(() => {
     if (!focusPoint) return null

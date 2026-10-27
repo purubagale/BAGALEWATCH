@@ -5,10 +5,12 @@ import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
   SiteMeasuredCoverage,
 } from './types'
 import type {
-  LinkedSystem, ProblemDashboard, ProblemLive, ProblemLiveTrace, ProblemNearbySites, ProblemNotificationRow, ProblemReport,
+  AlarmSource, AlarmSourceInput, AlarmSummary, SiteActiveAlarms,
+  LinkedSystem, ProblemDashboard, ProblemLive, ProblemLiveTrace, ProblemNearbySites, ProblemNotificationRow, ProblemRelated,
+  ProblemReport,
   SecuritySettings,
 } from './types'
-import type { DtPruneRun, DtPurpose, DtRecentResponse, DtRetentionSettings } from './types'
+import type { DtEnvironment, DtPruneRun, DtPurpose, DtRecentResponse, DtRetentionSettings } from './types'
 import type {
   CollectionSessionRow,
   CollectionSessionSample,
@@ -1835,10 +1837,12 @@ export function useDeleteTelemetryDtSession() {
   })
 }
 
-export function useTelemetryDtSessionSamples(id: number | null) {
+// `reload` (2026-10-26): bump it to read the session again from the start,
+// e.g. after its readings were tagged outdoors / indoors.
+export function useTelemetryDtSessionSamples(id: number | null, reload = 0) {
   return useDeltaSamples(
-    ['telemetry-dt-session-samples', id],
-    String(id),
+    ['telemetry-dt-session-samples', id, reload],
+    `${id}:${reload}`,
     (since) => {
       const qs = new URLSearchParams()
       if (since) qs.set('since', since)
@@ -2196,6 +2200,110 @@ export function useProblemLiveArea(id: number) {
   })
 }
 
+// Active alarms, read live through the server (2026-10-26, core/alarms.py).
+// The 502 of an unreachable alarm service still carries a body worth showing.
+async function alarmJson<T>(path: string): Promise<T> {
+  const res = await apiFetch(path)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok && !(body && 'configured' in body)) throw new ApiError(res.status, body)
+  return body as T
+}
+
+export function useSiteActiveAlarms(site: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['site-alarms', site],
+    queryFn: () => alarmJson<SiteActiveAlarms>(`/api/v2/alarms/active/?site=${encodeURIComponent(site)}`),
+    enabled: enabled && !!site,
+    refetchInterval: enabled ? 60_000 : false,
+  })
+}
+
+export function useAlarmSummary() {
+  return useQuery({
+    queryKey: ['alarm-summary'],
+    queryFn: () => alarmJson<AlarmSummary>('/api/v2/alarms/summary/'),
+    refetchInterval: 120_000,
+  })
+}
+
+// Outdoors / indoors / in a vehicle for a stretch of a session, set afterwards
+// (2026-10-26, core/environment.py). Refreshes the session's readings and sectors.
+export function useSetEnvironment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { collection_session?: string; telemetry_session?: number; from: string; to: string; environment: string }) =>
+      apiJson<{ updated: number; environment: string | null }>('/api/v2/telemetry/environment/', {
+        method: 'POST', body: JSON.stringify(input),
+      }),
+    onSuccess: () => {
+      for (const key of ['collection-session-samples', 'collection-session-sectors', 'telemetry-dt-session-samples', 'telemetry-dt-session-sectors']) {
+        qc.invalidateQueries({ queryKey: [key] })
+      }
+    },
+  })
+}
+
+// Where phones run the speed test (2026-10-26, core/speed_test.py). Superadmin.
+export function useSpeedTestSettings() {
+  return useQuery({
+    queryKey: ['speedtest-settings'],
+    queryFn: () => apiJson<{ base_url: string; updated_by: string | null; updated_at: string | null }>('/api/v2/speedtest/settings/'),
+  })
+}
+
+export function useSaveSpeedTestSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (baseUrl: string) =>
+      apiJson<{ base_url: string; updated_by: string | null; updated_at: string | null }>('/api/v2/speedtest/settings/', {
+        method: 'PUT', body: JSON.stringify({ base_url: baseUrl }),
+      }),
+    onSuccess: (d) => qc.setQueryData(['speedtest-settings'], d),
+  })
+}
+
+export function useAlarmSource() {
+  return useQuery({ queryKey: ['alarm-source'], queryFn: () => apiJson<AlarmSource>('/api/v2/alarms/source/') })
+}
+
+export function useSaveAlarmSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: AlarmSourceInput) =>
+      apiJson<AlarmSource>('/api/v2/alarms/source/', { method: 'PUT', body: JSON.stringify(input) }),
+    onSuccess: (d) => {
+      qc.setQueryData(['alarm-source'], d)
+      qc.invalidateQueries({ queryKey: ['alarm-summary'] })
+      qc.invalidateQueries({ queryKey: ['site-alarms'] })
+    },
+  })
+}
+
+// "Refresh" fetches from the alarm service now instead of the 60 s cache.
+export function useRefreshAlarms() {
+  const qc = useQueryClient()
+  return useMutation<SiteActiveAlarms | AlarmSummary, Error, string | undefined>({
+    mutationFn: (site) => site
+      ? alarmJson<SiteActiveAlarms>(`/api/v2/alarms/active/?site=${encodeURIComponent(site)}&refresh=1`)
+      : alarmJson<AlarmSummary>('/api/v2/alarms/summary/?refresh=1'),
+    onSuccess: (data, site) => {
+      if (site) qc.setQueryData(['site-alarms', site], data)
+      else qc.setQueryData(['alarm-summary'], data)
+      qc.invalidateQueries({ queryKey: site ? ['alarm-summary'] : ['site-alarms'] })
+    },
+  })
+}
+
+// Everything stored that relates to one complaint, for a time range (2026-10-26).
+export function useProblemRelated(id: number, params: Record<string, string>) {
+  const qs = new URLSearchParams(params).toString()
+  return useQuery({
+    queryKey: ['problem-related', id, qs],
+    queryFn: () => apiJson<ProblemRelated>(`/api/v2/problem-reports/${id}/related/?${qs}`),
+    placeholderData: (prev) => prev,
+  })
+}
+
 // Answers to one of the complaint's area requests; polls while it collects.
 export function useProblemLiveAreaResults(id: number, reqId: number | null) {
   return useQuery({
@@ -2281,8 +2389,8 @@ export function useUpdateProblemReport() {
 export function useUpdateDtSessionRetention(sessionId: number | undefined) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { purpose?: DtPurpose; keep?: boolean; source_location?: string }) =>
-      apiJson<{ purpose: DtPurpose; keep: boolean; source_location: string }>(
+    mutationFn: (body: { purpose?: DtPurpose; keep?: boolean; source_location?: string; environment?: DtEnvironment }) =>
+      apiJson<{ purpose: DtPurpose; keep: boolean; source_location: string; environment: DtEnvironment }>(
         `/api/v2/dt-sessions/${sessionId}/retention/`,
         { method: 'PATCH', body: JSON.stringify(body) },
       ),

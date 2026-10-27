@@ -182,6 +182,20 @@ def _serving(report):
     return serving, nearest
 
 
+def _outdoor_4g_mean(report):
+    """Average 4G level of readings marked outdoors (or in a vehicle) within
+    RADIUS_M in the BASELINE_DAYS before the report, or None with too few."""
+    from django.db.models import Avg, Count
+    point = Point(report.lng, report.lat, srid=4326)
+    start = report.happened_at - timedelta(days=BASELINE_DAYS)
+    agg = TelemetrySample.objects.filter(
+        received_at__gte=start, ts__gte=start, ts__lte=report.happened_at + timedelta(hours=AT_TIME_HOURS),
+        environment__in=('outdoor', 'vehicle'), network_type__in=('LTE', 'NR'), rsrp_dbm__isnull=False,
+        location__dwithin=(point, D(m=RADIUS_M)),
+    ).aggregate(n=Count('id'), avg=Avg('rsrp_dbm'))
+    return round(agg['avg'], 1) if agg['n'] and agg['n'] >= MIN_READINGS else None
+
+
 def _finding(kind, title, cause, action, evidence):
     return {'kind': kind, 'title': title, 'cause': cause, 'action': action, 'evidence': evidence}
 
@@ -210,6 +224,23 @@ def check_report(report, user):
     weak_here = (tech and level is not None and level < WEAK_DBM[tech]) or \
         (level is None and spot_4g is not None and spot_4g < WEAK_DBM['4G'])
     good_here = tech and level is not None and level >= GOOD_DBM[tech]
+
+    # Inside a building, weak, while outdoor readings around are good
+    # (2026-10-26): the building, not the network, is the likely cause.
+    outdoor_4g = _outdoor_4g_mean(report) if report.environment == 'indoor' and weak_here else None
+    outside_good = outdoor_4g if outdoor_4g is not None else spot_4g
+    if report.environment == 'indoor' and weak_here and level is not None and outside_good is not None \
+            and outside_good >= GOOD_DBM['4G']:
+        findings.append(_finding(
+            'building_penetration', 'Weak indoors, good outside',
+            'The phone was inside a building where the signal is weak, while the signal outside nearby is good. '
+            'The building walls are likely blocking it.',
+            f'Offer an indoor solution (repeater, small cell or Wi-Fi calling); no change at {site_name} is needed '
+            'for this alone.',
+            [f'{level} dBm on the phone, indoors',
+             f'{outside_good} dBm average outside nearby' + (' (readings marked outdoors)' if outdoor_4g is not None else '')],
+        ))
+        weak_here = False
 
     if weak_here:
         shown = f'{level} dBm on the phone' if level is not None else f'{spot_4g} dBm average nearby'
@@ -327,6 +358,9 @@ def check_report(report, user):
 CUSTOMER_REPLY = {
     'weak_coverage': 'Thank you for telling us. The signal at your location is weak; our engineers are checking '
                      'the nearby tower to improve it.',
+    'building_penetration': 'Thank you for telling us. The signal outside your building is good, but the walls '
+                            'weaken it indoors. Near a window it is usually better; you can also turn on Wi-Fi '
+                            'calling, or ask NTC about an indoor solution.',
     'interference': 'Thank you for telling us. We found a signal quality problem at your location and our '
                     'engineers are adjusting the nearby towers.',
     'busy_cell': 'Thank you for telling us. The network at your location is busy at this time of day; we are '
@@ -350,6 +384,7 @@ CUSTOMER_REPLY = {
 # The finding kinds above, as the dashboard names them.
 CAUSE_LABELS = {
     'weak_coverage': 'Weak signal',
+    'building_penetration': 'Weak indoors, good outside',
     'interference': 'Good signal, poor quality',
     'busy_cell': 'Good signal, slow (busy cell)',
     'lower_tech': 'Phone on 2G/3G where 4G is usable',
@@ -471,6 +506,7 @@ def _row(report, user, with_check=False):
         'ping_ms': report.ping_ms, 'jitter_ms': report.jitter_ms, 'packet_loss_pct': report.packet_loss_pct,
         'phone_model': report.phone_model, 'android_version': report.android_version,
         'app_version': report.app_version,
+        'environment': report.environment or None,
         'status': report.status,
         'engineer_note': report.engineer_note,
         'entered_by': report.entered_by.username if report.entered_by_id else None,
@@ -549,6 +585,8 @@ class DeviceProblemReportView(APIView):
             phone_model=str(data.get('phone_model') or '')[:80],
             android_version=str(data.get('android_version') or '')[:16],
             app_version=str(data.get('app_version') or '')[:40],
+            # Where the phone was (2026-10-26): outdoor / indoor / vehicle.
+            environment=str(data.get('environment') or '') if data.get('environment') in ('outdoor', 'indoor', 'vehicle') else '',
         )
         for key in (day_key, all_key):
             cache.add(key, 0, timeout=86400)

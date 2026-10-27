@@ -46,6 +46,7 @@ from .operators import operator_name
 from .rescue import _clean_msisdn
 from .serving_site_lookup import lookup_serving_site
 from .subscriber_analytics import profile_analytics
+from .telemetry_status import status_of
 from .views import IsSuperadminOnly
 
 AUDIT_ACTION = 'SUBSCRIBER_PROFILE.VIEWED'
@@ -249,6 +250,8 @@ class SubscriberProfileView(APIView):
                 'rssi_dbm': last.rssi_dbm,
                 'arfcn': last.arfcn,
                 'band': last.band,
+                'bandwidth_label': radio_band.bandwidth_label(
+                    last.bandwidth_khz, last.total_bandwidth_khz, last.carrier_count) or None,
                 'mcc': last.mcc,
                 'operator': operator_name(last.mcc, last.mnc),
                 'gps_accuracy_m': last.gps_accuracy_m,
@@ -579,6 +582,8 @@ class SubscriberSignalView(APIView):
             'ts', 'device_id', 'network_type', 'rsrp_dbm', 'rsrq_db', 'sinr_db', 'cqi', 'rscp_dbm', 'ecio_db',
             'rssi_dbm', 'rx_qual', 'pci', 'cell_id', 'tac', 'arfcn', 'band', 'band_mhz', 'trigger_reason',
             'serving_site_id', 'serving_sector', 'serving_dist_km', 'gps_accuracy_m', 'lat', 'lng',
+            'received_at', 'service_state', 'cell_info_status', 'airplane_mode', 'sim_state',
+            'environment', 'environment_source', 'bandwidth_khz', 'total_bandwidth_khz', 'carrier_count',
         )[:limit])[::-1]
 
         emergency = active_emergency() is not None
@@ -601,6 +606,8 @@ class SubscriberSignalView(APIView):
                 'ecio_db': r['ecio_db'], 'rx_qual': r['rx_qual'],
                 'pci': r['pci'], 'cell_id': r['cell_id'], 'tac': r['tac'],
                 'band_label': radio_band.label(r['network_type'], r['band'], r['band_mhz']) or None,
+                'bandwidth_label': radio_band.bandwidth_label(
+                    r['bandwidth_khz'], r['total_bandwidth_khz'], r['carrier_count']) or None,
                 'trigger_reason': r['trigger_reason'],
                 'serving_site_id': r['serving_site_id'] or None, 'serving_sector': r['serving_sector'] or None,
                 'serving_dist_km': r['serving_dist_km'],
@@ -609,6 +616,14 @@ class SubscriberSignalView(APIView):
                 'gps_accuracy_m': r['gps_accuracy_m'] if show else None,
                 # The problem report whose window released this position.
                 'complaint_report_id': report,
+                # What a reading without a network means (2026-10-26,
+                # core/telemetry_status.py), and how late it reached the server.
+                'status': status_of(r['network_type'], r['lat'], r['service_state'], r['cell_info_status'],
+                                    r['airplane_mode'], r['sim_state']),
+                'status_reason': r['cell_info_status'] or r['service_state'] or None,
+                'delay_s': int((r['received_at'] - r['ts']).total_seconds()) if r['received_at'] and r['ts'] else None,
+                # Outdoors / indoors / in a vehicle and who said so (2026-10-26).
+                'environment': r['environment'], 'environment_source': r['environment_source'],
             })
         for report in sorted(released):
             log_audit_event(request, COMPLAINT_AUDIT_ACTION, resource='problem_report', resource_id=str(report),

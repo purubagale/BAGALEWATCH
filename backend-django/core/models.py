@@ -928,6 +928,12 @@ class DriveTestSession(models.Model):
     purpose = models.CharField(max_length=12, choices=PURPOSES, default='other')
     # Pinned: retention never reduces or erases this session.
     keep = models.BooleanField(default=False)
+    # How it was measured (2026-10-26): from a vehicle, walking outdoors or
+    # walking inside a building. Asked at upload, editable in Session
+    # History; '' = not said (older sessions).
+    ENVIRONMENTS = [('drive', 'Drive (in a vehicle)'), ('walk_outdoor', 'Walk test outdoors'),
+                    ('walk_indoor', 'Walk test inside a building')]
+    environment = models.CharField(max_length=16, choices=ENVIRONMENTS, blank=True, default='')
     # Fingerprint (SHA-256) of the source file(s), worked out in the
     # browser; the file itself is never uploaded. Finds a re-upload.
     file_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
@@ -2444,6 +2450,26 @@ class TelemetrySample(models.Model):
     arfcn = models.IntegerField(null=True, blank=True)
     band = models.SmallIntegerField(null=True, blank=True)
     band_mhz = models.SmallIntegerField(null=True, blank=True)
+    # Channel bandwidth (2026-10-27, core/radio_band.py resolve_bandwidth),
+    # all in kHz: the serving cell's, the sum over every carrier in use, and
+    # how many carriers (more than one = carrier aggregation or 4G + 5G).
+    # Null on 2G/3G, on phones before Android 9 and on older readings.
+    bandwidth_khz = models.IntegerField(null=True, blank=True)
+    total_bandwidth_khz = models.IntegerField(null=True, blank=True)
+    carrier_count = models.SmallIntegerField(null=True, blank=True)
+    # Why the reading has or lacks a cell, sent by app builds from 2026-10-26
+    # (SDK collector/RadioStatus.kt; core/telemetry_status.py reads them).
+    # Null on older readings, which are judged from the network and position.
+    service_state = models.CharField(max_length=16, null=True, blank=True)     # in_service / out_of_service / emergency_only / radio_off
+    cell_info_status = models.CharField(max_length=16, null=True, blank=True)  # ok / background / location_off / no_permission / empty
+    airplane_mode = models.BooleanField(null=True, blank=True)
+    sim_state = models.CharField(max_length=10, null=True, blank=True)         # ready / absent / locked / other
+    # Outdoors, inside a building or in a vehicle (2026-10-26, SDK
+    # collector/Environment.kt; core/environment.py). Source: 'user' (tapped
+    # in the app), 'estimated' (from speed and GPS accuracy) or 'edited'
+    # (set afterwards on the web). Null on readings before then.
+    environment = models.CharField(max_length=10, null=True, blank=True)       # outdoor / indoor / vehicle
+    environment_source = models.CharField(max_length=10, null=True, blank=True)
     battery_pct = models.SmallIntegerField(null=True, blank=True)
     trigger_reason = models.CharField(max_length=16, choices=TRIGGERS, default='periodic')
     # Groups a drive's fixes and markers (2026-10-04). Set by the phone, a UUID
@@ -3440,6 +3466,9 @@ class ProblemReport(models.Model):
     # the canonical form (rescue._clean_msisdn), so the report appears on
     # that number's Subscriber Profile. Shown to a superadmin only.
     msisdn = models.CharField(max_length=20, blank=True, default='', db_index=True)
+    # Where the phone was when it reported (2026-10-26): outdoor / indoor /
+    # vehicle, '' = not said. Used by the check (building penetration).
+    environment = models.CharField(max_length=10, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -3514,6 +3543,55 @@ class ProblemNotification(models.Model):
         db_table = 'v2_problem_notification'
         ordering = ['-created_at']
         indexes = [models.Index(fields=['status', 'next_try_at'], name='v2_problem_notify_due_idx')]
+
+
+class SpeedTestSettings(models.Model):
+    """Where phones run the speed test (2026-10-26, core/speed_test.py
+    SpeedTestConfigView). Blank = this server's own /speedtest/. Set to a
+    public machine's https://<name>/speedtest/ once one exists; phones pick
+    it up at their next test and remember it, so no new app is needed.
+    Singleton (pk=1)."""
+    base_url = models.CharField(max_length=300, blank=True, default='')
+    updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_speedtest_settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        return cls.objects.filter(pk=1).first()
+
+
+class AlarmSourceSettings(models.Model):
+    """Where the active alarms come from (2026-10-26, core/alarms.py), set on
+    the Live Site Sync page so prod needs no .env edit. Singleton (pk=1). The
+    key is encrypted at rest (core/mfa.py's encrypt_secret) and never sent
+    back. With no address here, ALARM_API_URL / ALARM_API_TOKEN from .env
+    apply. Alarms themselves are never stored; this is only the connection."""
+    AUTH_CHOICES = [('Bearer', 'Bearer <key>'), ('Token', 'Token <key>')]
+    api_url = models.CharField(max_length=500, blank=True, default='')
+    api_key_encrypted = models.TextField(blank=True, default='')
+    auth_scheme = models.CharField(max_length=10, choices=AUTH_CHOICES, default='Bearer')
+    cache_seconds = models.PositiveIntegerField(default=60)
+    enabled = models.BooleanField(default=True)
+    updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_alarm_source_settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        return cls.objects.filter(pk=1).first()
 
 
 class TelemetryPushToken(models.Model):
