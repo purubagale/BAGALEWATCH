@@ -79,9 +79,9 @@
     <string name="battery_huawei">Open Huawei startup settings</string>
     <string name="push_reject">Reject</string>
     <string name="req_caption">Trace requests from NTC appear here. Nothing is sent until you tap Accept.</string>
-    <string name="req_hint">Your mobile number, +977...</string>
+    <string name="req_hint">10-digit mobile number, 9XXXXXXXXX</string>
     <string name="req_register">Register this phone</string>
-    <string name="req_need_number">Enter your mobile number first, for example +977...</string>
+    <string name="req_need_number">Enter your 10-digit mobile number, 9XXXXXXXXX</string>
     <string name="req_registering">Registering this phone...</string>
     <string name="req_registered">Registered. Requests will appear here.</string>
     <string name="req_failed">Failed: %1$s</string>

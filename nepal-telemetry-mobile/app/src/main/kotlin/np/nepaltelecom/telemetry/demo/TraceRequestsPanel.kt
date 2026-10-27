@@ -51,8 +51,15 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
         }
     }
 
+    private var numberFieldReady = false
+
     fun bind() {
         msisdnInput.setText(prefs.getString(KEY_MSISDN, ""))
+        // 10 digits only, red or green border (2026-10-27); set up once per screen.
+        if (!numberFieldReady) {
+            NumberField.setUp(msisdnInput)
+            numberFieldReady = true
+        }
         registerButton.setOnClickListener { register() }
         refreshRegistrationUi()
     }
@@ -120,8 +127,9 @@ class TraceRequestsPanel(private val root: View, private val fragment: Fragment)
 
     /** The form's button. The work itself is shared with the pop-up, see [Registration]. */
     private fun register() {
-        val msisdn = msisdnInput.text.toString().trim()
-        if (msisdn.isEmpty()) {
+        val msisdn = NumberField.valid(msisdnInput)
+        if (msisdn == null) {
+            msisdnInput.error = context.getString(R.string.req_need_number)
             setStatus(context.getString(R.string.req_need_number))
             return
         }

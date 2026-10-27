@@ -1,6 +1,12 @@
 package np.nepaltelecom.telemetry.demo
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Typeface
+import android.location.Location
+import android.location.LocationManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -13,6 +19,7 @@ import androidx.fragment.app.Fragment
 import np.nepaltelecom.telemetry.NetTelemetry
 import np.nepaltelecom.telemetry.model.CellReading
 import np.nepaltelecom.telemetry.model.RadioBand
+import np.nepaltelecom.telemetry.model.Sample
 
 /**
  * Every cell the modem can see: the serving cell first, then neighbours by
@@ -53,7 +60,51 @@ class CellsFragment : Fragment(R.layout.fragment_cells) {
         }
     }
 
+    // Site and sector names from NTC's server (2026-10-27), as on the Signal
+    // tab. The serving cell is matched by its cell number; a neighbour known
+    // only by PCI or code is placed by the phone's last known position. A cell
+    // the server has not answered for (not reachable, not registered, or not
+    // known) shows as before, with no site line.
+    private var lastCells: List<CellReading> = emptyList()
+
+    @SuppressLint("MissingPermission") // checked just above the call
+    private fun lastFix(): Location? {
+        val ctx = context ?: return null
+        val fine = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
+        val coarse = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION)
+        if (fine != PackageManager.PERMISSION_GRANTED && coarse != PackageManager.PERMISSION_GRANTED) return null
+        val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+        return runCatching {
+            lm.getProviders(true).mapNotNull { lm.getLastKnownLocation(it) }.maxByOrNull { it.time }
+        }.getOrNull()
+    }
+
+    /** The lookup's reading for one cell: its identity, and the position only for a cell with no cell number. */
+    private fun lookupSample(c: CellReading, fix: Location?): Sample? {
+        if (c.cellId == null && fix == null) return null
+        return Sample(
+            deviceId = "", timestampMs = 0L,
+            lat = if (c.cellId == null) fix?.latitude else null,
+            lon = if (c.cellId == null) fix?.longitude else null,
+            gpsAccuracyM = null, cellId = c.cellId, pci = c.pci, tac = c.tac, mcc = c.mcc, mnc = c.mnc,
+            networkType = c.networkType, rsrpDbm = null, rsrqDb = null, rssiDbm = null, sinrDb = null,
+            rxQual = null, rscpDbm = null, ecioDb = null, scramblingCode = c.scramblingCode,
+            bcch = c.bcch, bsic = c.bsic, batteryPct = null, triggerReason = "manual",
+        )
+    }
+
+    private fun siteName(c: CellReading, fix: Location?): String? {
+        val s = lookupSample(c, fix) ?: return null
+        ServingSiteLookup.cached(s)?.let { return ServingSiteLookup.label(it) }
+        ServingSiteLookup.request(requireContext().applicationContext, s) { found ->
+            if (found == null) return@request
+            activity?.runOnUiThread { if (isAdded && view != null) render(lastCells) }
+        }
+        return null
+    }
+
     private fun render(cells: List<CellReading>) {
+        lastCells = cells
         cellList.removeAllViews()
         if (cells.isEmpty()) {
             cellList.addView(text(getString(R.string.cells_empty), 14f, R.color.text_secondary))
@@ -63,10 +114,11 @@ class CellsFragment : Fragment(R.layout.fragment_cells) {
             compareByDescending<CellReading> { it.isServing }
                 .thenByDescending { primaryDbm(it) ?: Int.MIN_VALUE },
         )
-        for (cell in sorted) cellList.addView(cardFor(cell))
+        val fix = lastFix()
+        for (cell in sorted) cellList.addView(cardFor(cell, fix))
     }
 
-    private fun cardFor(c: CellReading): View {
+    private fun cardFor(c: CellReading, fix: Location?): View {
         val ctx = requireContext()
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -85,6 +137,7 @@ class CellsFragment : Fragment(R.layout.fragment_cells) {
             if (c.isServing) append("  ·  SERVING")
         }
         card.addView(text(title, 16f, if (c.isServing) R.color.brand_accent else R.color.text_primary, bold = true))
+        siteName(c, fix)?.let { card.addView(text(it, 14f, R.color.text_primary, bold = true)) }
         card.addView(text(detailLine(c), 13f, R.color.text_secondary))
 
         val dbm = primaryDbm(c)

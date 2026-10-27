@@ -22,11 +22,17 @@ object ServingSiteLookup {
 
     private val cache = HashMap<String, Entry>()
     private var failedAtMs = 0L
-    private var inFlight: String? = null
+    // Several cells can be asked at once (the Cells tab, 2026-10-27), one request per cell.
+    private val inFlight = HashSet<String>()
 
     private fun key(s: Sample): String? {
         if (s.cellId == null && s.pci == null && s.scramblingCode == null && s.bcch == null) return null
-        return listOf(s.networkType, s.cellId, s.tac, s.pci, s.scramblingCode, s.bcch, s.bsic).joinToString("|")
+        val parts = mutableListOf<Any?>(s.networkType, s.cellId, s.tac, s.pci, s.scramblingCode, s.bcch, s.bsic)
+        // A cell known only by PCI / code is placed by position: the same id is
+        // another site elsewhere, so its answer holds for about 1 km.
+        if (s.cellId == null) parts.addAll(listOf(s.lat?.let { "%.2f".format(java.util.Locale.US, it) },
+            s.lon?.let { "%.2f".format(java.util.Locale.US, it) }))
+        return parts.joinToString("|")
     }
 
     /** The answer already held for this reading's cell, or null. */
@@ -57,15 +63,15 @@ object ServingSiteLookup {
         val now = System.currentTimeMillis()
         synchronized(this) {
             if (!NetDevice.isRegistered(context)) return
-            if (now - failedAtMs < FAILURE_WAIT_MS || inFlight == k) return
+            if (now - failedAtMs < FAILURE_WAIT_MS || k in inFlight) return
             val held = cache[k]
             if (held != null && (held.site != null || now - held.atMs < UNKNOWN_RETRY_MS)) return
-            inFlight = k
+            inFlight += k
         }
         Thread {
             val result = runCatching { DeviceApi.servingSite(s) }
             synchronized(this) {
-                inFlight = null
+                inFlight -= k
                 if (result.isSuccess) cache[k] = Entry(result.getOrNull(), System.currentTimeMillis())
                 else failedAtMs = System.currentTimeMillis()
             }

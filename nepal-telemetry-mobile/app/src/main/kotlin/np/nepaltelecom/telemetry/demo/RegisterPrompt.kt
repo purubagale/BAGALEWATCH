@@ -1,6 +1,5 @@
 package np.nepaltelecom.telemetry.demo
 
-import android.text.InputType
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.Toast
@@ -18,10 +17,10 @@ object RegisterPrompt {
     fun ask(activity: AppCompatActivity) {
         val pad = (20 * activity.resources.displayMetrics.density).toInt()
         val input = EditText(activity).apply {
-            inputType = InputType.TYPE_CLASS_PHONE
             hint = activity.getString(R.string.req_hint)
             setText(Registration.number(activity))
         }
+        NumberField.setUp(input)
         val holder = FrameLayout(activity).apply {
             setPadding(pad, 0, pad, 0)
             addView(input)
@@ -36,8 +35,9 @@ object RegisterPrompt {
         dialog.setOnShowListener {
             // Set here, not in the builder, so an empty number keeps the pop-up open.
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val msisdn = input.text?.toString()?.trim().orEmpty()
-                if (msisdn.isEmpty()) {
+                // Only a 10-digit number goes ahead; the red border already shows why.
+                val msisdn = NumberField.valid(input)
+                if (msisdn == null) {
                     input.error = activity.getString(R.string.req_need_number)
                     return@setOnClickListener
                 }
