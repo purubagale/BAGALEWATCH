@@ -174,6 +174,32 @@ class SiteActiveAlarmsView(APIView):
         return Response({'configured': True, 'site': site, 'alarms': rows, 'fetched_at': data['fetched_at']})
 
 
+class SitesActiveAlarmsView(APIView):
+    """`GET alarms/sites/?sites=A,B,C[&refresh=1]` (2026-10-28): the active
+    alarms of up to 200 sites at once, for the alarm column of Sites
+    Topology, plus how many sites have one at all."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        wanted = {s.strip().upper() for s in str(request.query_params.get('sites') or '').split(',') if s.strip()}
+        wanted = set(sorted(wanted)[:200])
+        if not configured():
+            return Response({'configured': False, 'by_site': {}, 'sites_with_alarms': 0})
+        try:
+            data = active_alarms(refresh=_refresh_allowed(request))
+        except AlarmSourceError as exc:
+            return Response({'configured': True, 'by_site': {}, 'sites_with_alarms': 0, 'error': str(exc)}, status=502)
+        by_site = {}
+        for r in data['alarms']:
+            if r['site_id'] in wanted:
+                by_site.setdefault(r['site_id'], []).append(r)
+        return Response({
+            'configured': True, 'fetched_at': data['fetched_at'], 'by_site': by_site,
+            'sites_with_alarms': len({r['site_id'] for r in data['alarms'] if r['site_id']}),
+            'total': data['total'],
+        })
+
+
 class AlarmSummaryView(APIView):
     permission_classes = [IsAdminOrSuperadmin]
 

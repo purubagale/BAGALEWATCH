@@ -25,7 +25,7 @@ from django.contrib.gis.db.models.functions import Distance
 from django.contrib.gis.geos import Point
 from django.contrib.gis.measure import D
 from django.core.cache import cache
-from django.db.models import F, Q
+from django.db.models import Count, F, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -54,6 +54,10 @@ MAX_NOTE_CHARS = 500
 RADIUS_M = 500
 BASELINE_DAYS = 7
 AT_TIME_HOURS = 1                   # readings this close to the problem count as "at the time"
+# When nothing was measured that close (2026-10-28): look again within
+# WIDE_RADIUS_M and WIDE_DAYS either side of the problem, and say so.
+WIDE_RADIUS_M = 1000
+WIDE_DAYS = 90
 MIN_READINGS = 5                    # fewer than this and an average is not used
 DROP_DB = 6                         # "worse than usual" when the level is this much lower
 WEAK_DBM = {'4G': -110, '3G': -105, '2G': -100}
@@ -89,12 +93,13 @@ def _mean(values):
 # ── The check ──────────────────────────────────────────────────────────────
 
 
-def _phone_readings(report, user):
-    """Other phones' readings within RADIUS_M, at the time and in the 7 days before."""
+def _phone_readings(report, user, radius_m=RADIUS_M, wide=False):
+    """Other phones' readings within radius_m, at the time and in the 7 days
+    before; `wide` takes WIDE_DAYS either side of the problem instead."""
     at = report.happened_at
-    start = at - timedelta(days=BASELINE_DAYS)
-    end = at + timedelta(hours=AT_TIME_HOURS)
-    dlat = RADIUS_M / 111_000.0
+    start = at - timedelta(days=WIDE_DAYS if wide else BASELINE_DAYS)
+    end = at + (timedelta(days=WIDE_DAYS) if wide else timedelta(hours=AT_TIME_HOURS))
+    dlat = radius_m / 111_000.0
     dlng = dlat / max(0.2, math.cos(math.radians(report.lat)))
     qs = TelemetrySample.objects.filter(
         received_at__gte=start, ts__gte=start, ts__lte=end,
@@ -107,13 +112,14 @@ def _phone_readings(report, user):
     out = {'at_time': [], 'before': []}
     cos = math.cos(math.radians(report.lat))
     for ts, net, rsrp, rscp, rssi, rsrq, lat, lng in rows:
-        if math.hypot((lat - report.lat) * 111_000.0, (lng - report.lng) * 111_000.0 * cos) > RADIUS_M:
+        if math.hypot((lat - report.lat) * 111_000.0, (lng - report.lng) * 111_000.0 * cos) > radius_m:
             continue
         tech = _TECH.get(net)
         if tech is None:
             continue
         reading = (tech, sample_level(net, rsrp, rscp, rssi), rsrq)
-        out['at_time' if ts >= near_cut else 'before'].append(reading)
+        at_time = near_cut <= ts <= at + timedelta(hours=AT_TIME_HOURS)
+        out['at_time' if at_time else 'before'].append(reading)
     return out
 
 
@@ -130,13 +136,13 @@ def _summary(readings):
     }
 
 
-def _drive_tests(report):
-    """Drive-test readings within RADIUS_M, any date."""
+def _drive_tests(report, radius_m=RADIUS_M):
+    """Drive-test readings within radius_m, any date."""
     point = Point(report.lng, report.lat, srid=4326)
     # dwithin (ST_DWithin) uses the spatial index; distance_lte (ST_Distance)
     # read every drive-test reading and took about 2 s (2026-10-15).
     rows = list(
-        DriveTestSample.objects.filter(location__dwithin=(point, D(m=RADIUS_M)))
+        DriveTestSample.objects.filter(location__dwithin=(point, D(m=radius_m)))
         .values_list('session__tech', 'rsrp', 'rscp', 'rsrq', 'dl', 'session_id', 'session__name', 'session__date')[:20000]
     )
     four_g = [r for r in rows if (r[0] or '4G') == '4G']
@@ -271,6 +277,14 @@ def check_report(report, user):
     phones = _phone_readings(report, user)
     at_time, before = _summary(phones['at_time']), _summary(phones['before'])
     dt = _drive_tests(report)
+    # Nothing that close (2026-10-28): look wider rather than say "no data"
+    # while readings 1 km away or a month later exist.
+    radius_m, widened = RADIUS_M, False
+    if report.level_dbm is None and not (at_time['readings'] or before['readings'] or dt['readings']):
+        phones = _phone_readings(report, user, WIDE_RADIUS_M, wide=True)
+        at_time, before = _summary(phones['at_time']), _summary(phones['before'])
+        dt = _drive_tests(report, WIDE_RADIUS_M)
+        radius_m, widened = WIDE_RADIUS_M, True
     serving, nearest = _serving(report)
     site_name = (serving or {}).get('site_id') or (nearest[0]['site_id'] if nearest else 'the nearest site')
 
@@ -405,7 +419,9 @@ def check_report(report, user):
     if not has_data:
         findings.append(_finding(
             'no_data', 'No measurements near this spot',
-            'Nothing has been measured within 500 m, so the cause cannot be told from the data.',
+            f'No phone measured within {WIDE_RADIUS_M // 1000} km in the {WIDE_DAYS} days before or after the '
+            f'problem, and no drive test passed within {WIDE_RADIUS_M // 1000} km, so the cause cannot be told '
+            'from the data.',
             'Plan a drive test here, or ask the phones in the area for a fresh reading.',
             [],
         ))
@@ -417,12 +433,20 @@ def check_report(report, user):
             [],
         ))
 
+    if widened and findings[0]['kind'] != 'no_data':
+        findings[0]['evidence'].append(
+            f'from readings within {WIDE_RADIUS_M // 1000} km and {WIDE_DAYS} days either side; none within '
+            f'{RADIUS_M} m in the week before')
     for f in findings:
         f['evidence'] = [e for e in f['evidence'] if e]
 
     return {
-        'radius_m': RADIUS_M,
+        'radius_m': radius_m,
         'baseline_days': BASELINE_DAYS,
+        # True when nothing was within RADIUS_M in the week before and the
+        # check used WIDE_RADIUS_M and WIDE_DAYS either side instead.
+        'widened': widened,
+        'wide_days': WIDE_DAYS,
         'phones_at_time': at_time,
         'phones_before': before,
         'drive_tests': dt,
@@ -524,10 +548,13 @@ def classify_report(report, check=None):
 
 
 def _unsettled(now):
-    """Reports not yet classified, or classified before their readings settled."""
+    """Reports not yet classified, or classified before their readings settled.
+    An open report with no measurements nearby is looked at again once a day
+    (2026-10-28): readings may have arrived since, or the check widened."""
     settle = timedelta(hours=SETTLE_HOURS)
     return Q(classified_at__isnull=True) | Q(
-        classified_at__lt=F('happened_at') + settle, happened_at__lte=now - settle)
+        classified_at__lt=F('happened_at') + settle, happened_at__lte=now - settle) | (
+        Q(cause='no_data', classified_at__lt=now - timedelta(days=1)) & ~Q(status='closed'))
 
 
 def classify_pending(seconds, since=None):
@@ -717,7 +744,7 @@ class ProblemReportListView(APIView):
     def get(self, request):
         qs = ProblemReport.objects.select_related('device', 'entered_by', 'checked_by')
         # cause, site and days come from the dashboard: one hotspot's reports (2026-10-15).
-        for field in ('status', 'category', 'source', 'cause'):
+        for field in ('category', 'source', 'cause'):
             value = request.query_params.get(field)
             if value:
                 qs = qs.filter(**{field: value})
@@ -741,7 +768,36 @@ class ProblemReportListView(APIView):
         q = (request.query_params.get('q') or '').strip()[:60]
         if q:
             qs = qs.filter(_search_q(q, request.user))
-        return Response({'results': [_row(r, request.user) for r in qs[:500]]})
+        # Complaints tab (2026-10-28): a date range (days of the problem,
+        # Nepal time), sorting, pages and a count per status. The counts
+        # ignore the status filter, so the tiles above the list stay put.
+        from .collection import NEPAL_TZ
+        for key, lookup, extra in (('from', 'gte', 0), ('to', 'lt', 1)):
+            raw = request.query_params.get(key)
+            if raw:
+                try:
+                    day = datetime.strptime(raw[:10], '%Y-%m-%d').date() + timedelta(days=extra)
+                except ValueError:
+                    return Response({'detail': 'Dates are written as YYYY-MM-DD.'}, status=400)
+                qs = qs.filter(**{f'happened_at__{lookup}': datetime.combine(day, datetime.min.time(), NEPAL_TZ)})
+        counts = {k: 0 for k in ('new', 'checked', 'closed')}
+        for row in qs.order_by().values('status').annotate(n=Count('id')):
+            counts[row['status']] = row['n']
+        counts['all'] = sum(counts.values())
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        order = {'oldest': ('happened_at', 'id'), 'status': ('status', '-happened_at'),
+                 'cause': ('cause', '-happened_at')}.get(request.query_params.get('sort') or '', ('-happened_at', '-id'))
+        qs = qs.order_by(*order)
+        page = _int(request.query_params.get('page'), 1, 100000)
+        if not page:
+            return Response({'results': [_row(r, request.user) for r in qs[:500]], 'counts': counts})
+        size = _int(request.query_params.get('page_size'), 1, 200) or 10
+        total = qs.count()
+        rows = qs[(page - 1) * size:page * size]
+        return Response({'results': [_row(r, request.user) for r in rows], 'counts': counts, 'total': total,
+                         'page': page, 'page_size': size})
 
     def post(self, request):
         """An engineer enters a problem from a customer's complaint."""

@@ -1556,6 +1556,117 @@ repo, not on prod):
     with a throwaway admin: profile 200, sites shown, 0 of 81 points with a
     position, problem list number shown, viewer 403. Not seen in a browser.
 
+- **Explore: phone readings in Recent/Change, session lists as tables**
+  (2026-10-28, built, NOT committed, not seen in a browser; frontend plus
+  one server parameter). Recent and Change now draw the ticked telemetry
+  sessions too: 50 m squares built in the page (`phoneRecentSquares` in
+  `DtExploreTab.tsx`), newest phone session per square vs the one before,
+  white-ringed. Drive tests, telemetry sessions and nearby sites are boxed
+  tables (`components/ExploreListBox.tsx`, 10 rows by default, 10/20/50/100,
+  own choice, not the app-wide one). Drive tests and telemetry sessions have
+  tick boxes (one and all); only ticked ones are drawn, exported and used for
+  the PCI/band legends; a new search ticks all. `dt-sessions/recent/` takes
+  `sessions=` (ids) for the ticked drive tests.
+  A click on a Nearby sites row scrolls to the map and flies to the site
+  (`FlyToSite`).
+
+- **Complaints tab** (2026-10-28, built, NOT committed, not seen in a
+  browser). The Problem Dashboard's Reports tab is "Complaints", laid out
+  after NTC's complaint system: status tiles (Total/New/Checked/Closed,
+  click to filter), a filter card (search, source, problem, likely cause,
+  from/to dates in Nepal days that replace the period, sort, Clear all), a
+  paged table with a blue header (10/20/50/100, `page`/`size` in the
+  address), and a complaint opens full width with Back and Previous/Next.
+  `problem-reports/` gained `category` (already), `from`, `to`, `sort`,
+  `page`, `page_size`; with `page` it answers `total` and `counts` (per
+  status over the same filters without the status). Without `page` it
+  answers as before (500 rows). Styles: the `.cx-*` block at the end of
+  `App.css`.
+- **3D terrain on the site page** (2026-10-28, built, NOT committed, not
+  seen in a browser). "3D terrain" switch on the site map
+  (`SiteLocationMiniMap.tsx`) swaps in `SiteTerrain3D.tsx` (MapLibre GL
+  6.13.0, exact pin; 5.x has a critical advisory; lazy chunk ~290 KB gzip,
+  worker loaded with `setWorkerUrl` from a `?url` import). Google imagery
+  over AWS Terrain Tiles (terrarium, public, no key; all four tile hosts
+  answer CORS `*`), height ×1/1.5/2/3, wedges, tilt lines and measured
+  dots draped. `lib/terrainProfile.ts` reads the same height tiles (zoom 13,
+  ~17 m) and works out per sector where the beam centre meets the ground
+  on real terrain (4/3 earth), shown as ringed dots and a small profile
+  chart beside the flat-ground estimate. Heights checked: Kathmandu 1,306 m,
+  Pokhara lakeside 811 m, Sarangkot 1,528 m. nginx: `connect-src` gained
+  `https://*.google.com https://s3.amazonaws.com`, `img-src` the AWS host,
+  and a `.mjs` location (the worker was sent as octet-stream). Browsers
+  need internet to those hosts, as the flat maps already do.
+  First version drew a blank map: maplibre's stylesheet loads after ours and
+  sets `position: relative` on the map box, so `inset: 0` gave it no height;
+  it is now `width/height: 100%`. Seen drawing in headless Edge on a
+  throwaway page. The beam list sits in a scrollable box (340 px).
+  Decluttered after the user's WDR521 screenshot (same day): sectors with
+  the same mast position, azimuth, tilt and height form one direction
+  (2G A + 3G P1 + 4G J3), one solid beam line each from the site to where it
+  lands, with a label ("50° → 3.3 km"; faint line and "no landing" when it
+  does not come down within 6 km). Chips pick one direction; then only its
+  wedges, tilt lines and readings show, readings coloured by level (RSRP
+  scale, RxLev on 2G). Plain imagery (`lyrs=s`) by default, "Place names"
+  brings back the hybrid layer.
+  Then (same day): the strong part of each beam, from where its lower edge
+  (tilt + half the vertical beamwidth) to where its upper edge (tilt - half)
+  meets the ground, drawn thick on the line, in the label ("120° · 0.6–2.4
+  km"), the list and the chart. Vertical beamwidth is not in the site list
+  (only the antenna model, `Site.antenna_device`: Kathrein 80010865 12,162
+  rows, CommScope RZVV-65A-R4 6,609, RRZZ-65B-R4 1,416 in the 4G file), so it
+  is per band group, editable on the page and kept in the browser: low band
+  (700-900 MHz) 15 degrees, high band 7 degrees (RZVV-65A-R4 catalogue: about
+  14-17 low, 5.4-9.4 high; no Kathrein 80010865 datasheet found). Directions
+  split by band group (`bandGroup`: the sector's `site_band` first, since a
+  B3 sector's carrier reads "B3+B20"). Turn/tilt buttons on the 3D map (a
+  touchpad has no right button). A model-to-beamwidth table from NT's
+  datasheets would replace the band defaults.
+  Lit and shadow (same day, the user's question on "beyond 6 km"):
+  `coverRuns` in `lib/terrainProfile.ts` sorts each step along a direction
+  into strong (antenna sees the ground and it is inside the vertical beam),
+  weak (in view, outside the beam) and shadow (a nearer hill rises above the
+  line). The beam line draws strong stretches thick and shadow dark dashed;
+  the chart shades them; the text says "strong from X to Y" or "to 6 km,
+  where the check stops (it carries on further)" and how much is hidden.
+  Picking one direction draws its whole 65-degree sector as a footprint
+  (`beamFan`: radials every 5 degrees, 50 m steps), lit in colour and
+  shadow dark. Shadow means no direct line, not no signal (diffraction).
+  WDR521 sector A (40 deg, 17 m, 3 deg tilt): shadow 0.3-1.9 km below the
+  ridge brow, lit 2.45-2.85 and 3.1-3.85 km on the far valley side.
+- **"No measurements nearby" when readings exist** (2026-10-28). The check
+  looked only within 500 m and the 7 days before (PR-28: nothing there, 22
+  readings within 1 km at other times). When that is empty it now uses
+  `WIDE_RADIUS_M` 1 km and `WIDE_DAYS` 90 either side, flags `widened`,
+  and the page says which window it used; `no_data` names the wide window.
+  Open reports still at `no_data` are re-checked once a day (`_unsettled`),
+  so stored ones update on prod by themselves after the deploy.
+
+- **No hints for developers on screen** (2026-10-28, the user's rule): text
+  like "use the antenna's datasheet if you have it", setting names (.env,
+  SMS_*, EMAIL_HOST, HTTPS_ENABLED, TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL) and
+  "restart the server" were removed from the site map, Security and Live
+  Site Sync pages; such details go in the Technical Manual (superadmin
+  technical document) instead. The in-app Documentation page may keep them.
+  Live alarms on 28 October: the local server's connection comes from .env,
+  but 10.26.192.141:3000 did not answer from this PC (not on NTC's network).
+
+- **Active alarms column on Sites Topology** (2026-10-28). Table column
+  after Site: the three most severe alarms per site (severity, alarm, network
+  type, device) and "+N more"; header shows when the list was read, a
+  refresh button (asks the alarm system itself, `refresh=1`, rate-limited)
+  and an "Only active" switch (`alarms=1` on `/sites/`, filtered by the
+  cached alarm list's site ids). `GET alarms/sites/?sites=` returns the
+  page's sites' alarms (max 200) and `sites_with_alarms`. Tested with a
+  stand-in alarm list (the middleware was not reachable from this PC).
+- **3D terrain in DT Explore** (2026-10-28). "3D terrain" button beside
+  Satellite swaps the flat map for the same 3D component as the site page
+  (`SiteTerrain3D.tsx`, now also taking `area` and `sitePoints`): search
+  area, sites, and the dots of the chosen view and tab (weakest per square
+  as on the flat map, PCI/band colours, white-ringed phone dots, Recent /
+  Change squares via the shared `recentSquareStyle`), with turn, tilt and
+  height. "Street" on the flat map means place names on in 3D.
+
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an
 identified device. It was declined; Area Sample is the agreed

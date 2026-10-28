@@ -1,8 +1,8 @@
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { useDeleteSite, useSite, useSites, useSitesPage } from '../api/queries'
+import { useDeleteSite, useRefreshSitesAlarms, useSite, useSites, useSitesActiveAlarms, useSitesPage } from '../api/queries'
 import { isAllowed } from '../api/types'
-import type { SiteListItem, SitesPageParams } from '../api/types'
+import type { ActiveAlarm, SiteListItem, SitesPageParams } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { useTreeStore } from '../store/treeStore'
 import { siteMatchesTreeQuery } from '../components/SidebarTree'
@@ -410,8 +410,13 @@ export default function SitesPage() {
     setLastPageSize(pageSize)
     setTablePage(1)
   }
+  // Active alarms column (2026-10-28): the alarms of the sites on this page,
+  // read live from the alarm system through the server's one-minute copy.
+  // "Only active" keeps only the sites that have one now.
+  const [alarmsOnly, setAlarmsOnly] = useState(false)
   const tableParams: SitesPageParams = useMemo(
     () => ({
+      alarms: alarmsOnly || undefined,
       page: tablePage,
       page_size: pageSize,
       region: filters.region || undefined,
@@ -423,9 +428,14 @@ export default function SitesPage() {
       technologyOnly: filters.technologyOnly.length ? filters.technologyOnly : undefined,
       q: filters.search || undefined,
     }),
-    [tablePage, filters, pageSize],
+    [tablePage, filters, pageSize, alarmsOnly],
   )
   const { data: tablePageData, isLoading: tableLoading } = useSitesPage(tableParams, view === 'table')
+  const pageSiteIds = useMemo(() => (tablePageData?.results ?? []).map((s) => s.id), [tablePageData])
+  const siteAlarms = useSitesActiveAlarms(pageSiteIds, view === 'table')
+  const refreshAlarms = useRefreshSitesAlarms()
+  const alarmInfo = siteAlarms.data
+  const alarmTime = alarmInfo?.fetched_at ? new Date(alarmInfo.fetched_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null
   const tableTotalPages = tablePageData ? Math.max(1, Math.ceil(tablePageData.count / pageSize)) : 1
 
   // Drag-to-resize sidebar removed with the sidebar itself (2026-09-07) —
@@ -636,6 +646,30 @@ export default function SitesPage() {
                   <tr>
                     <th>S.N.</th>
                     <th>Site</th>
+                    <th className="sites-alarm-th">
+                      <span className="sites-alarm-th-row">
+                        Active alarms
+                        {alarmInfo?.configured === false
+                          ? <span className="sites-alarm-th-note" title="No alarm connection is set up">not set up</span>
+                          : alarmInfo?.error
+                            ? <span className="sites-alarm-th-note" title={alarmInfo.error}>unavailable</span>
+                            : alarmTime && <span className="sites-alarm-th-note" title="When the alarm list was last read">{alarmTime}</span>}
+                        <button type="button" className="sites-alarm-refresh" title="Fetch the latest alarms from the alarm system"
+                          disabled={refreshAlarms.isPending || alarmInfo?.configured === false}
+                          onClick={() => refreshAlarms.mutate()}>
+                          <span className={refreshAlarms.isPending ? 'spin' : ''}>⟳</span>
+                        </button>
+                        <label className="sites-alarm-only" title="Show only sites with an active alarm">
+                          Only active
+                          <input type="checkbox" checked={alarmsOnly}
+                            onChange={(e) => { setAlarmsOnly(e.target.checked); setTablePage(1) }} />
+                          <span className="sites-alarm-switch" aria-hidden />
+                        </label>
+                      </span>
+                      {alarmsOnly && alarmInfo?.configured && !alarmInfo.error && (
+                        <span className="sites-alarm-th-sub">{alarmInfo.sites_with_alarms.toLocaleString()} sites with an alarm</span>
+                      )}
+                    </th>
                     <th>Region</th>
                     <th>District</th>
                     <th>Technology</th>
@@ -651,6 +685,9 @@ export default function SitesPage() {
                       <td>
                         <div className="sites-table-name">{s.name || '—'}</div>
                         <div className="sites-table-id">{s.id}</div>
+                      </td>
+                      <td className="sites-alarm-cell">
+                        <SiteAlarmList alarms={alarmInfo?.by_site?.[s.id] ?? []} onMore={() => navigate(`/sites/${s.id}`)} />
                       </td>
                       <td>{s.region || '—'}</td>
                       <td>{s.district || '—'}</td>
@@ -703,8 +740,8 @@ export default function SitesPage() {
                   ))}
                   {tablePageData && tablePageData.results.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="page-status">
-                        No site matches the filters currently applied.
+                      <td colSpan={9} className="page-status">
+                        {alarmsOnly ? 'No site matching these filters has an active alarm.' : 'No site matches the filters currently applied.'}
                       </td>
                     </tr>
                   )}
@@ -890,6 +927,32 @@ export default function SitesPage() {
           onCancel={() => setPendingRelocate(null)}
           onConfirmed={() => setPendingRelocate(null)}
         />
+      )}
+    </div>
+  )
+}
+
+// One site's active alarms in the Sites Topology table (2026-10-28): the
+// three most severe, each with its severity, alarm, network type and the
+// device the alarm system names; the rest behind "+N more".
+const ALARM_SEVERITY_CLASS: Record<string, string> = {
+  critical: 'sev-critical', major: 'sev-major', minor: 'sev-minor', warning: 'sev-warning',
+}
+function SiteAlarmList({ alarms, onMore }: { alarms: ActiveAlarm[]; onMore: () => void }) {
+  if (!alarms.length) return <span className="muted">—</span>
+  const shown = alarms.slice(0, 3)
+  return (
+    <div className="sites-alarm-list">
+      {shown.map((a, i) => (
+        <div key={`${a.id}-${i}`} className="sites-alarm-item" title={a.occurred_at ? `Since ${new Date(a.occurred_at).toLocaleString()}` : undefined}>
+          <span className={`sites-alarm-sev ${ALARM_SEVERITY_CLASS[a.severity.toLowerCase()] ?? ''}`}>{a.severity || 'Alarm'}</span>
+          <span className="sites-alarm-name">{a.alarm || 'Alarm'}</span>
+          {a.ne_type && <span className="sites-alarm-ne">{a.ne_type}</span>}
+          {a.device && <div className="sites-alarm-device">{a.device}</div>}
+        </div>
+      ))}
+      {alarms.length > shown.length && (
+        <button type="button" className="sites-alarm-more" onClick={onMore}>+{alarms.length - shown.length} more</button>
       )}
     </div>
   )

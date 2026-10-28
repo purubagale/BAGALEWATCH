@@ -559,6 +559,11 @@ class SiteViewSet(viewsets.ModelViewSet):
                 elif set(technologies).issubset(techs):
                     matching_ids.append(site_id)
             qs = qs.filter(id__in=matching_ids)
+        # Only sites with an active alarm now (2026-10-28, Sites Topology's
+        # alarm column): the sites named in the alarm system's cached list.
+        if params.get('alarms') == '1':
+            from .alarms import site_alarm_counts
+            qs = qs.filter(id__in=list(site_alarm_counts()))
         return qs
 
     @staticmethod

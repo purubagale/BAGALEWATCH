@@ -1,13 +1,19 @@
 import { CircleMarker, MapContainer, Marker, Polygon, Polyline, TileLayer, Tooltip, useMap } from 'react-leaflet'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useSiteMeasuredCoverage } from '../api/queries'
 import type { Sector } from '../api/types'
 import { divergentSectorPoints } from '../lib/sectorLocation'
 import { TILT_REACH_DRAW_MAX_M, buildWedgePolygon, destinationPoint, tiltReachM } from '../lib/sectorWedge'
+import { RSRP_BANDS, RXLEV_BANDS, bandColor } from '../lib/dtBands'
 import { statusColor } from '../lib/statusColor'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
+import { beamFan, beamProfile, coverTotals, type BeamProfile, type FanRadial } from '../lib/terrainProfile'
+import type { Terrain3DData } from './SiteTerrain3D'
+
+// The 3D terrain view (2026-10-28) brings its own map library, so it loads only when ticked.
+const SiteTerrain3D = lazy(() => import('./SiteTerrain3D'))
 
 // Antenna coverage wedges (2026-09-27, "how can we use its [KML] data to
 // show antenna orientation, azimuth, beam power in graphical
@@ -93,6 +99,81 @@ function dotIcon(color: string, size: number): L.DivIcon {
 
 type MapPoint = { lat: number; lng: number; label: string; kind: 'site' | 'sector' }
 
+// Vertical beamwidth by band group (2026-10-28). NTC's site list names the
+// antenna model but not its beamwidths. The defaults are typical of the
+// multi-band panels in the 4G file: CommScope RZVV-65A-R4 lists about
+// 14-17 degrees on 700-960 MHz and 5.4-9.4 degrees on 1400-2700 MHz. They
+// can be changed on the page and are kept in this browser.
+type BandGroup = 'low' | 'high'
+const VBW_DEFAULT: Record<BandGroup, number> = { low: 15, high: 7 }
+const VBW_KEY = 'dtwatch_vertical_beamwidth'
+function bandGroup(s: Sector): BandGroup {
+  // The sector's own band first: a 4G B3 sector's carrier reads "B3+B20" (the site's bands).
+  const band = (s.site_band || (s.tech === '3G' ? '2100' : s.carrier) || '').toUpperCase()
+  if (/\b(B20|B8|B5|B28|800|850|900|700)\b/.test(band) || /GSM\s*900/.test(band)) return 'low'
+  if (!band.trim() && (s.tech || '') === '4G' && /20$/.test(s.sector || '')) return 'low'
+  if (!band.trim() && (s.tech || '') === '2G') return 'low'
+  return 'high'
+}
+function loadVbw(): Record<BandGroup, number> {
+  try {
+    const v = JSON.parse(localStorage.getItem(VBW_KEY) || 'null')
+    if (v && typeof v.low === 'number' && typeof v.high === 'number') return v
+  } catch {
+    // storage blocked: the defaults apply
+  }
+  return VBW_DEFAULT
+}
+
+/** Ground along one sector's direction, the beam centre and where it lands
+ * (2026-10-28). Heights in metres above sea level, distance across. */
+function BeamProfileChart({ p, color }: { p: BeamProfile; color: string }) {
+  const W = 300
+  const H = 80
+  const maxD = p.points[p.points.length - 1].d
+  const grounds = p.points.map((q) => q.ground)
+  const lo = Math.min(p.siteGround, ...grounds)
+  const hi = Math.max(p.antenna ?? p.siteGround, ...grounds)
+  const span = Math.max(20, hi - lo)
+  const x = (d: number) => (d / maxD) * W
+  const y = (h: number) => H - 4 - ((h - lo) / span) * (H - 10)
+  const ground = `M0,${H} L0,${y(p.siteGround)} ` + p.points.map((q) => `L${x(q.d).toFixed(1)},${y(q.ground).toFixed(1)}`).join(' ') + ` L${W},${H} Z`
+  const beamEnd = p.terrainReachM ?? maxD
+  const tan = p.antenna != null && p.flatReachM ? (p.antenna - p.siteGround) / p.flatReachM : null
+  return (
+    <svg className="site-beam-chart" viewBox={`0 0 ${W} ${H}`} role="img"
+      aria-label={`Ground along the sector, from ${Math.round(lo)} to ${Math.round(hi)} m`}>
+      <path d={ground} fill="#a3a38a" opacity={0.55} />
+      {p.antenna != null && p.verticalBeamwidth != null && tan != null && [1, -1].map((sign) => {
+        const edgeTan = Math.tan(Math.atan(tan) + (sign * p.verticalBeamwidth! * Math.PI) / 360)
+        const end = (sign > 0 ? p.nearM : p.farM) ?? maxD
+        return <line key={sign} x1={0} y1={y(p.antenna!)} x2={x(end)} y2={y(p.antenna! - end * edgeTan)} stroke={color} strokeWidth={1} opacity={0.6} />
+      })}
+      {p.runs.filter((r) => r.cover !== 'weak').map((r, i) => {
+        const inside = p.points.filter((q) => q.d >= r.from && q.d <= r.to)
+        if (inside.length < 1) return null
+        const top = inside.map((q) => `L${x(q.d).toFixed(1)},${y(q.ground).toFixed(1)}`).join(' ')
+        return <path key={`g${i}`} d={`M${x(r.from).toFixed(1)},${H} ${top} L${x(r.to).toFixed(1)},${H} Z`}
+          fill={r.cover === 'shadow' ? '#334155' : color} opacity={r.cover === 'shadow' ? 0.55 : 0.45} />
+      })}
+      {p.runs.map((r, i) => (
+        <line key={`s${i}`} x1={x(r.from)} y1={H - 2} x2={x(r.to)} y2={H - 2} strokeWidth={4}
+          stroke={r.cover === 'strong' ? color : r.cover === 'shadow' ? '#1e293b' : '#cbd5e1'} />
+      ))}
+      {p.antenna != null && tan != null && (
+        <line x1={0} y1={y(p.antenna)} x2={x(beamEnd)} y2={y(p.antenna - beamEnd * tan)} stroke={color} strokeWidth={2} strokeDasharray="5 3" />
+      )}
+      {p.antenna != null && <line x1={0} y1={y(p.siteGround)} x2={0} y2={y(p.antenna)} stroke="#334155" strokeWidth={3} />}
+      {p.antenna != null && tan != null && p.terrainReachM != null && (
+        <circle cx={x(p.terrainReachM)} cy={y(p.antenna - p.terrainReachM * tan)} r={4} fill={color} stroke="#fff" strokeWidth={1.5} />
+      )}
+      <text x={2} y={10} fontSize={9} fill="#475569">{Math.round(hi)} m</text>
+      <text x={2} y={H - 2} fontSize={9} fill="#475569">{Math.round(lo)} m</text>
+      <text x={W - 2} y={H - 2} fontSize={9} fill="#475569" textAnchor="end">{distanceText(maxD)}</text>
+    </svg>
+  )
+}
+
 export default function SiteLocationMiniMap({
   siteId, lat, lng, status, sectors = [],
 }: {
@@ -115,6 +196,7 @@ export default function SiteLocationMiniMap({
   const [showTilt, setShowTilt] = useState(false)
   const [showMeasured, setShowMeasured] = useState(false)
   const [measuredSession, setMeasuredSession] = useState<number | null>(null)
+  const [show3d, setShow3d] = useState(false)
   const measured = useSiteMeasuredCoverage(siteId, showMeasured, measuredSession)
 
   function toggleFullscreen() {
@@ -188,6 +270,83 @@ export default function SiteLocationMiniMap({
 
   const squares = showMeasured ? measured.data?.squares ?? [] : []
 
+  // Beam profiles on real ground, for the 3D view (2026-10-28). Sectors
+  // that share a mast position, azimuth, height and tilt (2G A, 3G P1 and 4G
+  // J3 often do) share one beam, so the 3D view draws one line per antenna
+  // direction rather than a dot per sector.
+  const [profiles, setProfiles] = useState<Map<string, BeamProfile | null> | null>(null)
+  const [focus, setFocus] = useState<string | null>(null)
+  const [names3d, setNames3d] = useState(false)
+  const [vbw, setVbwState] = useState<Record<BandGroup, number>>(loadVbw)
+  const setVbw = (group: BandGroup, value: number) => {
+    const next = { ...vbw, [group]: value }
+    setVbwState(next)
+    try { localStorage.setItem(VBW_KEY, JSON.stringify(next)) } catch { /* kept until the page reloads */ }
+  }
+  const directions = useMemo(() => {
+    if (lat == null || lng == null) return []
+    const byKey = new Map<string, { key: string; az: number; tilt: number | null; height: number | null; origin: [number, number]; band: BandGroup; sectors: Sector[] }>()
+    for (const s of sectors) {
+      if (s.azimuth == null) continue
+      const tilt = s.mech_tilt != null || s.elec_tilt != null ? (s.mech_tilt ?? 0) + (s.elec_tilt ?? 0) : null
+      const origin: [number, number] = [s.lat ?? lat, s.lng ?? lng]
+      // The band group splits a direction: low and high band beams have different vertical widths.
+      const band = bandGroup(s)
+      const key = `${origin[0].toFixed(5)},${origin[1].toFixed(5)}|${s.azimuth}|${tilt ?? '-'}|${s.height ?? '-'}|${band}`
+      const d = byKey.get(key)
+      if (d) d.sectors.push(s)
+      else byKey.set(key, { key, az: s.azimuth, tilt, height: s.height ?? null, origin, band, sectors: [s] })
+    }
+    return [...byKey.values()].sort((x, y) => x.az - y.az)
+  }, [lat, lng, sectors])
+  useEffect(() => {
+    if (!show3d) return
+    let live = true
+    setProfiles(null)
+    Promise.all(directions.map(async (d) =>
+      [d.key, await beamProfile(d.origin[0], d.origin[1], d.az, d.height, d.tilt, vbw[d.band])] as const,
+    )).then((rows) => { if (live) setProfiles(new Map(rows)) })
+    return () => { live = false }
+  }, [show3d, directions, vbw])
+  useEffect(() => {
+    if (focus && !directions.some((d) => d.key === focus)) setFocus(null)
+  }, [focus, directions])
+  const sectorName = (s: Sector) => s.sector || s.cell_name || `#${s.id}`
+  const directionName = (d: { az: number; sectors: Sector[] }) => `${d.az}° · ${d.sectors.map(sectorName).join(', ')}`
+  // From the lit / shadow runs (2026-10-28): where the beam first lights the
+  // ground, where it last does, whether it is still lit where the check stops
+  // (6 km), and how much ground in between a hill hides.
+  const coverText = (p: BeamProfile) => {
+    const strong = p.runs.filter((r) => r.cover === 'strong')
+    if (!strong.length) return p.runs.length ? 'the beam lights no ground within 6 km that the antenna can see' : null
+    const first = strong[0].from
+    const last = strong[strong.length - 1].to
+    const end = p.points[p.points.length - 1].d
+    const hidden = coverTotals(p.runs.filter((r) => r.from >= first && r.to <= last)).shadow
+    return `strong from ${distanceText(first)} to ${last >= end ? `${distanceText(end)}, where the check stops (it carries on further)` : distanceText(last)}`
+      + (hidden > 0 ? `; ${distanceText(hidden)} of that is hidden behind hills` : '')
+  }
+  const coverShort = (d: { az: number }, p: BeamProfile) => {
+    const strong = p.runs.filter((r) => r.cover === 'strong')
+    if (!strong.length) return null
+    const end = p.points[p.points.length - 1].d
+    const last = strong[strong.length - 1].to
+    return `${d.az}° · ${distanceText(strong[0].from)}–${last >= end ? '6 km+' : distanceText(last)}`
+  }
+
+  // The footprint across one chosen direction (2026-10-28): radials every 5
+  // degrees across 65 degrees, the horizontal beamwidth of NTC's panels.
+  const FAN_BEAMWIDTH = 65
+  const [fan, setFan] = useState<{ key: string; radials: FanRadial[] } | null>(null)
+  useEffect(() => {
+    const d = focus ? directions.find((x) => x.key === focus) : null
+    if (!show3d || !d || d.height == null || d.height <= 0) { setFan(null); return }
+    let live = true
+    beamFan(d.origin[0], d.origin[1], d.az, FAN_BEAMWIDTH, d.height, d.tilt, vbw[d.band])
+      .then((radials) => { if (live) setFan(radials ? { key: d.key, radials } : null) })
+    return () => { live = false }
+  }, [show3d, focus, directions, vbw])
+
   // Every corner of everything drawn, so the fit can take it all in.
   const wedgeShapes = useMemo(
     () => wedgeSectors.map(({ sector: s, origin }) => ({
@@ -203,6 +362,98 @@ export default function SiteLocationMiniMap({
     squares.forEach((q) => out.push([q.lat, q.lng]))
     return out
   }, [points, showDiagram, wedgeShapes, showTilt, tiltLines, squares])
+
+  const terrainData = useMemo<Terrain3DData>(() => {
+    const colorOf = (s: Sector) => colorByKey.get(`id:${s.id}`) ?? UNKNOWN_SECTOR_COLOR
+    const shown = focus ? directions.filter((d) => d.key === focus) : directions
+    const shownIds = new Set(shown.flatMap((d) => d.sectors.map((s) => s.id)))
+    const techOfKey = new Map<string, string>()
+    for (const d of shown) for (const s of d.sectors) if (s.cell_name) techOfKey.set(s.cell_name.trim().toLowerCase(), s.tech || '4G')
+    const beams: Terrain3DData['beams'] = []
+    const segments: Terrain3DData['segments'] = []
+    const cells: Terrain3DData['cells'] = []
+    const labels: Terrain3DData['labels'] = []
+    const reach: Terrain3DData['reach'] = []
+    for (const d of shown) {
+      const p = profiles?.get(d.key)
+      if (!p) continue
+      const color = colorOf(d.sectors[0])
+      const landed = p.terrainReachM != null
+      const dist = landed ? (p.terrainReachM as number) : p.points[p.points.length - 1].d
+      const [la, ln] = destinationPoint(d.origin[0], d.origin[1], d.az, dist)
+      const stretch = coverText(p)
+      const what = (landed ? `beam centre meets the ground ${distanceText(dist)} out` : 'beam centre does not come down within 6 km')
+        + (stretch ? `; ${stretch}` : '')
+      // The line runs to the far edge when that is farther than the centre.
+      const lineEnd = p.farM != null && p.farM > dist ? p.farM : p.nearM != null && p.farM == null ? p.points[p.points.length - 1].d : dist
+      const end = destinationPoint(d.origin[0], d.origin[1], d.az, lineEnd)
+      beams.push({ from: d.origin, to: end, color, landed, label: `${directionName(d)}: ${what}` })
+      for (const r of p.runs) {
+        if (r.cover === 'weak') continue
+        segments.push({
+          from: destinationPoint(d.origin[0], d.origin[1], d.az, r.from),
+          to: destinationPoint(d.origin[0], d.origin[1], d.az, r.to),
+          color, cover: r.cover,
+          label: `${directionName(d)}: ${r.cover === 'strong' ? 'lit by the beam' : 'hidden behind a hill'}, ${distanceText(r.from)}–${distanceText(r.to)}`,
+        })
+      }
+      if (fan && fan.key === d.key) {
+        const step = fan.radials.length > 1 ? Math.abs(fan.radials[1].bearing - fan.radials[0].bearing) : FAN_BEAMWIDTH
+        for (const rad of fan.radials) {
+          for (const r of rad.runs) {
+            if (r.cover === 'weak') continue
+            const a = rad.bearing - step / 2
+            const b = rad.bearing + step / 2
+            cells.push({
+              positions: [
+                destinationPoint(d.origin[0], d.origin[1], a, r.from), destinationPoint(d.origin[0], d.origin[1], b, r.from),
+                destinationPoint(d.origin[0], d.origin[1], b, r.to), destinationPoint(d.origin[0], d.origin[1], a, r.to),
+              ],
+              color, cover: r.cover,
+              label: r.cover === 'strong' ? 'Lit by the beam' : 'Hidden from the antenna by a hill',
+            })
+          }
+        }
+      }
+      labels.push({ lat: la, lng: ln, color, label: `${directionName(d)}: ${what}`,
+        text: coverShort(d, p) ?? (landed ? `${d.az}° → ${distanceText(dist)}` : `${d.az}° · no landing`) })
+      if (landed) reach.push({ lat: la, lng: ln, color, label: `${directionName(d)}: ${what}` })
+    }
+    return {
+      sites: points.map((p) => ({
+        lat: p.lat, lng: p.lng, label: p.label,
+        color: p.kind === 'site' ? statusColor(status) : '#a855f7', size: p.kind === 'site' ? 18 : 13,
+      })),
+      wedges: showDiagram ? wedgeShapes.filter(({ sector: s }) => shownIds.has(s.id)).map(({ sector: s, positions }) => ({
+        positions, color: colorOf(s),
+        label: `${s.cell_name || s.sector} (${s.tech || '4G'}), azimuth ${s.azimuth}°`,
+      })) : [],
+      lines: showTilt ? tiltLines.filter((t) => shownIds.has(t.sector.id)).map((t) => ({
+        from: t.origin, to: t.end, color: colorOf(t.sector),
+        label: `${t.sector.cell_name || t.sector.sector}: flat-ground reach ${distanceText(t.reach)}`,
+      })) : [],
+      // One direction shown: its readings coloured by signal level, the
+      // question being how well it serves. All shown: by sector, as on the flat map.
+      squares: squares
+        .filter((q) => !focus || techOfKey.has(q.key.trim().toLowerCase()))
+        .map((q) => {
+          const tech = techOfKey.get(q.key.trim().toLowerCase())
+          return {
+            lat: q.lat, lng: q.lng, hollow: !!q.uncertain, ring: q.source === 'phone',
+            color: focus ? bandColor(tech === '2G' ? RXLEV_BANDS : RSRP_BANDS, q.level)
+              : colorByKey.get(q.key.trim().toLowerCase()) ?? UNKNOWN_SECTOR_COLOR,
+            label: `${q.key} · ${q.level != null ? `${q.level} dBm` : 'no level'} · ${q.n} reading${q.n === 1 ? '' : 's'}`,
+          }
+        }),
+      beams,
+      segments,
+      cells,
+      labels,
+      reach,
+      corners: [...drawnCorners, ...beams.map((x) => x.to)],
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [points, status, showDiagram, wedgeShapes, showTilt, tiltLines, squares, colorByKey, profiles, directions, focus, drawnCorners, fan])
 
   if (!points.length) {
     return <div className="site-mini-map-empty">No GPS coordinates recorded for this site.</div>
@@ -229,6 +480,11 @@ export default function SiteLocationMiniMap({
         >
           {isFullscreen ? '⤦' : '⤢'}
         </button>
+        {show3d ? (
+          <Suspense fallback={<div className="site-mini-map-empty">Loading the 3D map…</div>}>
+            <SiteTerrain3D center={[sitePoint.lat, sitePoint.lng]} data={terrainData} names={names3d} />
+          </Suspense>
+        ) : (
         <MapContainer center={[sitePoint.lat, sitePoint.lng]} zoom={MINI_MAP_ZOOM} scrollWheelZoom={isFullscreen} attributionControl={false}>
           {/* subdomains="0123" is REQUIRED here, not cosmetic — Leaflet's
               TileLayer defaults to `subdomains="abc"` (OpenStreetMap's own
@@ -304,6 +560,7 @@ export default function SiteLocationMiniMap({
             </Marker>
           ))}
         </MapContainer>
+        )}
         <div className="site-mini-map-layers">
           <label title="Direction from the site list. Width and length are the same for every sector on a band.">
             <input type="checkbox" checked={showDiagram} onChange={(e) => setShowDiagram(e.target.checked)} /> Diagram
@@ -316,8 +573,82 @@ export default function SiteLocationMiniMap({
               <input type="checkbox" checked={showMeasured} onChange={(e) => setShowMeasured(e.target.checked)} /> Measured
             </label>
           )}
+          <label title="Tilted view on real ground heights, with where each beam centre meets the hills.">
+            <input type="checkbox" checked={show3d} onChange={(e) => setShow3d(e.target.checked)} /> 3D terrain
+          </label>
         </div>
       </div>
+      {show3d && (
+        <div className="site-mini-map-legend">
+          <div className="site-terrain-3d-chips" role="group" aria-label="Directions to show">
+            <button type="button" className={focus == null ? 'on' : ''} onClick={() => setFocus(null)}>All directions</button>
+            {directions.map((d) => (
+              <button key={d.key} type="button" className={focus === d.key ? 'on' : ''}
+                onClick={() => setFocus(focus === d.key ? null : d.key)} title={directionName(d)}>
+                <i style={{ background: colorByKey.get(`id:${d.sectors[0].id}`) ?? UNKNOWN_SECTOR_COLOR }} />
+                {d.az}° <span>{d.sectors.map(sectorName).join(' ')}</span>
+              </button>
+            ))}
+            <label className="site-terrain-3d-names">
+              <input type="checkbox" checked={names3d} onChange={(e) => setNames3d(e.target.checked)} /> Place names
+            </label>
+          </div>
+          <div className="site-terrain-3d-vbw">
+            Vertical beamwidth:{' '}
+            <label>low band (700–900 MHz){' '}
+              <input type="number" min={2} max={40} step={0.5} value={vbw.low} onChange={(e) => setVbw('low', Number(e.target.value) || VBW_DEFAULT.low)} />°
+            </label>{' '}
+            <label>high band (1800–2600 MHz){' '}
+              <input type="number" min={2} max={40} step={0.5} value={vbw.high} onChange={(e) => setVbw('high', Number(e.target.value) || VBW_DEFAULT.high)} />°
+            </label>
+          </div>
+          <div>
+            One line per antenna direction (same azimuth, tilt and band group), from the site. Thick colour: ground the
+            antenna can see and that lies inside the beam (strong). Dark dashes: ground hidden behind a hill (shadow: no direct line from the antenna; signal still reaches it by bending over the ridge, but much weaker).
+            Thin line: in view but outside the beam, weaker. The dot is where the centre of the beam lands; "6 km+"
+            means the beam is still strong where the check stops. Pick one direction to see its whole sector
+            ({FAN_BEAMWIDTH}° wide) shaded: colour where it is lit, dark where hills hide the ground.
+            {focus && fan == null && directions.find((x) => x.key === focus)?.height ? ' Working out the sector…' : ''}
+            {focus && showMeasured && ' Readings are coloured by signal level for the chosen direction.'}
+            {' '}Ground heights have about 30 m detail; buildings and trees are not included.
+          </div>
+          {focus && showMeasured && (
+            <div className="site-terrain-3d-scale">
+              {RSRP_BANDS.map((x) => <span key={x.label}><i style={{ background: x.color }} />{x.label}</span>)}
+              <span className="muted">dBm (2G uses the RxLev scale)</span>
+            </div>
+          )}
+          {directions.length === 0 && <div>No sector here has an azimuth, so no beam can be drawn.</div>}
+          {directions.length > 0 && profiles == null && <div>Reading the ground heights…</div>}
+          {profiles && <div className="site-terrain-3d-list">{(focus ? directions.filter((d) => d.key === focus) : directions).map((d) => {
+            const p = profiles.get(d.key)
+            const color = colorByKey.get(`id:${d.sectors[0].id}`) ?? UNKNOWN_SECTOR_COLOR
+            return (
+              <div key={d.key} className={`site-mini-map-legend-row site-terrain-3d-row${focus === d.key ? ' on' : ''}`}
+                onClick={() => setFocus(focus === d.key ? null : d.key)} title="Show this direction alone">
+                <span className="site-mini-map-legend-chip" style={{ background: color }} />
+                <b>{d.az}°</b> ({d.sectors.map((s) => `${sectorName(s)} ${s.tech || '4G'}`).join(', ')};{' '}
+                {d.band === 'low' ? 'low' : 'high'} band, {vbw[d.band]}° vertical):{' '}
+                {p && coverText(p) && <><b>{coverText(p)}</b>. </>}
+                {!p ? 'the ground heights could not be read.'
+                  : p.antenna == null ? 'no antenna height on record, so only the ground is shown.'
+                    : p.terrainReachM != null
+                      ? <>beam centre meets the ground <b>{distanceText(p.terrainReachM)}</b> out
+                        {p.flatReachM != null ? <> (flat-ground estimate {distanceText(p.flatReachM)})</> : null}.</>
+                      : p.flatReachM == null ? 'no down-tilt on record; the beam does not come down within 6 km.'
+                        : `beam centre does not meet the ground within 6 km (flat-ground estimate ${distanceText(p.flatReachM)}).`}
+                {p && (
+                  <div className="site-mini-map-legend-sub">
+                    Site ground {Math.round(p.siteGround)} m{p.antenna != null ? `, antenna ${Math.round(p.antenna)} m` : ''}; highest ground ahead{' '}
+                    {Math.round(p.peak.ground)} m at {distanceText(p.peak.d)}.
+                  </div>
+                )}
+                {p && <BeamProfileChart p={p} color={color} />}
+              </div>
+            )
+          })}</div>}
+        </div>
+      )}
       {showTilt && (
         <div className="site-mini-map-legend">
           {tiltLines.length === 0

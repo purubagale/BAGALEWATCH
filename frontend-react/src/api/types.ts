@@ -124,6 +124,8 @@ export interface SitesPageParams {
   /** One or more "X only" values — site's full tech set must equal EXACTLY this set (2026-09-10, extended same day to allow more than one: "2g only"+"4g only" matches a 2G+4G-only site). Mutually exclusive with `technology`. */
   technologyOnly?: string[]
   q?: string
+  /** Only sites with an active alarm now (2026-10-28). */
+  alarms?: boolean
 }
 
 // One entry of SectorSerializer.get_config_changes() (2026-09-23) --
@@ -2795,6 +2797,10 @@ export interface ProblemAreaSummary {
 export interface ProblemCheck {
   radius_m: number
   baseline_days: number
+  // Nothing within 500 m in the week before (2026-10-28): the figures are
+  // from radius_m and wide_days either side of the problem instead.
+  widened?: boolean
+  wide_days?: number
   phones_at_time: ProblemAreaSummary
   phones_before: ProblemAreaSummary
   drive_tests: {
@@ -2833,6 +2839,11 @@ export interface ProblemLiveTrace {
 export interface ActiveAlarm {
   id: number; csn: string; site_id: string; severity: string; alarm: string; device: string; ne_type: string
   occurred_at: string | null
+}
+// The alarms of the sites on one page of Sites Topology (2026-10-28).
+export interface SitesActiveAlarms {
+  configured: boolean; by_site: Record<string, ActiveAlarm[]>; sites_with_alarms: number
+  fetched_at?: string; total?: number; error?: string
 }
 export interface SiteActiveAlarms {
   configured: boolean; site: string; alarms: ActiveAlarm[]; fetched_at?: string; error?: string
@@ -2969,6 +2980,16 @@ export interface ProblemReport {
     has_address: boolean
     recent: ProblemNotificationRow[]
   } | null
+}
+
+// The complaint list (2026-10-28): one page, its total, and a count per
+// status over the same filters except the status itself.
+export interface ProblemReportList {
+  results: ProblemReport[]
+  counts?: { all: number; new: number; checked: number; closed: number }
+  total?: number
+  page?: number
+  page_size?: number
 }
 
 // Security settings page (2026-10-15, core/views.py SecuritySettingsView).
@@ -3120,9 +3141,11 @@ export interface ProblemDashboard {
 // ── Drive-test retention and the Recent layer (2026-10-14) ───────────────
 
 export interface DtRecentEntry {
-  session_id: number
+  // Explore also builds these from phone readings (2026-10-28): the phone
+  // session's key and no purpose.
+  session_id: number | string
   date: string
-  purpose: DtPurpose
+  purpose: DtPurpose | null
   n: number
   rsrp_min: number | null
   rsrp: number | null

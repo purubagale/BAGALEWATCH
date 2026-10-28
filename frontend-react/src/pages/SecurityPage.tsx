@@ -96,10 +96,6 @@ export default function SecurityPage() {
                     <tr><th>Phones asked to verify</th><td>{s.sms.verification_available ? 'Yes' : 'No'}</td></tr>
                   </tbody>
                 </table>
-                <p className="muted" style={{ fontSize: 12 }}>
-                  The gateway is set in the server's .env file (SMS_BACKEND, SMS_HTTP_URL, SMS_HTTP_FIELDS, the sign-in
-                  details and SMS_SENDER_ID), then the server is restarted. No code change is needed.
-                </p>
                 <div className="problem-actions">
                   <input value={testNumber} onChange={(e) => setTestNumber(e.target.value)} placeholder="98XXXXXXXX"
                     style={{ width: 180 }} />
@@ -248,7 +244,7 @@ function AttackAlerts({ data, busy, onSave }: {
             Every superadmin ({a.superadmins}) is told by the email and mobile number on their account (Users page).
           </li>
           {data.alert_by_email && !a.email_configured && (
-            <li className="error">No mail server is set (EMAIL_HOST in .env): emails only reach the server log.</li>
+            <li className="error">No mail server is set up, so alert emails are not sent.</li>
           )}
           {data.alert_by_email && a.superadmins_without_email.length > 0 && (
             <li>No email on: {a.superadmins_without_email.join(', ')}.</li>
@@ -324,17 +320,17 @@ function InEffect({ s }: { s: NonNullable<SecuritySettings['status']> }) {
         : s.provisioning.configured ? `Linked, through ${s.provisioning.address_host}` : 'Chosen, but the address is not set',
       !!s.provisioning?.configured && s.provisioning.backend === 'http'],
     ['Debug mode', s.debug ? 'On: must be off in production' : 'Off', !s.debug],
-    ['Redirect to https', s.https_redirect ? 'On' : 'Off (set HTTPS_ENABLED=1 once the site is served over https)',
+    ['Redirect to https', s.https_redirect ? 'On' : 'Off',
       s.https_redirect],
     ['Shared app upload key', s.shared_upload_key_until
       ? `Accepted until ${new Date(s.shared_upload_key_until).toLocaleString()}`
-      : 'Accepted with no end date (set TELEMETRY_SHARED_KEY_ACCEPTED_UNTIL once every phone signs its uploads)',
+      : 'Accepted with no end date',
       !!s.shared_upload_key_until],
   ]
   return (
     <section className="sec-card">
       <h2>Set in the server's configuration</h2>
-      <p className="muted">Read-only here; changed in .env and applied by restarting the server.</p>
+      <p className="muted">Read-only; set on the server.</p>
       <table className="sec-facts">
         <tbody>
           {rows.map(([k, v, good]) => (

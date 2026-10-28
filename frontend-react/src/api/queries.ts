@@ -1,13 +1,13 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef } from 'react'
 import { ApiError, apiFetch, apiJson } from './client'
 import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
   SiteMeasuredCoverage,
 } from './types'
 import type {
-  AlarmSource, AlarmSourceInput, AlarmSummary, SiteActiveAlarms,
+  AlarmSource, AlarmSourceInput, AlarmSummary, SiteActiveAlarms, SitesActiveAlarms,
   LinkedSystem, ProblemDashboard, ProblemLive, ProblemLiveTrace, ProblemNearbySites, ProblemNotificationRow, ProblemRelated,
-  ProblemReport,
+  ProblemReport, ProblemReportList,
   SecuritySettings,
 } from './types'
 import type { DtEnvironment, DtPruneRun, DtPurpose, DtRecentResponse, DtRetentionSettings } from './types'
@@ -128,6 +128,7 @@ export function useSitesPage(params: SitesPageParams, enabled = true) {
   if (params.district) qs.set('district', params.district)
   if (params.status) qs.set('status', params.status)
   if (params.q) qs.set('q', params.q)
+  if (params.alarms) qs.set('alarms', '1')
   if (params.technologyOnly?.length) {
     for (const t of params.technologyOnly) qs.append('technology_only', t)
   } else {
@@ -2031,10 +2032,18 @@ export function useTelemetrySessionsNear(
 
 export function useProblemReports(params: {
   status?: string; source?: string; cause?: string; site?: string; area?: string; days?: number; q?: string
+  // Complaints tab (2026-10-28): problem type, date range, sort and pages.
+  category?: string; from?: string; to?: string; sort?: string; page?: number; pageSize?: number
 }) {
   const qs = new URLSearchParams()
   if (params.status) qs.set('status', params.status)
   if (params.source) qs.set('source', params.source)
+  if (params.category) qs.set('category', params.category)
+  if (params.from) qs.set('from', params.from)
+  if (params.to) qs.set('to', params.to)
+  if (params.sort) qs.set('sort', params.sort)
+  if (params.page) qs.set('page', String(params.page))
+  if (params.pageSize) qs.set('page_size', String(params.pageSize))
   // From the dashboard (2026-10-15): one cause, or one hotspot's reports.
   if (params.cause) qs.set('cause', params.cause)
   if (params.site) qs.set('site', params.site)
@@ -2044,7 +2053,8 @@ export function useProblemReports(params: {
   if (params.q) qs.set('q', params.q)
   return useQuery({
     queryKey: ['problem-reports', qs.toString()],
-    queryFn: () => apiJson<{ results: ProblemReport[] }>(`/api/v2/problem-reports/?${qs.toString()}`),
+    queryFn: () => apiJson<ProblemReportList>(`/api/v2/problem-reports/?${qs.toString()}`),
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -2218,6 +2228,32 @@ export function useSiteActiveAlarms(site: string, enabled: boolean) {
   })
 }
 
+// Alarms of the sites shown on one page of Sites Topology (2026-10-28).
+// Re-read every minute; `refresh` asks the alarm system itself again.
+export function useSitesActiveAlarms(sites: string[], enabled: boolean) {
+  const list = [...sites].sort().join(',')
+  return useQuery({
+    queryKey: ['sites-alarms', list],
+    queryFn: () => alarmJson<SitesActiveAlarms>(`/api/v2/alarms/sites/?sites=${encodeURIComponent(list)}`),
+    enabled: enabled && list.length > 0,
+    refetchInterval: enabled ? 60_000 : false,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useRefreshSitesAlarms() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => alarmJson<SitesActiveAlarms>('/api/v2/alarms/sites/?refresh=1'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sites-alarms'] })
+      qc.invalidateQueries({ queryKey: ['site-alarms'] })
+      qc.invalidateQueries({ queryKey: ['alarm-summary'] })
+      qc.invalidateQueries({ queryKey: ['sites-page'] })
+    },
+  })
+}
+
 export function useAlarmSummary() {
   return useQuery({
     queryKey: ['alarm-summary'],
@@ -2290,6 +2326,7 @@ export function useRefreshAlarms() {
       if (site) qc.setQueryData(['site-alarms', site], data)
       else qc.setQueryData(['alarm-summary'], data)
       qc.invalidateQueries({ queryKey: site ? ['alarm-summary'] : ['site-alarms'] })
+      qc.invalidateQueries({ queryKey: ['sites-alarms'] })
     },
   })
 }
@@ -2407,15 +2444,19 @@ export function useDtRecent(
   techs: DtTech[],
   outline: string,
   enabled: boolean,
+  // Only these drive tests (2026-10-28, ticked in Explore's list); null = all.
+  sessionIds: number[] | null = null,
 ) {
+  const sessions = sessionIds ? sessionIds.join(',') : null
   return useQuery({
-    queryKey: ['dt-recent', point?.lat, point?.lng, radiusKm, techs.join(','), outline],
+    queryKey: ['dt-recent', point?.lat, point?.lng, radiusKm, techs.join(','), outline, sessions],
     queryFn: () =>
       apiJson<DtRecentResponse>(
         `/api/v2/dt-sessions/recent/?lat=${point!.lat}&lng=${point!.lng}&radius_km=${radiusKm}&tech=${techs.join(',')}` +
-          (outline ? `&outline=${encodeURIComponent(outline)}` : ''),
+          (outline ? `&outline=${encodeURIComponent(outline)}` : '') +
+          (sessions !== null ? `&sessions=${sessions}` : ''),
       ),
-    enabled: enabled && point !== null && techs.length > 0,
+    enabled: enabled && point !== null && techs.length > 0 && sessions !== '',
   })
 }
 

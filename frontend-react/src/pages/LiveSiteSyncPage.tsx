@@ -467,7 +467,7 @@ function AlarmSourceForm() {
   }
   const where = src?.origin === 'page'
     ? `Set on this page${src.updated_by ? ` by ${src.updated_by}` : ''}${src.updated_at ? `, ${new Date(src.updated_at).toLocaleString()}` : ''}`
-    : src?.origin === 'env' ? "From the server's settings file (.env)" : 'Not set'
+    : src?.origin === 'env' ? 'Set on the server' : 'Not set'
   if (!open) {
     return (
       <div className="admin-page-actions" style={{ justifyContent: 'flex-start', gap: 10, alignItems: 'center' }}>
@@ -484,7 +484,7 @@ function AlarmSourceForm() {
         { onSuccess: () => { setOpen(false); setMsg('Saved. The next look asks the alarm system again.') } })
     }}>
       <label>Address of the active-alarm list
-        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://10.26.192.141:3000/api/v1/alarms/active" />
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Address ending in /api/v1/alarms/active" />
       </label>
       <label>Header
         <select value={scheme} onChange={(e) => setScheme(e.target.value as 'Bearer' | 'Token')}>
@@ -502,7 +502,7 @@ function AlarmSourceForm() {
         </select>
       </label>
       <label className="alarm-source-check"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> On (untick to pause)</label>
-      <p className="muted" style={{ margin: 0 }}>Leave the address empty to use the server's settings file instead.</p>
+      <p className="muted" style={{ margin: 0 }}>Leave the address empty to use the connection set on the server.</p>
       {save.error && <p className="error">{apiErrorMessage(save.error)}</p>}
       <div className="admin-page-actions" style={{ justifyContent: 'flex-start' }}>
         <button type="button" className="btn-secondary btn-small" onClick={() => setOpen(false)}>Cancel</button>

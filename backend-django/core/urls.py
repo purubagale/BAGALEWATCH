@@ -238,6 +238,7 @@ urlpatterns = [
     path('problem-reports/<int:pk>/live/', problem_live.ProblemLiveView.as_view(), name='problem-live'),
     # Active alarms from the alarm middleware, read live (2026-10-26) -- see core/alarms.py.
     path('alarms/active/', alarms.SiteActiveAlarmsView.as_view(), name='alarms-active'),
+    path('alarms/sites/', alarms.SitesActiveAlarmsView.as_view(), name='alarms-sites'),  # 2026-10-28, Sites Topology column
     path('alarms/summary/', alarms.AlarmSummaryView.as_view(), name='alarms-summary'),
     path('alarms/source/', alarms.AlarmSourceView.as_view(), name='alarms-source'),
     # Where phones run the speed test (2026-10-26) -- see core/speed_test.py.

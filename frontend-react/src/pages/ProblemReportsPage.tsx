@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { Circle, CircleMarker, MapContainer, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
@@ -66,7 +66,7 @@ const PERIODS = [
 type Tab = 'overview' | 'reports' | 'map' | 'hotspots'
 const TABS: { key: Tab; label: string }[] = [
   { key: 'overview', label: 'Overview' },
-  { key: 'reports', label: 'Reports' },
+  { key: 'reports', label: 'Complaints' },
   { key: 'map', label: 'Map' },
   { key: 'hotspots', label: 'Hotspots' },
 ]
@@ -146,7 +146,8 @@ export default function ProblemReportsPage() {
               onClick={() => set(t.key === 'reports'
                 // Opening Reports from the tab shows every report: filters
                 // set from Overview or Hotspots are cleared (2026-10-26).
-                ? { tab: 'reports', status: 'all', source: null, cause: null, site: null, area: null, q: null, enter: null }
+                ? { tab: 'reports', status: 'all', source: null, category: null, cause: null, site: null, area: null, q: null,
+                  from: null, to: null, page: null, report: null, enter: null }
                 : { tab: t.key })}>
               {t.label}
             </button>
@@ -172,10 +173,10 @@ export default function ProblemReportsPage() {
       )}
 
       {tab === 'overview' && (dash.data
-        ? <Overview d={dash.data} onCause={(c) => set({ tab: 'reports', cause: c, status: 'all', site: null, area: null, days })}
+        ? <Overview d={dash.data} onCause={(c) => set({ tab: 'reports', cause: c, status: 'all', site: null, area: null, page: null, report: null, days })}
             onHotspot={(h) => openHotspot(h, set, days)} />
         : !dash.error && <p className="muted">Loading…</p>)}
-      {tab === 'reports' && <Reports params={params} set={set} days={days} statusAll={statusAll} />}
+      {tab === 'reports' && <Reports params={params} set={set} days={days} statusAll={statusAll} causes={dash.data?.by_cause ?? []} />}
       {tab === 'map' && (dash.data
         ? <ProblemMap d={dash.data} onOpen={(id) => set({ tab: 'reports', report: id, enter: null })} />
         : !dash.error && <p className="muted">Loading…</p>)}
@@ -187,7 +188,7 @@ export default function ProblemReportsPage() {
 }
 
 function openHotspot(h: ProblemHotspot, set: (c: Record<string, string | number | null>) => void, days: number) {
-  set({ tab: 'reports', site: h.site_id, area: h.area ?? null, cause: null, status: 'all', report: null, enter: null, days })
+  set({ tab: 'reports', site: h.site_id, area: h.area ?? null, cause: null, status: 'all', report: null, enter: null, page: null, days })
 }
 
 // ── Overview ───────────────────────────────────────────────────────────────
@@ -199,7 +200,7 @@ function Overview({ d, onCause, onHotspot }: {
   return (
     <>
       <div className="pd-kpis">
-        <Kpi label="Reports" value={t.all} sub={`${t.app} app · ${t.staff} staff · ${t.external} other systems`} />
+        <Kpi label="Complaints" value={t.all} sub={`${t.app} app · ${t.staff} staff · ${t.external} other systems`} />
         <Kpi label="New" value={t.new} sub={t.overdue ? `${t.overdue} waiting over ${t.overdue_hours} h` : 'none overdue'}
           warn={t.overdue > 0} />
         <Kpi label="Checked" value={t.checked} />
@@ -334,106 +335,255 @@ function DayChart({ d }: { d: ProblemDashboard }) {
   )
 }
 
-// ── Reports ────────────────────────────────────────────────────────────────
+// ── Complaints ─────────────────────────────────────────────────────────────
+// (2026-10-28, after NTC's complaint system: "rename report tab as complaints
+// and manage page as of reference"). Status tiles that filter, one filter
+// card, a paged table, and one complaint at a time opened full width.
 
-function Reports({ params, set, days, statusAll }: {
+const SORTS = [
+  { key: '', label: 'Newest first' },
+  { key: 'oldest', label: 'Oldest first' },
+  { key: 'status', label: 'Status' },
+  { key: 'cause', label: 'Likely cause' },
+]
+const PAGE_SIZES = [10, 20, 50, 100]
+const STATUS_TILES: { key: '' | ProblemReport['status']; label: string; sub: string; icon: string }[] = [
+  { key: '', label: 'Total complaints', sub: 'in the chosen period', icon: '📊' },
+  { key: 'new', label: 'New', sub: 'not yet looked at', icon: '🆕' },
+  { key: 'checked', label: 'Checked', sub: 'an engineer looked', icon: '🔍' },
+  { key: 'closed', label: 'Closed', sub: 'done', icon: '✅' },
+]
+
+function ago(iso: string) {
+  const m = (Date.now() - new Date(iso).getTime()) / 60_000
+  if (m < 60) return `${Math.max(0, Math.round(m))} min ago`
+  if (m < 48 * 60) return `${Math.round(m / 60)} h ago`
+  return `${Math.round(m / 1440)} days ago`
+}
+
+function Reports({ params, set, days, statusAll, causes }: {
   params: URLSearchParams; set: (c: Record<string, string | number | null>) => void; days: number; statusAll: boolean
+  causes: ProblemCount[]
 }) {
   // No status in the address means every status (2026-10-26; was "new").
   const status = statusAll ? '' : params.get('status') ?? ''
   const siteLink = useSiteLinkBack()
   const source = params.get('source') ?? ''
+  const category = params.get('category') ?? ''
   const cause = params.get('cause') ?? ''
   const site = params.get('site') ?? ''
   const area = params.get('area') ?? ''
+  const from = params.get('from') ?? ''
+  const to = params.get('to') ?? ''
+  const sort = params.get('sort') ?? ''
+  const page = Math.max(1, Number(params.get('page')) || 1)
+  const pageSize = PAGE_SIZES.includes(Number(params.get('size'))) ? Number(params.get('size')) : 10
   const selected = params.get('report') ? Number(params.get('report')) : null
   const entering = params.get('enter') === '1'
   const q = params.get('q') ?? ''
   const [typed, setTyped] = useState(q)
   useEffect(() => setTyped(q), [q])
   useEffect(() => {
-    const t = window.setTimeout(() => { if (typed.trim() !== q) set({ q: typed.trim() || null }) }, 400)
+    const t = window.setTimeout(() => { if (typed.trim() !== q) set({ q: typed.trim() || null, page: null }) }, 400)
     return () => window.clearTimeout(t)
   }, [typed, q, set])
-  const { data, isLoading, error } = useProblemReports({ status, source, cause, site, area, days, q })
+  // A date range replaces the period above.
+  const { data, isLoading, isFetching, error } = useProblemReports({
+    status, source, category, cause, site, area, days: from || to ? undefined : days, q, from, to, sort, page, pageSize,
+  })
   const rows = data?.results ?? []
+  const total = data?.total ?? rows.length
+  const counts = data?.counts
+  const pages = Math.max(1, Math.ceil(total / pageSize))
+  // Filters change the list, so they go back to page 1.
+  const filter = (c: Record<string, string | number | null>) => set({ ...c, page: null })
+  const anyFilter = !!(cause || site || area || source || category || q || from || to || status)
+  const toPage = (p: number) => set({ page: p === 1 ? null : p })
+
+  if (entering) {
+    return (
+      <div className="cx-open">
+        <div className="cx-open-bar">
+          <button type="button" className="btn-secondary btn-small" onClick={() => set({ enter: null })}>← Back to complaints</button>
+        </div>
+        <div className="problem-detail"><EnterComplaint onSaved={(id) => set({ enter: null, status: 'all', report: id })} /></div>
+      </div>
+    )
+  }
+  if (selected != null) {
+    const i = rows.findIndex((r) => r.id === selected)
+    return (
+      <div className="cx-open">
+        <div className="cx-open-bar">
+          <button type="button" className="btn-secondary btn-small" onClick={() => set({ report: null })}>← Back to complaints</button>
+          {i >= 0 && (
+            <>
+              <button type="button" className="btn-secondary btn-small" disabled={i === 0}
+                onClick={() => set({ report: rows[i - 1].id })}>‹ Previous</button>
+              <button type="button" className="btn-secondary btn-small" disabled={i === rows.length - 1}
+                onClick={() => set({ report: rows[i + 1].id })}>Next ›</button>
+              <span className="muted">{(page - 1) * pageSize + i + 1} of {total}</span>
+            </>
+          )}
+        </div>
+        <div className="problem-detail"><ReportDetail id={selected} /></div>
+      </div>
+    )
+  }
 
   return (
     <>
-      <div className="problem-toolbar">
-        <label>
-          Status{' '}
-          <select value={status} onChange={(e) => set({ status: e.target.value || 'all' })}>
-            <option value="">All</option>
-            <option value="new">New</option>
-            <option value="checked">Checked</option>
-            <option value="closed">Closed</option>
-          </select>
-        </label>
-        <label>
-          From{' '}
-          <select value={source} onChange={(e) => set({ source: e.target.value })}>
-            <option value="">Everywhere</option>
-            <option value="app">Mobile app</option>
-            <option value="staff">Entered by staff</option>
-            <option value="external">Other systems</option>
-          </select>
-        </label>
-        <label className="pd-search">
-          <input type="search" value={typed} onChange={(e) => setTyped(e.target.value)}
-            placeholder="Search: mobile number, PR-12, ticket or words" aria-label="Search reports" />
-        </label>
-        {cause && (
-          <span className="pd-chip">
-            Cause: {rows[0]?.cause_label || cause}
-            <button type="button" onClick={() => set({ cause: null })} title="Remove">×</button>
-          </span>
-        )}
-        {(site || area) && (
-          <span className="pd-chip">
-            {site ? <>Site <Link to={siteLink(site)}>{site}</Link></> : `Area ${area}`}
-            <button type="button" onClick={() => set({ site: null, area: null })} title="Remove">×</button>
-          </span>
-        )}
-        {(cause || site || area || source || q || (status && status !== '')) && (
-          <button type="button" className="btn-secondary btn-small"
-            onClick={() => set({ status: 'all', source: null, cause: null, site: null, area: null, q: null })}>
-            Show all reports</button>
-        )}
+      <div className="cx-tiles">
+        {STATUS_TILES.map((t) => {
+          const n = counts ? (t.key ? counts[t.key] : counts.all) : null
+          return (
+            <button key={t.key || 'all'} type="button" className={`cx-tile${status === t.key ? ' on' : ''}`}
+              onClick={() => filter({ status: t.key || 'all' })} title={`Show: ${t.label}`}>
+              <span className="cx-tile-label">{t.label}<i aria-hidden>{t.icon}</i></span>
+              <b className={`cx-tile-val cx-${t.key || 'all'}`}>{n == null ? '…' : n.toLocaleString()}</b>
+              <span className="cx-tile-sub">{t.sub}</span>
+            </button>
+          )
+        })}
       </div>
 
-      <div className="problem-layout">
-        <div className="problem-list">
-          {isLoading && <p className="muted">Loading…</p>}
-          {error && <p className="error">{apiErrorMessage(error)}</p>}
-          {!isLoading && !rows.length && <p className="muted">No reports.</p>}
-          {rows.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              className={`problem-row${selected === r.id ? ' problem-row-active' : ''}`}
-              onClick={() => set({ report: r.id, enter: null })}
-            >
-              <span className="problem-row-title">
-                <i className="pd-dot" style={{ background: CAUSE_COLOR[r.cause || 'unchecked'] }} />
-                {r.category_label}
+      <section className="cx-filters">
+        <div className="cx-filters-head">Filters</div>
+        <div className="cx-filters-grid">
+          <label className="cx-wide">Search
+            <input type="search" value={typed} onChange={(e) => setTyped(e.target.value)}
+              placeholder="Mobile number, PR-12, ticket or words" />
+          </label>
+          <label>Source
+            <select value={source} onChange={(e) => filter({ source: e.target.value })}>
+              <option value="">All sources</option>
+              <option value="app">Mobile app</option>
+              <option value="staff">Entered by staff</option>
+              <option value="external">Other systems</option>
+            </select>
+          </label>
+          <label>Problem
+            <select value={category} onChange={(e) => filter({ category: e.target.value })}>
+              <option value="">All problems</option>
+              {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+          </label>
+          <label>Likely cause
+            <select value={cause} onChange={(e) => filter({ cause: e.target.value })}>
+              <option value="">All causes</option>
+              {cause && !causes.some((c) => c.key === cause) && <option value={cause}>{rows[0]?.cause_label || cause}</option>}
+              {causes.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+          </label>
+          <label>From
+            <input type="date" value={from} max={to || undefined} onChange={(e) => filter({ from: e.target.value })} />
+          </label>
+          <label>To
+            <input type="date" value={to} min={from || undefined} onChange={(e) => filter({ to: e.target.value })} />
+          </label>
+          <label>Sort by
+            <select value={sort} onChange={(e) => set({ sort: e.target.value })}>
+              {SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+            </select>
+          </label>
+          <div className="cx-filters-end">
+            {(site || area) && (
+              <span className="pd-chip">
+                {site ? <>Site <Link to={siteLink(site)}>{site}</Link></> : `Area ${area}`}
+                <button type="button" onClick={() => filter({ site: null, area: null })} title="Remove">×</button>
               </span>
-              <span className="muted">{when(r.happened_at)}</span>
-              <span className="muted">{sourceText(r)} · {STATUS_LABEL[r.status]}</span>
-              {(r.cause_label || r.site_id) && (
-                <span className="muted">{r.cause_label}{r.site_id ? ` · ${r.site_id}` : ''}</span>
-              )}
-              <span className="muted pd-row-ref">{r.reference ?? `PR-${r.id}`}{r.phone_number ? ` · ${r.phone_number}` : ''}</span>
-            </button>
-          ))}
+            )}
+            {anyFilter && (
+              <button type="button" className="btn-secondary btn-small"
+                onClick={() => filter({ status: 'all', source: null, category: null, cause: null, site: null, area: null, q: null, from: null, to: null })}>
+                Clear all</button>
+            )}
+          </div>
         </div>
-        <div className="problem-detail">
-          {entering && <EnterComplaint onSaved={(id) => set({ enter: null, status: 'all', report: id })} />}
-          {!entering && selected != null && <ReportDetail id={selected} />}
-          {!entering && selected == null && <p className="muted">Choose a report, or enter a complaint.</p>}
-        </div>
+        {(from || to) && <div className="muted cx-note">The dates replace the period chosen above.</div>}
+      </section>
+
+      <div className="cx-listbar">
+        <span className="muted">
+          {isLoading ? 'Loading…' : total === 0 ? 'No complaints' : `Showing ${(page - 1) * pageSize + 1} to ${Math.min(total, page * pageSize)} of ${total.toLocaleString()} complaints`}
+          {isFetching && !isLoading ? ' · updating…' : ''}
+        </span>
+        <Pager page={page} pages={pages} onPage={toPage} />
+      </div>
+      {error && <p className="error">{apiErrorMessage(error)}</p>}
+      <div className="cx-table-wrap">
+        <table className="cx-table" data-pager="off">
+          <thead>
+            <tr>
+              <th>ID</th><th>Customer</th><th>Problem</th><th>Site</th><th>Likely cause</th>
+              <th>Source</th><th>Status</th><th>Created on</th><th>Checked</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id} onClick={() => set({ report: r.id })} title="Open this complaint">
+                <td>
+                  <span className="cx-id">{r.reference ?? `PR-${r.id}`}</span>
+                  {r.external_ref && <span className="cx-badge">{r.external_system} #{r.external_ref}</span>}
+                </td>
+                <td>{r.phone_number
+                  ? <span className="cx-num">{r.phone_number}</span>
+                  : <span className="muted">{r.has_number ? 'Number held' : '—'}</span>}</td>
+                <td>
+                  <span className="cx-cat"><i style={{ background: CATEGORY_COLOR[r.category] ?? '#64748b' }} />{r.category_label}</span>
+                  {r.note && <div className="muted cx-note-cell" title={r.note}>{r.note}</div>}
+                </td>
+                <td>{r.site_id
+                  ? <>
+                    <Link to={siteLink(r.site_id)} onClick={(e) => e.stopPropagation()}>{r.site_id}</Link>
+                    {r.sector ? <span className="muted"> {r.sector}</span> : null}
+                    <div className="muted cx-small">{r.site_by === 'serving' ? 'served the phone' : 'nearest site'}</div>
+                  </>
+                  : <span className="muted">—</span>}</td>
+                <td><span className="cx-cat"><i style={{ background: CAUSE_COLOR[r.cause || 'unchecked'] }} />{r.cause_label || 'Not checked yet'}</span></td>
+                <td>{sourceText(r)}</td>
+                <td><span className={`cx-status cx-${r.status}`}>{STATUS_LABEL[r.status]}</span></td>
+                <td className="cx-nowrap">{new Date(r.happened_at).toLocaleString()}<div className="muted cx-small">{ago(r.happened_at)}</div></td>
+                <td className="cx-nowrap">{r.checked_at
+                  ? <>By {r.checked_by ?? '—'}<div className="muted cx-small">{ago(r.checked_at)}</div></>
+                  : <span className="muted">—</span>}</td>
+              </tr>
+            ))}
+            {!isLoading && rows.length === 0 && (
+              <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 24 }}>No complaints match these filters.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="cx-listbar">
+        <label className="muted">Show{' '}
+          <select value={pageSize} onChange={(e) => set({ size: Number(e.target.value) === 10 ? null : e.target.value, page: null })}>
+            {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>{' '}per page
+        </label>
+        <Pager page={page} pages={pages} onPage={toPage} />
       </div>
     </>
+  )
+}
+
+function Pager({ page, pages, onPage }: { page: number; pages: number; onPage: (p: number) => void }) {
+  if (pages <= 1) return null
+  const near = [1, pages, page - 1, page, page + 1]
+  if (page <= 3) near.push(2, 3, 4)
+  if (page >= pages - 2) near.push(pages - 1, pages - 2, pages - 3)
+  const list = [...new Set(near)].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b)
+  return (
+    <div className="cx-pager">
+      <button type="button" disabled={page <= 1} onClick={() => onPage(page - 1)}>‹ Prev</button>
+      {list.map((n, i) => (
+        <Fragment key={n}>
+          {i > 0 && n - list[i - 1] > 1 && <span className="muted">…</span>}
+          <button type="button" className={n === page ? 'on' : ''} onClick={() => onPage(n)}>{n}</button>
+        </Fragment>
+      ))}
+      <button type="button" disabled={page >= pages} onClick={() => onPage(page + 1)}>Next ›</button>
+    </div>
   )
 }
 
@@ -506,7 +656,7 @@ function Hotspots({ d, onOpen }: { d: ProblemDashboard; onOpen: (h: ProblemHotsp
                 <td>{h.sectors.length ? h.sectors.map((s) => `${s.key} (${s.count})`).join(', ') : '—'}</td>
                 <td>{fmt(h.level_mean, ' dBm')}</td>
                 <td>{when(h.latest_at)}</td>
-                <td><button type="button" className="btn-secondary btn-small" onClick={() => onOpen(h)}>Reports</button></td>
+                <td><button type="button" className="btn-secondary btn-small" onClick={() => onOpen(h)}>Complaints</button></td>
               </tr>
             ))}
           </tbody>
@@ -965,7 +1115,13 @@ function CauseTab({ c }: { c: NonNullable<ProblemReport['check']>; reportId: num
           {f.evidence.length > 0 && <p className="muted">Measured: {f.evidence.join(' · ')}</p>}
         </div>
       ))}
-      <Band icon="📶">Measurements around the spot ({c.radius_m} m)</Band>
+      <Band icon="📶">Measurements around the spot ({c.radius_m >= 1000 ? `${c.radius_m / 1000} km` : `${c.radius_m} m`})</Band>
+      {c.widened && (
+        <p className="muted" style={{ margin: '4px 0 8px' }}>
+          Nothing was measured within 500 m in the week before, so these figures use readings within{' '}
+          {c.radius_m / 1000} km from {c.wide_days} days before to {c.wide_days} days after the problem.
+        </p>
+      )}
       <div className="pd-tiles">
         <div className="pd-tile pd-tile-wide">
           <div className="pd-tile-label">Serving site</div>
@@ -977,7 +1133,7 @@ function CauseTab({ c }: { c: NonNullable<ProblemReport['check']>; reportId: num
         <Tile icon="📶" label="4G level now (other phones)" value={round(c.phones_at_time.rsrp_4g_mean)} unit="dBm"
           verdict={rateLevel('LTE', c.phones_at_time.rsrp_4g_mean)}
           hint={c.phones_at_time.readings ? `${c.phones_at_time.readings} readings, ${c.phones_at_time.share_4g_pct ?? 0}% on 4G` : 'no readings'} />
-        <Tile icon="🗓" label={`4G level, ${c.baseline_days} days before`} value={round(c.phones_before.rsrp_4g_mean)} unit="dBm"
+        <Tile icon="🗓" label={c.widened ? `4G level, ${c.wide_days} days either side` : `4G level, ${c.baseline_days} days before`} value={round(c.phones_before.rsrp_4g_mean)} unit="dBm"
           verdict={rateLevel('LTE', c.phones_before.rsrp_4g_mean)}
           hint={c.phones_before.readings ? `${c.phones_before.readings} readings` : 'no readings'} />
         <Tile icon="〰" label="4G quality now (RSRQ)" value={round(c.phones_at_time.rsrq_4g_mean)} unit="dB" verdict={rate(c.phones_at_time.rsrq_4g_mean, -10, -15)}
