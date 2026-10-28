@@ -256,7 +256,7 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
             sectors: a.sectors ?? [], total,
             matched: (a.sectors ?? []).reduce((x, r) => x + r.readings, 0),
             unmatched: a.sectors_unmatched ?? 0, capped: (a.sectors ?? []).length >= 80,
-            neighbours: a.neighbours,
+            neighbours: a.neighbours, calls_total: a.sectors_calls_total,
           }} />
         </div>
         {unknownCells.length > 0 && (

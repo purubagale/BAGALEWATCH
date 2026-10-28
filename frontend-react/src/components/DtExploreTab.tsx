@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
@@ -6,6 +6,12 @@ import 'leaflet/dist/leaflet.css'
 import CurrentLocationMarker from './CurrentLocationMarker'
 import SitePhotoLayer from './SitePhotoLayer'
 import TelemetryNearLayer from './TelemetryNearLayer'
+import ExploreListBox from './ExploreListBox'
+import type { Terrain3DData } from './SiteTerrain3D'
+import { destinationPoint } from '../lib/sectorWedge'
+
+// 3D terrain view of the search (2026-10-28): the site page's 3D map, loaded only when asked for.
+const Terrain3D = lazy(() => import('./SiteTerrain3D'))
 import { useAuth } from '../auth/AuthContext'
 import { apiErrorMessage } from '../api/client'
 import { useDtRecent, useDtServingCellsForSessions, useDtSessionsNear, useSites, useTelemetrySessionsNear } from '../api/queries'
@@ -267,6 +273,16 @@ const DETAIL_MAX_KM = 4
 
 interface ViewBox { s: number; w: number; n: number; e: number }
 
+// Zooms to a site picked in the Nearby sites list (2026-10-28); `n` changes
+// on every pick, so picking the same site again flies there again.
+function FlyToSite({ target }: { target: { lat: number; lng: number; n: number } | null }) {
+  const map = useMap()
+  useEffect(() => {
+    if (target) map.flyTo([target.lat, target.lng], Math.max(map.getZoom(), 16), { duration: 0.6 })
+  }, [map, target])
+  return null
+}
+
 function ViewWatcher({ onView }: { onView: (box: ViewBox) => void }) {
   const map = useMapEvents({
     moveend: () => {
@@ -291,45 +307,105 @@ function monthsAgo(isoDate: string) {
   return (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth())
 }
 
+// Phone readings in the Recent and Change views (2026-10-28): the same
+// 50 m squares, built here from the phone points of the ticked telemetry
+// sessions. Per square and technology, the average of each measure per
+// session; the newest session there is "latest", the one before "previous".
+const SQUARE_M = 50
+
+function phoneRecentSquares(points: TelemetryNearPoint[], metricKeys: { tech: DtTech; key: string }[], lat0: number): DtRecentSquare[] {
+  const dLat = SQUARE_M / 111320
+  const dLng = SQUARE_M / (111320 * Math.cos((lat0 * Math.PI) / 180))
+  type Acc = { last: string; n: number; sums: Record<string, [number, number]> }
+  const cells = new Map<string, { tech: DtTech; i: number; j: number; bySession: Map<string, Acc> }>()
+  for (const p of points) {
+    const tech = techOf(p.network_type)
+    if (!tech) continue
+    const i = Math.floor(p.lat / dLat)
+    const j = Math.floor(p.lng / dLng)
+    const k = `${tech}|${i}|${j}`
+    let cell = cells.get(k)
+    if (!cell) cells.set(k, (cell = { tech, i, j, bySession: new Map() }))
+    let acc = cell.bySession.get(p.session)
+    if (!acc) cell.bySession.set(p.session, (acc = { last: p.ts, n: 0, sums: {} }))
+    acc.n += 1
+    if (p.ts > acc.last) acc.last = p.ts
+    for (const m of metricKeys) {
+      if (m.tech !== tech) continue
+      const v = telemetryMetricValue(p, tech, m.key)
+      if (v == null) continue
+      const s = acc.sums[m.key] ?? (acc.sums[m.key] = [0, 0])
+      s[0] += v
+      s[1] += 1
+    }
+  }
+  const entry = (session: string, a: Acc): DtRecentEntry => {
+    const avg = (key: string) => (a.sums[key] ? Math.round((a.sums[key][0] / a.sums[key][1]) * 10) / 10 : null)
+    return {
+      session_id: session, date: a.last.slice(0, 10), purpose: null, n: a.n, rsrp_min: null,
+      rsrp: avg('rsrp'), rsrq: avg('rsrq'), sinr: avg('sinr'), dl: null, cqi: avg('cqi'),
+      rscp: avg('rscp'), ecno: avg('ecno'), rx_qual: avg('rx_qual'),
+    }
+  }
+  const out: DtRecentSquare[] = []
+  for (const cell of cells.values()) {
+    const ranked = [...cell.bySession].sort((a, b) => b[1].last.localeCompare(a[1].last))
+    out.push({
+      tech: cell.tech, lat: (cell.i + 0.5) * dLat, lng: (cell.j + 0.5) * dLng,
+      latest: entry(ranked[0][0], ranked[0][1]),
+      previous: ranked[1] ? entry(ranked[1][0], ranked[1][1]) : null,
+    })
+  }
+  return out
+}
+
+/** Colour of one Recent / Change square on the chosen measure, or null when
+ * it is not drawn (another technology, no value, nothing to compare with). */
+function recentSquareStyle(sq: DtRecentSquare, metric: TaggedMetric, view: Exclude<ExploreView, 'sessions'>) {
+  if (sq.tech !== metric.tech) return null
+  const key = metric.key as keyof DtRecentEntry
+  const latest = sq.latest[key] as number | null
+  if (latest == null) return null
+  if (view === 'recent') {
+    return { color: bandColor(metric.bands, latest), opacity: monthsAgo(sq.latest.date) > RECENT_FADE_MONTHS ? 0.3 : 0.85, change: null }
+  }
+  const before = sq.previous ? (sq.previous[key] as number | null) : null
+  if (before == null) return null
+  const change = Math.round((latest - before) * 10) / 10
+  const better = metric.key === 'rx_qual' ? -change : change
+  const step = CHANGE_STEP[metric.key] ?? 2
+  return { color: better >= step ? '#16a34a' : better <= -step ? '#dc2626' : '#9ca3af', opacity: 0.85, change }
+}
+
 function RecentSquaresLayer({
-  squares, metric, view, names,
+  squares, metric, view, names, ring = false,
 }: {
   squares: DtRecentSquare[]
   metric: TaggedMetric
   view: Exclude<ExploreView, 'sessions'>
   names: Record<string, string>
+  // Phone squares carry a white ring, like the phone dots in the Sessions view.
+  ring?: boolean
 }) {
   const map = useMap()
   useEffect(() => {
     const layer = L.layerGroup()
     const key = metric.key as keyof DtRecentEntry
-    const lowerIsBetter = metric.key === 'rx_qual'
     const fmt = (e: DtRecentEntry) => {
       const v = e[key] as number | null
-      return `${e.date} · ${purposeLabel(e.purpose)} · ${names[String(e.session_id)] ?? 'Session ' + e.session_id}<br>` +
+      return `${e.date} · ${e.purpose ? purposeLabel(e.purpose) : 'Phone readings'} · ${names[String(e.session_id)] ?? 'Session ' + e.session_id}<br>` +
         `${metric.label}: ${v == null ? '—' : v + metric.unit} (average of ${e.n} readings)`
     }
     for (const sq of squares) {
-      if (sq.tech !== metric.tech) continue
-      const latest = sq.latest[key] as number | null
-      if (latest == null) continue
-      let color: string
-      let opacity = 0.85
+      const st = recentSquareStyle(sq, metric, view)
+      if (!st) continue
+      const { color, opacity } = st
       let text = `<b>Latest</b> ${fmt(sq.latest)}`
-      if (view === 'recent') {
-        color = bandColor(metric.bands, latest)
-        if (monthsAgo(sq.latest.date) > RECENT_FADE_MONTHS) opacity = 0.3
-        if (sq.previous) text += `<br><b>Before</b> ${fmt(sq.previous)}`
-      } else {
-        const before = sq.previous ? (sq.previous[key] as number | null) : null
-        if (before == null) continue
-        const change = Math.round((latest - before) * 10) / 10
-        const better = lowerIsBetter ? -change : change
-        const step = CHANGE_STEP[metric.key] ?? 2
-        color = better >= step ? '#16a34a' : better <= -step ? '#dc2626' : '#9ca3af'
-        text += `<br><b>Before</b> ${fmt(sq.previous as DtRecentEntry)}<br><b>Change</b> ${change > 0 ? '+' : ''}${change}${metric.unit}`
-      }
-      L.circleMarker([sq.lat, sq.lng], { radius: 4, color, fillColor: color, fillOpacity: opacity, weight: 0 })
+      if (sq.previous) text += `<br><b>Before</b> ${fmt(sq.previous)}`
+      if (st.change != null) text += `<br><b>Change</b> ${st.change > 0 ? '+' : ''}${st.change}${metric.unit}`
+      L.circleMarker([sq.lat, sq.lng], ring
+        ? { radius: 5, color: '#ffffff', weight: 1.5, opacity, fillColor: color, fillOpacity: opacity }
+        : { radius: 4, color, fillColor: color, fillOpacity: opacity, weight: 0 })
         .bindTooltip(text, { sticky: true, direction: 'top', offset: [0, -4] })
         .addTo(layer)
     }
@@ -337,8 +413,15 @@ function RecentSquaresLayer({
     return () => {
       map.removeLayer(layer)
     }
-  }, [map, squares, metric, view, names])
+  }, [map, squares, metric, view, names, ring])
   return null
+}
+
+function toggled<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set)
+  if (next.has(value)) next.delete(value)
+  else next.add(value)
+  return next
 }
 
 function inBox(box: ViewBox, r: DtSample) {
@@ -997,8 +1080,6 @@ export default function DtExploreTab() {
     mapLayer, setMapLayer,
   } = useDtExploreState()
   const [error, setError] = useState<string | null>(null)
-  const [sitesExpanded, setSitesExpanded] = useState(false)
-  const [sessionsExpanded, setSessionsExpanded] = useState(false)
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set())
   const { allMetrics } = useDtMetrics()
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -1045,7 +1126,12 @@ export default function DtExploreTab() {
 
   // Sessions, Recent or Change view of the map (2026-10-14).
   const [exploreView, setExploreView] = useState<ExploreView>('sessions')
-  const recent = useDtRecent(point, backendRadiusKm, techs, outlineParam, exploreView !== 'sessions')
+  // Sessions left off the map (2026-10-28): every session found is ticked
+  // until the user unticks it in the lists below; a new search ticks all again.
+  const [hiddenDt, setHiddenDt] = useState<Set<number>>(new Set())
+  const [hiddenTel, setHiddenTel] = useState<Set<string>>(new Set())
+  const [flyTarget, setFlyTarget] = useState<{ lat: number; lng: number; n: number } | null>(null)
+  const [show3d, setShow3d] = useState(false)
 
   // Zoomed in on a search that arrived as squares: every reading in view.
   const [viewBox, setViewBox] = useState<ViewBox | null>(null)
@@ -1095,6 +1181,11 @@ export default function DtExploreTab() {
     () => Object.fromEntries(telemetrySessions.map((s) => [s.key, s.name])),
     [telemetrySessions],
   )
+  // Only the ticked telemetry sessions are drawn.
+  const telemetryPlotted = useMemo(
+    () => (hiddenTel.size ? telemetryPoints.filter((p) => !hiddenTel.has(p.session)) : telemetryPoints),
+    [telemetryPoints, hiddenTel],
+  )
 
   // Shared with FullscreenSync so re-fitting after a fullscreen resize
   // keeps the same search area visible, not wherever the pre-resize
@@ -1133,6 +1224,24 @@ export default function DtExploreTab() {
       .map((s) => ({ ...s, samples: s.samples.filter((r) => r.lat != null && r.lng != null && pointInPolygon(r.lat as number, r.lng as number, shape.points)) }))
       .filter((s) => s.samples.length > 0)
   }, [nearSessionsRaw, shape, detail, detailBox])
+
+  // Only the ticked drive tests are drawn (2026-10-28); the tabs and the
+  // lists still count every session found.
+  const plottedSessions = useMemo(
+    () => (hiddenDt.size ? nearSessions.filter((s) => !hiddenDt.has(s.id)) : nearSessions),
+    [nearSessions, hiddenDt],
+  )
+  const recentSessionIds = useMemo(
+    () => (hiddenDt.size ? plottedSessions.map((s) => s.id) : null),
+    [hiddenDt, plottedSessions],
+  )
+  const recent = useDtRecent(point, backendRadiusKm, techs, outlineParam, exploreView !== 'sessions', recentSessionIds)
+  // Phone readings in Recent and Change, from the ticked telemetry sessions.
+  const phoneSquares = useMemo(() => {
+    if (exploreView === 'sessions' || !telemetryShown || !point || telemetryPlotted.length === 0) return []
+    return phoneRecentSquares(telemetryPlotted, allMetrics.map((m) => ({ tech: m.tech, key: m.key })), point.lat)
+  }, [exploreView, telemetryShown, point, telemetryPlotted, allMetrics])
+  const phoneChangeSquares = useMemo(() => phoneSquares.filter((q) => q.previous).length, [phoneSquares])
 
   // "Latest per area" clustering over the currently-shown near-sessions
   // list (see the latestOnly state comment above). Grouped by the same
@@ -1257,7 +1366,7 @@ export default function DtExploreTab() {
   const rankedPcis = useMemo(() => {
     if (!isPciTab) return [] as { pci: number; n: number }[]
     const counts = new Map<number, number>()
-    for (const s of nearSessions) {
+    for (const s of plottedSessions) {
       if (s.tech !== '4G') continue
       for (const sample of s.samples) {
         if (sample.pci != null && sample.lat != null && sample.lng != null) {
@@ -1266,11 +1375,11 @@ export default function DtExploreTab() {
       }
     }
     // 4G phone readings with "Include telemetry sessions" ticked share the legend.
-    for (const p of telemetryPoints) {
+    for (const p of telemetryPlotted) {
       if (p.pci != null && techOf(p.network_type) === '4G') counts.set(p.pci, (counts.get(p.pci) ?? 0) + 1)
     }
     return [...counts].map(([pci, n]) => ({ pci, n })).sort((a, b) => b.n - a.n || a.pci - b.pci)
-  }, [isPciTab, nearSessions, telemetryPoints])
+  }, [isPciTab, plottedSessions, telemetryPlotted])
   const [pciMode, setPciMode] = useState<'pci' | 'mod3'>('pci')
   const [isolatedPci, setIsolatedPci] = useState<number | null>(null)
   const [pciFind, setPciFind] = useState('')
@@ -1315,12 +1424,13 @@ export default function DtExploreTab() {
   const distinctBands = useMemo(() => {
     if (!isBandTab) return []
     const set = new Set<string>()
-    for (const s of nearSessions) {
+    for (const s of plottedSessions) {
       if (s.tech !== '4G') continue
       for (const sample of s.samples) if (sample.band) set.add(sample.band)
     }
     return [...set].sort().slice(0, PCI_LEGEND_CAP)
-  }, [isBandTab, nearSessions])
+  }, [isBandTab, plottedSessions])
+
 
   // Serving-site hover/click connector (2026-09-04) — one /serving-cells/
   // fetch per session currently plotted (see useDtServingCellsForSessions'
@@ -1329,7 +1439,7 @@ export default function DtExploreTab() {
   // session regardless of the active tech tab, not just `metric.tech` —
   // small per-session payloads, and it means switching tech tabs never
   // re-fetches something already cached from a moment ago.
-  const nearSessionIds = useMemo(() => nearSessions.map((s) => s.id), [nearSessions])
+  const nearSessionIds = useMemo(() => plottedSessions.map((s) => s.id), [plottedSessions])
   const servingCellQueries = useDtServingCellsForSessions(nearSessionIds)
   // Not wrapped in useMemo: `servingCellQueries` is a fresh array every
   // render (useQueries' own contract), so memoizing on it would never
@@ -1352,6 +1462,72 @@ export default function DtExploreTab() {
       .sort((a, b) => a.d - b.d)
   }, [point, sites, radiusKm, shape])
 
+  // What the 3D view draws (2026-10-28): the same dots as the flat map for
+  // the chosen view and tab, the search area and the sites in it.
+  const terrainData = useMemo<Terrain3DData | null>(() => {
+    if (!show3d || !point) return null
+    const squares: Terrain3DData['squares'] = []
+    const fmt = (v: number | null | undefined, unit = '') => (v == null ? '—' : `${v}${unit}`)
+    if (exploreView === 'sessions') {
+      for (const session of plottedSessions) {
+        const usable = session.samples.filter((x) => x.lat != null && x.lng != null)
+        if (isPciTab) {
+          if (session.tech !== '4G') continue
+          for (const x of subsampleForMap(usable.filter((y) => y.pci != null && (isolatedPci == null || y.pci === isolatedPci)))) {
+            squares.push({ lat: x.lat as number, lng: x.lng as number, color: pciColorOf(x.pci as number), hollow: false, ring: false,
+              label: `${session.name} · PCI ${x.pci}` })
+          }
+        } else if (isBandTab) {
+          if (session.tech !== '4G') continue
+          for (const x of subsampleForMap(usable.filter((y) => !!y.band))) {
+            squares.push({ lat: x.lat as number, lng: x.lng as number, color: bandCategoryColor(x.band as string), hollow: false, ring: false,
+              label: `${session.name} · band ${x.band}` })
+          }
+        } else {
+          if (session.tech !== metric.tech) continue
+          const higherIsBetter = metric.key !== 'rx_qual'
+          const kept = weakestPerSquare(usable.filter((y) => y[metric.key] != null),
+            (y) => [y.lat as number, y.lng as number],
+            (y) => (higherIsBetter ? (y[metric.key] as number) : -(y[metric.key] as number))).kept
+          for (const { item: x } of kept) {
+            const v = x[metric.key] as number
+            squares.push({ lat: x.lat as number, lng: x.lng as number, color: bandColor(metric.bands, v), hollow: false, ring: false,
+              label: `${session.name} · ${metric.label} ${fmt(v, metric.unit)}` })
+          }
+        }
+      }
+      if (telemetryShown) {
+        for (const p of telemetryPlotted) {
+          const color = telemetryColorOf(p)
+          if (color) squares.push({ lat: p.lat, lng: p.lng, color, hollow: false, ring: true, label: telemetryNames[p.session] ?? 'Phone reading' })
+        }
+      }
+    } else if (!isPciTab && !isBandTab) {
+      const add = (list: DtRecentSquare[], ring: boolean, names: Record<string, string>) => {
+        for (const sq of list) {
+          const st = recentSquareStyle(sq, metric, exploreView)
+          if (!st) continue
+          const who = names[String(sq.latest.session_id)] ?? (ring ? 'Phone readings' : `Session ${sq.latest.session_id}`)
+          squares.push({ lat: sq.lat, lng: sq.lng, color: st.color, hollow: st.opacity < 0.5, ring,
+            label: st.change != null ? `${who} · change ${st.change > 0 ? '+' : ''}${st.change}${metric.unit}` : `${who} · ${sq.latest.date}` })
+        }
+      }
+      if (recent.data && recentSessionIds?.length !== 0) add(recent.data.squares, false, recent.data.sessions)
+      add(phoneSquares, true, telemetryNames)
+    }
+    const area: [number, number][] = shape.type === 'polygon'
+      ? shape.points
+      : Array.from({ length: 64 }, (_, i) => destinationPoint(point.lat, point.lng, (360 * i) / 64, radiusKm * 1000))
+    const sitePoints = nearSites.map(({ s, d }) => ({ lat: s.lat as number, lng: s.lng as number, color: '#1e2330',
+      label: `${s.name || s.id} · ${d.toFixed(2)} km from the search point` }))
+    return {
+      sites: [{ lat: point.lat, lng: point.lng, color: '#7f77dd', size: 14, label: pointLabel }],
+      wedges: [], lines: [], beams: [], segments: [], cells: [], labels: [], reach: [],
+      squares, area, sitePoints, corners: area,
+    }
+  }, [show3d, point, exploreView, plottedSessions, isPciTab, isBandTab, isolatedPci, pciColorOf, metric, telemetryShown,
+    telemetryPlotted, telemetryColorOf, telemetryNames, recent.data, recentSessionIds, phoneSquares, shape, radiusKm, nearSites, pointLabel])
+
   function handleSearch() {
     if (!inputText.trim()) {
       setError('Enter coordinates ("27.7172, 85.3240"), a city/district name, or a Site ID')
@@ -1366,9 +1542,9 @@ export default function DtExploreTab() {
     setPointLabel(resolved.label)
     setShape(resolved.shape)
     setPoint({ lat: resolved.lat, lng: resolved.lng })
-    setSitesExpanded(false)
-    setSessionsExpanded(false)
     setExpandedClusters(new Set())
+    setHiddenDt(new Set())
+    setHiddenTel(new Set())
     setSelectedSite(null)
   }
 
@@ -1502,8 +1678,8 @@ export default function DtExploreTab() {
                 type="button"
                 className={exploreView === v ? 'btn-primary btn-small' : 'btn-secondary btn-small'}
                 onClick={() => setExploreView(v)}
-                title={v === 'sessions' ? 'Every session found here'
-                  : v === 'recent' ? 'The most recent value measured in each 50 m square, from any session'
+                title={v === 'sessions' ? 'Every ticked session'
+                  : v === 'recent' ? 'The most recent value measured in each 50 m square, from the ticked sessions'
                     : 'Each 50 m square compared with the drive before it'}
               >
                 {v === 'sessions' ? 'Sessions' : v === 'recent' ? 'Recent' : 'Change'}
@@ -1516,8 +1692,13 @@ export default function DtExploreTab() {
                     : `${exploreView === 'recent'
                       ? `The most recent value in each 50 m square, from any drive; faded when older than ${RECENT_FADE_MONTHS} months.`
                       : 'Green: better than the drive before; red: worse; grey: about the same. Only squares measured at least twice.'}`
-                      + ` Team drive tests only (${nearSessions.length} here); phone readings are hidden in this view.`
-                      + (exploreView === 'change' && nearSessions.length < 2 ? ' Change needs two drive tests over the same streets.' : '')}
+                      + ` Drive tests: ${plottedSessions.length} of ${nearSessions.length} ticked.`
+                      + (telemetryShown
+                        ? ` Phone sessions (white ring): ${telemetrySessions.filter((t) => !hiddenTel.has(t.key)).length} of ${telemetrySessions.length} ticked`
+                          + (exploreView === 'change' ? `, ${phoneChangeSquares} square${phoneChangeSquares === 1 ? '' : 's'} with an earlier phone session to compare.` : '.')
+                        : canSeeTelemetry ? ' Tick "Include telemetry sessions" to add phone readings.' : '')
+                      + (exploreView === 'change' && plottedSessions.length < 2 && !(telemetryShown && phoneChangeSquares)
+                        ? ' Change needs two drives over the same streets.' : '')}
               </span>
             )}
           </div>
@@ -1559,7 +1740,7 @@ export default function DtExploreTab() {
                 className="btn-secondary btn-small"
                 disabled={isPciTab || isBandTab}
                 title={isPciTab ? 'CSV export is not yet available for the PCI Plot' : isBandTab ? 'CSV export is not yet available for Band Distribution' : undefined}
-                onClick={() => exportCsv(nearSessions, metric, nearSites, point, shape, radiusKm, pointLabel)}
+                onClick={() => exportCsv(plottedSessions, metric, nearSites, point, shape, radiusKm, pointLabel)}
               >
                 CSV
               </button>
@@ -1568,7 +1749,7 @@ export default function DtExploreTab() {
                 className="btn-secondary btn-small"
                 disabled={isPciTab || isBandTab}
                 title={isPciTab ? 'KML export is not yet available for the PCI Plot' : isBandTab ? 'KML export is not yet available for Band Distribution' : undefined}
-                onClick={() => exportKml(nearSessions, metric, nearSites, point, shape, radiusKm, pointLabel)}
+                onClick={() => exportKml(plottedSessions, metric, nearSites, point, shape, radiusKm, pointLabel)}
               >
                 KML
               </button>
@@ -1578,6 +1759,14 @@ export default function DtExploreTab() {
                 onClick={() => setMapLayer((m) => (m === 'street' ? 'satellite' : 'street'))}
               >
                 {mapLayer === 'street' ? '🛰 Satellite' : '🗺 Street'}
+              </button>
+              <button
+                type="button"
+                className={show3d ? 'btn-primary btn-small' : 'btn-secondary btn-small'}
+                onClick={() => setShow3d((v) => !v)}
+                title="Tilted view on real ground heights; turn and tilt with the buttons on the map"
+              >
+                {show3d ? '🗺 Flat map' : '⛰ 3D terrain'}
               </button>
               <button type="button" className="btn-secondary btn-small" onClick={toggleFullscreen}>
                 {isFullscreen ? '⤦ Exit Fullscreen' : '⤢ Fullscreen'}
@@ -1638,6 +1827,13 @@ export default function DtExploreTab() {
             ref={wrapRef}
             className={isFullscreen ? 'dt-explore-map-wrap dt-explore-map-fullscreen' : 'dt-explore-map-wrap'}
           >
+            {show3d && terrainData ? (
+              <div className="dt-coverage-map dt-explore-3d">
+                <Suspense fallback={<div className="page-status">Loading the 3D map…</div>}>
+                  <Terrain3D center={[point.lat, point.lng]} data={terrainData} names={mapLayer === 'street'} />
+                </Suspense>
+              </div>
+            ) : (
             <MapContainer
               key={mapLayer}
               center={DEFAULT_CENTER}
@@ -1656,24 +1852,33 @@ export default function DtExploreTab() {
               <SearchAreaLayer point={pointTuple as LatLng} radiusKm={radiusKm} shape={shape} label={pointLabel} />
               <NearSitesLayer sites={nearSites} onSelect={setSelectedSite} />
               {exploreView !== 'sessions' ? (
-                !isPciTab && !isBandTab && recent.data && (
-                  <RecentSquaresLayer squares={recent.data.squares} metric={metric} view={exploreView} names={recent.data.sessions} />
+                !isPciTab && !isBandTab && (
+                  <>
+                    {recent.data && recentSessionIds?.length !== 0 && (
+                      <RecentSquaresLayer squares={recent.data.squares} metric={metric} view={exploreView} names={recent.data.sessions} />
+                    )}
+                    {phoneSquares.length > 0 && (
+                      <RecentSquaresLayer squares={phoneSquares} metric={metric} view={exploreView} names={telemetryNames} ring />
+                    )}
+                  </>
                 )
               ) : isPciTab ? (
                 <>
-                  <PciSamplesLayer sessions={nearSessions} colorOf={pciColorOf} isolated={isolatedPci} />
-                  <PciLabelsLayer sessions={nearSessions} isolated={isolatedPci} />
+                  <PciSamplesLayer sessions={plottedSessions} colorOf={pciColorOf} isolated={isolatedPci} />
+                  <PciLabelsLayer sessions={plottedSessions} isolated={isolatedPci} />
                 </>
               ) : isBandTab ? (
-                <BandSamplesLayer sessions={nearSessions} />
+                <BandSamplesLayer sessions={plottedSessions} />
               ) : (
-                <NearSamplesLayer sessions={nearSessions} metric={metric} servingCells={servingCells} />
+                <NearSamplesLayer sessions={plottedSessions} metric={metric} servingCells={servingCells} />
               )}
-              {telemetryShown && exploreView === 'sessions' && <TelemetryNearLayer points={telemetryPoints} names={telemetryNames} colorOf={telemetryColorOf} />}
+              {telemetryShown && exploreView === 'sessions' && <TelemetryNearLayer points={telemetryPlotted} names={telemetryNames} colorOf={telemetryColorOf} />}
+              <FlyToSite target={flyTarget} />
               <ViewWatcher onView={setViewBox} />
               <FullscreenSync isFullscreen={isFullscreen} bounds={currentBounds} />
               <InvalidateOnResize />
             </MapContainer>
+            )}
             {selectedSite && (
               <div className="site-quickview">
                 <div className="site-quickview-title">{selectedSite.name || selectedSite.id}</div>
@@ -1735,119 +1940,110 @@ export default function DtExploreTab() {
           </div>
 
           <div className="dt-explore-lists">
-            <div className="dt-explore-list-col">
-              <div className="dt-explore-list-title">Nearby Sites ({nearSites.length})</div>
-              {nearSites.length === 0 && <div className="page-status">No BTS sites in this area.</div>}
-              {(sitesExpanded ? nearSites : []).map(({ s, d }) => (
-                <div
-                  key={s.id}
-                  className="dt-dup-card"
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => setSelectedSite(s)}
-                  title="View on map / open site detail"
-                >
-                  <div className="dt-dup-card-name">{s.name || s.id}</div>
-                  <div className="dt-dup-card-sub">{s.district || '—'} · {d.toFixed(2)} km</div>
-                </div>
-              ))}
-              {nearSites.length > 0 && (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSitesExpanded((v) => !v)}>
-                  {sitesExpanded ? '▲ Show fewer' : `▼ Show all ${nearSites.length} sites`}
-                </button>
-              )}
-            </div>
-            {telemetryShown && (
-              <div className="dt-explore-list-col">
-                <div className="dt-explore-list-title">Telemetry Sessions ({telemetrySessions.length})</div>
-                {telemetryNear.isLoading && <div className="muted">Loading…</div>}
-                {telemetryNear.error && <div className="muted">Could not load telemetry sessions.</div>}
-                {!telemetryNear.isLoading && !telemetryNear.error && telemetrySessions.length === 0 && (
-                  <div className="muted">No telemetry sessions recorded in this area.</div>
-                )}
-                {telemetrySessions.map((s) => (
-                  <div key={s.key} style={{ padding: '4px 0', fontSize: 12 }}>
-                    <b>{s.name}</b>
-                    <div className="muted">
-                      {s.kind === 'telemetry_dt' ? 'Telemetry Drive Test' : 'Collections'} ·{' '}
-                      {new Date(s.started_at).toLocaleString()} · {s.samples_in_area} reading(s) here
-                    </div>
-                  </div>
-                ))}
-                {telemetryNear.data?.truncated && (
-                  <div className="muted">Only the newest readings are drawn. Narrow the radius to see them all.</div>
-                )}
-                <div className="muted" style={{ marginTop: 4 }}>
-                  White-ringed dots on the map, coloured by signal level (RSRP on 4G, RSCP on 3G, RxLev on 2G).
-                  The 4G / 3G / 2G buttons apply to these too.
-                </div>
-              </div>
-            )}
-            <div className="dt-explore-list-col">
-              <div className="dt-explore-list-title">Nearby Sessions ({nearSessions.length})</div>
-              {nearSessions.length > 0 && (
-                // "Latest only" toggle (2026-09-13), reusing
-                // .sites-active-toggle + clusterDtSessionsByArea exactly
-                // as DtSessionHistoryPage.tsx does -- see the latestOnly
-                // state comment above for why this defaults off here.
+            <ExploreListBox
+              title="Drive tests"
+              count={nearSessions.length}
+              rows={displaySessions}
+              rowKey={(s) => s.id}
+              selectedOf={(s) => !hiddenDt.has(s.id)}
+              onToggle={(s) => setHiddenDt((prev) => toggled(prev, s.id))}
+              onToggleAll={(on) => setHiddenDt(on ? new Set() : new Set(nearSessions.map((s) => s.id)))}
+              rowClass={(s) => {
+                const cluster = latestOnly ? areaClusterBySessionId.get(s.id) : undefined
+                return cluster && cluster.sessions[0].id !== s.id ? 'dt-cluster-child-row' : undefined
+              }}
+              empty={sessionsLoading ? 'Loading…' : 'No saved drive-test coverage in this area.'}
+              head={nearSessions.length > 0 && (
+                // "Latest only" (2026-09-13): same grouping as Session History; list only.
                 <label
                   className="sites-active-toggle"
-                  style={{ marginBottom: 8 }}
-                  title="Show only the latest session for each drive-test area; older re-tests stay one click away"
+                  style={{ marginLeft: 'auto' }}
+                  title="List only the latest session for each drive-test area; older re-tests stay one click away"
                 >
                   <input type="checkbox" checked={latestOnly} onChange={(e) => setLatestOnly(e.target.checked)} />
                   <span className="sites-active-toggle-track"><span className="sites-active-toggle-thumb" /></span>
                   Latest only
                 </label>
               )}
-              {!sessionsLoading && nearSessions.length === 0 && <div className="page-status">No saved drive-test coverage in this area.</div>}
-              {(sessionsExpanded ? displaySessions : []).map((s) => {
-                // Cluster info only matters (and is only computed here)
-                // while "Latest only" is on -- same convention as
-                // DtSessionHistoryPage.tsx's visibleSessions.map().
-                const cluster = latestOnly ? areaClusterBySessionId.get(s.id) : undefined
-                const isClusterHead = !!cluster && cluster.sessions[0].id === s.id
-                const isClusterSibling = !!cluster && !isClusterHead
-                return (
-                  <div key={s.id} className={isClusterSibling ? 'dt-dup-card dt-cluster-child-row' : 'dt-dup-card'}>
-                    <div className="dt-dup-card-name">
-                      {isClusterSibling ? '↳ ' : ''}
-                      {s.name}
-                      {cluster && isClusterHead && cluster.sessions.length > 1 && (
-                        <button
-                          type="button"
-                          className="dt-cluster-chip"
-                          onClick={() => toggleClusterExpanded(cluster.key)}
-                          title="Older sessions saved for this same area"
-                        >
-                          {expandedClusters.has(cluster.key)
-                            ? 'Hide earlier sessions'
-                            : `+${cluster.sessions.length - 1} earlier here`}
-                        </button>
-                      )}
-                    </div>
-                    <div className="dt-dup-card-sub">{s.tech} · {s.date} · {s.samples.length} pts in area</div>
-                    {/* Optimization Activity badges (2026-09-13), same
-                        markup/classes as DtSessionHistoryPage.tsx --
-                        Explore only shows them (no "Attach to Activity"
-                        action here, that stays a History-only workflow). */}
-                    {s.activities.length > 0 && (
-                      <div className="dt-activity-badges">
-                        {s.activities.map((a) => (
-                          <span key={`${a.id}-${a.role}`} className="dt-activity-badge" title={`${a.name} · ${ACTIVITY_ROLE_LABELS[a.role]}`}>
-                            {a.name} · {ACTIVITY_ROLE_LABELS[a.role]}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-              {nearSessions.length > 0 && (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSessionsExpanded((v) => !v)}>
-                  {sessionsExpanded ? '▲ Show fewer' : `▼ Show all ${displaySessions.length} sessions`}
-                </button>
-              )}
-            </div>
+              columns={[
+                {
+                  label: 'Session',
+                  cell: (s) => {
+                    const cluster = latestOnly ? areaClusterBySessionId.get(s.id) : undefined
+                    const isHead = !!cluster && cluster.sessions[0].id === s.id
+                    return (
+                      <>
+                        {cluster && !isHead ? '↳ ' : ''}<b>{s.name}</b>
+                        {cluster && isHead && cluster.sessions.length > 1 && (
+                          <button
+                            type="button"
+                            className="dt-cluster-chip"
+                            onClick={(e) => { e.stopPropagation(); toggleClusterExpanded(cluster.key) }}
+                            title="Older sessions saved for this same area"
+                          >
+                            {expandedClusters.has(cluster.key) ? 'Hide earlier sessions' : `+${cluster.sessions.length - 1} earlier here`}
+                          </button>
+                        )}
+                        {s.activities.length > 0 && (
+                          <div className="dt-activity-badges">
+                            {s.activities.map((a) => (
+                              <span key={`${a.id}-${a.role}`} className="dt-activity-badge" title={`${a.name} · ${ACTIVITY_ROLE_LABELS[a.role]}`}>
+                                {a.name} · {ACTIVITY_ROLE_LABELS[a.role]}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )
+                  },
+                },
+                { label: 'Network', cell: (s) => s.tech },
+                { label: 'Date', cell: (s) => s.date || '—', className: 'num' },
+                { label: 'Readings here', cell: (s) => s.samples.length.toLocaleString(), className: 'num', title: plotStepM ? 'Dots in this area (squares on a wide search)' : 'Readings in this area' },
+              ]}
+            />
+            {telemetryShown && (
+              <ExploreListBox
+                title="Telemetry sessions"
+                count={telemetrySessions.length}
+                rows={telemetrySessions}
+                rowKey={(s) => s.key}
+                selectedOf={(s) => !hiddenTel.has(s.key)}
+                onToggle={(s) => setHiddenTel((prev) => toggled(prev, s.key))}
+                onToggleAll={(on) => setHiddenTel(on ? new Set() : new Set(telemetrySessions.map((s) => s.key)))}
+                empty={telemetryNear.isLoading ? 'Loading…' : telemetryNear.error ? 'Could not load telemetry sessions.' : 'No telemetry sessions recorded in this area.'}
+                columns={[
+                  { label: 'Session', cell: (s) => <b>{s.name}</b> },
+                  { label: 'Kind', cell: (s) => (s.kind === 'telemetry_dt' ? 'Telemetry Drive Test' : 'Collections') },
+                  { label: 'Started', cell: (s) => new Date(s.started_at).toLocaleString(), className: 'num' },
+                  { label: 'Readings here', cell: (s) => s.samples_in_area.toLocaleString(), className: 'num' },
+                ]}
+                foot={
+                  <>
+                    {telemetryNear.data?.truncated && 'Only the newest readings are drawn. Narrow the radius to see them all. '}
+                    White-ringed dots on the map, coloured like the drive tests. The 4G / 3G / 2G buttons apply to these too.
+                  </>
+                }
+              />
+            )}
+            <ExploreListBox
+              title="Nearby sites"
+              count={nearSites.length}
+              rows={nearSites}
+              rowKey={(o) => o.s.id}
+              onRowClick={(o) => {
+                setSelectedSite(o.s)
+                setFlyTarget({ lat: o.s.lat as number, lng: o.s.lng as number, n: Date.now() })
+                wrapRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              }}
+              empty="No BTS sites in this area."
+              columns={[
+                { label: 'Site', cell: (o) => <><b>{o.s.id}</b>{o.s.name && o.s.name !== o.s.id ? <span className="muted"> · {o.s.name}</span> : null}</> },
+                { label: 'District', cell: (o) => o.s.district || '—' },
+                { label: 'Distance', cell: (o) => `${o.d.toFixed(2)} km`, className: 'num' },
+              ]}
+              foot="Click a site to go to it on the map."
+            />
           </div>
         </>
       )}

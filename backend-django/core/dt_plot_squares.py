@@ -203,8 +203,9 @@ RECENT_MAX_SQUARES = 40_000
 _RECENT_VALUES = ('rsrp', 'rsrq', 'sinr', 'dl', 'cqi', 'rscp', 'ecno', 'rx_qual')
 
 
-def recent_squares(lat, lng, radius_km, outline_wkt, outline_margin_m, tech_list):
-    """([square], {session id: name}) or (None, None) when the area holds too many squares."""
+def recent_squares(lat, lng, radius_km, outline_wkt, outline_margin_m, tech_list, session_ids=None):
+    """([square], {session id: name}) or (None, None) when the area holds too many squares.
+    `session_ids` (2026-10-28): only these sessions, as ticked in Explore's list."""
     rebuild_stale()
     where = ['ST_DWithin(q.location, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s)',
              f'q.n >= {RECENT_MIN_READINGS}']
@@ -216,6 +217,9 @@ def recent_squares(lat, lng, radius_km, outline_wkt, outline_margin_m, tech_list
     if tech_list:
         where.append("COALESCE(NULLIF(s.tech, ''), '4G') = ANY(%s)")
         params.append(list(tech_list))
+    if session_ids is not None:
+        where.append('q.session_id = ANY(%s)')
+        params.append(list(session_ids))
     avgs = ', '.join(f'q.{v}_avg' for v in _RECENT_VALUES)
     sql = f"""
         SELECT * FROM (

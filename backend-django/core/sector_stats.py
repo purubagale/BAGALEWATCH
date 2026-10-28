@@ -29,6 +29,7 @@ from rest_framework.views import APIView
 
 from . import neighbour_cells, radio_band
 from .access import CanViewDrives
+from .call_cells import sector_calls
 from .cqi import sample_cqi_sql
 from .models import CollectionSession, DriveTestSample, DriveTestSession, Site, TelemetrySample, TelemetryDriveTestSession
 from .problem_report import GOOD_DBM, WEAK_DBM
@@ -132,11 +133,30 @@ def telemetry_sectors(qs):
         for b in (qs.exclude(serving_site_id='').values('serving_site_id', 'serving_sector', 'network_type')
                   .annotate(band=Max('band'), band_mhz=Max('band_mhz'))):
             bands[(b['serving_site_id'], b['serving_sector'], b['network_type'])] = b
-    return _shape(
+    out = _shape(
         rows, qs.count(), lambda r: r['network_type'],
         lambda r: (lambda b: radio_band.label(r['network_type'], b['band'], b['band_mhz']) if b else None)(
             bands.get((r['serving_site_id'], r['serving_sector'], r['network_type']))) or None,
     )
+    _add_calls(out, qs)
+    return out
+
+
+def _add_calls(out, qs):
+    """Calls the same phones started in the same time span, per sector
+    (2026-10-27, core/call_cells.py): how many and how many fell back to
+    2G/3G. Only 4G rows carry them; a call is counted on its start sector."""
+    span = qs.aggregate(first=Min('ts'), last=Max('ts'))
+    devices = list(qs.order_by().values_list('device_id', flat=True).distinct()[:2000])
+    if not devices or span['first'] is None:
+        out.update(calls_total=0, calls_unplaced=0)
+        return
+    per, unplaced = sector_calls(devices, span['first'], span['last'])
+    for row in out['sectors']:
+        e = per.get((row['site_id'], row['sector'] or '')) if row['tech'] == '4G' else None
+        row['calls'] = e['calls'] if e else 0
+        row['calls_fallback'] = e['fallback'] if e else 0
+    out.update(calls_total=sum(e['calls'] for e in per.values()) + unplaced, calls_unplaced=unplaced)
 
 
 def drive_test_sectors(session):

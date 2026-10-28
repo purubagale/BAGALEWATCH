@@ -88,6 +88,7 @@ def _traces(report):
 
 def _live(report, user):
     msisdn = _msisdn(report)
+    device = _device(report, msisdn) if msisdn else None
     return {
         'reference': _reference(report),
         'area': {
@@ -97,7 +98,11 @@ def _live(report, user):
         },
         'phone': {
             'has_number': bool(msisdn),
-            'registered': bool(msisdn) and _device(report, msisdn) is not None,
+            'registered': device is not None,
+            # Whether the phone has sent its push address (2026-10-27): without
+            # it no notification can reach it, and it sees the request only
+            # when the app is opened.
+            'push_ready': bool(device is not None and device.fcm_token),
             'can_request': True,
             'skips_accept': _skips_accept(user),
             'ttl_minutes': PHONE_TTL_MINUTES,

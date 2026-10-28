@@ -654,8 +654,12 @@ class DriveTestSessionViewSet(
         tech_param = request.query_params.get('tech')
         tech_list = [t for t in tech_param.split(',') if t] if tech_param else None
         outline = _near_outline(request.query_params.get('outline'))
+        # `sessions=1,2,3` (2026-10-28): only the drive tests ticked in Explore's list.
+        session_param = request.query_params.get('sessions')
+        session_ids = [int(x) for x in session_param.split(',') if x.strip().isdigit()][:2000]             if session_param is not None else None
         squares, names = dt_plot_squares.recent_squares(
             lat, lng, radius_km, outline.wkt if outline is not None else None, NEAR_OUTLINE_MARGIN_M, tech_list,
+            session_ids,
         )
         if squares is None:
             return Response({'detail': 'This area is too large for the recent view. Search a smaller area.'},

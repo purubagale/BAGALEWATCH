@@ -469,9 +469,12 @@ function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
                 {Object.entries(p.calls.by_outcome).map(([k, v]) => <span key={k}><i style={{ background: OUTCOME[k]?.color ?? '#64748b' }} />{OUTCOME[k]?.label ?? k} · {v}</span>)}
               </div>
               <Paged rows={p.calls.latest}
-                head={<tr><th>Started</th><th>Length</th><th>Voice network</th><th>Cell</th><th>Level</th></tr>}
+                head={<tr><th>Started</th><th>Length</th><th>Voice network</th><th>Cell at start</th><th>Level</th><th>At the end</th></tr>}
                 row={(c, i) => (
-                  <tr key={i}><td>{fmt(c.started_at)}</td><td className="mono">{num(c.duration_s, ' s')}</td><td>{c.voice_networks.replace(/,/g, ' → ') || '—'}</td><td className="mono">{c.cell_id ?? '—'}</td><td className="mono">{num(c.level_dbm, ' dBm')}</td></tr>
+                  <tr key={i}><td>{fmt(c.started_at)}</td><td className="mono">{num(c.duration_s, ' s')}</td><td>{c.voice_networks.replace(/,/g, ' → ') || '—'}</td>
+                    <td>{c.start_site ? <b>{c.start_site}</b> : null}{c.cell_id != null ? <span className="mono sp-muted"> {c.cell_id}</span> : (c.start_site ? null : '—')}</td>
+                    <td className="mono">{num(c.level_dbm, ' dBm')}</td>
+                    <td className="mono">{num(c.end_level_dbm ?? null, ' dBm')}{c.end_site && c.end_site !== c.start_site ? <span className="sp-muted"> · {c.end_site}</span> : null}</td></tr>
                 )} />
             </>
           )}

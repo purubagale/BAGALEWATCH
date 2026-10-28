@@ -55,10 +55,14 @@ export default function CollectionsPage() {
   const sectors = useCollectionSectors(selectedId)
   // Clicking a session brings its route map into view (2026-10-27), instead
   // of leaving it below the whole list.
+  // The section is at least a screen tall, so its heading can reach the top
+  // even before the route has loaded; once it has, the heading is put there
+  // again in case the page moved meanwhile.
   const routeRef = useRef<HTMLElement>(null)
+  const routeLoaded = !!samples.data
   useEffect(() => {
     if (selectedId) routeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [selectedId])
+  }, [selectedId, routeLoaded])
 
   // Filters beyond source (2026-10-07) -- client-side over the <=200 rows
   // the list endpoint already caps, same reasoning as the Telemetry Drive
@@ -223,7 +227,7 @@ export default function CollectionsPage() {
       )}
 
       {selected && (
-        <section ref={routeRef} style={{ marginTop: 20, scrollMarginTop: 56 }}>
+        <section ref={routeRef} style={{ marginTop: 20, scrollMarginTop: 8, minHeight: 'calc(100vh - 80px)' }}>
           <h2>
             Route —{SOURCE_LABEL[selected.source] ?? selected.source}, started{' '}
             {new Date(selected.started_at).toLocaleString()}

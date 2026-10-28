@@ -27,6 +27,7 @@ from rest_framework.views import APIView
 from .dt_serving_cell import sectors_by_cell_identity
 from .models import CallContextSample
 from .telemetry import _f, _int, _scope_by_operator, hash_device_id, ingest_row_device_id, resolve_ingest_caller
+from .call_cells import name_calls
 from .views import IsSuperadminOnly
 
 MAX_CALLS_PER_REQUEST = 100
@@ -187,6 +188,7 @@ class CallContextListView(APIView):
             e['cell_name'] = sec.cell_name if sec else ''
 
         rows = list(qs.order_by('-started_at')[:_ROW_LIMIT])
+        names = name_calls(rows)   # "KTM856 J3" at start and end (2026-10-27)
         return Response({
             'days': days,
             'total': total,
@@ -207,5 +209,7 @@ class CallContextListView(APIView):
                 'end_level_dbm': r.end_level_dbm,
                 'lat': r.lat,
                 'lng': r.lng,
-            } for r in rows],
+                'start_site': n[0],
+                'end_site': n[1],
+            } for r, n in zip(rows, names)],
         })
