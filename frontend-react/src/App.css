@@ -5218,3 +5218,21 @@ tr.rel-st-no_coverage td:first-child { color: #be123c; font-weight: 600; }
 .cellkpi-levels legend { float: left; margin-right: 6px; font-size: 12px; }
 .pd-load { font-size: 12px; white-space: nowrap; }
 
+
+/* Predicted coverage on the site map (2026-10-28, components/CoveragePrediction.tsx). */
+.prediction-overlay { image-rendering: pixelated; }
+.pred-panel { display: grid; gap: 6px; }
+.pred-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pred-controls select { font-size: 12px; padding: 1px 4px; }
+.pred-calib { color: var(--text-primary); }
+.pred-values { border-top: 1px solid var(--border-color, #e2e8f0); padding-top: 6px; display: grid; gap: 4px; }
+.pred-values-head { line-height: 1.4; }
+.pred-values-scroll { overflow-x: auto; }
+.pred-table { font-size: 11px; }
+.pred-table th, .pred-table td { padding: 3px 6px; white-space: nowrap; }
+.pred-table input { width: 64px; font-size: 11px; padding: 1px 3px; }
+.pred-changed { font-weight: 700; }
+.pred-globals { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+.pred-globals input { width: 56px; font-size: 11px; padding: 1px 3px; }
+.pred-globals select { font-size: 11px; }
+.pred-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

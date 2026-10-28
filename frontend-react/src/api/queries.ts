@@ -6,7 +6,7 @@ import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
 } from './types'
 import type {
   AlarmSource, AlarmSourceInput, AlarmSummary, SiteActiveAlarms, SitesActiveAlarms,
-  CellKpiSource, CellKpiSourceInput, SiteCellKpis,
+  CellKpiSource, CellKpiSourceInput, SiteCellKpis, PredictionSettings, PredictionSettingsInput,
   LinkedSystem, ProblemDashboard, ProblemLive, ProblemLiveTrace, ProblemNearbySites, ProblemNotificationRow, ProblemRelated,
   ProblemReport, ProblemReportList,
   SecuritySettings,
@@ -2350,6 +2350,25 @@ export function useSiteCellKpis(siteId: string | undefined, days = 7) {
     queryFn: () => apiJson<SiteCellKpis>(`/api/v2/sites/${encodeURIComponent(siteId as string)}/cell-kpis/?days=${days}`),
     enabled: !!siteId,
     staleTime: 5 * 60_000,
+  })
+}
+
+// Radio values for the predicted coverage on the site map (2026-10-28).
+export function usePredictionSettings(enabled = true) {
+  return useQuery({
+    queryKey: ['coverage-prediction-settings'],
+    queryFn: () => apiJson<PredictionSettings>('/api/v2/coverage-prediction/settings/'),
+    enabled,
+    staleTime: 10 * 60_000,
+  })
+}
+
+export function useSavePredictionSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: PredictionSettingsInput) =>
+      apiJson<PredictionSettings>('/api/v2/coverage-prediction/settings/', { method: 'PUT', body: JSON.stringify(input) }),
+    onSuccess: (d) => qc.setQueryData(['coverage-prediction-settings'], d),
   })
 }
 

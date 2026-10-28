@@ -1351,6 +1351,14 @@ export interface DtServingCell {
   beamwidth: number | null
   radius: number | null
   max_tx_power_dbm: number | null
+  // For the antenna beam (2026-10-28, same drawing as the site map).
+  tech?: string | null
+  site_band?: string | null
+  carrier?: string | null
+  height?: number | null
+  mech_tilt?: number | null
+  elec_tilt?: number | null
+  antenna_device?: string | null
   sample_count: number
   mean_dist_km: number | null
 }
@@ -2912,6 +2920,41 @@ export interface SiteCellKpiCell {
 }
 export interface SiteCellKpis {
   site_id: string; configured: boolean; newest_date: string | null; busy_prb: number; cells: SiteCellKpiCell[]
+}
+
+// GET/PUT /api/v2/coverage-prediction/settings/ (2026-10-28, core/coverage_prediction.py):
+// radio values for the predicted coverage on the site map.
+export type RadioBandKey = 'lte_b20' | 'lte_b3' | 'wcdma_b1' | 'gsm900' | 'gsm1800'
+export type RadioValueKey = 'freq_mhz' | 'power_dbm' | 'bandwidth_mhz' | 'gain_dbi' | 'loss_db'
+export interface RadioBand {
+  label: string
+  tech: '2G' | '3G' | '4G'
+  freq_mhz: number
+  power_dbm: number
+  bandwidth_mhz: number | null
+  gain_dbi: number
+  loss_db: number
+  /** Values changed from the starting value. */
+  changed: RadioValueKey[]
+}
+export type PredictionEnvironment = 'urban' | 'suburban' | 'rural'
+export interface PredictionGlobals {
+  environment: PredictionEnvironment
+  rx_height_m: number
+  default_height_m: number
+  default_tilt_deg: number
+  offset_db: number
+}
+export interface PredictionSettings extends PredictionGlobals {
+  bands: Record<RadioBandKey, RadioBand>
+  defaults: PredictionGlobals & { bands: Record<RadioBandKey, Record<RadioValueKey, number | null>> }
+  is_default: boolean
+  updated_at: string | null
+  updated_by: string | null
+}
+export type PredictionSettingsInput = Partial<PredictionGlobals> & {
+  bands?: Partial<Record<RadioBandKey, Partial<Record<RadioValueKey, number | null>>>>
+  reset?: boolean
 }
 
 export interface AlarmSummary {

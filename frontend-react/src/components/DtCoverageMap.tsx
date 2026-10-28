@@ -9,7 +9,9 @@ import RouteEnds, { StackedNote } from './RouteEnds'
 import type { DtSample, DtServingCell, DtTech } from '../api/types'
 import { bandColor, weakestPerSquare, type DtMetric } from '../lib/dtBands'
 import { declusterForPlot } from '../lib/declusterPlot'
-import { buildWedgePolygon } from '../lib/sectorWedge'
+import {
+  antennaHpbw, bandGroup, beamReachM, buildBeamPolygon, buildCirclePolygon, loadHbw, loadVbw,
+} from '../lib/sectorWedge'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 import { useDtMetrics } from '../lib/useDtMetrics'
 
@@ -87,29 +89,46 @@ function FitToBounds({ bounds, onDone }: { bounds: L.LatLngBounds; onDone: () =>
   return null
 }
 
-/** Draws one wedge per serving cell that has azimuth/beamwidth/radius,
- * following CoverageDots's own imperative-layer pattern below (useMap() +
- * a manually-managed L.layerGroup, not react-leaflet's declarative
- * <Polygon>) for consistency with this file's established style. Mounted
- * BEFORE <CoverageDots> in the JSX below so this layer's addTo(map) runs
- * first and the wedges sit underneath the real RSRP dots, not on top of
- * them. A serving cell missing any of the three is skipped — no
- * fabricated default. */
-function SectorWedgeOverlay({ servingCells }: { servingCells?: DtServingCell[] }) {
+/** Draws the beam of each serving cell's antenna under the readings
+ * (2026-10-28): the same drawing as the site map (lib/sectorWedge.ts), from
+ * the antenna's horizontal pattern, its height and tilt, instead of the site
+ * list's KML wedge whose fixed 40/60 degree width left gaps between sectors.
+ * Serving cells on one mast, azimuth, tilt and band group share one beam.
+ * Imperative layer like CoverageDots below; mounted before it so the beams
+ * sit under the dots. A cell without a site position or azimuth is skipped. */
+function SectorBeamOverlay({ servingCells }: { servingCells?: DtServingCell[] }) {
   const map = useMap()
 
   useEffect(() => {
     const layer = L.layerGroup()
+    const vbw = loadVbw()
+    const hbwOverride = loadHbw()
+    const byKey = new Map<string, { cells: DtServingCell[]; lat: number; lng: number; az: number; tilt: number | null; height: number | null; vbw: number; model: string | null }>()
     for (const cell of servingCells ?? []) {
-      if (cell.site_lat == null || cell.site_lng == null) continue
-      if (cell.azimuth == null || cell.beamwidth == null || cell.radius == null) continue
-      const positions = buildWedgePolygon(cell.site_lat, cell.site_lng, cell.azimuth, cell.beamwidth, cell.radius)
-      L.polygon(positions, { color: WEDGE_COLOR, fillColor: WEDGE_COLOR, fillOpacity: 0.25, weight: 1 })
-        .bindTooltip(
-          `${cell.cell_name || cell.site_name} — Az ${cell.azimuth}° · BW ${cell.beamwidth}°`
-          + (cell.max_tx_power_dbm != null ? ` · ${cell.max_tx_power_dbm} dBm` : ''),
-        )
+      if (cell.site_lat == null || cell.site_lng == null || cell.azimuth == null) continue
+      const tilt = cell.mech_tilt != null || cell.elec_tilt != null ? (cell.mech_tilt ?? 0) + (cell.elec_tilt ?? 0) : null
+      const group = bandGroup(cell)
+      const key = `${cell.site_id}|${cell.azimuth}|${tilt ?? '-'}|${cell.height ?? '-'}|${group}`
+      const d = byKey.get(key)
+      if (d) d.cells.push(cell)
+      else byKey.set(key, { cells: [cell], lat: cell.site_lat, lng: cell.site_lng, az: cell.azimuth, tilt, height: cell.height ?? null, vbw: vbw[group], model: cell.antenna_device ?? null })
+    }
+    for (const d of byKey.values()) {
+      const hbw = hbwOverride ?? antennaHpbw(d.model).deg
+      const reach = beamReachM(d.height, d.tilt, d.vbw)
+      const names = d.cells.map((c) => c.cell_name || c.sector || c.site_name).join(', ')
+      const text = `${d.cells[0].site_name} ${names} — azimuth ${d.az}°, beamwidth ${hbw == null ? 'omni' : `${hbw}°`}`
+        + (d.tilt != null ? `, tilt ${d.tilt}°` : '') + (d.height != null ? `, ${d.height} m high` : '')
+      const full = hbw == null ? buildCirclePolygon(d.lat, d.lng, reach.m) : buildBeamPolygon(d.lat, d.lng, d.az, hbw, reach.m)
+      L.polygon(full, { color: WEDGE_COLOR, fillColor: WEDGE_COLOR, fillOpacity: 0.1, weight: 1, dashArray: '4 4' })
+        .bindTooltip(`${text}; lighter: weaker towards the sides`, { sticky: true })
         .addTo(layer)
+      if (hbw != null) {
+        L.polygon(buildBeamPolygon(d.lat, d.lng, d.az, hbw, reach.m, { withinDb: 3, stepDeg: 2 }),
+          { color: WEDGE_COLOR, fillColor: WEDGE_COLOR, fillOpacity: 0.25, weight: 1 })
+          .bindTooltip(`${text}; strong part of the beam`, { sticky: true })
+          .addTo(layer)
+      }
     }
     layer.addTo(map)
     return () => {
@@ -388,7 +407,7 @@ export default function DtCoverageMap({
               attribution="&copy; OpenStreetMap contributors"
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
-            <SectorWedgeOverlay servingCells={servingCells} />
+            <SectorBeamOverlay servingCells={servingCells} />
             <CoverageDots samples={drawnSamples} metric={activeMetric} servingCells={servingCells}
               counts={counts} squareM={grouped.squareM} />
             {/* Start and end of the whole route, whatever the filter (2026-10-28). */}
@@ -405,10 +424,10 @@ export default function DtCoverageMap({
             {activeMetric.unit}
           </span>
         ))}
-        {(servingCells ?? []).some((c) => c.azimuth != null && c.beamwidth != null && c.radius != null) && (
-          <span className="dt-legend-item">
+        {(servingCells ?? []).some((c) => c.azimuth != null && c.site_lat != null) && (
+          <span className="dt-legend-item" title="From the antenna's pattern, height and tilt; strong colour within 3 dB of the beam centre">
             <span className="dt-legend-dot" style={{ background: WEDGE_COLOR, opacity: 0.5 }} />
-            Theoretical antenna coverage
+            Serving antenna beams
           </span>
         )}
       </div>

@@ -1,16 +1,24 @@
 import { CircleMarker, MapContainer, Marker, Polygon, Polyline, TileLayer, Tooltip, useMap } from 'react-leaflet'
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { useSiteMeasuredCoverage } from '../api/queries'
+import { usePredictionSettings, useSiteMeasuredCoverage } from '../api/queries'
+import { useAuth } from '../auth/AuthContext'
 import type { Sector } from '../api/types'
 import { divergentSectorPoints } from '../lib/sectorLocation'
-import { TILT_REACH_DRAW_MAX_M, buildWedgePolygon, destinationPoint, tiltReachM } from '../lib/sectorWedge'
+import {
+  HBW_KEY, TILT_REACH_DRAW_MAX_M, VBW_DEFAULT, VBW_KEY, antennaHpbw, bandGroup, beamReachM, buildBeamPolygon,
+  buildCirclePolygon, destinationPoint, loadHbw, loadVbw, tiltReachM, type BandGroup,
+} from '../lib/sectorWedge'
 import { RSRP_BANDS, RXLEV_BANDS, bandColor } from '../lib/dtBands'
 import { statusColor } from '../lib/statusColor'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 import { beamFan, beamProfile, coverTotals, type BeamProfile, type FanRadial } from '../lib/terrainProfile'
 import type { Terrain3DData } from './SiteTerrain3D'
+import { PredictionOverlay, PredictionPanel, type PredictionView } from './CoveragePrediction'
+import {
+  bandKeyOf, calibrate, makeTransmitter, predictGrid, type PredictionGrid, type PredictTech,
+} from '../lib/coveragePrediction'
 
 // The 3D terrain view (2026-10-28) brings its own map library, so it loads only when ticked.
 const SiteTerrain3D = lazy(() => import('./SiteTerrain3D'))
@@ -25,10 +33,11 @@ const SiteTerrain3D = lazy(() => import('./SiteTerrain3D'))
 // green color is used... if only color is used then use different color
 // for different sectors"). Cycles through a distinct palette by each
 // sector's position in the list instead, so overlapping wedges at one
-// site are always visually distinguishable regardless of tech. A sector
-// only gets a wedge when it has real azimuth/beamwidth/radius — never a
-// fabricated default (see Sector.beamwidth/Sector.radius's docstring in
-// models.py).
+// site are always visually distinguishable regardless of tech. Since
+// 2026-10-28 the map draws one beam per antenna direction from the
+// antenna's pattern (lib/sectorWedge.ts buildBeamPolygon) instead of the
+// site list's KML wedge, whose 40/60 degree width and 150/200 m length were
+// drawing values and left gaps between sectors.
 const WEDGE_COLOR_PALETTE = [
   '#3b82f6', '#f97316', '#a855f7', '#ec4899', '#14b8a6', '#eab308', '#ef4444', '#22c55e',
 ]
@@ -45,8 +54,8 @@ function wedgeColorForIndex(i: number): string {
 // imagery than on a street-only basemap, especially at this zoom.
 // Three things can be drawn for a sector (2026-10-13). They answer
 // different questions, so each has its own switch:
-//   diagram   the wedge above: direction from the site list, with a width
-//             and length that are the same for every sector on a band.
+//   beams     each antenna direction's beam from its horizontal pattern,
+//             height and tilt (the "Beams" switch).
 //   tilt      a line to where the centre of the beam meets flat ground,
 //             from the antenna's height and tilt.
 //   measured  where readings served by the sector were really taken.
@@ -99,32 +108,6 @@ function dotIcon(color: string, size: number): L.DivIcon {
 
 type MapPoint = { lat: number; lng: number; label: string; kind: 'site' | 'sector' }
 
-// Vertical beamwidth by band group (2026-10-28). NTC's site list names the
-// antenna model but not its beamwidths. The defaults are typical of the
-// multi-band panels in the 4G file: CommScope RZVV-65A-R4 lists about
-// 14-17 degrees on 700-960 MHz and 5.4-9.4 degrees on 1400-2700 MHz. They
-// can be changed on the page and are kept in this browser.
-type BandGroup = 'low' | 'high'
-const VBW_DEFAULT: Record<BandGroup, number> = { low: 15, high: 7 }
-const VBW_KEY = 'dtwatch_vertical_beamwidth'
-function bandGroup(s: Sector): BandGroup {
-  // The sector's own band first: a 4G B3 sector's carrier reads "B3+B20" (the site's bands).
-  const band = (s.site_band || (s.tech === '3G' ? '2100' : s.carrier) || '').toUpperCase()
-  if (/\b(B20|B8|B5|B28|800|850|900|700)\b/.test(band) || /GSM\s*900/.test(band)) return 'low'
-  if (!band.trim() && (s.tech || '') === '4G' && /20$/.test(s.sector || '')) return 'low'
-  if (!band.trim() && (s.tech || '') === '2G') return 'low'
-  return 'high'
-}
-function loadVbw(): Record<BandGroup, number> {
-  try {
-    const v = JSON.parse(localStorage.getItem(VBW_KEY) || 'null')
-    if (v && typeof v.low === 'number' && typeof v.high === 'number') return v
-  } catch {
-    // storage blocked: the defaults apply
-  }
-  return VBW_DEFAULT
-}
-
 /** Ground along one sector's direction, the beam centre and where it lands
  * (2026-10-28). Heights in metres above sea level, distance across. */
 function BeamProfileChart({ p, color }: { p: BeamProfile; color: string }) {
@@ -175,7 +158,7 @@ function BeamProfileChart({ p, color }: { p: BeamProfile; color: string }) {
 }
 
 export default function SiteLocationMiniMap({
-  siteId, lat, lng, status, sectors = [],
+  siteId, lat, lng, status, sectors = [], antennaModel,
 }: {
   /** Needed for the measured layer; without it that switch is not offered. */
   siteId?: string
@@ -189,6 +172,8 @@ export default function SiteLocationMiniMap({
    * alongside the site's main pin, instead of the map only ever being
    * able to show one point per site. */
   sectors?: Sector[]
+  /** The site list's antenna model, for the horizontal beamwidth. */
+  antennaModel?: string | null
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -197,7 +182,11 @@ export default function SiteLocationMiniMap({
   const [showMeasured, setShowMeasured] = useState(false)
   const [measuredSession, setMeasuredSession] = useState<number | null>(null)
   const [show3d, setShow3d] = useState(false)
+  const [showPredicted, setShowPredicted] = useState(false)
   const measured = useSiteMeasuredCoverage(siteId, showMeasured, measuredSession)
+  const { user } = useAuth()
+  const canEditRadio = !!user && (user.role === 'admin' || user.role === 'superadmin')
+  const predSettings = usePredictionSettings(showPredicted)
 
   function toggleFullscreen() {
     const el = wrapRef.current
@@ -224,32 +213,6 @@ export default function SiteLocationMiniMap({
     ]
   }, [lat, lng, sectors])
 
-  // Wedge origin is the sector's OWN location when it diverges from the
-  // site (same per-sector GPS override the markers above already use via
-  // divergentSectorPoints), falling back to the site's point otherwise —
-  // never a second, separate notion of "where this sector is."
-  const wedgeSectors = useMemo(() => {
-    if (lat == null || lng == null) return []
-    return sectors
-      .filter((s) => s.azimuth != null && s.beamwidth != null && s.radius != null)
-      .map((s) => ({
-        sector: s,
-        origin: [s.lat ?? lat, s.lng ?? lng] as [number, number],
-      }))
-  }, [lat, lng, sectors])
-
-  // One colour per sector, shared by all three layers. Sectors with a wedge
-  // keep the colours they always had; the others follow on.
-  const colorByKey = useMemo(() => {
-    const out = new Map<string, string>()
-    const ordered = [...wedgeSectors.map((w) => w.sector), ...sectors.filter((s) => !wedgeSectors.some((w) => w.sector.id === s.id))]
-    ordered.forEach((s, i) => {
-      const color = wedgeColorForIndex(i)
-      if (s.cell_name) out.set(s.cell_name.trim().toLowerCase(), color)
-      out.set(`id:${s.id}`, color)
-    })
-    return out
-  }, [sectors, wedgeSectors])
 
   // Reach from height and tilt: a line, not a wedge, so it needs no beamwidth
   // and works for 2G and 3G sectors too.
@@ -283,6 +246,13 @@ export default function SiteLocationMiniMap({
     setVbwState(next)
     try { localStorage.setItem(VBW_KEY, JSON.stringify(next)) } catch { /* kept until the page reloads */ }
   }
+  const [hbwOverride, setHbwOverrideState] = useState<number | null>(loadHbw)
+  const setHbwOverride = (v: number | null) => {
+    setHbwOverrideState(v)
+    try { if (v == null) localStorage.removeItem(HBW_KEY); else localStorage.setItem(HBW_KEY, String(v)) } catch { /* kept until reload */ }
+  }
+  const modelHbw = antennaHpbw(antennaModel)
+  const hbw = hbwOverride ?? modelHbw.deg      // null = omni
   const directions = useMemo(() => {
     if (lat == null || lng == null) return []
     const byKey = new Map<string, { key: string; az: number; tilt: number | null; height: number | null; origin: [number, number]; band: BandGroup; sectors: Sector[] }>()
@@ -299,6 +269,27 @@ export default function SiteLocationMiniMap({
     }
     return [...byKey.values()].sort((x, y) => x.az - y.az)
   }, [lat, lng, sectors])
+
+  // One colour per antenna direction, shared by every layer: sectors on the
+  // same mast, azimuth, tilt and band group (2G A, 3G P1, 4G J3) are one beam.
+  const colorByKey = useMemo(() => {
+    const out = new Map<string, string>()
+    let i = 0
+    for (const d of directions) {
+      const color = wedgeColorForIndex(i++)
+      for (const s of d.sectors) {
+        if (s.cell_name) out.set(s.cell_name.trim().toLowerCase(), color)
+        out.set(`id:${s.id}`, color)
+      }
+    }
+    for (const s of sectors) {
+      if (out.has(`id:${s.id}`)) continue
+      const color = wedgeColorForIndex(i++)
+      if (s.cell_name) out.set(s.cell_name.trim().toLowerCase(), color)
+      out.set(`id:${s.id}`, color)
+    }
+    return out
+  }, [directions, sectors])
   useEffect(() => {
     if (!show3d) return
     let live = true
@@ -347,21 +338,79 @@ export default function SiteLocationMiniMap({
     return () => { live = false }
   }, [show3d, focus, directions, vbw])
 
+  // One beam per antenna direction (2026-10-28), from the antenna's pattern:
+  // the half-power main beam, and the lighter edge out to where the signal is
+  // about 25 dB down, where neighbouring sectors overlap. Length: where the
+  // upper edge of the vertical beam meets flat ground (lib/sectorWedge.ts).
+  const beamShapes = useMemo(() => directions.map((d) => {
+    const reach = beamReachM(d.height, d.tilt, vbw[d.band])
+    const [la, ln] = d.origin
+    const full = hbw == null ? buildCirclePolygon(la, ln, reach.m) : buildBeamPolygon(la, ln, d.az, hbw, reach.m)
+    const main = hbw == null ? null : buildBeamPolygon(la, ln, d.az, hbw, reach.m, { withinDb: 3, stepDeg: 2 })
+    return { d, reach, full, main }
+  }), [directions, hbw, vbw])
+  const beamText = (b: (typeof beamShapes)[number]) =>
+    `${directionName(b.d)} — horizontal beamwidth ${hbw == null ? 'omni' : `${hbw}°`}`
+    + (b.d.tilt != null ? ` · tilt ${b.d.tilt}°` : '') + (b.d.height != null ? ` · ${b.d.height} m high` : '')
+    + ` · drawn to ${distanceText(b.reach.m)} (${b.reach.basis === 'tilt' ? 'where the top of the beam meets flat ground'
+      : b.reach.basis === 'horizon' ? `the top of the beam stays above the horizon; capped` : 'height or tilt not known'})`
+
+  // Predicted coverage (2026-10-28, lib/coveragePrediction.ts): one
+  // transmitter per antenna direction and technology, on real ground heights,
+  // with the radio values from the server (admins change them).
+  const techOf = (s: Sector): PredictTech => (s.tech === '2G' || s.tech === '3G' ? s.tech : '4G')
+  const predTechs = useMemo(() => {
+    const seen = new Set(directions.flatMap((d) => d.sectors.map(techOf)))
+    return (['4G', '3G', '2G'] as PredictTech[]).filter((t) => seen.has(t))
+  }, [directions])
+  const [predTech, setPredTech] = useState<PredictTech>('4G')
+  const tech = predTechs.includes(predTech) ? predTech : predTechs[0] ?? '4G'
+  const [predView, setPredView] = useState<PredictionView>('level')
+  const [predRadius, setPredRadius] = useState(3000)
+  const [grid, setGrid] = useState<PredictionGrid | null>(null)
+  const [predWorking, setPredWorking] = useState(false)
+  const [predError, setPredError] = useState<string | null>(null)
+  const predDirections = useMemo(() => directions.flatMap((d) => {
+    const own = d.sectors.filter((s) => techOf(s) === tech)
+    return own.length ? [{ d, sectors: own }] : []
+  }), [directions, tech])
+  const transmitters = useMemo(() => (predSettings.data
+    ? predDirections.map(({ d, sectors: own }) => makeTransmitter({ ...d, key: `${d.key}|${tech}`, sectors: own }, hbw, vbw, predSettings.data!))
+    : []), [predDirections, tech, hbw, vbw, predSettings.data])
+  useEffect(() => {
+    if (!showPredicted || show3d || lat == null || lng == null || !predSettings.data || !transmitters.length) {
+      setGrid(null)
+      return
+    }
+    let stop = false
+    setPredWorking(true)
+    setPredError(null)
+    predictGrid(lat, lng, predRadius, transmitters, predSettings.data, 120, () => stop)
+      .then((g) => { if (!stop) setGrid(g) })
+      .catch(() => { if (!stop) setPredError('The prediction could not be worked out; the ground heights may not be reachable.') })
+      .finally(() => { if (!stop) setPredWorking(false) })
+    return () => { stop = true }
+  }, [showPredicted, show3d, lat, lng, predRadius, transmitters, predSettings.data])
+  const predColorOf = useMemo(() => (i: number) => {
+    const pd = grid ? predDirections.find(({ d }) => `${d.key}|${tech}` === grid.transmitters[i]?.key) : null
+    return pd ? colorByKey.get(`id:${pd.d.sectors[0].id}`) ?? UNKNOWN_SECTOR_COLOR : UNKNOWN_SECTOR_COLOR
+  }, [grid, predDirections, tech, colorByKey])
+  const predLabel = (i: number) => {
+    const pd = grid ? predDirections.find(({ d }) => `${d.key}|${tech}` === grid.transmitters[i]?.key) : null
+    return pd ? `${pd.d.az}° ${pd.sectors.map(sectorName).join(' ')}` : '?'
+  }
+  const usedBands = useMemo(() => [...new Set(sectors.filter((s) => s.azimuth != null).map((s) => bandKeyOf(s)))], [sectors])
+  const calibration = useMemo(() => (grid && squares.length ? calibrate(grid, squares) : null), [grid, squares])
+
   // Every corner of everything drawn, so the fit can take it all in.
-  const wedgeShapes = useMemo(
-    () => wedgeSectors.map(({ sector: s, origin }) => ({
-      sector: s,
-      positions: buildWedgePolygon(origin[0], origin[1], s.azimuth as number, s.beamwidth as number, s.radius as number),
-    })),
-    [wedgeSectors],
-  )
   const drawnCorners = useMemo<[number, number][]>(() => {
     const out: [number, number][] = points.map((p) => [p.lat, p.lng])
-    if (showDiagram) wedgeShapes.forEach((w) => w.positions.forEach((c) => out.push(c)))
+    if (grid) out.push([grid.south, grid.west], [grid.north, grid.east])
+    if (showDiagram) beamShapes.forEach((b) => (b.main ?? b.full).forEach((c) => out.push(c)))
     if (showTilt) tiltLines.forEach((t) => out.push(t.end))
     squares.forEach((q) => out.push([q.lat, q.lng]))
     return out
-  }, [points, showDiagram, wedgeShapes, showTilt, tiltLines, squares])
+  }, [points, grid, showDiagram, beamShapes, showTilt, tiltLines, squares])
 
   const terrainData = useMemo<Terrain3DData>(() => {
     const colorOf = (s: Sector) => colorByKey.get(`id:${s.id}`) ?? UNKNOWN_SECTOR_COLOR
@@ -424,9 +473,8 @@ export default function SiteLocationMiniMap({
         lat: p.lat, lng: p.lng, label: p.label,
         color: p.kind === 'site' ? statusColor(status) : '#a855f7', size: p.kind === 'site' ? 18 : 13,
       })),
-      wedges: showDiagram ? wedgeShapes.filter(({ sector: s }) => shownIds.has(s.id)).map(({ sector: s, positions }) => ({
-        positions, color: colorOf(s),
-        label: `${s.cell_name || s.sector} (${s.tech || '4G'}), azimuth ${s.azimuth}°`,
+      wedges: showDiagram ? beamShapes.filter((b) => shown.includes(b.d)).map((b) => ({
+        positions: b.main ?? b.full, color: colorOf(b.d.sectors[0]), label: beamText(b),
       })) : [],
       lines: showTilt ? tiltLines.filter((t) => shownIds.has(t.sector.id)).map((t) => ({
         from: t.origin, to: t.end, color: colorOf(t.sector),
@@ -453,7 +501,7 @@ export default function SiteLocationMiniMap({
       corners: [...drawnCorners, ...beams.map((x) => x.to)],
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [points, status, showDiagram, wedgeShapes, showTilt, tiltLines, squares, colorByKey, profiles, directions, focus, drawnCorners, fan])
+  }, [points, status, showDiagram, beamShapes, showTilt, tiltLines, squares, colorByKey, profiles, directions, focus, drawnCorners, fan])
 
   if (!points.length) {
     return <div className="site-mini-map-empty">No GPS coordinates recorded for this site.</div>
@@ -500,8 +548,9 @@ export default function SiteLocationMiniMap({
           <InvalidateOnResize />
           <FitToDrawn
             corners={drawnCorners}
-            fitKey={`${isFullscreen}|${showDiagram}|${showTilt}|${squares.length}|${drawnCorners.length}|${lat},${lng}`}
+            fitKey={`${isFullscreen}|${showDiagram}|${showTilt}|${squares.length}|${drawnCorners.length}|${lat},${lng}|${grid ? `${grid.north}` : ''}`}
           />
+          {showPredicted && grid && <PredictionOverlay grid={grid} tech={tech} view={predView} colorOf={predColorOf} />}
           {squares.map((q, i) => (
             <CircleMarker
               key={`sq-${i}`}
@@ -535,21 +584,21 @@ export default function SiteLocationMiniMap({
               </Tooltip>
             </Polyline>
           ))}
-          {showDiagram && wedgeShapes.map(({ sector: s, positions }, i) => (
-            <Polygon
-              key={`wedge-${s.id}`}
-              positions={positions}
-              pathOptions={{ color: wedgeColorForIndex(i), fillColor: wedgeColorForIndex(i), fillOpacity: 0.3, weight: 1 }}
-            >
-              <Tooltip direction="top">
-                {s.cell_name || s.sector} ({s.tech || '4G'}) — Az {s.azimuth}° · BW {s.beamwidth}°
-                {s.mech_tilt != null || s.elec_tilt != null
-                  ? ` · Tilt ${s.mech_tilt ?? 0}+${s.elec_tilt ?? 0}°`
-                  : ''}
-                {s.max_tx_power_dbm != null ? ` · ${s.max_tx_power_dbm} dBm` : ''}
-              </Tooltip>
-            </Polygon>
-          ))}
+          {showDiagram && beamShapes.map((b) => {
+            const color = colorByKey.get(`id:${b.d.sectors[0].id}`) ?? UNKNOWN_SECTOR_COLOR
+            return (
+              <Fragment key={`beam-${b.d.key}`}>
+                <Polygon positions={b.full} pathOptions={{ color, fillColor: color, fillOpacity: 0.12, weight: 1, dashArray: '4 4' }}>
+                  <Tooltip direction="top" sticky>{beamText(b)}; lighter: up to about 25 dB weaker, where neighbouring sectors overlap</Tooltip>
+                </Polygon>
+                {b.main && (
+                  <Polygon positions={b.main} pathOptions={{ color, fillColor: color, fillOpacity: 0.32, weight: 1.5 }}>
+                    <Tooltip direction="top" sticky>{beamText(b)}; strong part: within 3 dB of the beam centre</Tooltip>
+                  </Polygon>
+                )}
+              </Fragment>
+            )
+          })}
           {points.map((p, i) => (
             <Marker
               key={i}
@@ -562,8 +611,8 @@ export default function SiteLocationMiniMap({
         </MapContainer>
         )}
         <div className="site-mini-map-layers">
-          <label title="Direction from the site list. Width and length are the same for every sector on a band.">
-            <input type="checkbox" checked={showDiagram} onChange={(e) => setShowDiagram(e.target.checked)} /> Diagram
+          <label title="Each antenna direction's beam, from the antenna's horizontal pattern, its height and tilt.">
+            <input type="checkbox" checked={showDiagram} onChange={(e) => setShowDiagram(e.target.checked)} /> Beams
           </label>
           <label title="Where the centre of each beam meets flat ground, from antenna height and tilt. Hills change this.">
             <input type="checkbox" checked={showTilt} onChange={(e) => setShowTilt(e.target.checked)} /> Reach from tilt
@@ -573,11 +622,56 @@ export default function SiteLocationMiniMap({
               <input type="checkbox" checked={showMeasured} onChange={(e) => setShowMeasured(e.target.checked)} /> Measured
             </label>
           )}
+          <label title="Predicted signal level round the site, worked out from the antennas, the radio values and the ground heights.">
+            <input type="checkbox" checked={showPredicted} onChange={(e) => setShowPredicted(e.target.checked)} /> Predicted
+          </label>
           <label title="Tilted view on real ground heights, with where each beam centre meets the hills.">
             <input type="checkbox" checked={show3d} onChange={(e) => setShow3d(e.target.checked)} /> 3D terrain
           </label>
         </div>
       </div>
+      {showDiagram && !show3d && directions.length > 0 && (
+        <div className="site-mini-map-legend site-beam-legend">
+          <div>
+            One beam per antenna direction. Strong colour: within 3 dB of the beam centre (the half-power width). Lighter,
+            dashed: weaker towards the sides, where neighbouring sectors overlap, so three sectors cover the full circle.
+            Length: where the top of the beam meets flat ground, at most {distanceText(1500)}; hills change it (see 3D terrain).
+          </div>
+          <div className="site-terrain-3d-vbw">
+            <label>Horizontal beamwidth{' '}
+              <input type="number" min={10} max={180} step={1} value={hbw ?? ''} placeholder="omni"
+                onChange={(e) => { const v = Number(e.target.value); setHbwOverride(v >= 10 && v <= 180 ? v : null) }} />°
+            </label>{' '}
+            <span className="muted">
+              {hbwOverride != null
+                ? <>changed here · <button type="button" className="btn-link" onClick={() => setHbwOverride(null)}>use the antenna's</button></>
+                : modelHbw.known ? `from the antenna${antennaModel ? ` (${antennaModel})` : ''}`
+                  : `typical of NTC's panels${antennaModel ? `; antenna "${antennaModel}" not known` : '; no antenna model in the site list'}`}
+            </span>{' '}
+            <label>Vertical: low band{' '}
+              <input type="number" min={2} max={40} step={0.5} value={vbw.low} onChange={(e) => setVbw('low', Number(e.target.value) || VBW_DEFAULT.low)} />°
+            </label>{' '}
+            <label>high band{' '}
+              <input type="number" min={2} max={40} step={0.5} value={vbw.high} onChange={(e) => setVbw('high', Number(e.target.value) || VBW_DEFAULT.high)} />°
+            </label>
+          </div>
+        </div>
+      )}
+      {showPredicted && show3d && (
+        <div className="site-mini-map-legend">The predicted coverage is drawn on the flat map; untick 3D terrain to see it.</div>
+      )}
+      {showPredicted && !show3d && (
+        directions.length === 0
+          ? <div className="site-mini-map-legend">No sector here has an azimuth, so nothing can be predicted.</div>
+          : predSettings.isError
+            ? <div className="site-mini-map-legend error">The radio values could not be loaded.</div>
+            : <PredictionPanel
+                settings={predSettings.data} grid={grid} working={predWorking || predSettings.isLoading} error={predError}
+                tech={tech} techs={predTechs} setTech={setPredTech} view={predView} setView={setPredView}
+                radius={predRadius} setRadius={setPredRadius} colorOf={predColorOf} directionLabel={predLabel}
+                usedBands={usedBands} canEdit={canEditRadio} calibration={calibration} measuredOn={showMeasured}
+              />
+      )}
       {show3d && (
         <div className="site-mini-map-legend">
           <div className="site-terrain-3d-chips" role="group" aria-label="Directions to show">

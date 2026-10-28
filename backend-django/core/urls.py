@@ -8,6 +8,7 @@ from . import (alarms, api_auth, area_sample, audit, auth_log, backup, call_cont
                rf_reports, roles, sector_stats, site_import, site_coverage, site_photo, speed_test, sso_views, subscriber_link, subscriber_profile, system_doc,
                telemetry_admin, telemetry_near, views, volte_quality)
 from . import cell_kpi
+from . import coverage_prediction
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
@@ -246,6 +247,9 @@ urlpatterns = [
     path('cell-kpis/source/', cell_kpi.CellKpiSourceView.as_view(), name='cell-kpi-source'),
     path('cell-kpis/source/fetch/', cell_kpi.CellKpiFetchView.as_view(), name='cell-kpi-fetch'),
     path('sites/<str:site_id>/cell-kpis/', cell_kpi.SiteCellKpiView.as_view(), name='site-cell-kpis'),
+    # Radio values for the predicted coverage on the site map (2026-10-28).
+    path('coverage-prediction/settings/', coverage_prediction.CoveragePredictionSettingsView.as_view(),
+         name='coverage-prediction-settings'),
     # Where phones run the speed test (2026-10-26) -- see core/speed_test.py.
     path('speedtest/settings/', speed_test.SpeedTestSettingsView.as_view(), name='speedtest-settings'),
     # Everything stored that relates to a complaint, for a chosen time range (2026-10-26).

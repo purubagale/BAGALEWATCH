@@ -1740,6 +1740,45 @@ repo, not on prod):
   jump to the map on Telemetry Drive Test and DT Session History. All in
   the same commit as the network KPIs.
 
+- **Antenna beams on the site map** (2026-10-28, built, NOT committed). The
+  site list's 4G `beamwidth`/`radius` are KML drawing values (40 or 60
+  degrees, 200 or 150 m; none on 2G/3G; no Tx power anywhere), so three
+  sectors showed 60-80 degree gaps. The "Diagram" switch is now "Beams": one
+  beam per antenna direction (same grouping as the 3D view), drawn from the
+  3GPP horizontal pattern (12 x (angle/HPBW)^2 dB, floor 25 dB) with path-loss
+  exponent 3.5, so the outline at 60 degrees off boresight is half the length
+  and neighbouring sectors meet. Strong fill = within 3 dB, light dashed = out
+  to the floor. HPBW from `Site.antenna_device` (`antennaHpbw`: CommScope
+  names carry it, Kathrein 80010865 taken as 65, Omni = circle, unknown = 65),
+  changeable on the page (localStorage `dtwatch_horizontal_beamwidth`). Length
+  = where the top of the vertical beam meets flat ground, 150 m to 1.5 km,
+  500 m when height or tilt is missing (`beamReachM`). Helpers in
+  `lib/sectorWedge.ts` (band group and beamwidth storage moved there too).
+  The DT coverage map (`SectorBeamOverlay` in `DtCoverageMap.tsx`) draws the
+  same beams; `serving-cells/` now also returns tech, site_band, carrier,
+  height, tilts and the site's antenna model.
+- **Predicted coverage on the site map** (2026-10-28, built, NOT committed,
+  not seen in a browser). "Predicted" switch: `lib/coveragePrediction.ts`
+  works out a 120 x 120 grid (1.5/3/5/8 km round the site, about 0.3 s) per
+  technology: power + gain - cable loss - 3GPP pattern (horizontal and
+  vertical, max 25 dB) - Hata (Okumura <= 1500 MHz, COST-231 above; antenna
+  height over the point's ground; urban/suburban/rural) - knife-edge loss
+  over the main ridge (ITU-R P.526, one walk per mast) + model offset, on the
+  terrain tiles (`heightSampler` in `lib/terrainProfile.ts`). Views: Level,
+  Best sector, Overlap (next sector within 3/6 dB). With Measured on, the
+  panel compares readings with the prediction for the same sector and an
+  admin can save the mean difference as the model offset. Radio values:
+  `CoveragePredictionSettings` singleton (migration 0151; AI migrations now
+  0152-0157, local history renamed, table created by hand),
+  `core/coverage_prediction.py` (`GET/PUT coverage-prediction/settings/`,
+  GET any user, PUT admin, audit `COVERAGE_PREDICTION.UPDATED`). Starting
+  values per band (B20 RS 18.2 dBm/15.5 dBi, B3 15.2/17.5, 3G CPICH 33/18,
+  2G BCCH 43 with 2 dB cable), only changed values are stored; a sector's
+  own `max_tx_power_dbm` comes first (4G: minus 10 log(12 x 5 x MHz); 3G
+  minus 10). Waiting for NTC's planning values; an admin types them in on
+  the site map ("Change values"). Flat-ground check: B3 -94 dBm at 1 km,
+  B20 -83. Tests `tests_coverage_prediction.py`.
+
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an
 identified device. It was declined; Area Sample is the agreed

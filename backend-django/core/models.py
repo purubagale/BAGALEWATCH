@@ -3697,6 +3697,35 @@ class CellKpi(models.Model):
         ]
 
 
+class CoveragePredictionSettings(models.Model):
+    """Radio values for the predicted coverage on the site map (2026-10-28,
+    core/coverage_prediction.py). Singleton (pk=1). Until NTC's planning
+    values arrive these are typical defaults; admins change them on the site
+    map. `bands` holds, per band key (core/coverage_prediction.py BANDS),
+    only the values changed from the default. A sector's own maximum
+    transmit power from the engineering parameters, when present, comes
+    before the band's power."""
+    bands = models.JSONField(default=dict, blank=True)
+    environment = models.CharField(max_length=12, default='suburban')
+    rx_height_m = models.FloatField(default=1.5)
+    default_height_m = models.FloatField(default=25)
+    default_tilt_deg = models.FloatField(default=4)
+    offset_db = models.FloatField(default=0)
+    updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_coverage_prediction_settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        return cls.objects.filter(pk=1).first()
+
+
 class TelemetryPushToken(models.Model):
     """Push address of a device that is currently sharing (2026-10-08), so an
     engineer can ask an area's sharing devices for a fresh reading

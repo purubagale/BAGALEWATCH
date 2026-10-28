@@ -902,7 +902,8 @@ export default function SiteDetailPage() {
 
         <div className="site-sidebar-card site-sidebar-card-grow">
           <div className="site-sidebar-card-title" data-icon="📍">Location</div>
-          <SiteLocationMiniMap siteId={site.id} lat={site.lat} lng={site.lng} status={site.status} sectors={site.sectors} />
+          <SiteLocationMiniMap siteId={site.id} lat={site.lat} lng={site.lng} status={site.status} sectors={site.sectors}
+            antennaModel={site.antenna_device} />
         </div>
       </aside>
 
