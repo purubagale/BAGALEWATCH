@@ -6,6 +6,7 @@ import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
 } from './types'
 import type {
   AlarmSource, AlarmSourceInput, AlarmSummary, SiteActiveAlarms, SitesActiveAlarms,
+  CellKpiSource, CellKpiSourceInput, SiteCellKpis,
   LinkedSystem, ProblemDashboard, ProblemLive, ProblemLiveTrace, ProblemNearbySites, ProblemNotificationRow, ProblemRelated,
   ProblemReport, ProblemReportList,
   SecuritySettings,
@@ -2312,6 +2313,43 @@ export function useSaveAlarmSource() {
       qc.invalidateQueries({ queryKey: ['alarm-summary'] })
       qc.invalidateQueries({ queryKey: ['site-alarms'] })
     },
+  })
+}
+
+// Per-cell network KPIs (2026-10-28) -- core/cell_kpi.py.
+export function useCellKpiSource() {
+  return useQuery({
+    queryKey: ['cell-kpi-source'],
+    queryFn: () => apiJson<CellKpiSource>('/api/v2/cell-kpis/source/'),
+    // Asked again every 5 s while a fetch runs on the server.
+    refetchInterval: (q) => (q.state.data?.running ? 5000 : false),
+  })
+}
+
+export function useSaveCellKpiSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: CellKpiSourceInput) =>
+      apiJson<CellKpiSource>('/api/v2/cell-kpis/source/', { method: 'PUT', body: JSON.stringify(input) }),
+    onSuccess: (d) => qc.setQueryData(['cell-kpi-source'], d),
+  })
+}
+
+export function useFetchCellKpis() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (date?: string) =>
+      apiJson<{ started: boolean }>('/api/v2/cell-kpis/source/fetch/', { method: 'POST', body: JSON.stringify(date ? { date } : {}) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cell-kpi-source'] }),
+  })
+}
+
+export function useSiteCellKpis(siteId: string | undefined, days = 7) {
+  return useQuery({
+    queryKey: ['site-cell-kpis', siteId, days],
+    queryFn: () => apiJson<SiteCellKpis>(`/api/v2/sites/${encodeURIComponent(siteId as string)}/cell-kpis/?days=${days}`),
+    enabled: !!siteId,
+    staleTime: 5 * 60_000,
   })
 }
 

@@ -15,7 +15,8 @@ import {
 import SectorBreakdown from '../components/SectorBreakdown'
 import NeighbourCellsCell from '../components/NeighbourCellsCell'
 import EnvironmentTools, { filterByEnvironment, type EnvFilter } from '../components/EnvironmentTools'
-import RouteEnds from '../components/RouteEnds'
+import RouteEnds, { StackedNote } from '../components/RouteEnds'
+import { useScrollToSelection } from '../lib/useScrollToSelection'
 import type { TelemetryLiveSample } from '../api/types'
 import { resolveAreaQuery, type ResolvedAreaPoint } from '../lib/resolveDeviceAreaQuery'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
@@ -624,6 +625,11 @@ export default function TelemetryDriveTestSessionsPage() {
   // see TelemetryLiveSamplesPage.tsx's identical fix for why (it forced a
   // full Leaflet map remount on nearly every 10s poll).
   const mapKey = `${selectedId}`
+  // Picking a session brings its map into view (2026-10-28): the list above
+  // it keeps growing. "Back to the session list" returns.
+  const viewRef = useScrollToSelection<HTMLElement>(selectedId, !!samplesData)
+  const listRef = useRef<HTMLDivElement>(null)
+  const selectedSession = (sessions ?? []).find((x) => x.id === selectedId)
 
   // Session list filters (2026-10-07) -- client-side over the <=200 rows
   // the list endpoint already caps, same as CollectionsPage's own source
@@ -687,7 +693,7 @@ export default function TelemetryDriveTestSessionsPage() {
       {!isLoading && (sessions ?? []).length === 0 && <div className="page-status">No sessions yet -- start one above.</div>}
 
       {(sessions ?? []).length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+        <div ref={listRef} style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 10, scrollMarginTop: 8 }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             Status
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as '' | 'active' | 'ended')}>
@@ -803,7 +809,14 @@ export default function TelemetryDriveTestSessionsPage() {
       )}
 
       {selectedId != null && (
-        <>
+        <section ref={viewRef} style={{ scrollMarginTop: 8, minHeight: 'calc(100vh - 80px)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+            <h2 style={{ margin: 0 }}>Session — {selectedSession?.name ?? `#${selectedId}`}</h2>
+            <button type="button" className="btn-secondary btn-small"
+              onClick={() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+              ↑ Back to the session list
+            </button>
+          </div>
           {samplesData?.require_consent && samplesData.consent_summary && (
             <p className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
               Consent required for this session -- {samplesData.consent_summary.consented} of{' '}
@@ -853,6 +866,7 @@ export default function TelemetryDriveTestSessionsPage() {
                 <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 <RouteLines samples={samples} />
                 <DeviceRouteEnds samples={samples} />
+                <StackedNote points={samples} />
                 <MetricPoints samples={techSamples} metric={metric} />
               </MapContainer>
             </>
@@ -879,7 +893,7 @@ export default function TelemetryDriveTestSessionsPage() {
               </tr>
             </thead>
             <tbody>
-              {samples.slice(0, 50).map((s, i) => (
+              {[...samples].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()).slice(0, 50).map((s, i) => (
                 <tr key={i}>
                   <td>{s.device_id.slice(0, 12)}...</td>
                   <td>{new Date(s.ts).toLocaleTimeString()}</td>
@@ -937,7 +951,7 @@ export default function TelemetryDriveTestSessionsPage() {
               </tbody>
             </table>
           )}
-        </>
+        </section>
       )}
     </div>
   )

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -11,7 +11,8 @@ import { useCollectionSectors, useCollectionSessionSamples, useCollectionSession
 import SectorBreakdown from '../components/SectorBreakdown'
 import NeighbourCellsCell from '../components/NeighbourCellsCell'
 import EnvironmentTools, { environmentText, filterByEnvironment, type EnvFilter } from '../components/EnvironmentTools'
-import RouteEnds from '../components/RouteEnds'
+import RouteEnds, { StackedNote } from '../components/RouteEnds'
+import { useScrollToSelection } from '../lib/useScrollToSelection'
 import { useAuth } from '../auth/AuthContext'
 import { CQI_COLUMN_HINT, CQI_MODULATION_HINT, cqiLabel, cqiModulationLabel } from '../lib/cqiDisplay'
 
@@ -59,45 +60,8 @@ export default function CollectionsPage() {
   // The section is at least a screen tall, so its heading can reach the top
   // even before the route has loaded; once it has, the heading is put there
   // again in case the page moved meanwhile.
-  // One smooth scroll could stop short (2026-10-28): the map, the route fit
-  // and the sector table change the page's height while it glides, and a
-  // second scroll when the readings arrive could cut the first off. Now,
-  // for 2.5 s after a click, the heading is put back at the top whenever it
-  // is not there, and the watch stops as soon as the user scrolls.
-  const routeRef = useRef<HTMLElement>(null)
-  const routeLoaded = !!samples.data
-  useEffect(() => {
-    if (!selectedId) return
-    const el = routeRef.current
-    if (!el) return
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    let stopped = false
-    const stop = () => { stopped = true }
-    const opts = { passive: true } as const
-    window.addEventListener('wheel', stop, opts)
-    window.addEventListener('touchstart', stop, opts)
-    window.addEventListener('keydown', stop)
-    const started = Date.now()
-    let lastTop = Number.NaN
-    const timer = window.setInterval(() => {
-      const node = routeRef.current
-      if (stopped || !node || Date.now() - started > 2500) {
-        window.clearInterval(timer)
-        return
-      }
-      const top = node.getBoundingClientRect().top
-      // Still gliding (the position moved since the last look): let it finish.
-      if (Math.abs(top - lastTop) > 1) { lastTop = top; return }
-      if (Math.abs(top - 8) > 4) node.scrollIntoView({ behavior: 'auto', block: 'start' })
-      lastTop = top
-    }, 150)
-    return () => {
-      window.clearInterval(timer)
-      window.removeEventListener('wheel', stop)
-      window.removeEventListener('touchstart', stop)
-      window.removeEventListener('keydown', stop)
-    }
-  }, [selectedId, routeLoaded])
+  // Kept in view by the shared hook (lib/useScrollToSelection.ts).
+  const routeRef = useScrollToSelection<HTMLElement>(selectedId, !!samples.data)
 
   // Filters beyond source (2026-10-07) -- client-side over the <=200 rows
   // the list endpoint already caps, same reasoning as the Telemetry Drive
@@ -300,6 +264,7 @@ export default function CollectionsPage() {
                     pathOptions={{ color: '#0153A5', weight: 3 }}
                   />
                   <RouteEnds points={samples.data.results} name={selected.name || undefined} />
+                  <StackedNote points={samples.data.results} />
                   {plotPoints.map((p, i) => {
                     const level = telemetryLevel({
                       network_type: p.item.network_type, rsrp: p.item.rsrp_dbm, rscp: p.item.rscp_dbm, rssi: p.item.rssi_dbm,

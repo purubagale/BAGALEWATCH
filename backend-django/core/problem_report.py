@@ -185,6 +185,7 @@ def _serving(report):
         if sector is not None:
             serving = {
                 'site_id': sector.site_id, 'name': sector.site.name, 'cell_name': sector.cell_name,
+                'sector_id': sector.pk,
                 'km': round(km, 2) if km is not None else None, 'matched_by': how,
             }
     return serving, nearest
@@ -268,6 +269,35 @@ def _customer_devices(report):
     return ids
 
 
+def _cell_load(report, serving, nearest):
+    """The network KPIs of the serving cell around the problem time, else
+    of the serving or nearest site's busiest cell (2026-10-28)."""
+    from .cell_kpi import load_at
+    if serving and serving.get('sector_id'):
+        found = load_at(report.happened_at, sector_id=serving['sector_id'])
+        if found:
+            return found
+    site = (serving or {}).get('site_id') or (nearest[0]['site_id'] if nearest else None)
+    return load_at(report.happened_at, site_id=site) if site else None
+
+
+def _load_line(load):
+    if not load or load.get('prb_dl') is None:
+        return ''
+    from .cell_kpi import describe
+    extra = [f"{load['thr_dl_user']} Mbps per user" if load.get('thr_dl_user') is not None else '',
+             f"{load['users_avg']} users on average" if load.get('users_avg') is not None else '']
+    return ', '.join([describe(load)] + [e for e in extra if e])
+
+
+def _drop_line(load):
+    if not load or (load.get('service_drop') is None and load.get('volte_drop') is None):
+        return ''
+    parts = [f"service drop {load['service_drop']}%" if load.get('service_drop') is not None else '',
+             f"VoLTE call drop {load['volte_drop']}%" if load.get('volte_drop') is not None else '']
+    return f"{load['cell_name'] or load['site_id']} on {load['date']}: " + ', '.join(p for p in parts if p)
+
+
 def _finding(kind, title, cause, action, evidence):
     return {'kind': kind, 'title': title, 'cause': cause, 'action': action, 'evidence': evidence}
 
@@ -287,6 +317,7 @@ def check_report(report, user):
         radius_m, widened = WIDE_RADIUS_M, True
     serving, nearest = _serving(report)
     site_name = (serving or {}).get('site_id') or (nearest[0]['site_id'] if nearest else 'the nearest site')
+    load = _cell_load(report, serving, nearest)
 
     tech = _TECH.get(report.network_type)
     level = report.level_dbm
@@ -358,15 +389,37 @@ def check_report(report, user):
     slow = (report.download_mbps is not None and report.download_mbps < SLOW_DL_MBPS) or \
         (report.ping_ms is not None and report.ping_ms > HIGH_PING_MS) or \
         (report.packet_loss_pct is not None and report.packet_loss_pct >= HIGH_LOSS_PCT)
-    if slow and not weak_here and (good_here or (level is None and spot_4g is not None and spot_4g >= GOOD_DBM['4G'])):
+    signal_ok = good_here or (level is None and spot_4g is not None and spot_4g >= GOOD_DBM['4G'])
+    speed_evidence = [f'download {report.download_mbps} Mbps' if report.download_mbps is not None else '',
+                      f'ping {report.ping_ms} ms' if report.ping_ms is not None else '',
+                      f'packet loss {report.packet_loss_pct}%' if report.packet_loss_pct is not None else '']
+    # The cell's real load from the network KPIs (2026-10-28, core/cell_kpi.py):
+    # busy confirms the guess, quiet rules it out.
+    if slow and not weak_here and signal_ok and load and load['quiet']:
+        findings.append(_finding(
+            'slow_not_busy', 'Slow, but the cell was not busy',
+            'The signal is good and the cell had capacity to spare at that time, so the slowness is more likely '
+            'the phone, its data plan or settings, or the link behind the site.',
+            f"Check the customer's data plan and APN, try another phone at the spot, and check the "
+            f'transmission link of {site_name}.',
+            speed_evidence + [_load_line(load)],
+        ))
+    elif slow and not weak_here and signal_ok:
         findings.append(_finding(
             'busy_cell', 'Good signal but slow',
+            'The signal is good but the speed is low: the cell is busy at this time.' if load and load['busy'] else
             'The signal is good but the speed is low: the cell is probably busy at this time.',
             f'Check the load and number of users of the serving cell of {site_name} at this hour; consider '
             'more capacity (another carrier, load balancing) if it is busy every day.',
-            [f'download {report.download_mbps} Mbps' if report.download_mbps is not None else '',
-             f'ping {report.ping_ms} ms' if report.ping_ms is not None else '',
-             f'packet loss {report.packet_loss_pct}%' if report.packet_loss_pct is not None else ''],
+            speed_evidence + [_load_line(load)],
+        ))
+    elif report.category == 'slow_data' and not weak_here and load and load['busy']:
+        findings.append(_finding(
+            'busy_cell', 'Busy cell at that time',
+            'The customer reports slow data and the cell was busy at that time.',
+            f'Consider more capacity for the serving cell of {site_name} (another carrier, load balancing) if it '
+            'is busy every day.',
+            [_load_line(load)],
         ))
 
     four_g_nearby = [v for v, n in ((before['rsrp_4g_mean'], before['readings_4g']),
@@ -412,7 +465,7 @@ def check_report(report, user):
              'to 2G/3G or ended on a weak signal. ' if calls_near else '')
             + 'Phone readings show the signal, not why a call ended.',
             f'Check the call drop counters of the serving cell of {site_name} for that hour.',
-            [],
+            [_drop_line(load)],
         ))
 
     has_data = level is not None or at_time['readings'] or before['readings'] or dt['readings']
@@ -453,6 +506,7 @@ def check_report(report, user):
         'serving': serving,
         'nearest_sites': nearest,
         'neighbours': heard,
+        'cell_load': load,
         'findings': findings,
         'customer_reply': CUSTOMER_REPLY.get(findings[0]['kind'], CUSTOMER_REPLY['no_fault_found']),
     }
@@ -471,6 +525,9 @@ CUSTOMER_REPLY = {
                           'stronger one is available; our engineers are adjusting how phones move between them.',
     'no_dominant_cell': 'Thank you for telling us. Several towers overlap at your location and disturb each other; '
                         'our engineers are adjusting them.',
+    'slow_not_busy': 'Thank you for telling us. The network at your location had capacity to spare at that time; '
+                     'please check your data pack and restart the phone. If it stays slow, our engineers will '
+                     'check further.',
     'busy_cell': 'Thank you for telling us. The network at your location is busy at this time of day; we are '
                  'working to add capacity.',
     'lower_tech': 'Thank you for telling us. 4G is available at your location. Please set your phone\'s network '
@@ -501,6 +558,7 @@ CAUSE_LABELS = {
     'stronger_neighbour': 'Stronger cell not used',
     'no_dominant_cell': 'No dominant cell',
     'busy_cell': 'Good signal, slow (busy cell)',
+    'slow_not_busy': 'Slow, cell not busy',
     'lower_tech': 'Phone on 2G/3G where 4G is usable',
     'lower_tech_weak_4g': 'Little 4G here',
     'worse_than_usual': 'Worse than usual',
@@ -964,7 +1022,11 @@ def dashboard_data(days, classify=True):
 
     cause_labels = dict(CAUSE_LABELS, unchecked='Not checked yet')
     hotspots = []
-    for spot in sorted(spots.values(), key=lambda s: (-s['count'], -s['open'], s['key']))[:25]:
+    top_spots = sorted(spots.values(), key=lambda s: (-s['count'], -s['open'], s['key']))[:25]
+    # Busy-hour load of each hotspot site over the last week (2026-10-28, core/cell_kpi.py).
+    from .cell_kpi import site_busy_days
+    loads = site_busy_days({s['site_id'] for s in top_spots if s['site_id']})
+    for spot in top_spots:
         top = max(spot['causes'].items(), key=lambda kv: kv[1])[0]
         hotspots.append({
             **{k: v for k, v in spot.items() if k not in ('causes', 'sectors', 'levels')},
@@ -972,6 +1034,7 @@ def dashboard_data(days, classify=True):
             'causes': _ranked(spot['causes'], cause_labels),
             'sectors': _ranked(spot['sectors'], top=5),
             'level_mean': _mean(spot['levels']),
+            'cell_load': loads.get(spot['site_id']) if spot['site_id'] else None,
         })
 
     start_day = since.astimezone(NEPAL_TZ).date()

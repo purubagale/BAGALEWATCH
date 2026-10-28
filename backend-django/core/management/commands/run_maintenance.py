@@ -11,6 +11,7 @@ Runs the background jobs in one process, one thread each:
     apply_dt_retention     drive-test retention runs a superadmin approved
     classify_problem_reports  likely cause and site of new problem reports
     send_problem_updates   status updates to linked systems that sent reports
+    fetch_cell_kpis        yesterday's per-cell network KPIs (idle while the source is off)
 
 Each job is the existing command run with --loop, so its interval,
 settings and behaviour are unchanged. entrypoint.sh starts this next to
@@ -30,7 +31,7 @@ from django.core.management.base import BaseCommand
 from django.db import close_old_connections, connection
 
 JOBS = ('sync_live_sites', 'telemetry_maintenance', 'roll_telemetry_bins', 'prune_audit_log', 'prune_site_photos',
-        'apply_dt_retention', 'classify_problem_reports', 'send_problem_updates')
+        'apply_dt_retention', 'classify_problem_reports', 'send_problem_updates', 'fetch_cell_kpis')
 RESTART_DELAY_SECONDS = 60
 # Arbitrary fixed number, only has to be the same in every runner.
 LOCK_KEY = 20261011

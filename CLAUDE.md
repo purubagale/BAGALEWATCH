@@ -1685,6 +1685,61 @@ repo, not on prod):
   to 30). Collections' jump to the route keeps re-aligning for 2.5 s until
   the user scrolls.
 
+- **One card per phone** (2026-10-28, built, NOT committed). Prod showed one
+  Samsung as "3 phones" and 8 cards: only some ids carry the hardware
+  fingerprint, and `_describe_phones` keyed on it first. Now make and model
+  is the key; the fingerprint splits a model only when two fingerprints were
+  seen for it. Diagnosis dashboard: one card per phone (current registration,
+  total readings, app now) with its records folded into a table. Registered
+  Devices marks a registration replaced by a newer one from the same number
+  and model (`replaced_at`, nothing revoked) and hides those by default.
+
+- **Stacked readings and pins** (2026-10-28, built, NOT committed). Local
+  Telemetry Drive Test "koteshwor chowk area" (2 September): 34 readings on
+  two spots (32 + 2), all RSRP -44, operator 310/260, i.e. a test phone that
+  did not move; one dot per spot, both under the S/E pins, so it looked like
+  "no plot". Pins now float 8 px above the reading; `StackedNote` in
+  `RouteEnds.tsx` says "34 readings at 2 places" on Collections, Telemetry
+  Drive Test and DT Session History maps when there are 3+ readings per
+  place. Telemetry Drive Test's reading table is in time order.
+
+- **Jump to the map on every session list** (2026-10-28, built, NOT
+  committed). Collections' scroll watch moved to
+  `lib/useScrollToSelection.ts` and is used on Collections, Telemetry Drive
+  Test (selected session in a section headed "Session — name" with "↑ Back to
+  the session list") and DT Session History (the detail panel).
+
+- **Network KPIs per cell** (2026-10-28). NTC's KPI team is building an
+  API for their dashboard's per-cell figures; no manual upload or mail
+  (the user's decision). `core/cell_kpi.py`: `CellKpi` (one row per cell
+  and day / busy hour / hour, `uniq_cell_kpi_period`, null = not measured,
+  never "/0") and `CellKpiSourceSettings` (singleton: off / demo / http,
+  address, encrypted key, field map their->ours, levels, fetch hour, keep
+  days, link pattern to their dashboard), migration 0150 (AI migrations
+  now 0151-0156, local history renamed, tables made from `sqlmigrate`).
+  Pull: `fetch_cell_kpis` in `run_maintenance` fetches yesterday after the
+  fetch hour, retries every 30 min; `GET <url>?date=&level=&page=&page_size=5000`,
+  answers a list or `results`/`data` with `next`. Push: `POST
+  /api/external/v1/cell-kpis/` with scope `kpis:write`. Demo: the daily
+  "Network 2" exports in `data/media/cell_kpi_demo/` (git-ignored; placed
+  here, not on prod). Matching: cell name, site + label, eNodeB + local
+  cell, site + local cell; 22 Oct export: 24,374 rows, 99.3% matched, 26 s.
+  After each import the site list's `prb`/`prb_dl`/`prb_ul` take the busiest
+  sector's newest busy hour (monthly report). Site page card "Network KPIs"
+  (`SiteCellKpis.tsx`: busy hour / whole day, 7-30 day DL PRB line, network
+  CQI beside drive-test CQI, link to their dashboard); Live Site Sync card
+  (`CellKpiSourceSection.tsx`). Complaint check: `cell_load` (serving cell,
+  else the site's busiest cell; hour row, else busy hour, else day, else up
+  to 3 days before), `busy_cell` quotes it, new cause `slow_not_busy` (DL
+  PRB under 50%), call-drop finding shows the cell's drop rates; Hotspots
+  "Cell load" column. Tested: 9 unit tests, rolled-back checks; pages not
+  seen in a browser. Network 2 covers EDR, WDR and FWDR only; its BBH is
+  20:00 for every cell.
+- **One card per phone; Registered Devices replaced rows** (2026-10-28):
+  see the diagnosis dashboard notes; stacked-readings note and route pins;
+  jump to the map on Telemetry Drive Test and DT Session History. All in
+  the same commit as the network KPIs.
+
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an
 identified device. It was declined; Area Sample is the agreed

@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import CurrentLocationMarker from './CurrentLocationMarker'
 import SitePhotoLayer from './SitePhotoLayer'
 import EnvironmentTools, { filterByEnvironment, withSessionPlace, type EnvFilter } from './EnvironmentTools'
-import RouteEnds from './RouteEnds'
+import RouteEnds, { StackedNote } from './RouteEnds'
 import type { DtSample, DtServingCell, DtTech } from '../api/types'
 import { bandColor, weakestPerSquare, type DtMetric } from '../lib/dtBands'
 import { declusterForPlot } from '../lib/declusterPlot'
@@ -393,6 +393,7 @@ export default function DtCoverageMap({
               counts={counts} squareM={grouped.squareM} />
             {/* Start and end of the whole route, whatever the filter (2026-10-28). */}
             <RouteEnds points={placed} />
+            <StackedNote points={placed} />
           </>
         )}
       </MapContainer>

@@ -25,6 +25,7 @@ import DtCompareDeltaMap from '../components/DtCompareDeltaMap'
 import DtCompareReportView from '../components/DtCompareReportView'
 import DtCallDownloadSummary from '../components/DtCallDownloadSummary'
 import DtCoverageMap from '../components/DtCoverageMap'
+import { useScrollToSelection } from '../lib/useScrollToSelection'
 import SectorBreakdown from '../components/SectorBreakdown'
 import { assignDtCompareOrder } from '../lib/dtCompareAssignment'
 import { DriveModeSelect } from '../lib/dtDriveMode'
@@ -245,6 +246,9 @@ export default function DtSessionHistoryPage() {
     return result
   }, [searchFilteredSessions, latestOnly, clusterBySessionId, expandedClusters])
   const { data: sessionDetail, isLoading: detailLoading } = useDtSession(selectedSessionId ?? undefined)
+  // A pick from far down the list brings the detail panel and its map into
+  // view (2026-10-28).
+  const detailRef = useScrollToSelection<HTMLDivElement>(selectedSessionId, !!sessionDetail)
   const { data: servingCells } = useDtServingCells(selectedSessionId ?? undefined)
   const { data: sectorStats } = useDtSessionSectors(selectedSessionId ?? undefined)
   const deleteSession = useDeleteDtSession()
@@ -723,7 +727,7 @@ export default function DtSessionHistoryPage() {
               onMouseDown={onHistoryResizeMouseDown}
               title="Drag to resize"
             />
-            <div style={{ flex: 1, minWidth: 280 }}>
+            <div ref={detailRef} style={{ flex: 1, minWidth: 280, scrollMarginTop: 8 }}>
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
                 <button
                   type="button"

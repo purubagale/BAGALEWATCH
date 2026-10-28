@@ -2271,6 +2271,9 @@ class ApiKey(models.Model):
         # status and likely cause (core/external_problem.py).
         ('problems:write', 'Problem reports — send'),
         ('problems:read', 'Problem reports — read status'),
+        # Added 2026-10-28 — the KPI team's system may push per-cell network
+        # KPIs instead of us fetching them (core/cell_kpi.py).
+        ('kpis:write', 'Cell KPIs — send'),
     ]
 
     name = models.CharField(max_length=100)
@@ -3600,6 +3603,98 @@ class AlarmSourceSettings(models.Model):
     @classmethod
     def load(cls):
         return cls.objects.filter(pk=1).first()
+
+
+class CellKpiSourceSettings(models.Model):
+    """Where the per-cell network KPIs come from (2026-10-28, core/cell_kpi.py).
+    Another NTC team is building an API for them; until it exists the source
+    is off, or `demo`, which reads the daily network exports placed in
+    MEDIA_ROOT/cell_kpi_demo/. Singleton (pk=1), set on the Live Site Sync
+    page. The key is encrypted at rest and never sent back."""
+    BACKEND_OFF, BACKEND_DEMO, BACKEND_HTTP = 'off', 'demo', 'http'
+    BACKENDS = [(BACKEND_OFF, 'Off'), (BACKEND_DEMO, 'Demo files'), (BACKEND_HTTP, 'Their API')]
+    AUTH_CHOICES = [('Bearer', 'Bearer <key>'), ('Token', 'Token <key>')]
+    backend = models.CharField(max_length=8, choices=BACKENDS, default=BACKEND_OFF)
+    api_url = models.CharField(max_length=500, blank=True, default='')
+    api_key_encrypted = models.TextField(blank=True, default='')
+    auth_scheme = models.CharField(max_length=10, choices=AUTH_CHOICES, default='Bearer')
+    # Their field name -> ours, only where they differ (see core/cell_kpi.py FIELDS).
+    field_map = models.JSONField(default=dict, blank=True)
+    levels = models.CharField(max_length=20, default='day,bbh')   # day, bbh, hour
+    fetch_hour = models.PositiveSmallIntegerField(default=6)       # Nepal time
+    keep_days = models.PositiveIntegerField(default=400)
+    # Address of a cell on their dashboard: {cell}, {site}, {date} are filled in.
+    dashboard_url = models.CharField(max_length=500, blank=True, default='')
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    last_result = models.JSONField(default=dict, blank=True)
+    last_success_date = models.DateField(null=True, blank=True)
+    running_since = models.DateTimeField(null=True, blank=True)
+    updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_cell_kpi_source_settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        return cls.objects.filter(pk=1).first()
+
+
+class CellKpi(models.Model):
+    """One 4G cell's network KPIs for one day, its busy hour or one hour
+    (2026-10-28, core/cell_kpi.py). Fetched from the KPI team's API or sent
+    to /api/external/v1/cell-kpis/; matched to a sector on arrival. A value
+    that was not measured ("/0", no attempts) is null, never 0."""
+    LEVEL_DAY, LEVEL_BBH, LEVEL_HOUR = 'day', 'bbh', 'hour'
+    LEVELS = [(LEVEL_DAY, 'Whole day'), (LEVEL_BBH, 'Busy hour'), (LEVEL_HOUR, 'Hour')]
+
+    date = models.DateField()
+    level = models.CharField(max_length=4, choices=LEVELS)
+    hour = models.SmallIntegerField(default=-1)          # 0-23 for 'hour'; -1 otherwise
+    busy_hour = models.SmallIntegerField(null=True, blank=True)   # the hour a 'bbh' row stands for
+    cell_key = models.CharField(max_length=160)          # cell name, upper case, no spaces
+    cell_name = models.CharField(max_length=160, blank=True, default='')
+    enodeb_id = models.IntegerField(null=True, blank=True)
+    local_cell_id = models.IntegerField(null=True, blank=True)
+    site = models.ForeignKey(Site, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    sector = models.ForeignKey(Sector, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    band = models.CharField(max_length=16, blank=True, default='')
+    bandwidth_mhz = models.FloatField(null=True, blank=True)
+    prb_dl = models.FloatField(null=True, blank=True)
+    prb_dl_peak = models.FloatField(null=True, blank=True)
+    prb_ul = models.FloatField(null=True, blank=True)
+    prb_dl_available = models.FloatField(null=True, blank=True)
+    users_avg = models.FloatField(null=True, blank=True)
+    users_max = models.FloatField(null=True, blank=True)
+    traffic_gb = models.FloatField(null=True, blank=True)
+    thr_dl_cell = models.FloatField(null=True, blank=True)
+    thr_ul_cell = models.FloatField(null=True, blank=True)
+    thr_dl_user = models.FloatField(null=True, blank=True)
+    thr_ul_user = models.FloatField(null=True, blank=True)
+    cqi_avg = models.FloatField(null=True, blank=True)
+    rrc_sr = models.FloatField(null=True, blank=True)
+    erab_sr = models.FloatField(null=True, blank=True)
+    service_drop = models.FloatField(null=True, blank=True)
+    volte_sr = models.FloatField(null=True, blank=True)
+    volte_drop = models.FloatField(null=True, blank=True)
+    availability = models.FloatField(null=True, blank=True)
+    integrity = models.FloatField(null=True, blank=True)
+    extra = models.JSONField(default=dict, blank=True)    # every other field, as sent
+    source = models.CharField(max_length=8, default='')   # pull / push / demo
+    received_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'v2_cell_kpi'
+        constraints = [models.UniqueConstraint(fields=['cell_key', 'date', 'level', 'hour'], name='uniq_cell_kpi_period')]
+        indexes = [
+            models.Index(fields=['sector', 'date'], name='cell_kpi_sector_date'),
+            models.Index(fields=['site', 'date'], name='cell_kpi_site_date'),
+            models.Index(fields=['date', 'level'], name='cell_kpi_date_level'),
+        ]
 
 
 class TelemetryPushToken(models.Model):

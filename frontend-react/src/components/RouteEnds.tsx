@@ -15,8 +15,11 @@ function pin(letter: string, color: string): L.DivIcon {
     className: 'route-end-pin',
     html: `<span style="background:${color}"><b>${letter}</b></span>`,
     iconSize: [22, 30],
-    iconAnchor: [11, 29],
-    tooltipAnchor: [0, -26],
+    // The tip floats 8 px above the reading, so the reading's dot stays visible
+    // under the pin (2026-10-28: a session whose readings sat on two spots
+    // looked like a line with no plot).
+    iconAnchor: [11, 37],
+    tooltipAnchor: [0, -34],
   })
 }
 const START = pin('S', '#16a34a')
@@ -51,5 +54,21 @@ export default function RouteEnds({ points, name }: { points: Pt[]; name?: strin
         </Marker>
       )}
     </>
+  )
+}
+
+/** "34 readings at 2 places" over a map whose readings stack on a few spots
+ * (2026-10-28). Readings taken at one spot are drawn as one dot, so a session
+ * recorded from a phone that did not move shows almost nothing. Shown only
+ * when there are at least three readings per place on average. */
+export function StackedNote({ points }: { points: Pt[] }) {
+  const placed = points.filter((p) => p.lat != null && p.lng != null)
+  const places = new Set(placed.map((p) => `${(p.lat as number).toFixed(5)},${(p.lng as number).toFixed(5)}`)).size
+  if (placed.length < 6 || places * 3 > placed.length) return null
+  return (
+    <div className="route-stacked-note">
+      {placed.length.toLocaleString()} readings at {places} place{places === 1 ? '' : 's'}: readings taken at the same spot are drawn as one dot
+      {places === 1 ? '. The phone did not move.' : ', so the phone hardly moved.'}
+    </div>
   )
 }

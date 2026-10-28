@@ -7,6 +7,7 @@ from . import (alarms, api_auth, area_sample, audit, auth_log, backup, call_cont
                exports, ip_block, issues, kpi_trend, mfa, password_reset, problem_live, problem_notify, problem_related, problem_report, problem_sites, provisioning, reports, rescue, rf_audit,
                rf_reports, roles, sector_stats, site_import, site_coverage, site_photo, speed_test, sso_views, subscriber_link, subscriber_profile, system_doc,
                telemetry_admin, telemetry_near, views, volte_quality)
+from . import cell_kpi
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
@@ -241,6 +242,10 @@ urlpatterns = [
     path('alarms/sites/', alarms.SitesActiveAlarmsView.as_view(), name='alarms-sites'),  # 2026-10-28, Sites Topology column
     path('alarms/summary/', alarms.AlarmSummaryView.as_view(), name='alarms-summary'),
     path('alarms/source/', alarms.AlarmSourceView.as_view(), name='alarms-source'),
+    # Per-cell network KPIs from the KPI team (2026-10-28) -- see core/cell_kpi.py.
+    path('cell-kpis/source/', cell_kpi.CellKpiSourceView.as_view(), name='cell-kpi-source'),
+    path('cell-kpis/source/fetch/', cell_kpi.CellKpiFetchView.as_view(), name='cell-kpi-fetch'),
+    path('sites/<str:site_id>/cell-kpis/', cell_kpi.SiteCellKpiView.as_view(), name='site-cell-kpis'),
     # Where phones run the speed test (2026-10-26) -- see core/speed_test.py.
     path('speedtest/settings/', speed_test.SpeedTestSettingsView.as_view(), name='speedtest-settings'),
     # Everything stored that relates to a complaint, for a chosen time range (2026-10-26).
