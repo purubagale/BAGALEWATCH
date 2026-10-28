@@ -5176,3 +5176,8 @@ tr.rel-st-no_coverage td:first-child { color: #be123c; font-weight: 600; }
 .sites-alarm-device { color: #2563eb; font-size: 11px; word-break: break-word; }
 .sites-alarm-more { background: none; border: 0; color: #0b4ea2; cursor: pointer; font-size: 11px; padding: 0; text-align: left; }
 .dt-explore-3d { position: relative; height: 100%; width: 100%; border-radius: var(--radius-md, 8px); overflow: hidden; }
+
+/* Start (S) and end (E) of a session's route (2026-10-28, components/RouteEnds.tsx). */
+.route-end-pin { background: none; border: 0; }
+.route-end-pin span { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); color: #fff; font: 700 11px/1 system-ui, sans-serif; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
+.route-end-pin b { transform: rotate(45deg); }

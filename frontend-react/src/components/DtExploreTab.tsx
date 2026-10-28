@@ -7,6 +7,8 @@ import CurrentLocationMarker from './CurrentLocationMarker'
 import SitePhotoLayer from './SitePhotoLayer'
 import TelemetryNearLayer from './TelemetryNearLayer'
 import ExploreListBox from './ExploreListBox'
+import EnvironmentTools, { filterByEnvironment, withSessionPlace, type EnvFilter } from './EnvironmentTools'
+import RouteEnds from './RouteEnds'
 import type { Terrain3DData } from './SiteTerrain3D'
 import { destinationPoint } from '../lib/sectorWedge'
 
@@ -292,6 +294,9 @@ function ViewWatcher({ onView }: { onView: (box: ViewBox) => void }) {
   })
   return null
 }
+
+// Start/end pins are drawn per session up to this many sessions; more would bury the dots.
+const ROUTE_ENDS_MAX = 30
 
 // Recent and Change views (2026-10-14): one dot per 50 m square, from the
 // sessions' squares. Recent = the most recent value measured there (faded
@@ -1132,6 +1137,10 @@ export default function DtExploreTab() {
   const [hiddenTel, setHiddenTel] = useState<Set<string>>(new Set())
   const [flyTarget, setFlyTarget] = useState<{ lat: number; lng: number; n: number } | null>(null)
   const [show3d, setShow3d] = useState(false)
+  // Outdoors / indoors / in a vehicle (2026-10-28): filters every plotted
+  // reading; a drive-test reading counts as its session's test type unless a
+  // stretch of it was tagged otherwise.
+  const [envFilter, setEnvFilter] = useState<EnvFilter>('')
 
   // Zoomed in on a search that arrived as squares: every reading in view.
   const [viewBox, setViewBox] = useState<ViewBox | null>(null)
@@ -1231,6 +1240,39 @@ export default function DtExploreTab() {
     () => (hiddenDt.size ? nearSessions.filter((s) => !hiddenDt.has(s.id)) : nearSessions),
     [nearSessions, hiddenDt],
   )
+  const placedSessions = useMemo(
+    () => plottedSessions.map((x) => ({ ...x, samples: withSessionPlace(x.samples, x.environment) })),
+    [plottedSessions],
+  )
+  const envSessions = useMemo(
+    () => (envFilter ? placedSessions.map((x) => ({ ...x, samples: filterByEnvironment(x.samples, envFilter) })) : plottedSessions),
+    [envFilter, placedSessions, plottedSessions],
+  )
+  const telemetryEnvPlotted = useMemo(() => filterByEnvironment(telemetryPlotted, envFilter), [telemetryPlotted, envFilter])
+  const envItems = useMemo(
+    () => [...placedSessions.flatMap((x) => x.samples), ...(telemetryShown ? telemetryPlotted : [])],
+    [placedSessions, telemetryShown, telemetryPlotted],
+  )
+  // Start and end pins per session, while there are few enough to read.
+  const routeEndSets = useMemo(() => {
+    if (plotStepM > 0) return []
+    const out: { key: string; name: string; points: { lat: number | null; lng: number | null; ts: string }[] }[] =
+      plottedSessions.map((x) => ({ key: `dt-${x.id}`, name: x.name, points: x.samples }))
+    if (telemetryShown) {
+      const bySession = new Map<string, TelemetryNearPoint[]>()
+      for (const p of telemetryPlotted) {
+        const list = bySession.get(p.session) ?? []
+        list.push(p)
+        bySession.set(p.session, list)
+      }
+      for (const [key, list] of bySession) {
+        list.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
+        out.push({ key: `tel-${key}`, name: telemetryNames[key] ?? 'Phone session', points: list })
+      }
+    }
+    return out.length <= ROUTE_ENDS_MAX ? out : []
+  }, [plotStepM, plottedSessions, telemetryShown, telemetryPlotted, telemetryNames])
+
   const recentSessionIds = useMemo(
     () => (hiddenDt.size ? plottedSessions.map((s) => s.id) : null),
     [hiddenDt, plottedSessions],
@@ -1469,7 +1511,7 @@ export default function DtExploreTab() {
     const squares: Terrain3DData['squares'] = []
     const fmt = (v: number | null | undefined, unit = '') => (v == null ? '—' : `${v}${unit}`)
     if (exploreView === 'sessions') {
-      for (const session of plottedSessions) {
+      for (const session of envSessions) {
         const usable = session.samples.filter((x) => x.lat != null && x.lng != null)
         if (isPciTab) {
           if (session.tech !== '4G') continue
@@ -1497,7 +1539,7 @@ export default function DtExploreTab() {
         }
       }
       if (telemetryShown) {
-        for (const p of telemetryPlotted) {
+        for (const p of telemetryEnvPlotted) {
           const color = telemetryColorOf(p)
           if (color) squares.push({ lat: p.lat, lng: p.lng, color, hollow: false, ring: true, label: telemetryNames[p.session] ?? 'Phone reading' })
         }
@@ -1525,8 +1567,8 @@ export default function DtExploreTab() {
       wedges: [], lines: [], beams: [], segments: [], cells: [], labels: [], reach: [],
       squares, area, sitePoints, corners: area,
     }
-  }, [show3d, point, exploreView, plottedSessions, isPciTab, isBandTab, isolatedPci, pciColorOf, metric, telemetryShown,
-    telemetryPlotted, telemetryColorOf, telemetryNames, recent.data, recentSessionIds, phoneSquares, shape, radiusKm, nearSites, pointLabel])
+  }, [show3d, point, exploreView, envSessions, isPciTab, isBandTab, isolatedPci, pciColorOf, metric, telemetryShown,
+    telemetryEnvPlotted, telemetryColorOf, telemetryNames, recent.data, recentSessionIds, phoneSquares, shape, radiusKm, nearSites, pointLabel])
 
   function handleSearch() {
     if (!inputText.trim()) {
@@ -1774,6 +1816,10 @@ export default function DtExploreTab() {
             </div>
           </div>
 
+          {exploreView === 'sessions' && envItems.length > 0 && plotStepM === 0 && (
+            <EnvironmentTools items={envItems} filter={envFilter} onFilter={setEnvFilter} canEdit={false} />
+          )}
+
           {isPciTab && exploreView === 'sessions' && (
             <div className="report-toolbar" style={{ marginTop: 6, marginBottom: 0, gap: 6, flexWrap: 'wrap' }}>
               <button
@@ -1864,15 +1910,16 @@ export default function DtExploreTab() {
                 )
               ) : isPciTab ? (
                 <>
-                  <PciSamplesLayer sessions={plottedSessions} colorOf={pciColorOf} isolated={isolatedPci} />
-                  <PciLabelsLayer sessions={plottedSessions} isolated={isolatedPci} />
+                  <PciSamplesLayer sessions={envSessions} colorOf={pciColorOf} isolated={isolatedPci} />
+                  <PciLabelsLayer sessions={envSessions} isolated={isolatedPci} />
                 </>
               ) : isBandTab ? (
-                <BandSamplesLayer sessions={plottedSessions} />
+                <BandSamplesLayer sessions={envSessions} />
               ) : (
-                <NearSamplesLayer sessions={plottedSessions} metric={metric} servingCells={servingCells} />
+                <NearSamplesLayer sessions={envSessions} metric={metric} servingCells={servingCells} />
               )}
-              {telemetryShown && exploreView === 'sessions' && <TelemetryNearLayer points={telemetryPlotted} names={telemetryNames} colorOf={telemetryColorOf} />}
+              {exploreView === 'sessions' && routeEndSets.map((r) => <RouteEnds key={r.key} points={r.points} name={r.name} />)}
+              {telemetryShown && exploreView === 'sessions' && <TelemetryNearLayer points={telemetryEnvPlotted} names={telemetryNames} colorOf={telemetryColorOf} />}
               <FlyToSite target={flyTarget} />
               <ViewWatcher onView={setViewBox} />
               <FullscreenSync isFullscreen={isFullscreen} bounds={currentBounds} />

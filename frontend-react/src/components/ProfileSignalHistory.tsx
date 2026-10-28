@@ -8,7 +8,7 @@ import { CQI_BANDS, RSRP_BANDS, RSRQ_BANDS, RXLEV_BANDS, SINR_BANDS, bandColor, 
 import { netHex } from '../lib/netColors'
 import { telemetryLevel } from '../lib/telemetryLevel'
 import FitToPoints from './FitToPoints'
-import { environmentText } from './EnvironmentTools'
+import { ENV_LABEL, environmentText, filterByEnvironment, type EnvFilter } from './EnvironmentTools'
 
 // Signal history on the Subscriber Profile (2026-10-16). Newest 300
 // readings by default, or every stored one, or one session, for all
@@ -155,6 +155,8 @@ export default function ProfileSignalHistory({ msisdn, reason, total, emergency,
   const [range, setRange] = useState<string>('newest')
   const [session, setSession] = useState('')
   const [tech, setTech] = useState('')
+  // Outdoors / indoors / in a vehicle (2026-10-28): the chart and map follow it.
+  const [envFilter, setEnvFilter] = useState<EnvFilter>('')
   const [metric, setMetric] = useState<MetricKey>('level')
   const [hover, setHover] = useState<number | null>(null)
   const [sel, setSel] = useState<[number, number] | null>(null)
@@ -172,7 +174,13 @@ export default function ProfileSignalHistory({ msisdn, reason, total, emergency,
     })
   }, [data, range, tech, isFetching, onSelection])
 
-  const all = data?.points ?? []
+  const fetched = data?.points ?? []
+  const envCounts = useMemo(() => {
+    const c: Record<string, number> = { outdoor: 0, indoor: 0, vehicle: 0, none: 0 }
+    for (const p of fetched) c[p.environment ?? 'none'] = (c[p.environment ?? 'none'] ?? 0) + 1
+    return c
+  }, [fetched])
+  const all = useMemo(() => filterByEnvironment(fetched, envFilter), [fetched, envFilter])
   const m = METRICS[metric]
   const pts = useMemo(() => all.filter((p) => m.value(p) != null), [all, m])
   // Readings with no level (no service, or a measure the phone did not give),
@@ -289,6 +297,20 @@ export default function ProfileSignalHistory({ msisdn, reason, total, emergency,
             <button key={t || 'all'} type="button" className={tech === t ? 'on' : ''} onClick={() => choose({ tech: t })}>{t || 'All'}</button>
           ))}
         </div>
+        {fetched.some((p) => p.environment) && (
+          <div className="sp-sh-pills" role="group" aria-label="Where">
+            {(['', 'outdoor', 'indoor', 'vehicle', 'none'] as EnvFilter[]).map((k) => {
+              const count = k ? envCounts[k] : fetched.length
+              return (
+                <button key={k || 'all'} type="button" className={envFilter === k ? 'on' : ''} disabled={!!k && !count}
+                  title={k ? `${k === 'none' ? 'Not tagged' : ENV_LABEL[k]}: ${count} readings` : 'Everywhere'}
+                  onClick={() => { setEnvFilter(k); setSel(null); setHover(null) }}>
+                  {k === '' ? 'Anywhere' : k === 'none' ? 'Not tagged' : k === 'indoor' ? 'Indoors' : k === 'vehicle' ? 'Vehicle' : 'Outdoors'} {count}
+                </button>
+              )
+            })}
+          </div>
+        )}
         <div className="sp-sh-pills" role="group" aria-label="Colour by">
           {(Object.keys(METRICS) as MetricKey[]).map((k) => (
             <button key={k} type="button" className={metric === k ? 'on' : ''} onClick={() => { setMetric(k); setSel(null) }}>{METRICS[k].label}</button>

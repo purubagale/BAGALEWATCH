@@ -15,6 +15,7 @@ import {
 import SectorBreakdown from '../components/SectorBreakdown'
 import NeighbourCellsCell from '../components/NeighbourCellsCell'
 import EnvironmentTools, { filterByEnvironment, type EnvFilter } from '../components/EnvironmentTools'
+import RouteEnds from '../components/RouteEnds'
 import type { TelemetryLiveSample } from '../api/types'
 import { resolveAreaQuery, type ResolvedAreaPoint } from '../lib/resolveDeviceAreaQuery'
 import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
@@ -224,6 +225,29 @@ function RouteLines({ samples }: { samples: TelemetryLiveSample[] }) {
     }
   }, [map, samples])
   return null
+}
+
+// Start and end of each phone's route in the session (2026-10-28).
+function DeviceRouteEnds({ samples }: { samples: TelemetryLiveSample[] }) {
+  const byDevice = useMemo(() => {
+    const m = new Map<string, TelemetryLiveSample[]>()
+    for (const s of samples) {
+      if (s.lat == null || s.lng == null) continue
+      const list = m.get(s.device_id) ?? []
+      list.push(s)
+      m.set(s.device_id, list)
+    }
+    for (const list of m.values()) list.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
+    return [...m.entries()]
+  }, [samples])
+  return (
+    <>
+      {byDevice.map(([device, list]) => (
+        <RouteEnds key={device} points={list.map((s) => ({ lat: s.lat_smooth ?? s.lat, lng: s.lng_smooth ?? s.lng, ts: s.ts }))}
+          name={byDevice.length > 1 ? `Phone ${device.slice(0, 6)}` : undefined} />
+      ))}
+    </>
+  )
 }
 
 // Click-to-pick a center point (2026-10-07, "so that i can edit the
@@ -828,6 +852,7 @@ export default function TelemetryDriveTestSessionsPage() {
                 <FitToSamples samples={samples} fitKey={mapKey} />
                 <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 <RouteLines samples={samples} />
+                <DeviceRouteEnds samples={samples} />
                 <MetricPoints samples={techSamples} metric={metric} />
               </MapContainer>
             </>

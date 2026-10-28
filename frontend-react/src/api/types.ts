@@ -768,6 +768,8 @@ export type DtTech = '4G' | '3G' | '2G'
 export type DtCellRole = 'serving' | 'neighbor'
 
 export interface DtSample {
+  // Place set on the web for a stretch (2026-10-28); null = the session's test type.
+  environment?: string | null
   // Set only on a 50 m square of Explore's wide search (2026-10-14): how many
   // readings it stands for; its values are the weakest of each measurement.
   square_n?: number
@@ -2765,6 +2767,9 @@ export interface TelemetryNearPoint {
   rssi: number | null
   rxqual: number | null
   band_label?: string
+  // Outdoors / indoors / vehicle (2026-10-28), for Explore's "Where" filter.
+  environment?: string | null
+  environment_source?: string | null
 }
 
 export interface TelemetryNearResponse {

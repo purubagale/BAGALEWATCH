@@ -10,9 +10,24 @@ import { useSetEnvironment } from '../api/queries'
 export type EnvFilter = '' | 'outdoor' | 'indoor' | 'vehicle' | 'none'
 
 export const ENV_LABEL: Record<string, string> = { outdoor: 'Outdoors', indoor: 'Inside a building', vehicle: 'In a vehicle' }
-const SOURCE_LABEL: Record<string, string> = { user: 'set on the phone', estimated: 'estimated', edited: 'set on the web' }
+const SOURCE_LABEL: Record<string, string> = { user: 'set on the phone', estimated: 'estimated', edited: 'set on the web', session: "from the session's test type" }
 
 interface Item { ts: string | number; environment?: string | null; environment_source?: string | null }
+
+// A drive test's own place (2026-10-28): a reading with none set on the web
+// takes its session's test type.
+const DT_SESSION_PLACE: Record<string, string> = { drive: 'vehicle', walk_outdoor: 'outdoor', walk_indoor: 'indoor' }
+
+/** Drive-test readings with the place each one counts as: its own (set on
+ * the web for a stretch) or its session's test type. */
+export function withSessionPlace<T extends { environment?: string | null }>(samples: T[], sessionEnvironment?: string | null) {
+  const fallback = DT_SESSION_PLACE[sessionEnvironment ?? ''] ?? null
+  return samples.map((s) => ({
+    ...s,
+    environment: s.environment || fallback,
+    environment_source: s.environment ? 'edited' : fallback ? 'session' : null,
+  }))
+}
 
 /** Keeps the items that match the filter ('' = all, 'none' = not tagged). */
 export function filterByEnvironment<T extends Item>(items: T[], filter: EnvFilter): T[] {
@@ -47,7 +62,7 @@ export default function EnvironmentTools({ items, filter, onFilter, session, can
   items: Item[]
   filter: EnvFilter
   onFilter: (f: EnvFilter) => void
-  session: { collection_session?: string; telemetry_session?: number }
+  session?: { collection_session?: string; telemetry_session?: number; dt_session?: number }
   canEdit: boolean
   onTagged?: () => void
 }) {
@@ -85,7 +100,7 @@ export default function EnvironmentTools({ items, filter, onFilter, session, can
         {Object.keys(counts.src).length > 0 && (
           <span className="muted env-src">{Object.entries(counts.src).map(([k, n]) => `${n} ${SOURCE_LABEL[k] ?? k}`).join(' · ')}</span>
         )}
-        {canEdit && first != null && last != null && (
+        {canEdit && session && first != null && last != null && (
           <button type="button" className="btn-secondary btn-small" onClick={() => {
             setFrom(localInput(first)); setTo(localInput(last)); setDone(''); setOpen((v) => !v)
           }}>{open ? 'Close' : 'Tag a stretch…'}</button>

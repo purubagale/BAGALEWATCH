@@ -4,6 +4,8 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import CurrentLocationMarker from './CurrentLocationMarker'
 import SitePhotoLayer from './SitePhotoLayer'
+import EnvironmentTools, { filterByEnvironment, withSessionPlace, type EnvFilter } from './EnvironmentTools'
+import RouteEnds from './RouteEnds'
 import type { DtSample, DtServingCell, DtTech } from '../api/types'
 import { bandColor, weakestPerSquare, type DtMetric } from '../lib/dtBands'
 import { declusterForPlot } from '../lib/declusterPlot'
@@ -253,14 +255,26 @@ function CoverageDots({
 }
 
 export default function DtCoverageMap({
-  samples,
+  samples: allSamples,
   tech,
   servingCells,
+  sessionId,
+  sessionEnvironment,
+  canTag = false,
 }: {
   samples: DtSample[]
   tech: DtTech
   servingCells?: DtServingCell[]
+  /** With a session (2026-10-28): the "Where" bar (outdoors / indoors / in a
+   * vehicle) over its readings, and tagging a stretch for admins. */
+  sessionId?: number
+  sessionEnvironment?: string | null
+  canTag?: boolean
 }) {
+  // Each reading's place: its own, else the session's test type.
+  const placed = useMemo(() => withSessionPlace(allSamples, sessionEnvironment), [allSamples, sessionEnvironment])
+  const [envFilter, setEnvFilter] = useState<EnvFilter>('')
+  const samples = useMemo(() => filterByEnvironment(placed, envFilter), [placed, envFilter])
   const { metricsForTech } = useDtMetrics()
   const allMetrics = useMemo(() => metricsForTech(tech), [metricsForTech, tech])
   // Hide a metric's own tab entirely when this session has no real reading
@@ -359,6 +373,10 @@ export default function DtCoverageMap({
       {activeMetric.note && (activeMetric.key !== 'cqi' || samples.some((s) => s.cqi_estimated)) && (
         <div className="muted" style={{ fontSize: 10, marginBottom: 6 }}>{activeMetric.note}</div>
       )}
+      {sessionId != null && (
+        <EnvironmentTools items={placed} filter={envFilter} onFilter={setEnvFilter}
+          session={{ dt_session: sessionId }} canEdit={canTag} />
+      )}
       <MapContainer key={mapKey} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
         <InvalidateOnResize />
         <CurrentLocationMarker />
@@ -373,6 +391,8 @@ export default function DtCoverageMap({
             <SectorWedgeOverlay servingCells={servingCells} />
             <CoverageDots samples={drawnSamples} metric={activeMetric} servingCells={servingCells}
               counts={counts} squareM={grouped.squareM} />
+            {/* Start and end of the whole route, whatever the filter (2026-10-28). */}
+            <RouteEnds points={placed} />
           </>
         )}
       </MapContainer>

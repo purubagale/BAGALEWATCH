@@ -800,7 +800,9 @@ export default function DtSessionHistoryPage() {
                             <div className="report-card-label">Uploaded By</div>
                           </div>
                         </div>
-                        <DtCoverageMap samples={sessionDetail.samples} tech={sessionDetail.tech} servingCells={servingCells} />
+                        <DtCoverageMap samples={sessionDetail.samples} tech={sessionDetail.tech} servingCells={servingCells}
+                          sessionId={sessionDetail.id} sessionEnvironment={sessionDetail.environment}
+                          canTag={user?.role === 'admin' || user?.role === 'superadmin'} />
                         <DtCallDownloadSummary
                           callSummary={sessionDetail.meta?.callSummary}
                           downloadSummary={sessionDetail.meta?.downloadSummary}

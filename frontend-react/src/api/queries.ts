@@ -2267,12 +2267,12 @@ export function useAlarmSummary() {
 export function useSetEnvironment() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { collection_session?: string; telemetry_session?: number; from: string; to: string; environment: string }) =>
+    mutationFn: (input: { collection_session?: string; telemetry_session?: number; dt_session?: number; from: string; to: string; environment: string }) =>
       apiJson<{ updated: number; environment: string | null }>('/api/v2/telemetry/environment/', {
         method: 'POST', body: JSON.stringify(input),
       }),
     onSuccess: () => {
-      for (const key of ['collection-session-samples', 'collection-session-sectors', 'telemetry-dt-session-samples', 'telemetry-dt-session-sectors']) {
+      for (const key of ['collection-session-samples', 'collection-session-sectors', 'telemetry-dt-session-samples', 'telemetry-dt-session-sectors', 'dt-session', 'dt-sessions-near']) {
         qc.invalidateQueries({ queryKey: [key] })
       }
     },

@@ -1506,6 +1506,10 @@ class DriveTestSample(models.Model):
     # the CQI the test phone reported. Both sat in `cqi` unmarked, and a
     # calibration built on the filled-in values went wrong for it.
     cqi_estimated = models.BooleanField(default=False)
+    # Outdoors / inside a building / in a vehicle for this reading
+    # (2026-10-28), set on the web for a stretch (core/environment.py);
+    # null = the session's own place applies (drive, walk outdoors, walk indoors).
+    environment = models.CharField(max_length=10, null=True, blank=True)
     dl = SignalFloatField(null=True, blank=True)
     pci = models.IntegerField(null=True, blank=True)
     # LTE band this sample's serving cell was on (e.g. "3", "20") --

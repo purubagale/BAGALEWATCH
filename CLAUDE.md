@@ -1667,6 +1667,24 @@ repo, not on prod):
   Change squares via the shared `recentSquareStyle`), with turn, tilt and
   height. "Street" on the flat map means place names on in 3D.
 
+- **"Where" on every session map, and start/end pins** (2026-10-28, built,
+  NOT committed). Drive-test readings got `environment` (migration 0149,
+  nullable; AI migrations now 0150-0155, local history renamed, column added
+  by hand): null means the session's test type (drive = vehicle, walk
+  outdoors, walk indoors; `withSessionPlace` in `EnvironmentTools.tsx`).
+  `POST telemetry/environment/` takes `dt_session` (times are text, each is
+  parsed; naive = UTC). The "Where" bar is now on DT Session History's map
+  (`DtCoverageMap` props `sessionId`, `sessionEnvironment`, `canTag`;
+  tagging for admin and superadmin), DT Explore (filter only, over drive
+  tests and phone points; Sessions view, not on square searches; the 3D view
+  follows it) and the diagnosis dashboard's signal analytics (pills; the
+  analysis cards do not follow it). Collections and Telemetry Drive Test had
+  it already. `components/RouteEnds.tsx`: green S pin at the first reading,
+  dark red E at the last, time on hover; on Collections, Telemetry Drive
+  Test (per phone), DT Session History and Explore (per ticked session, up
+  to 30). Collections' jump to the route keeps re-aligning for 2.5 s until
+  the user scrolls.
+
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an
 identified device. It was declined; Area Sample is the agreed

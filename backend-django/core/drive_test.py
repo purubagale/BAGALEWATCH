@@ -231,7 +231,7 @@ NEAR_OUTLINE_MAX_POINTS = 400
 NEAR_PLOT_FIELDS = (
     'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band', 'cqi',
     'cqi_estimated', 'cell_id', 'serving_site_name', 'rx_qual', 'bcch', 'bsic', 'rscp', 'ecno',
-    'scrambling_code', 'serving_site_id', 'serving_dist_km',
+    'scrambling_code', 'serving_site_id', 'serving_dist_km', 'environment',
 )
 
 

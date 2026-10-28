@@ -6,19 +6,25 @@ person's tap ('user'), or an estimate from speed and GPS accuracy
 the web and say where it was. Those readings become 'edited'.
 
     POST /api/v2/telemetry/environment/
-         {"collection_session": "<uuid>" | "telemetry_session": <id>,
+         {"collection_session": "<uuid>" | "telemetry_session": <id> | "dt_session": <id>,
           "from": "<iso>", "to": "<iso>", "environment": "outdoor" | "indoor" | "vehicle" | ""}
 
 An empty environment clears the tag. Admin and superadmin; every change is
 written to the Audit Log.
+
+Drive tests (2026-10-28): `dt_session` tags the session's readings in the
+stretch; a cleared reading takes the session's own place again (drive, walk
+outdoors, walk indoors). Their times are stored as text, so each is read.
 """
+from datetime import timezone as dt_timezone
+
 from django.shortcuts import get_object_or_404
 from django.utils.dateparse import parse_datetime
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .audit import log_audit_event
-from .models import CollectionSession, TelemetryDriveTestSession, TelemetrySample
+from .models import CollectionSession, DriveTestSample, DriveTestSession, TelemetryDriveTestSession, TelemetrySample
 from .views import IsAdminOrSuperadmin
 
 ENVIRONMENTS = ('outdoor', 'indoor', 'vehicle')
@@ -47,6 +53,20 @@ class EnvironmentEditView(APIView):
             s = get_object_or_404(TelemetryDriveTestSession, pk=data['telemetry_session'])
             qs = TelemetrySample.objects.filter(pk__in=session_samples_qs(s, request.user)[0].values('pk'))
             what = f'telemetry session {s.pk}'
+        elif data.get('dt_session'):
+            s = get_object_or_404(DriveTestSession, pk=data['dt_session'])
+            lo, hi = _aware(start), _aware(end)
+            ids = []
+            for pk, ts in DriveTestSample.objects.filter(session=s).values_list('pk', 'ts').iterator(chunk_size=5000):
+                t = parse_datetime(ts or '')
+                if t is not None and lo <= _aware(t) <= hi:
+                    ids.append(pk)
+            n = 0
+            for i in range(0, len(ids), 5000):
+                n += DriveTestSample.objects.filter(pk__in=ids[i:i + 5000]).update(environment=env or None)
+            log_audit_event(request, 'TELEMETRY.ENVIRONMENT_SET', resource='dt_samples', resource_id=f'dt session {s.pk}',
+                            detail=f'{env or "cleared"} {start.isoformat()} to {end.isoformat()} ({n} readings)')
+            return Response({'updated': n, 'environment': env or None})
         else:
             return Response({'detail': 'Say which session.'}, status=400)
         n = qs.filter(ts__gte=start, ts__lte=end).update(
@@ -54,3 +74,8 @@ class EnvironmentEditView(APIView):
         log_audit_event(request, 'TELEMETRY.ENVIRONMENT_SET', resource='telemetry_samples', resource_id=what,
                         detail=f'{env or "cleared"} {start.isoformat()} to {end.isoformat()} ({n} readings)')
         return Response({'updated': n, 'environment': env or None})
+
+
+def _aware(t):
+    """A time without a zone counts as UTC, as the drive-test logs store it."""
+    return t if t.tzinfo is not None else t.replace(tzinfo=dt_timezone.utc)
