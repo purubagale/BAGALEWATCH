@@ -1847,6 +1847,37 @@ an Accept/Reject request; nothing is sent until the person accepts.
   sent to registered phones) was started and then dropped on 2026-10-29;
   its code was removed. Area Sample still asks only phones seen in the
   circle in the last 7 days.
+  Committed and pushed with the items above as `984bfe5` (2026-10-29).
+- **"Share my location with NTC until this is fixed"** (2026-10-29, app
+  1.3.0, built, NOT committed in either repo, not run on a phone). A tick
+  box on the app's Report a problem screen. The report carries
+  `share_until_fixed`; `start_customer_share` in `core/problem_report.py`
+  creates an ACCEPTED trace (consent APP, `policy_mode` 'customer_share',
+  case = the complaint's label, 72 h) and answers `share` {trace_id,
+  expires_at, interval_s 300}. The app starts `TraceSharingService` with a
+  5-minute interval and no speed tests (new `intervalMs`/`speedTests`
+  extras). Closing the complaint (`patch` status closed) ends it
+  (`end_customer_share`, COMPLETED), and the phone stops on the next 409.
+  The readings show in the complaint's customer phone card like any trace.
+  SDK: `NetProblem.send(shareUntilFixed=)`, `Outcome.share`,
+  `DeviceApi.reportProblem` returns the answer. Tests `tests_customer_share.py`.
+- **"Help improve NTC's network"** (2026-10-29, app 1.3.0, the user's
+  request, designed to be anonymous). Opt-in, off by default: asked once on
+  the first start after install or update (`NetworkHelpPrompt.kt`, before
+  registration) and a Settings tick box. SDK `collector/ScheduledReadings.kt`:
+  readings around 00:00, 10:00, 14:00, 19:00 local, each at a random moment
+  within 30 min (WorkManager, so Android may delay them); network, band,
+  level, RSRQ, SINR and serving cell id read without a GPS fix; sent with the
+  shared key only (a signed call is refused) under a random id renewed every
+  30 days. Server `core/scheduled_readings.py`, model `ScheduledReading`
+  (migration 0153; AI migrations now 0154-0159, local history renamed,
+  table made from `sqlmigrate`): stores a hash of that id, the slot, the
+  readings and only the site/sector of the cell (identity match, no
+  position); 8 a day per id; kept 365 days. Summary
+  `GET telemetry/scheduled-readings/?days=` (admin): per slot and technology
+  average and weak/fair/good, and the weakest sites per slot; card "Readings
+  by time of day" on Telemetry Coverage (admin, superadmin). Stops working
+  if the shared telemetry key is retired. Tests `tests_scheduled_readings.py`.
 
 **Open items:**
 - Deploy to prod (back up the database, pull, `docker compose build

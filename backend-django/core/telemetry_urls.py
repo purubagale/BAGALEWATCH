@@ -5,7 +5,7 @@ the isolation decision in models.py's TelemetryIngestKey docstring."""
 from django.urls import path
 
 from . import (area_sample, call_context, device_identity, device_trace, number_verify, problem_report,
-               rescue_signed, serving_site_lookup, site_photo, speed_test, trace_speed)
+               rescue_signed, scheduled_readings, serving_site_lookup, site_photo, speed_test, trace_speed)
 from .consent import DriveTestConsentMessageView, DriveTestConsentView
 from .rescue import RescueEnrollView
 from .telemetry import TelemetryHealthView, TelemetryIngestView
@@ -34,6 +34,8 @@ urlpatterns = [
     # Calls as an ordinary app sees them: voice network, duration, cell and
     # level, no quality figures (2026-10-14). See core/call_context.py.
     path('call-samples/', call_context.CallContextIngestView.as_view(), name='call-samples'),
+    # 'Help improve NTC's network': four anonymous readings a day (2026-10-29).
+    path('scheduled-readings/', scheduled_readings.ScheduledReadingIngestView.as_view(), name='scheduled-readings'),
     # Rescue-beacon opt-in/opt-out (2026-09-01) — same ingest-key auth as
     # samples/ above, called by the device itself. See core/rescue.py.
     path('rescue-enroll/', RescueEnrollView.as_view(), name='rescue-enroll'),

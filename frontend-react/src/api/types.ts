@@ -2929,6 +2929,15 @@ export interface SiteCellKpis {
   site_id: string; configured: boolean; newest_date: string | null; busy_prb: number; cells: SiteCellKpiCell[]
 }
 
+// GET /api/v2/telemetry/scheduled-readings/ (2026-10-29, core/scheduled_readings.py).
+export interface ScheduledReadingTech { readings: number; level_avg: number | null; weak: number; fair: number; good: number }
+export interface ScheduledReadingSummary {
+  days: number; readings: number; phones: number; matched_to_site: number
+  slots: { slot: number; label: string; readings: number; techs: Record<string, ScheduledReadingTech> }[]
+  weakest_sites: { site_id: string; name: string | null; district: string | null; readings: number; weak_pct: number;
+    weak_pct_by_slot: Record<string, number> }[]
+}
+
 // GET /api/v2/problem-reports/<id>/oss-kpi/ (2026-10-29, core/problem_oss.py):
 // network KPIs of the sites related to a complaint.
 export type OssSiteRole = 'complaint' | 'served' | 'nearby'

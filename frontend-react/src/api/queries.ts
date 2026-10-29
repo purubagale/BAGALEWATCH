@@ -6,7 +6,7 @@ import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
 } from './types'
 import type {
   AlarmSource, AlarmSourceInput, AlarmSummary, SiteActiveAlarms, SitesActiveAlarms,
-  CellKpiSource, CellKpiSourceInput, SiteCellKpis, PredictionSettings, PredictionSettingsInput, ProblemOssKpi,
+  CellKpiSource, CellKpiSourceInput, SiteCellKpis, PredictionSettings, PredictionSettingsInput, ProblemOssKpi, ScheduledReadingSummary,
   LinkedSystem, ProblemDashboard, ProblemLive, ProblemLiveTrace, ProblemNearbySites, ProblemNotificationRow, ProblemRelated,
   ProblemReport, ProblemReportList,
   SecuritySettings,
@@ -2447,6 +2447,15 @@ export function useProblemNearbySites(id: number, radiusKm: number, enabled = tr
     queryKey: ['problem-nearby-sites', id, radiusKm],
     queryFn: () => apiJson<ProblemNearbySites>(`/api/v2/problem-reports/${id}/nearby-sites/?radius_km=${radiusKm}`),
     enabled,
+  })
+}
+
+// Readings by time of day from phones that opted in (2026-10-29).
+export function useScheduledReadings(days: number) {
+  return useQuery({
+    queryKey: ['scheduled-readings', days],
+    queryFn: () => apiJson<ScheduledReadingSummary>(`/api/v2/telemetry/scheduled-readings/?days=${days}`),
+    staleTime: 5 * 60 * 1000,
   })
 }
 

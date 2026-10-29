@@ -10,6 +10,7 @@ from . import (alarms, api_auth, area_sample, audit, auth_log, backup, call_cont
 from . import cell_kpi
 from . import coverage_prediction
 from . import problem_oss
+from . import scheduled_readings
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
@@ -222,6 +223,9 @@ urlpatterns = [
     path('telemetry/volte-samples/', volte_quality.VolteQualityListView.as_view(), name='telemetry-volte-samples'),
     # Calls from phones without quality figures (2026-10-14) -- see core/call_context.py.
     path('telemetry/call-samples/', call_context.CallContextListView.as_view(), name='telemetry-call-samples'),
+    # Summary of the anonymous scheduled readings (2026-10-29) -- see core/scheduled_readings.py.
+    path('telemetry/scheduled-readings/', scheduled_readings.ScheduledReadingSummaryView.as_view(),
+         name='telemetry-scheduled-readings'),
     # Scoped drive-test sessions over the live telemetry pipeline
     # (2026-09-01) — see core/telemetry_admin.py's TelemetryDriveTestSession*
     # views for why these replace TelemetryLiveSamplesView as the

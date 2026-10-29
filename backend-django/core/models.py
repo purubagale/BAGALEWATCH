@@ -2606,6 +2606,31 @@ class VolteCallSample(models.Model):
         return f'{self.device_id[:8]}… @ {self.ts:%Y-%m-%d %H:%M} (MOS≈{self.mos_estimate})'
 
 
+class ScheduledReading(models.Model):
+    """"Help improve NTC's network" (2026-10-29, core/scheduled_readings.py):
+    one of the four readings a day a phone sends after its owner opted in.
+    No position, no number and no device id: `anon_hash` is a hash of a
+    random id the phone changes every 30 days. The serving cell is kept only
+    as the site and sector it belongs to."""
+    anon_hash = models.CharField(max_length=32, db_index=True)
+    ts = models.DateTimeField(db_index=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+    slot = models.SmallIntegerField(null=True, blank=True)        # 0, 10, 14 or 19 (local hour)
+    network_type = models.CharField(max_length=12, blank=True, default='')
+    band = models.CharField(max_length=24, blank=True, default='')
+    level_dbm = models.IntegerField(null=True, blank=True)
+    rsrq_db = models.IntegerField(null=True, blank=True)
+    sinr_db = models.IntegerField(null=True, blank=True)
+    mcc = models.CharField(max_length=6, blank=True, default='')
+    mnc = models.CharField(max_length=6, blank=True, default='')
+    serving_site_id = models.CharField(max_length=40, blank=True, default='', db_index=True)
+    serving_sector = models.CharField(max_length=40, blank=True, default='')
+
+    class Meta:
+        db_table = 'v2_scheduled_reading'
+        indexes = [models.Index(fields=['slot', 'ts'], name='v2_sched_slot_ts_idx')]
+
+
 class CallContextSample(models.Model):
     """One phone call as an ordinary (not carrier-privileged) app sees it
     (2026-10-14, core/call_context.py). No quality figures: Android gives

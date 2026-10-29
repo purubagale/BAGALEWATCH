@@ -641,6 +641,41 @@ def _reported_place(data):
     return {'reported_lat': lat, 'reported_lng': lng} if lat is not None and lng is not None else {}
 
 
+SHARE_MAX_HOURS = 72
+SHARE_INTERVAL_S = 300
+
+
+def start_customer_share(request, report, device):
+    """Starts the customer's own sharing for a complaint: an accepted trace
+    on their phone, labelled with the complaint, for up to SHARE_MAX_HOURS.
+    It ends when the complaint is closed (`end_customer_share`), when the
+    customer taps Stop, or at the limit. Returns what the phone needs."""
+    from .collection import ensure_trace_session
+    from .models import TraceRequest
+    now = timezone.now()
+    trace = TraceRequest.objects.create(
+        device=device, msisdn=device.msisdn or '', kind=TraceRequest.KIND_INVESTIGATION,
+        case_reference=complaint_labels(report)[0], status=TraceRequest.STATUS_ACCEPTED,
+        consent_method=TraceRequest.CONSENT_APP, consent_at=now, policy_mode='customer_share',
+        ttl_minutes=SHARE_MAX_HOURS * 60, expires_at=now + timedelta(hours=SHARE_MAX_HOURS),
+    )
+    ensure_trace_session(trace)
+    log_audit_event(request, 'PROBLEM_REPORT.CUSTOMER_SHARE', resource='problem_report',
+                    resource_id=str(report.pk), detail=f'trace={trace.id} hours={SHARE_MAX_HOURS}')
+    return {'trace_id': str(trace.id), 'expires_at': trace.expires_at.isoformat(), 'interval_s': SHARE_INTERVAL_S}
+
+
+def end_customer_share(report):
+    """Ends the customer's own sharing when the complaint is closed. Returns how many ended."""
+    from .models import TraceRequest
+    if not report.device_id:
+        return 0
+    return TraceRequest.objects.filter(
+        device_id=report.device_id, policy_mode='customer_share', status=TraceRequest.STATUS_ACCEPTED,
+        case_reference__in=complaint_labels(report)[1],
+    ).update(status=TraceRequest.STATUS_COMPLETED, ended_at=timezone.now())
+
+
 def complaint_reference(report):
     """How a complaint is named on screens (2026-10-29: "Complaint ID 28";
     before it was "PR-28", Problem Report). A complaint from another NTC
@@ -807,7 +842,12 @@ class DeviceProblemReportView(APIView):
                 cache.incr(key)
             except ValueError:
                 pass
-        return Response({'id': report.pk, 'stored': True}, status=201)
+        out = {'id': report.pk, 'stored': True}
+        # "Share my location with NTC until this is fixed" (2026-10-29): the
+        # customer starts it on the phone, so it begins accepted.
+        if str(data.get('share_until_fixed', '')).lower() in ('1', 'true', 'yes'):
+            out['share'] = start_customer_share(request, report, device)
+        return Response(out, status=201)
 
 
 def _search_q(q, user):
@@ -952,6 +992,8 @@ class ProblemReportDetailView(APIView):
             report.save(update_fields=fields + ['updated_at'])
             if status_value is not None:
                 queue_update(report, 'status')   # a linked system on Automatic hears of it
+            if report.status == 'closed':
+                end_customer_share(report)       # "until this is fixed" (2026-10-29)
             log_audit_event(request, 'problem_report_update', resource='problem_report', resource_id=str(pk),
                             detail=f'status {report.status}')
         return Response({'id': report.pk, 'status': report.status})
