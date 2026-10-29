@@ -4,7 +4,7 @@
 
 **From:** Puru (RAN O&M, owner of the DT-WATCH server and web application)
 
-**Last updated:** 2026-10-29 (app 1.3.1: optional rough area with the time-of-day readings; app 1.3.0: "share my location until this is fixed" on a problem report, and the opt-in "Help improve NTC's network" readings; earlier: push address retried until accepted, 3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
+**Last updated:** 2026-10-29 (app 1.3.2: ping under load and use ratings in the speed test; app 1.3.1: optional rough area with the time-of-day readings; app 1.3.0: "share my location until this is fixed" on a problem report, and the opt-in "Help improve NTC's network" readings; earlier: push address retried until accepted, 3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
 
 ## 1. Summary
 
@@ -566,8 +566,31 @@ The result goes to `POST speed-samples/`, only while the user is sharing:
 ```
 
 Returns `201 {"stored": true}`. Limited to 20 a minute. `packet_loss_pct`
-(0 to 100) is optional. `bearer` is `mobile` or `wifi`; any other value, or
+(0 to 100) is optional. Since app 1.3.2 also send `"latency_down_ms"` and
+`"latency_up_ms"` (see below); both optional. `bearer` is `mobile` or `wifi`; any other value, or
 none, is stored blank (results from builds before 15 October 2026).
+
+**Ping under load and use ratings (29 October 2026, app 1.3.2).** Like
+Ookla, the test also measures the delay while data is moving: while the
+download runs, a second thread requests `GET /speedtest/empty` every 250 ms
+(3 s timeout) and keeps the median of the answered pings as
+`latency_down_ms`; the same during the upload gives `latency_up_ms`. A line
+that is quick when idle but slow under load makes calls and games lag. Send
+both with the speed result and with a problem report. The app then grades
+four uses from download, upload, ping, jitter, loss and the larger of the two
+loaded pings (the server holds the same table, `core/speed_quality.py`; a
+limit whose figure is missing is skipped):
+
+| Use | Very good | Good | Fair |
+|---|---|---|---|
+| Browsing | down >= 25, ping <= 50, loaded <= 300 | down >= 10, ping <= 100, loaded <= 600 | down >= 3, ping <= 200 |
+| Video streaming | down >= 25 | down >= 10 | down >= 3 |
+| Gaming | down >= 5, ping <= 30, jitter <= 10, loss <= 0.5, loaded <= 100 | down >= 3, ping <= 60, jitter <= 20, loss <= 1, loaded <= 200 | down >= 1, ping <= 100, jitter <= 30, loss <= 2.5, loaded <= 400 |
+| Video calls | down and up >= 10, ping <= 50, jitter <= 15, loss <= 0.5, loaded <= 150 | down and up >= 3, ping <= 100, jitter <= 30, loss <= 1, loaded <= 250 | down and up >= 1, ping <= 150, jitter <= 50, loss <= 3, loaded <= 500 |
+
+Anything below Fair is Poor (Mbps for speeds, ms for times, % for loss). In
+the SDK: `SpeedTest.Result.latencyDownMs` / `latencyUpMs`,
+`SpeedRatings.rate(result)` and `SpeedRatings.describe(result)`.
 
 A second set under `device/trace-requests/<id>/speedtest/` is signed and works
 only while that request is accepted. Its result call takes `ran_at` (epoch ms,
