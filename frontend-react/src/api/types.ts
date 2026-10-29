@@ -2938,6 +2938,16 @@ export interface ScheduledReadingSummary {
     weak_pct_by_slot: Record<string, number> }[]
 }
 
+// GET /api/v2/telemetry/scheduled-readings/map/ (2026-10-29).
+export interface ScheduledMapFigures { readings: number; weak_pct: number; level_avg: number | null }
+export interface ScheduledMapSector extends ScheduledMapFigures {
+  site_id: string; sector: string; name: string | null; district: string | null; lat: number; lng: number; azimuth: number | null
+}
+export interface ScheduledReadingMap {
+  days: number; slot: string | null; tech: string | null; area_deg: number
+  sectors: ScheduledMapSector[]; squares: (ScheduledMapFigures & { lat: number; lng: number })[]
+}
+
 // GET /api/v2/problem-reports/<id>/oss-kpi/ (2026-10-29, core/problem_oss.py):
 // network KPIs of the sites related to a complaint.
 export type OssSiteRole = 'complaint' | 'served' | 'nearby'

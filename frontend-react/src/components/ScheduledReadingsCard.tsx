@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiErrorMessage } from '../api/client'
 import { useScheduledReadings } from '../api/queries'
+import ScheduledReadingsMap from './ScheduledReadingsMap'
 
 // "Help improve NTC's network" (2026-10-29, core/scheduled_readings.py):
 // readings phones send at about midnight, 10 am, 2 pm and 7 pm after their
-// owner opted in. Counts and averages only; no phone or place is shown.
+// owner opted in. Counts and averages only; no phone and no exact place is shown.
 
 const TECHS = ['4G', '5G', '3G', '2G']
 
@@ -17,8 +18,8 @@ export default function ScheduledReadingsCard() {
       <h2>Readings by time of day</h2>
       <p className="muted">
         Four readings a day from phones whose owners chose "Help improve NTC's network": about midnight, 10 am, 2 pm
-        and 7 pm. They carry the network, signal and serving cell, with no location or number, so they show how
-        quality changes between quiet and busy hours.{' '}
+        and 7 pm. They carry the network, signal and serving cell with no number, and a rough area of about 500 m
+        only from phones that allowed it, so they show how quality changes between quiet and busy hours.{' '}
         <label>Last <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
           {[7, 30, 90].map((d) => <option key={d} value={d}>{d} days</option>)}
         </select></label>
@@ -49,6 +50,7 @@ export default function ScheduledReadingsCard() {
               ))}
             </tbody>
           </table>
+          <ScheduledReadingsMap days={days} />
           {data.weakest_sites.length > 0 && (
             <>
               <h3 style={{ marginTop: 14 }}>Sites with the most weak readings</h3>

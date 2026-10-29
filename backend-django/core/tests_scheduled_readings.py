@@ -48,3 +48,15 @@ class ScheduledReadingTests(TestCase):
         self.assertEqual((d['readings'], d['phones']), (8, 1))
         evening = next(s for s in d['slots'] if s['slot'] == 19)
         self.assertEqual(evening['techs']['4G']['weak'], 8)
+
+    def test_area_rounded_to_the_square_and_on_the_map(self):
+        self._send(area_lat=27.70123, area_lng=85.32456)
+        self._send(area_lat=48.0, area_lng=2.3)          # outside Nepal: dropped
+        rows = list(ScheduledReading.objects.order_by('id').values_list('area_lat', 'area_lng'))
+        self.assertEqual(rows, [(27.7025, 85.3225), (None, None)])
+        admin = get_user_model().objects.create_user('sched_map', password='x', role='admin')
+        c = APIClient()
+        c.force_authenticate(admin)
+        d = c.get('/api/v2/telemetry/scheduled-readings/map/?days=7&slot=19&tech=4G').json()
+        self.assertEqual(d['squares'], [{'lat': 27.7025, 'lng': 85.3225, 'readings': 1, 'weak_pct': 100, 'level_avg': -112.0}])
+        self.assertEqual(c.get('/api/v2/telemetry/scheduled-readings/map/?slot=10').json()['squares'], [])

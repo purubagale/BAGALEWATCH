@@ -1878,6 +1878,22 @@ an Accept/Reject request; nothing is sent until the person accepts.
   average and weak/fair/good, and the weakest sites per slot; card "Readings
   by time of day" on Telemetry Coverage (admin, superadmin). Stops working
   if the shared telemetry key is retired. Tests `tests_scheduled_readings.py`.
+  Committed and pushed 2026-10-29: dtwatch `f2e83bb` (+ handoff `0d853cb`),
+  mobile `ec764bc` (app 1.3.0).
+  **Map and rough area** (same day, app 1.3.1, built, NOT committed, not run
+  on a phone). Map: `ScheduledReadingMapView`
+  (`GET telemetry/scheduled-readings/map/?days=&slot=&tech=`, admin) and
+  `ScheduledReadingsMap.tsx` in the card: hour and technology buttons,
+  district filter, sectors as wedges at their site along the azimuth and
+  rough-area squares, coloured by weak share; "Sectors in view" table.
+  Rough area: only with location "Allow all the time"
+  (ACCESS_BACKGROUND_LOCATION now in the app manifest, not the SDK's), asked
+  after a yes to the readings (`NetworkHelpPrompt.offerArea`) and from a
+  Settings button; the phone sends the centre of the 0.005-degree square
+  (`ScheduledReadings.roughArea`), the server rounds again (`_area`, Nepal
+  bounds only) into `area_lat/area_lng` (migration 0154; AI migrations now
+  0155-0160, local history renamed, columns added by hand). A host app on
+  Google Play must declare background location in Play Console.
 
 **Open items:**
 - Deploy to prod (back up the database, pull, `docker compose build

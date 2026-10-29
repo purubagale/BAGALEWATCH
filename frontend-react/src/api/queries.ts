@@ -6,7 +6,7 @@ import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
 } from './types'
 import type {
   AlarmSource, AlarmSourceInput, AlarmSummary, SiteActiveAlarms, SitesActiveAlarms,
-  CellKpiSource, CellKpiSourceInput, SiteCellKpis, PredictionSettings, PredictionSettingsInput, ProblemOssKpi, ScheduledReadingSummary,
+  CellKpiSource, CellKpiSourceInput, SiteCellKpis, PredictionSettings, PredictionSettingsInput, ProblemOssKpi, ScheduledReadingSummary, ScheduledReadingMap,
   LinkedSystem, ProblemDashboard, ProblemLive, ProblemLiveTrace, ProblemNearbySites, ProblemNotificationRow, ProblemRelated,
   ProblemReport, ProblemReportList,
   SecuritySettings,
@@ -2455,6 +2455,16 @@ export function useScheduledReadings(days: number) {
   return useQuery({
     queryKey: ['scheduled-readings', days],
     queryFn: () => apiJson<ScheduledReadingSummary>(`/api/v2/telemetry/scheduled-readings/?days=${days}`),
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+// The same readings on a map, for one hour and technology (2026-10-29).
+export function useScheduledReadingsMap(days: number, slot: string, tech: string) {
+  return useQuery({
+    queryKey: ['scheduled-readings-map', days, slot, tech],
+    queryFn: () => apiJson<ScheduledReadingMap>(
+      `/api/v2/telemetry/scheduled-readings/map/?${new URLSearchParams({ days: String(days), slot, tech })}`),
     staleTime: 5 * 60 * 1000,
   })
 }

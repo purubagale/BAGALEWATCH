@@ -2,16 +2,21 @@
 
 A phone whose owner turned this on in the app sends four short readings a
 day, around 00:00, 10:00, 14:00 and 19:00 Nepal time (quiet and busy hours):
-the network, band, signal and the serving cell's number. The phone sends no
-position and uses the shared ingest key, never its registration, under a
-random id it changes every 30 days; the server keeps only a hash of that id,
-and keeps the serving cell only as its site and sector. So a reading says how
-the network was at a site and an hour, not who measured it.
+the network, band, signal and the serving cell's number, and, only when the
+owner allowed location "all the time", the centre of the ~500 m square the
+phone was in (rounded on the phone and again here; never the exact spot). It
+uses the shared ingest key, never its registration, under a random id it
+changes every 30 days; the server keeps only a hash of that id, and keeps
+the serving cell only as its site and sector. So a reading says how the
+network was at a site or a square and an hour, not who measured it.
 
     POST /api/telemetry/v1/scheduled-readings/   one reading (shared key)
     GET  /api/v2/telemetry/scheduled-readings/?days=30   summary (admin, superadmin)
+    GET  /api/v2/telemetry/scheduled-readings/map/?days=30&slot=19&tech=4G
+         sectors and squares for the map (admin, superadmin)
 """
 import hashlib
+import math
 from datetime import datetime, timedelta, timezone as dt_timezone
 
 from django.core.cache import cache
@@ -22,7 +27,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .collection import NEPAL_TZ
-from .models import ScheduledReading, Site
+from .models import ScheduledReading, Sector, Site
 from .problem_report import GOOD_DBM, WEAK_DBM
 from .serving_site_lookup import lookup_serving_site
 from .telemetry import resolve_ingest_caller
@@ -33,6 +38,21 @@ SLOT_LABELS = {0: 'Midnight', 10: '10 am', 14: '2 pm', 19: '7 pm'}
 MAX_PER_PHONE_PER_DAY = 8
 KEEP_DAYS = 365
 _TECH = {'LTE': '4G', 'NR': '5G', 'UMTS': '3G', 'GSM': '2G'}
+_NETWORKS = {'4G': ('LTE',), '5G': ('NR',), '3G': ('UMTS',), '2G': ('GSM',)}
+AREA_DEG = 0.005     # the ~500 m square; the same grid as the phone's
+
+
+def _area(lat_raw, lng_raw):
+    """The centre of the AREA_DEG square, or (None, None). Rounded here
+    as well, so nothing finer than the square is ever stored."""
+    try:
+        lat, lng = float(lat_raw), float(lng_raw)
+    except (TypeError, ValueError):
+        return None, None
+    if not (26 <= lat <= 31 and 80 <= lng <= 89):   # Nepal and its edges
+        return None, None
+    return (round((math.floor(lat / AREA_DEG) + 0.5) * AREA_DEG, 4),
+            round((math.floor(lng / AREA_DEG) + 0.5) * AREA_DEG, 4))
 
 
 def _int(value, low, high):
@@ -94,6 +114,7 @@ class ScheduledReadingIngestView(APIView):
             rsrq_db=_int(data.get('rsrq_db'), -40, 10), sinr_db=_int(data.get('sinr_db'), -30, 50),
             mcc=str(data.get('mcc') or '')[:6], mnc=str(data.get('mnc') or '')[:6],
             serving_site_id=(site or {}).get('site_id') or '', serving_sector=(site or {}).get('sector') or '',
+            **dict(zip(('area_lat', 'area_lng'), _area(data.get('area_lat'), data.get('area_lng')))),
         )
         _prune()
         return Response({'stored': True}, status=201)
@@ -158,4 +179,67 @@ class ScheduledReadingSummaryView(APIView):
             'days': days, 'readings': totals['n'], 'phones': totals['phones'],
             'matched_to_site': sum(v['readings'] for v in sites.values()),
             'slots': [slots[s] for s in SLOTS], 'weakest_sites': weakest,
+        })
+
+
+class ScheduledReadingMapView(APIView):
+    """`GET .../scheduled-readings/map/?days=30&slot=19&tech=4G`: per serving
+    sector (placed at its site, with its direction) and per ~500 m square,
+    the readings, weak share and average level for that hour. `slot` empty
+    means every hour. Counts only; nothing per phone."""
+    permission_classes = [IsAdminOrSuperadmin]
+
+    def get(self, request):
+        try:
+            days = max(1, min(int(request.query_params.get('days', 30)), 365))
+        except ValueError:
+            days = 30
+        qs = ScheduledReading.objects.filter(ts__gte=timezone.now() - timedelta(days=days))
+        slot = request.query_params.get('slot')
+        if slot not in (None, ''):
+            try:
+                qs = qs.filter(slot=int(slot))
+            except ValueError:
+                pass
+        tech = request.query_params.get('tech') or ''
+        if tech in _NETWORKS:
+            qs = qs.filter(network_type__in=_NETWORKS[tech])
+
+        sectors, squares = {}, {}
+        for net, level, site, sector, alat, alng in qs.values_list(
+                'network_type', 'level_dbm', 'serving_site_id', 'serving_sector', 'area_lat', 'area_lng').iterator():
+            t = _TECH.get(net, net)
+            q = _quality('4G' if t == '5G' else t, level)
+            for key, bucket in (((site, sector), sectors) if site else (None, None),
+                                ((alat, alng), squares) if alat is not None else (None, None)):
+                if key is None:
+                    continue
+                e = bucket.setdefault(key, [0, 0, 0, 0])   # readings, weak, level sum, levels
+                e[0] += 1
+                e[1] += 1 if q == 'weak' else 0
+                if level is not None:
+                    e[2] += level
+                    e[3] += 1
+
+        def figures(e):
+            return {'readings': e[0], 'weak_pct': round(100 * e[1] / e[0]),
+                    'level_avg': round(e[2] / e[3], 1) if e[3] else None}
+
+        site_ids = {k[0] for k in sectors}
+        sites = {s['pk']: s for s in Site.objects.filter(pk__in=site_ids).values('pk', 'name', 'district', 'lat', 'lng')}
+        azimuths = {}
+        for row in Sector.objects.filter(site_id__in=site_ids).values('site_id', 'sector', 'azimuth'):
+            azimuths.setdefault((row['site_id'], row['sector']), row['azimuth'])
+        out_sectors = []
+        for (site_id, sector), e in sectors.items():
+            s = sites.get(site_id)
+            if not s or s['lat'] is None:
+                continue
+            out_sectors.append({'site_id': site_id, 'sector': sector, 'name': s['name'], 'district': s['district'],
+                                'lat': s['lat'], 'lng': s['lng'], 'azimuth': azimuths.get((site_id, sector)),
+                                **figures(e)})
+        return Response({
+            'days': days, 'slot': slot or None, 'tech': tech or None, 'area_deg': AREA_DEG,
+            'sectors': out_sectors,
+            'squares': [{'lat': k[0], 'lng': k[1], **figures(e)} for k, e in squares.items()],
         })

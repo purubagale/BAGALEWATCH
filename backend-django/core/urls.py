@@ -226,6 +226,8 @@ urlpatterns = [
     # Summary of the anonymous scheduled readings (2026-10-29) -- see core/scheduled_readings.py.
     path('telemetry/scheduled-readings/', scheduled_readings.ScheduledReadingSummaryView.as_view(),
          name='telemetry-scheduled-readings'),
+    path('telemetry/scheduled-readings/map/', scheduled_readings.ScheduledReadingMapView.as_view(),
+         name='telemetry-scheduled-readings-map'),
     # Scoped drive-test sessions over the live telemetry pipeline
     # (2026-09-01) — see core/telemetry_admin.py's TelemetryDriveTestSession*
     # views for why these replace TelemetryLiveSamplesView as the
