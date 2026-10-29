@@ -4,7 +4,7 @@
 
 **From:** Puru (RAN O&M, owner of the DT-WATCH server and web application)
 
-**Last updated:** 2026-10-29 (app 1.3.0: "share my location until this is fixed" on a problem report, and the opt-in "Help improve NTC's network" readings; earlier: push address retried until accepted, 3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
+**Last updated:** 2026-10-29 (app 1.3.1: optional rough area with the time-of-day readings; app 1.3.0: "share my location until this is fixed" on a problem report, and the opt-in "Help improve NTC's network" readings; earlier: push address retried until accepted, 3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
 
 ## 1. Summary
 
@@ -635,11 +635,23 @@ because these readings must not name the phone.
  "sinr_db": 6, "mcc": "429", "mnc": "01", "cell_id": 26385921, "tac": 1201, "pci": 120}
 ```
 
-No position is read or sent: read the cell without a GPS fix. `anon_id` is a
-random value kept on the phone and replaced every 30 days; never send the
-device id, number or IMEI. The server keeps a hash of `anon_id`, the slot,
-the readings and the site and sector the cell belongs to; it does not keep
-the raw cell number. `201 {"stored": true}`; at most 8 a day per `anon_id`
+Read the cell without waiting for a GPS fix. `anon_id` is a random value kept
+on the phone and replaced every 30 days; never send the device id, number or
+IMEI.
+
+**Rough area (app 1.3.1), optional.** Only when the person allowed location
+"Allow all the time" (`ACCESS_BACKGROUND_LOCATION`, asked after they said yes
+to the readings, and from Settings), add `"area_lat"` and `"area_lng"`: the
+centre of the 0.005-degree square the phone is in (about 550 m north-south and
+500 m east-west in Nepal), rounded on the phone:
+`centre = (floor(value / 0.005) + 0.5) * 0.005`. Never send the exact
+position. Without that permission leave both out; the reading is then placed
+by its cell. The server rounds again to the same grid and drops any area
+outside Nepal. An app on Google Play that declares background location must
+justify it in the Play Console; the reference app declares it in its own
+manifest, not in the SDK, so a host app chooses. The server keeps a hash of `anon_id`, the slot,
+the readings, the site and sector the cell belongs to and the rough area when
+sent; it does not keep the raw cell number. `201 {"stored": true}`; at most 8 a day per `anon_id`
 (429 after). In the SDK: `NetTelemetry.setScheduledReadings(true|false)`,
 `scheduledReadingsEnabled()`, `scheduledReadingsAsked()`.
 
