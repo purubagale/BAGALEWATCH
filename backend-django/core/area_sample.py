@@ -13,7 +13,18 @@ The readings come back through the normal sample upload, as TelemetrySample
 rows with trigger_reason 'on_demand'. Nothing here stores or returns a
 phone number, an IMEI or a device id: the results are signal readings at a
 place, plus a count of how many devices answered.
+
+Registered phones that are not sharing (2026-10-29, the user's decision):
+an admin or superadmin may also ask them. A phone is asked when it was seen
+in the circle in the last REGISTERED_LOOKBACK_DAYS (its newest readings from
+an earlier share), it has a push address and no open request. Each gets an
+investigation trace request (TraceRequest.area_request), the same Accept /
+Reject notification as a trace from Trace Requests: nothing is sent until
+the person taps Accept, and then signal and place every 10 s for
+REGISTERED_TTL_MINUTES. Those readings join this request's results, still
+without a number or device id.
 """
+import math
 import time
 from datetime import timedelta
 
@@ -42,6 +53,56 @@ MAX_LOOKBACK_HOURS = 24
 # How long after a request its readings are still counted as answers to it.
 RESPONSE_WINDOW = timedelta(minutes=15)
 MAX_RESULT_ROWS = 2000
+REGISTERED_LOOKBACK_DAYS = 7
+REGISTERED_TTL_MINUTES = 15
+MAX_REGISTERED_PER_REQUEST = 50
+
+
+def _km(lat1, lng1, lat2, lng2):
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lng2 - lng1) / 2) ** 2
+    return 12742.0 * math.asin(math.sqrt(a))
+
+
+def can_ask_registered(user):
+    return getattr(user, 'role', None) in ('admin', 'superadmin')
+
+
+def _ask_registered(request, req, point, radius_km):
+    """Asks registered, non-sharing phones last seen in the circle for an
+    Accept/Reject request. Returns how many were asked."""
+    from .device_trace import create_trace
+    from .models import DeviceCredential, TraceRequest
+
+    creds = {}
+    for cred in DeviceCredential.objects.filter(revoked_at__isnull=True).exclude(fcm_token='') \
+            .exclude(msisdn__isnull=True).exclude(msisdn=''):
+        for key in {cred.sdk_device_hash, cred.device_hash} - {''}:
+            creds.setdefault(key, cred)
+    if not creds:
+        return 0
+    since = timezone.now() - timedelta(days=REGISTERED_LOOKBACK_DAYS)
+    seen = set(
+        TelemetrySample.objects.filter(received_at__gte=since, device_id__in=list(creds),
+                                       location__distance_lte=(point, D(km=radius_km)))
+        .order_by().values_list('device_id', flat=True).distinct()
+    )
+    sharing = set(TelemetryPushToken.objects.filter(device_id__in=seen).values_list('device_id', flat=True))
+    busy = set(TraceRequest.objects.filter(
+        status__in=(TraceRequest.STATUS_PENDING, TraceRequest.STATUS_ACCEPTED), expires_at__gt=timezone.now(),
+    ).values_list('device_id', flat=True))
+    asked, done = 0, set()
+    for key in seen - sharing:
+        cred = creds[key]
+        if cred.pk in done or cred.pk in busy or asked >= MAX_REGISTERED_PER_REQUEST:
+            continue
+        done.add(cred.pk)
+        trace, _ = create_trace(request, cred, cred.msisdn, TraceRequest.KIND_INVESTIGATION,
+                                f'Area sample {req.label or f"#{req.id}"}', REGISTERED_TTL_MINUTES)
+        trace.area_request = req
+        trace.save(update_fields=['area_request'])
+        asked += 1
+    return asked
 
 
 class TelemetryPushTokenView(APIView):
@@ -90,6 +151,7 @@ def _describe(req):
         'lookback_hours': req.lookback_hours,
         'devices_in_area': req.devices_in_area,
         'pushes_sent': req.pushes_sent,
+        'registered_asked': req.registered_asked,
         'created_at': req.created_at,
         'requested_by': (req.requested_by.name or req.requested_by.username) if req.requested_by else None,
     }
@@ -133,7 +195,8 @@ class AreaSampleRequestListCreateView(APIView):
             lookback_hours = MAX_LOOKBACK_HOURS
         lookback_hours = max(1, min(lookback_hours, MAX_LOOKBACK_HOURS))
         label = str(request.data.get('label') or '').strip()[:120]
-        return Response(create_area_request(request, lat, lng, radius_km, lookback_hours, label),
+        ask_registered = str(request.data.get('ask_registered', 'true')).lower() not in ('0', 'false', 'no', '')
+        return Response(create_area_request(request, lat, lng, radius_km, lookback_hours, label, ask_registered),
                         status=status.HTTP_201_CREATED)
 
 
@@ -148,10 +211,12 @@ def user_rate_limited(user):
         return False
 
 
-def create_area_request(request, lat, lng, radius_km, lookback_hours, label):
+def create_area_request(request, lat, lng, radius_km, lookback_hours, label, ask_registered=False):
     """Finds the devices sharing in the circle, asks each for one reading and
-    records the request. Returns its description plus `devices_sharing`. Also
-    used by a complaint on the Problem Dashboard (core/problem_live.py)."""
+    records the request. With `ask_registered` (admin and superadmin) also
+    asks registered phones that are not sharing, with Accept/Reject. Returns
+    its description plus `devices_sharing`. Also used by a complaint on the
+    Problem Dashboard (core/problem_live.py)."""
     since = timezone.now() - timedelta(hours=lookback_hours)
     point = Point(lng, lat, srid=4326)
     device_ids = list(
@@ -170,11 +235,14 @@ def create_area_request(request, lat, lng, radius_km, lookback_hours, label):
     )
     sent = sum(1 for t in tokens if send_sample_request_push(t.fcm_token, req.id))
     req.pushes_sent = sent
-    req.save(update_fields=['pushes_sent'])
+    if ask_registered and can_ask_registered(request.user):
+        req.registered_asked = _ask_registered(request, req, point, radius_km)
+    req.save(update_fields=['pushes_sent', 'registered_asked'])
 
     log_audit_event(
         request, 'AREA_SAMPLE.REQUESTED', resource='area_sample_request', resource_id=str(req.id),
-        detail=f'radius_km={radius_km} devices_in_area={len(device_ids)} sharing={len(tokens)} sent={sent}',
+        detail=f'radius_km={radius_km} devices_in_area={len(device_ids)} sharing={len(tokens)} sent={sent} '
+               f'registered_asked={req.registered_asked}',
     )
     payload = _describe(req)
     payload['devices_sharing'] = len(tokens)
@@ -232,10 +300,47 @@ def area_results(req, user):
         }
         for s in qs.order_by('-received_at')[:MAX_RESULT_ROWS]
     ]
+    for s in samples:
+        s['source'] = 'sharing'
+
+    # Registered phones asked with Accept/Reject: their readings inside the circle.
+    from .models import TraceLocationSample, TraceRequest
+    traces = list(req.traces.all())
+    registered = {'asked': len(traces), 'accepted': 0, 'declined': 0, 'waiting': 0}
+    for t in traces:
+        if t.consent_at or t.status in (TraceRequest.STATUS_ACCEPTED, TraceRequest.STATUS_COMPLETED):
+            registered['accepted'] += 1
+        elif t.status in (TraceRequest.STATUS_REJECTED, TraceRequest.STATUS_REVOKED):
+            registered['declined'] += 1
+        elif t.status == TraceRequest.STATUS_PENDING and t.expires_at and t.expires_at > timezone.now():
+            registered['waiting'] += 1
+    if traces:
+        lat_span = req.radius_km / 111.0
+        tqs = TraceLocationSample.objects.filter(trace__area_request=req, lat__range=(req.lat - lat_span, req.lat + lat_span))
+        answered = set()
+        for s in tqs.order_by('-ts')[:MAX_RESULT_ROWS]:
+            if _km(req.lat, req.lng, s.lat, s.lng) > req.radius_km:
+                continue
+            answered.add(s.trace_id)
+            samples.append({
+                'ts': s.ts, 'lat': s.lat, 'lng': s.lng, 'gps_accuracy_m': s.accuracy_m,
+                'network_type': s.network_type, 'pci': s.pci, 'rsrp_dbm': s.rsrp_dbm, 'rsrq_db': s.rsrq_db,
+                'sinr_db': s.sinr_db, 'rssi_dbm': s.rssi_dbm, 'rscp_dbm': None, 'ecio_db': None, 'rx_qual': None,
+                **radio_band.fields(s.network_type, None, None, None, None, None, None),
+                **neighbour_cells.fields(None),
+                'cqi': s.cqi, 'cqi_derived': None,
+                **sample_cqi_fields(s.cqi, s.sinr_db, s.rsrq_db, s.network_type),
+                'serving_site_id': None, 'serving_sector': None, 'source': 'registered',
+            })
+        devices += len(answered)
+        samples.sort(key=lambda r: r['ts'], reverse=True)
     open_until = req.created_at + RESPONSE_WINDOW
+    if traces:
+        open_until = max([open_until] + [t.expires_at for t in traces if t.expires_at])
     return {
         'request': _describe(req),
         'devices': devices,
+        'registered': registered,
         'samples': samples,
         'open': timezone.now() < open_until,
         'open_until': open_until,

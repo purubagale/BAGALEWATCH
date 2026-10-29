@@ -36,7 +36,7 @@ from .collection import close_trace_session
 from .device_trace import OPEN_STATUSES, _refresh, create_trace, registered_device
 from .emergency import active_emergency
 from .models import AreaSampleRequest, ProblemReport, TraceLocationSample, TraceRequest
-from .problem_report import CanUseProblemDashboard
+from .problem_report import CanUseProblemDashboard, complaint_labels, complaint_reference
 
 AREA_RADII_KM = (0.5, 1, 2, 5)
 PHONE_TTL_MINUTES = (30, 60, 120)
@@ -44,12 +44,17 @@ MAX_FIXES = 1000
 
 
 def _reference(report):
-    return f'{report.external_system} {report.external_ref}' if report.external_ref else f'PR-{report.pk}'
+    return complaint_reference(report)
 
 
 def _label(report):
     # Area requests and traces are found again by this label.
-    return f'Complaint {_reference(report)}'[:120]
+    return complaint_labels(report)[0]
+
+
+def _labels(report):
+    # Also the earlier "Complaint PR-28" form, so older requests still show.
+    return complaint_labels(report)[1]
 
 
 def _msisdn(report):
@@ -83,7 +88,7 @@ def _traces(report):
     msisdn = _msisdn(report)
     if not msisdn:
         return TraceRequest.objects.none()
-    return TraceRequest.objects.filter(msisdn=msisdn, case_reference=_label(report))
+    return TraceRequest.objects.filter(msisdn=msisdn, case_reference__in=_labels(report))
 
 
 def _live(report, user):
@@ -94,7 +99,7 @@ def _live(report, user):
         'area': {
             'radii_km': AREA_RADII_KM,
             'requests': [_describe(r) for r in
-                         AreaSampleRequest.objects.filter(label=_label(report)).select_related('requested_by')[:20]],
+                         AreaSampleRequest.objects.filter(label__in=_labels(report)).select_related('requested_by')[:20]],
         },
         'phone': {
             'has_number': bool(msisdn),
@@ -133,7 +138,10 @@ class ProblemLiveAreaView(APIView):
         except (TypeError, ValueError):
             radius = 1
         radius = min(AREA_RADII_KM, key=lambda r: abs(r - radius))
-        payload = create_area_request(request, report.lat, report.lng, radius, MAX_LOOKBACK_HOURS, _label(report))
+        # Registered phones that are not sharing are asked too, with Accept/Reject (2026-10-29; admin, superadmin).
+        ask_registered = str(request.data.get('ask_registered', 'true')).lower() not in ('0', 'false', 'no', '')
+        payload = create_area_request(request, report.lat, report.lng, radius, MAX_LOOKBACK_HOURS, _label(report),
+                                      ask_registered)
         return Response(payload, status=status.HTTP_201_CREATED)
 
 
@@ -171,7 +179,7 @@ class ProblemLiveAreaResultsView(APIView):
 
     def get(self, request, pk, req_id):
         report = get_object_or_404(ProblemReport, pk=pk)
-        req = get_object_or_404(AreaSampleRequest, pk=req_id, label=_label(report))
+        req = get_object_or_404(AreaSampleRequest, pk=req_id, label__in=_labels(report))
         return Response(area_results(req, request.user))
 
 

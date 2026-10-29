@@ -16,6 +16,9 @@ import { CQI_COLUMN_HINT, CQI_MODULATION_HINT, cqiLabel, cqiModulationLabel } fr
 // each, to compare live coverage against a stored drive test. Only devices
 // that are opted in are asked, and the readings carry no device id, phone
 // number or IMEI: this page shows signal at a place and a count of devices.
+// 2026-10-29: registered phones seen in the area that are not sharing are
+// asked too, with an Accept/Reject notification; nothing comes from them
+// until the person accepts.
 
 interface Metric {
   key: 'rsrp_dbm' | 'rsrq_db' | 'sinr_db'
@@ -74,6 +77,7 @@ export default function AreaSamplePage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [metricKey, setMetricKey] = useState<Metric['key']>('rsrp_dbm')
+  const [askRegistered, setAskRegistered] = useState(true)
 
   const { data: results } = useAreaSampleResults(selectedId)
   const metric = METRICS.find((m) => m.key === metricKey) ?? METRICS[0]
@@ -105,12 +109,14 @@ export default function AreaSamplePage() {
     setNotice(null)
     try {
       const created = await create.mutateAsync({
-        lat: resolved.lat, lng: resolved.lng, radius_km: radiusKm, label: resolved.label,
+        lat: resolved.lat, lng: resolved.lng, radius_km: radiusKm, label: resolved.label, ask_registered: askRegistered,
       })
       setSelectedId(created.id)
       setNotice(
         `${created.devices_in_area} device(s) seen in this area in the last ${created.lookback_hours}h, ` +
-          `${created.devices_sharing ?? 0} sharing now, ${created.pushes_sent} asked. Readings appear below as they arrive.`,
+          `${created.devices_sharing ?? 0} sharing now, ${created.pushes_sent} asked.` +
+          (askRegistered ? ` ${created.registered_asked ?? 0} registered phone(s) not sharing were asked to accept.` : '') +
+          ' Readings appear below as they arrive.',
       )
     } catch (err) {
       setFormError(apiErrorMessage(err, 'Could not send the request.'))
@@ -123,9 +129,10 @@ export default function AreaSamplePage() {
     <div className="admin-page" style={{ maxWidth: 1200 }}>
       <h1>Area Sample</h1>
       <p className="muted">
-        Ask the devices sharing in an area for one fresh signal reading each, to compare live coverage with a stored
-        drive test. Only devices with "Share with NTC" turned on are asked. Readings carry no phone number, IMEI or
-        device id.
+        Ask the phones in an area for fresh signal readings, to compare live coverage with a stored drive test. Phones
+        sharing with NTC send one reading at once. Registered phones that were in the area in the last 7 days but are not
+        sharing get a notification with Accept and Reject; they send readings for 15 minutes only after the person
+        accepts. Readings carry no phone number, IMEI or device id.
       </p>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8 }}>
@@ -157,6 +164,10 @@ export default function AreaSamplePage() {
         <button className="btn-primary" onClick={handleRequest} disabled={!resolved || create.isPending}>
           {create.isPending ? 'Sending…' : 'Request fresh readings'}
         </button>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <input type="checkbox" checked={askRegistered} onChange={(e) => setAskRegistered(e.target.checked)} />
+          Also ask registered phones that are not sharing (they must accept)
+        </label>
       </div>
 
       {formError && <div className="form-error">{formError}</div>}
@@ -196,6 +207,7 @@ export default function AreaSamplePage() {
               <th>Radius</th>
               <th>Seen in area</th>
               <th>Asked</th>
+              <th title="Registered phones that were not sharing, asked with Accept and Reject">Asked to accept</th>
               <th>By</th>
             </tr>
           </thead>
@@ -211,6 +223,7 @@ export default function AreaSamplePage() {
                 <td>{r.radius_km} km</td>
                 <td>{r.devices_in_area}</td>
                 <td>{r.pushes_sent}</td>
+                <td>{r.registered_asked ?? 0}</td>
                 <td>{r.requested_by ?? '—'}</td>
               </tr>
             ))}
@@ -225,7 +238,11 @@ export default function AreaSamplePage() {
             {new Date(shown.created_at).toLocaleString()}
           </h2>
           <p className="muted">
-            {results.samples.length} reading(s) from {results.devices} device(s) of {shown.pushes_sent} asked.{' '}
+            {results.samples.length} reading(s) from {results.devices} device(s); {shown.pushes_sent} sharing phone(s) asked
+            {results.registered && results.registered.asked > 0
+              ? `, ${results.registered.asked} registered phone(s) asked to accept (${results.registered.accepted} accepted, ` +
+                `${results.registered.declined} declined, ${results.registered.waiting} not answered yet)`
+              : ''}.{' '}
             {results.open
               ? `Still collecting until ${new Date(results.open_until).toLocaleTimeString()}.`
               : 'Collection window closed.'}{' '}
@@ -281,8 +298,8 @@ export default function AreaSamplePage() {
 
           {results.samples.length === 0 ? (
             <p className="page-status">
-              No readings yet. A phone answers only while it is sharing, has a data connection, and is still inside
-              the area.
+              No readings yet. A sharing phone answers at once; a registered phone that is not sharing answers only after
+              the person taps Accept. Either needs a data connection and must still be inside the area.
             </p>
           ) : (
             <table className="admin-table">

@@ -6,7 +6,7 @@ import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
 } from './types'
 import type {
   AlarmSource, AlarmSourceInput, AlarmSummary, SiteActiveAlarms, SitesActiveAlarms,
-  CellKpiSource, CellKpiSourceInput, SiteCellKpis, PredictionSettings, PredictionSettingsInput,
+  CellKpiSource, CellKpiSourceInput, SiteCellKpis, PredictionSettings, PredictionSettingsInput, ProblemOssKpi, ScheduledReadingSummary, ScheduledReadingMap,
   LinkedSystem, ProblemDashboard, ProblemLive, ProblemLiveTrace, ProblemNearbySites, ProblemNotificationRow, ProblemRelated,
   ProblemReport, ProblemReportList,
   SecuritySettings,
@@ -2447,6 +2447,35 @@ export function useProblemNearbySites(id: number, radiusKm: number, enabled = tr
     queryKey: ['problem-nearby-sites', id, radiusKm],
     queryFn: () => apiJson<ProblemNearbySites>(`/api/v2/problem-reports/${id}/nearby-sites/?radius_km=${radiusKm}`),
     enabled,
+  })
+}
+
+// Readings by time of day from phones that opted in (2026-10-29).
+export function useScheduledReadings(days: number) {
+  return useQuery({
+    queryKey: ['scheduled-readings', days],
+    queryFn: () => apiJson<ScheduledReadingSummary>(`/api/v2/telemetry/scheduled-readings/?days=${days}`),
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+// The same readings on a map, for one hour and technology (2026-10-29).
+export function useScheduledReadingsMap(days: number, slot: string, tech: string) {
+  return useQuery({
+    queryKey: ['scheduled-readings-map', days, slot, tech],
+    queryFn: () => apiJson<ScheduledReadingMap>(
+      `/api/v2/telemetry/scheduled-readings/map/?${new URLSearchParams({ days: String(days), slot, tech })}`),
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+// Network KPIs of the sites related to a complaint (2026-10-29), asked when opened.
+export function useProblemOssKpi(id: number, radiusKm: number, enabled = true) {
+  return useQuery({
+    queryKey: ['problem-oss-kpi', id, radiusKm],
+    queryFn: () => apiJson<ProblemOssKpi>(`/api/v2/problem-reports/${id}/oss-kpi/?radius_km=${radiusKm}`),
+    enabled,
+    staleTime: 5 * 60 * 1000,
   })
 }
 

@@ -477,6 +477,18 @@ class SubscriberProfileView(APIView):
         lookups.sort(key=lambda x: x['at'] or '', reverse=True)
 
         found = bool(devices or credentials or rescue_rows or traces)
+        # Superadmin only (2026-10-29, the user's rule): who looked this number
+        # up, and whether a phone turned on the rescue beacon. An admin gets
+        # neither; a phone known only by its beacon shows as linked.
+        is_super = request.user.role == 'superadmin'
+        if not is_super:
+            lookups = None
+            for d in devices:
+                d['rescue_beacon'] = d['rescue_since'] = None
+                if d.get('role') == 'rescue':
+                    d['role'] = 'linked'
+            if last_location and last_location.get('source') == 'rescue':
+                last_location['source'] = 'location_report'
         return Response({
             'msisdn': canonical,
             'found': found,
@@ -492,7 +504,7 @@ class SubscriberProfileView(APIView):
                 # Phones left out because they only typed this number (verified-only mode).
                 'unproven_claims': unproven_claims,
                 'first_registered_at': _iso(min((c.created_at for c in credentials), default=None)),
-                'rescue_beacon': ('on' if any(r.rescue_consent for r in rescue_rows)
+                'rescue_beacon': (None if not is_super else 'on' if any(r.rescue_consent for r in rescue_rows)
                                   else 'withdrawn' if rescue_rows else None),
                 'readings': sum(s['n'] for s in reading_stats.values()),
                 'first_reading': _iso(min((s['first'] for s in reading_stats.values()), default=None)),
@@ -515,7 +527,7 @@ class SubscriberProfileView(APIView):
             'calls': calls,
             'volte': volte,
             'site_photos': photos,
-            'lookups': lookups[:30],
+            'lookups': lookups[:30] if lookups is not None else None,
         })
 
 

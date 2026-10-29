@@ -9,6 +9,8 @@ from . import (alarms, api_auth, area_sample, audit, auth_log, backup, call_cont
                telemetry_admin, telemetry_near, views, volte_quality)
 from . import cell_kpi
 from . import coverage_prediction
+from . import problem_oss
+from . import scheduled_readings
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
@@ -221,6 +223,11 @@ urlpatterns = [
     path('telemetry/volte-samples/', volte_quality.VolteQualityListView.as_view(), name='telemetry-volte-samples'),
     # Calls from phones without quality figures (2026-10-14) -- see core/call_context.py.
     path('telemetry/call-samples/', call_context.CallContextListView.as_view(), name='telemetry-call-samples'),
+    # Summary of the anonymous scheduled readings (2026-10-29) -- see core/scheduled_readings.py.
+    path('telemetry/scheduled-readings/', scheduled_readings.ScheduledReadingSummaryView.as_view(),
+         name='telemetry-scheduled-readings'),
+    path('telemetry/scheduled-readings/map/', scheduled_readings.ScheduledReadingMapView.as_view(),
+         name='telemetry-scheduled-readings-map'),
     # Scoped drive-test sessions over the live telemetry pipeline
     # (2026-09-01) — see core/telemetry_admin.py's TelemetryDriveTestSession*
     # views for why these replace TelemetryLiveSamplesView as the
@@ -254,6 +261,8 @@ urlpatterns = [
     path('speedtest/settings/', speed_test.SpeedTestSettingsView.as_view(), name='speedtest-settings'),
     # Everything stored that relates to a complaint, for a chosen time range (2026-10-26).
     path('problem-reports/<int:pk>/related/', problem_related.ProblemRelatedView.as_view(), name='problem-related'),
+    # Network KPIs of the sites related to a complaint (2026-10-29) -- see core/problem_oss.py.
+    path('problem-reports/<int:pk>/oss-kpi/', problem_oss.ProblemOssKpiView.as_view(), name='problem-oss-kpi'),
     path('problem-reports/<int:pk>/live/area/', problem_live.ProblemLiveAreaView.as_view(), name='problem-live-area'),
     path('problem-reports/<int:pk>/live/area/<int:req_id>/', problem_live.ProblemLiveAreaResultsView.as_view(),
          name='problem-live-area-results'),

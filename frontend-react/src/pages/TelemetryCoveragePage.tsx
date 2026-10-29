@@ -3,6 +3,8 @@ import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import CurrentLocationMarker from '../components/CurrentLocationMarker'
+import ScheduledReadingsCard from '../components/ScheduledReadingsCard'
+import { useAuth } from '../auth/AuthContext'
 import SitePhotoLayer from '../components/SitePhotoLayer'
 import { useTelemetryCoverage } from '../api/queries'
 import type { TelemetryCoverageBin } from '../api/types'
@@ -186,6 +188,8 @@ export default function TelemetryCoveragePage() {
   // Remount the Leaflet instance when the dataset identity changes so it
   // reframes cleanly instead of reusing a view built for a different set.
   const mapKey = `${network}|${region}|${days}|${bins.length}`
+  const { user } = useAuth()
+  const staff = user?.role === 'admin' || user?.role === 'superadmin'
 
   return (
     <div className="admin-page" style={{ maxWidth: 1200 }}>
@@ -308,6 +312,7 @@ export default function TelemetryCoveragePage() {
           </p>
         </>
       )}
+      {staff && <ScheduledReadingsCard />}
     </div>
   )
 }
