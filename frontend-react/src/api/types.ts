@@ -3616,6 +3616,13 @@ export interface SubscriberProfile {
     earlier_position?: { ts: string | null; lat: number; lng: number; gps_accuracy_m: number | null }
     // Why a position is shown (2026-10-16): an emergency, or the customer's own complaint.
     position_basis?: 'emergency' | 'superadmin' | 'complaint' | null
+    // Where the newest reading came from (2026-10-29), and the open session or
+    // sharing when the newest reading is not from it.
+    origin?: { kind: 'open_session' | 'closed_session' | 'outside' | 'request' | 'share'; open?: boolean;
+      session_id?: string; trace_id?: string; name?: string | null }
+    open_one?: { kind: 'open_session' | 'request' | 'share'; open: boolean; session_id?: string; trace_id?: string;
+      name?: string | null; ts: string | null; level_dbm: number | null; network_type: string;
+      lat: number | null; lng: number | null }
     complaint_report_id?: number | null
     network_type?: string
     band_mhz?: number | null

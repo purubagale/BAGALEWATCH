@@ -102,6 +102,11 @@ const ROLE: Record<string, { label: string; hint: string }> = {
   linked: { label: 'Linked to this number', hint: 'Linked to this number; no readings.' },
   identity: { label: 'Phone details', hint: 'Sent its make and model with this number; no readings.' },
 }
+// Where the location card's reading came from (2026-10-29).
+const ORIGIN_LABEL: Record<string, string> = {
+  open_session: 'Session', closed_session: 'Session', outside: 'Not in a session (single reading)',
+  request: 'Accepted request', share: 'Shared until fixed',
+}
 const ROLE_ORDER = ['app_install', 'registration', 'earlier_install', 'rescue', 'linked', 'identity']
 const LINKED_BY: Record<string, string> = {
   registered_phone: 'registering in the app',
@@ -411,6 +416,20 @@ function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
               <SiteMap loc={loc} />
               <dl className="sp-facts">
                 <div className="sp-fact"><dt>Time</dt><dd>{fmt(loc.ts)} <span className="sp-muted">· {loc.source === 'rescue' ? 'rescue beacon' : (loc.trigger_reason || 'reading')}</span></dd></div>
+                {loc.origin && (
+                  <div className="sp-fact"><dt>From</dt><dd>{ORIGIN_LABEL[loc.origin.kind]}
+                    {loc.origin.name ? <> · {loc.origin.name}</> : null}
+                    {loc.origin.kind !== 'outside' && (
+                      <> <span className={`sp-chip ${loc.origin.open ? 'ok' : 'plain'}`}>{loc.origin.open ? 'Open' : 'Ended'}</span></>
+                    )}</dd></div>
+                )}
+                {loc.open_one && (
+                  <div className="sp-fact"><dt>Still open</dt><dd>{ORIGIN_LABEL[loc.open_one.kind]}
+                    {loc.open_one.name ? <> · {loc.open_one.name}</> : null}: last reading {fmt(loc.open_one.ts)}
+                    {loc.open_one.level_dbm != null ? ` · ${loc.open_one.network_type} ${loc.open_one.level_dbm} dBm` : ''}
+                    {loc.open_one.lat != null && loc.open_one.lng != null
+                      ? <span className="sp-mono"> · {loc.open_one.lat.toFixed(5)}, {loc.open_one.lng.toFixed(5)}</span> : null}</dd></div>
+                )}
                 {loc.network_type && <div className="sp-fact"><dt>Network</dt><dd>{loc.network_type}{loc.band_mhz ? ` · ${loc.band_mhz} MHz` : ''}{loc.arfcn != null ? ` · ch ${loc.arfcn}` : ''}{loc.bandwidth_label ? ` · ${loc.bandwidth_label} wide` : ''}</dd></div>}
                 {(loc.operator || loc.mnc) && <div className="sp-fact"><dt>Operator</dt><dd title={loc.mnc ? `${loc.mcc}/${loc.mnc}` : undefined}>{loc.operator ?? `${loc.mcc}/${loc.mnc}`}</dd></div>}
                 {loc.cell_id != null && <div className="sp-fact"><dt>Cell</dt><dd className="sp-mono">{loc.cell_id}{loc.pci != null ? ` · PCI ${loc.pci}` : ''}{loc.tac != null ? ` · TAC ${loc.tac}` : ''}</dd></div>}

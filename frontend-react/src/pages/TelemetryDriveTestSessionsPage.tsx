@@ -877,7 +877,8 @@ export default function TelemetryDriveTestSessionsPage() {
               <SectorBreakdown data={sectorStats} siteLink={(id) => `/sites/${encodeURIComponent(id)}`} />
             </div>
           )}
-          <table className="admin-table" style={{ marginTop: 16 }}>
+          <p className="muted" style={{ margin: '16px 0 4px' }}>The 50 newest readings, newest first.</p>
+          <table className="admin-table">
             <thead>
               <tr>
                 <th>Device</th>
@@ -893,7 +894,7 @@ export default function TelemetryDriveTestSessionsPage() {
               </tr>
             </thead>
             <tbody>
-              {[...samples].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()).slice(0, 50).map((s, i) => (
+              {[...samples].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()).slice(0, 50).map((s, i) => (
                 <tr key={i}>
                   <td>{s.device_id.slice(0, 12)}...</td>
                   <td>{new Date(s.ts).toLocaleTimeString()}</td>

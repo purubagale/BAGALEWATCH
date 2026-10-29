@@ -293,6 +293,13 @@ export default function CollectionsPage() {
                   <SectorBreakdown data={sectors.data} siteLink={(id) => `/sites/${encodeURIComponent(id)}`} />
                 </div>
               )}
+              {/* Newest reading first (2026-10-29); the map keeps time order for its route. */}
+              <p className="muted" style={{ margin: '4px 0' }}>
+                Newest reading first.{' '}
+                {(samples.data.total ?? 0) > samples.data.results.length
+                  ? `Showing the latest ${samples.data.results.length.toLocaleString()} of ${(samples.data.total ?? 0).toLocaleString()} readings with a position.`
+                  : `${samples.data.results.length.toLocaleString()} readings with a position.`}
+              </p>
               <table className="admin-table">
                 <thead>
                   <tr>
@@ -312,7 +319,7 @@ export default function CollectionsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {samples.data.results.map((s, i) => (
+                  {[...samples.data.results].reverse().map((s, i) => (
                     <tr key={i}>
                       <td>{new Date(s.ts).toLocaleString()}</td>
                       <td>{s.lat.toFixed(5)}</td>

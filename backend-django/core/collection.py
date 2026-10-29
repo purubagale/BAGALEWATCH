@@ -409,7 +409,11 @@ class CollectionSessionSamplesView(APIView):
             limit = 2000
 
         if session.trace_id:
-            rows = TraceLocationSample.objects.filter(trace_id=session.trace_id).order_by('ts')[:limit]
+            # The newest `limit` readings, in time order (2026-10-29): before it
+            # was the oldest, so a long session never showed its last ones.
+            base = TraceLocationSample.objects.filter(trace_id=session.trace_id)
+            total = base.count()
+            rows = list(base.order_by('-ts')[:limit])[::-1]
             results = [
                 {
                     'ts': r.ts, 'lat': r.lat, 'lng': r.lng, 'accuracy_m': r.accuracy_m,
@@ -435,12 +439,13 @@ class CollectionSessionSamplesView(APIView):
                 for r in rows
             ]
         else:
-            rows = (
+            base = (
                 TelemetrySample.objects
                 .filter(device_id=session.device_hash, drive_session_id=session.drive_session_id or '__none__')
                 .exclude(lat__isnull=True).exclude(lng__isnull=True)
-                .order_by('ts')[:limit]
             )
+            total = base.count()
+            rows = list(base.order_by('-ts')[:limit])[::-1]
             results = [
                 {
                     'ts': r.ts, 'lat': r.lat, 'lng': r.lng, 'accuracy_m': r.gps_accuracy_m,
@@ -463,4 +468,5 @@ class CollectionSessionSamplesView(APIView):
                 }
                 for r in rows
             ]
-        return Response({'results': results}, status=status.HTTP_200_OK)
+        # `total` readings with a position; `results` holds the newest of them.
+        return Response({'results': results, 'total': total}, status=status.HTTP_200_OK)

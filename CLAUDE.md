@@ -1894,6 +1894,21 @@ an Accept/Reject request; nothing is sent until the person accepts.
   bounds only) into `area_lat/area_lng` (migration 0154; AI migrations now
   0155-0160, local history renamed, columns added by hand). A host app on
   Google Play must declare background location in Play Console.
+- **Newest readings first, and the location card by session** (2026-10-29,
+  built, NOT committed). Collections' readings endpoint returned the OLDEST
+  2000 of a session (`order_by('ts')[:limit]`), so a long open session never
+  showed its latest readings and disagreed with the diagnosis dashboard's
+  last location. It now returns the newest `limit` in time order plus
+  `total`; the Collections table lists newest first with "Showing the latest
+  N of M"; Telemetry Drive Test's table shows the 50 newest, newest first;
+  `sharing_periods` reads the newest readings. The diagnosis dashboard's last
+  location (`_last_reading` in `core/subscriber_profile.py`, agreed with the
+  user after a first session-only version): the NEWEST reading of any kind
+  -- open or closed phone session, a reading outside any session, an
+  accepted request or a share until fixed (TraceLocationSample) -- with a
+  "From" line naming it; when an open session or open sharing exists but the
+  newest reading is not from it, a "Still open" line gives that one's last
+  reading (position under the same rules).
 
 **Open items:**
 - Deploy to prod (back up the database, pull, `docker compose build
