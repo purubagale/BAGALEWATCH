@@ -67,6 +67,11 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             (activity as? MainActivity)?.onStaffModeChanged()
         }
 
+        // "Help improve NTC's network" (2026-10-29): four anonymous readings a day.
+        val helpBox = view.findViewById<CheckBox>(R.id.networkHelpCheck)
+        helpBox.isChecked = NetTelemetry.scheduledReadingsEnabled()
+        helpBox.setOnCheckedChangeListener { _, checked -> NetTelemetry.setScheduledReadings(checked) }
+
         view.findViewById<Button>(R.id.optOutButton).setOnClickListener {
             Collector.stopSharing(requireContext())
             refresh()

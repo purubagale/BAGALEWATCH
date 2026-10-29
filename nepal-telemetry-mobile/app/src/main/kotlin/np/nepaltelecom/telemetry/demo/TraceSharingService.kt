@@ -36,6 +36,8 @@ class TraceSharingService : Service() {
     private var traceId: String? = null
     private var expiresAtMs: Long = 0L
     private var nextSpeedAtMs: Long = 0L
+    private var intervalMs: Long = INTERVAL_MS
+    private var speedTests: Boolean = true
     private var worker: Thread? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -51,6 +53,10 @@ class TraceSharingService : Service() {
 
         traceId = id
         expiresAtMs = expires
+        // The customer's own "until this is fixed" sharing (2026-10-29) runs for
+        // days, so it reads every few minutes and runs no speed tests.
+        intervalMs = intent.getLongExtra(EXTRA_INTERVAL_MS, INTERVAL_MS).coerceAtLeast(INTERVAL_MS)
+        speedTests = intent.getBooleanExtra(EXTRA_SPEED_TESTS, true)
         nextSpeedAtMs = 0L  // a speed test runs straight away for a new trace
         ensureChannel()
         val notification = buildNotification()
@@ -75,13 +81,13 @@ class TraceSharingService : Service() {
                 stopSharing(tellServer = false)
                 return
             }
-            if (System.currentTimeMillis() >= nextSpeedAtMs) {
+            if (speedTests && System.currentTimeMillis() >= nextSpeedAtMs) {
                 nextSpeedAtMs = System.currentTimeMillis() + SPEED_INTERVAL_MS
                 traceId?.let { runTraceSpeedTest(it) }
             }
             sampleAndSend()
             try {
-                Thread.sleep(INTERVAL_MS)
+                Thread.sleep(intervalMs)
             } catch (_: InterruptedException) {
                 return
             }
@@ -214,7 +220,8 @@ class TraceSharingService : Service() {
         val stopPending = PendingIntent.getService(
             this, 0, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val until = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(expiresAtMs))
+        val pattern = if (expiresAtMs - System.currentTimeMillis() > 20 * 3_600_000L) "d MMM HH:mm" else "HH:mm"
+        val until = SimpleDateFormat(pattern, Locale.getDefault()).format(Date(expiresAtMs))
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle(getString(R.string.trace_sharing_title))
@@ -239,12 +246,23 @@ class TraceSharingService : Service() {
         const val ACTION_STOP = "np.nepaltelecom.telemetry.demo.TRACE_STOP"
         private const val EXTRA_TRACE_ID = "trace_id"
         private const val EXTRA_EXPIRES_MS = "expires_ms"
+        private const val EXTRA_INTERVAL_MS = "interval_ms"
+        private const val EXTRA_SPEED_TESTS = "speed_tests"
 
-        /** Starts sharing for [traceId] until [expiresAtMs]. Safe to call again for the same trace. */
-        fun start(context: Context, traceId: String, expiresAtMs: Long) {
+        /**
+         * Starts sharing for [traceId] until [expiresAtMs]. Safe to call again for the
+         * same trace. [intervalMs] between readings (at least 10 s); [speedTests] off
+         * for the customer's own long sharing.
+         */
+        fun start(
+            context: Context, traceId: String, expiresAtMs: Long,
+            intervalMs: Long = INTERVAL_MS, speedTests: Boolean = true,
+        ) {
             val intent = Intent(context, TraceSharingService::class.java)
                 .putExtra(EXTRA_TRACE_ID, traceId)
                 .putExtra(EXTRA_EXPIRES_MS, expiresAtMs)
+                .putExtra(EXTRA_INTERVAL_MS, intervalMs)
+                .putExtra(EXTRA_SPEED_TESTS, speedTests)
             context.startForegroundService(intent)
         }
 

@@ -32,6 +32,24 @@
             android:textColor="@color/text_secondary"
             android:textSize="13sp" />
 
+        <!-- Four anonymous readings a day, only when turned on (2026-10-29). -->
+        <CheckBox
+            android:id="@+id/networkHelpCheck"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:buttonTint="@color/brand_accent"
+            android:text="@string/network_help_check"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:text="@string/network_help_hint"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

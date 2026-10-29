@@ -129,6 +129,8 @@ object NetTelemetry {
             startHandoverListener()
             startCallListener()
         }
+        // "Help improve NTC's network" readings, when the person turned them on (2026-10-29).
+        np.nepaltelecom.telemetry.collector.ScheduledReadings.ensureScheduled(appContext)
     }
 
     fun optIn() {
@@ -306,6 +308,23 @@ object NetTelemetry {
             sample?.let { SampleQueue(appContext).append(it) }
         }
     }
+
+    /**
+     * "Help improve NTC's network" (2026-10-29): four anonymous readings a day
+     * (network, band, signal, serving cell; no position), only after the person
+     * turns it on. See [np.nepaltelecom.telemetry.collector.ScheduledReadings].
+     */
+    fun setScheduledReadings(enabled: Boolean) {
+        check(::appContext.isInitialized) { "NetTelemetry.init() must be called before setScheduledReadings()" }
+        np.nepaltelecom.telemetry.collector.ScheduledReadings.setEnabled(appContext, enabled)
+    }
+
+    fun scheduledReadingsEnabled(): Boolean =
+        ::appContext.isInitialized && np.nepaltelecom.telemetry.collector.ScheduledReadings.isEnabled(appContext)
+
+    /** True once the person has answered the question, yes or no. */
+    fun scheduledReadingsAsked(): Boolean =
+        ::appContext.isInitialized && np.nepaltelecom.telemetry.collector.ScheduledReadings.wasAsked(appContext)
 
     /**
      * Reads this device's live cell, signal and location state right now and

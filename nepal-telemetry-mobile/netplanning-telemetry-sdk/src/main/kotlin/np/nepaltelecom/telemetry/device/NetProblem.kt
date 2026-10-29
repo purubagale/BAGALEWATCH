@@ -44,9 +44,22 @@ object NetProblem {
         val hint: String? = null,
         val sample: Sample? = null,
         val speed: SpeedTest.Result? = null,
+        /** Set when the person chose to share until the problem is fixed and the server started it. */
+        val share: Share? = null,
     )
 
-    fun send(context: Context, category: String, note: String, withSpeedTest: Boolean = true): Outcome {
+    /**
+     * The customer's own sharing for this report (2026-10-29): the host app
+     * sends signal and place to [traceId] every [intervalMs] until
+     * [expiresAtMs], until NTC closes the complaint (the server then answers
+     * 409), or until the person stops it.
+     */
+    data class Share(val traceId: String, val expiresAtMs: Long, val intervalMs: Long)
+
+    fun send(
+        context: Context, category: String, note: String, withSpeedTest: Boolean = true,
+        shareUntilFixed: Boolean = false,
+    ): Outcome {
         val app = context.applicationContext
         if (!NetTelemetry.isSupported()) return Outcome(sent = false, error = NetDevice.UNSUPPORTED_MESSAGE)
         if (!NetDevice.isRegistered(app)) return Outcome(sent = false, notRegistered = true)
@@ -59,12 +72,20 @@ object NetProblem {
         val speed = if (withSpeedTest) SpeedTest.runOnMobileData(app, fallback = false, profile = SpeedTest.Profile.LIGHT) else null
         if (s?.lat == null || s.lon == null) return Outcome(sent = false, noLocation = true, sample = s, speed = speed)
         return try {
-            DeviceApi.reportProblem(body(app, category, note.take(NOTE_MAX), s, speed).toString())
-            Outcome(sent = true, hint = ProblemHints.explain(s, speed), sample = s, speed = speed)
+            val body = body(app, category, note.take(NOTE_MAX), s, speed)
+            if (shareUntilFixed) body.put("share_until_fixed", true)
+            val answer = DeviceApi.reportProblem(body.toString())
+            Outcome(sent = true, hint = ProblemHints.explain(s, speed), sample = s, speed = speed, share = parseShare(answer))
         } catch (e: Exception) {
             Outcome(sent = false, error = friendlyErrorMessage(e), sample = s, speed = speed)
         }
     }
+
+    private fun parseShare(answer: String): Share? = runCatching {
+        val share = JSONObject(answer).optJSONObject("share") ?: return null
+        val expires = java.time.OffsetDateTime.parse(share.getString("expires_at")).toInstant().toEpochMilli()
+        Share(share.getString("trace_id"), expires, share.optLong("interval_s", 300L) * 1000L)
+    }.getOrNull()
 
     /** The JSON the server expects for one report. */
     fun body(context: Context, category: String, note: String, s: Sample, speed: SpeedTest.Result?): JSONObject =

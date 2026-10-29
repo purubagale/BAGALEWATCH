@@ -137,6 +137,16 @@
     <string name="report_failed">Not sent: %1$s</string>
     <string name="report_no_location">Not sent: the phone\'s position is needed. Switch on location and try again.</string>
     <string name="report_register_first">Register this phone first, then report the problem.</string>
+    <string name="report_share_until_fixed">Share my location with NTC until this is fixed</string>
+    <string name="report_share_hint">Sends your signal and location every 5 minutes so NTC can find the cause. It stops when NTC closes the complaint, after 3 days, or when you tap Stop on the notification.</string>
+    <string name="report_share_started">Sharing your location with NTC until this is fixed. Tap Stop on the notification to end it.</string>
+    <string name="report_share_not_started">Sharing could not be started. Your report was still sent.</string>
+    <string name="network_help_title">Help improve NTC\'s network?</string>
+    <string name="network_help_body">If you agree, this phone sends four short readings a day, around 10 am, 2 pm, 7 pm and midnight: the network, the signal level and the cell it is using. No location and no phone number are sent, and the readings are not linked to you or your number. NTC uses them to see where and when the signal is weak. You can turn this off in Settings at any time.</string>
+    <string name="network_help_yes">Yes, help</string>
+    <string name="network_help_no">No, thanks</string>
+    <string name="network_help_check">Help improve NTC\'s network</string>
+    <string name="network_help_hint">Four anonymous readings a day (network, signal, cell), with no location or number.</string>
     <string name="speed_no_radio">no reading</string>
     <string name="speed_error">Test failed: %1$s</string>
     <string name="drive_title">Drive test</string>

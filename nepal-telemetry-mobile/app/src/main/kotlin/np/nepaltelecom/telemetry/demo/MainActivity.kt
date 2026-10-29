@@ -65,16 +65,19 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Quick Setup closed, with the permissions answered or put off. On the
-     * first start after install or after an update, registration comes next.
+     * first start after install or after an update, the "Help improve NTC's
+     * network" question (once, 2026-10-29) and then registration come next.
      */
     fun onSetupFinished() {
         showSignal()
         when (AppLaunch.kind(this)) {
             AppLaunch.Kind.FIRST_INSTALL -> {
                 AppLaunch.markHandled(this)
-                if (!Registration.isRegistered(this)) RegisterPrompt.ask(this)
+                NetworkHelpPrompt.askIfNeeded(this) {
+                    if (!Registration.isRegistered(this)) RegisterPrompt.ask(this)
+                }
             }
-            AppLaunch.Kind.UPDATED -> checkRegistrationAfterUpdate()
+            AppLaunch.Kind.UPDATED -> NetworkHelpPrompt.askIfNeeded(this) { checkRegistrationAfterUpdate() }
             AppLaunch.Kind.NORMAL -> Unit
         }
     }
