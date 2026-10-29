@@ -70,7 +70,17 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         // "Help improve NTC's network" (2026-10-29): four anonymous readings a day.
         val helpBox = view.findViewById<CheckBox>(R.id.networkHelpCheck)
         helpBox.isChecked = NetTelemetry.scheduledReadingsEnabled()
-        helpBox.setOnCheckedChangeListener { _, checked -> NetTelemetry.setScheduledReadings(checked) }
+        val areaButton = view.findViewById<Button>(R.id.networkAreaButton)
+        fun showArea() {
+            areaButton.visibility = if (helpBox.isChecked &&
+                !np.nepaltelecom.telemetry.collector.ScheduledReadings.hasBackgroundLocation(requireContext())
+            ) View.VISIBLE else View.GONE
+        }
+        showArea()
+        helpBox.setOnCheckedChangeListener { _, checked -> NetTelemetry.setScheduledReadings(checked); showArea() }
+        areaButton.setOnClickListener {
+            (activity as? androidx.appcompat.app.AppCompatActivity)?.let { NetworkHelpPrompt.offerArea(it) }
+        }
 
         view.findViewById<Button>(R.id.optOutButton).setOnClickListener {
             Collector.stopSharing(requireContext())

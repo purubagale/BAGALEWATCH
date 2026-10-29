@@ -20,6 +20,10 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Help improve NTC's network (2026-10-29): a rough area (about 500 m) with the
+         readings taken while the app is closed. Asked for only after the person
+         turned those readings on, and optional; without it no area is sent. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
     <application
         android:name=".DemoApplication"

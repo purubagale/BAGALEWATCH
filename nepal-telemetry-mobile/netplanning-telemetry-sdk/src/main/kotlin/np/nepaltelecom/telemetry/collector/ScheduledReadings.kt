@@ -1,7 +1,14 @@
 package np.nepaltelecom.telemetry.collector
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.Tasks
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -29,10 +36,13 @@ import kotlin.random.Random
  * [WINDOW_MINUTES] of its slot so phones do not all send at once. Android
  * may delay a reading while the phone sleeps.
  *
- * A reading holds the network, band, signal and the serving cell's number,
- * read without a GPS fix: no position is taken or sent. It goes with the
- * shared key under a random id that changes every [ANON_DAYS] days, never
- * with the phone's registration, so the server cannot tie it to a number.
+ * A reading holds the network, band, signal and the serving cell's number.
+ * Only when the person has allowed location "all the time" (the reading is
+ * taken while the app is closed) does it add a rough area: the centre of the
+ * [AREA_DEG] square the phone is in (about 500 m), rounded on the phone; the
+ * exact position never leaves it. It goes with the shared key under a random
+ * id that changes every [ANON_DAYS] days, never with the phone's
+ * registration, so the server cannot tie it to a number.
  * Off by default; [setEnabled] false cancels the next reading.
  */
 object ScheduledReadings {
@@ -47,6 +57,26 @@ object ScheduledReadings {
     private val SLOTS = intArrayOf(0, 10, 14, 19)
     private const val WINDOW_MINUTES = 30
     private const val ANON_DAYS = 30L
+    /** Size of the rough area in degrees: about 550 m north-south, 500 m east-west in Nepal. */
+    internal const val AREA_DEG = 0.005
+
+    /** True when a closed app may read the position (Android 10+ needs "Allow all the time"). */
+    fun hasBackgroundLocation(context: Context): Boolean {
+        val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!fine) return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
+    /** The centre of the [AREA_DEG] square holding (lat, lng). */
+    internal fun roughArea(lat: Double, lng: Double): Pair<Double, Double> {
+        fun centre(v: Double) = (Math.floor(v / AREA_DEG) + 0.5) * AREA_DEG
+        return centre(lat) to centre(lng)
+    }
 
     fun isEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
@@ -135,6 +165,7 @@ internal class ScheduledReadingWorker(context: Context, params: WorkerParameters
                     s.cellId?.let { put("cell_id", it) }
                     s.tac?.let { put("tac", it) }
                     s.pci?.let { put("pci", it) }
+                    roughPosition(app)?.let { (lat, lng) -> put("area_lat", lat); put("area_lng", lng) }
                 }.toString().toByteArray(StandardCharsets.UTF_8)
                 val sent = try {
                     val connection = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -159,6 +190,18 @@ internal class ScheduledReadingWorker(context: Context, params: WorkerParameters
         }
         ScheduledReadings.scheduleNext(app, ExistingWorkPolicy.APPEND_OR_REPLACE)
         return Result.success()
+    }
+
+    /** The rough area, only with "Allow all the time"; null otherwise or without a fix in 20 s. */
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun roughPosition(context: Context): Pair<Double, Double>? {
+        if (!ScheduledReadings.hasBackgroundLocation(context)) return null
+        return runCatching {
+            val client = LocationServices.getFusedLocationProviderClient(context)
+            val loc = Tasks.await(client.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, com.google.android.gms.tasks.CancellationTokenSource().token), 20, TimeUnit.SECONDS)
+                ?: Tasks.await(client.lastLocation, 5, TimeUnit.SECONDS)
+            loc?.let { ScheduledReadings.roughArea(it.latitude, it.longitude) }
+        }.getOrNull()
     }
 
     /** `.../telemetry/v1/samples/` becomes `.../telemetry/v1/scheduled-readings/`. */
