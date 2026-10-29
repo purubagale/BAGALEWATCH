@@ -634,6 +634,30 @@ def classify_pending(seconds, since=None):
     return done
 
 
+def _reported_place(data):
+    """{'reported_lat', 'reported_lng'} from an entry, both or neither (2026-10-29)."""
+    lat = _num(data.get('reported_lat'), -90, 90)
+    lng = _num(data.get('reported_lng', data.get('reported_lon')), -180, 180)
+    return {'reported_lat': lat, 'reported_lng': lng} if lat is not None and lng is not None else {}
+
+
+def complaint_reference(report):
+    """How a complaint is named on screens (2026-10-29: "Complaint ID 28";
+    before it was "PR-28", Problem Report). A complaint from another NTC
+    system keeps that system's ticket ("UTS 12345")."""
+    if report.external_ref:
+        return f'{report.external_system} {report.external_ref}'
+    return f'Complaint ID {report.pk}'
+
+
+def complaint_labels(report):
+    """The label live requests and traces of a complaint carry, and the
+    earlier form ("Complaint PR-28") they were found by before 2026-10-29."""
+    ref = complaint_reference(report)
+    label = (ref if ref.startswith('Complaint') else f'Complaint {ref}')[:120]
+    return label, [label, f'Complaint PR-{report.pk}']
+
+
 def is_staff(user):
     """NTC staff (admin and superadmin): on the Problem Dashboard and the
     diagnosis dashboard they see every subscriber detail except positions
@@ -684,6 +708,8 @@ def _row(report, user, with_check=False):
         'happened_at': report.happened_at.isoformat(),
         'created_at': report.created_at.isoformat(),
         'lat': report.lat, 'lng': report.lng,
+        # Complaint registered location (2026-10-29); null when not known.
+        'reported_lat': report.reported_lat, 'reported_lng': report.reported_lng,
         'network_type': report.network_type, 'band': report.band, 'pci': report.pci, 'cell_id': report.cell_id,
         'level_dbm': report.level_dbm, 'rsrq_db': report.rsrq_db, 'sinr_db': report.sinr_db,
         'download_mbps': report.download_mbps, 'upload_mbps': report.upload_mbps,
@@ -705,7 +731,7 @@ def _row(report, user, with_check=False):
         'external_ref': report.external_ref,
         'located_by': report.located_by,
         # How the report is named on screens and as the profile's reference (2026-10-19).
-        'reference': f'{report.external_system} {report.external_ref}' if report.external_ref else f'PR-{report.pk}',
+        'reference': complaint_reference(report),
         'has_number': bool((report.device_id and report.device.msisdn) or report.msisdn),
     }
     # The list shows the number to NTC staff (admin and superadmin; widened
@@ -758,6 +784,8 @@ class DeviceProblemReportView(APIView):
         report = ProblemReport.objects.create(
             source=ProblemReport.SOURCE_APP, device=device, category=category,
             note=str(data.get('note') or '')[:MAX_NOTE_CHARS], happened_at=happened_at, lat=lat, lng=lon,
+            # Sent from where the phone was: that is also where the complaint was registered.
+            reported_lat=lat, reported_lng=lon,
             network_type=str(data.get('network_type') or '').upper()[:12],
             band=str(data.get('band') or '')[:24],
             pci=_int(data.get('pci'), 0, 1007), cell_id=_int(data.get('cell_id'), 0, 2 ** 36),
@@ -786,7 +814,10 @@ def _search_q(q, user):
     from .rescue import _clean_msisdn
     from .subscriber_profile import number_variants
     cond = Q(external_ref__icontains=q) | Q(note__icontains=q)
-    digits = q.upper().removeprefix('PR-').removeprefix('PR').strip()
+    # "Complaint ID 28", "ID 28", "28", and the earlier "PR-28".
+    digits = q.upper().strip()
+    for prefix in ('COMPLAINT', 'ID', ':', '#', 'PR-', 'PR'):
+        digits = digits.removeprefix(prefix).strip()
     if digits.isdigit() and len(digits) <= 9:
         cond |= Q(pk=int(digits))
     canonical = _clean_msisdn(q) if is_staff(user) else None
@@ -881,7 +912,7 @@ class ProblemReportListView(APIView):
         report = ProblemReport.objects.create(
             source=ProblemReport.SOURCE_STAFF, entered_by=request.user, category=category,
             note=str(data.get('note') or '')[:MAX_NOTE_CHARS], happened_at=happened_at, lat=lat, lng=lng,
-            msisdn=msisdn,
+            msisdn=msisdn, **_reported_place(data),
         )
         log_audit_event(request, 'problem_report_create', resource='problem_report', resource_id=str(report.pk),
                         detail=f'entered a {category} problem')

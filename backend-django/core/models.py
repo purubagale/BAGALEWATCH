@@ -3426,8 +3426,14 @@ class ProblemReport(models.Model):
     category = models.CharField(max_length=12, choices=CATEGORIES)
     note = models.TextField(blank=True, default='')
     happened_at = models.DateTimeField()
+    # Problem location: where the problem happens.
     lat = models.FloatField()
     lng = models.FloatField()
+    # Complaint registered location (2026-10-29, after NTC's complaint system):
+    # where the customer was when the complaint was made. The app sends its
+    # own position; staff and other systems may give it. Empty when unknown.
+    reported_lat = models.FloatField(null=True, blank=True)
+    reported_lng = models.FloatField(null=True, blank=True)
     # The phone's reading when the report was sent; empty for staff entries.
     network_type = models.CharField(max_length=12, blank=True, default='')
     band = models.CharField(max_length=24, blank=True, default='')
@@ -3756,6 +3762,9 @@ class AreaSampleRequest(models.Model):
     lookback_hours = models.PositiveSmallIntegerField(default=24)
     devices_in_area = models.PositiveIntegerField(default=0)
     pushes_sent = models.PositiveIntegerField(default=0)
+    # Registered phones that were not sharing, asked with an Accept/Reject
+    # request (2026-10-29, TraceRequest.area_request).
+    registered_asked = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
@@ -3948,6 +3957,10 @@ class TraceRequest(models.Model):
     expires_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     ended_at = models.DateTimeField(null=True, blank=True)
+    # Set when the request asks a registered phone for readings in an area
+    # (2026-10-29, core/area_sample.py): its readings feed that area request.
+    area_request = models.ForeignKey(AreaSampleRequest, null=True, blank=True, on_delete=models.SET_NULL,
+                                     related_name='traces')
 
     class Meta:
         db_table = 'v2_trace_request'

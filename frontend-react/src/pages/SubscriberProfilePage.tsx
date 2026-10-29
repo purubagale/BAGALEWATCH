@@ -98,9 +98,11 @@ const ROLE: Record<string, { label: string; hint: string }> = {
   registration: { label: 'Registration', hint: 'Made by "Register this phone" in the app. Registered Devices lists these.' },
   earlier_install: { label: 'Earlier install · linked by hand', hint: 'The app before a reinstall. A superadmin tied its readings to this number.' },
   rescue: { label: 'Rescue beacon', hint: 'Turned on the rescue location beacon with this number.' },
+  // Shown to an admin instead of 'rescue' (2026-10-29: the beacon is for superadmin only).
+  linked: { label: 'Linked to this number', hint: 'Linked to this number; no readings.' },
   identity: { label: 'Phone details', hint: 'Sent its make and model with this number; no readings.' },
 }
-const ROLE_ORDER = ['app_install', 'registration', 'earlier_install', 'rescue', 'identity']
+const ROLE_ORDER = ['app_install', 'registration', 'earlier_install', 'rescue', 'linked', 'identity']
 const LINKED_BY: Record<string, string> = {
   registered_phone: 'registering in the app',
   rescue_enrolment: 'turning on the rescue beacon',
@@ -227,6 +229,7 @@ function PhonesSummary({ devices, phones, registeredLink }: {
     regs && `${regs} registration${regs === 1 ? '' : 's'}${replaced ? ` (${replaced} replaced)` : ''}`,
     count('earlier_install') && `${count('earlier_install')} earlier install${count('earlier_install') === 1 ? '' : 's'} linked by hand`,
     count('rescue') && `${count('rescue')} rescue beacon`,
+    count('linked') && `${count('linked')} linked only`,
     count('identity') && `${count('identity')} phone details only`,
   ].filter(Boolean)
   const n = phones ?? devices.length
@@ -376,8 +379,8 @@ function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
     ...(p.analytics ? [['sp-capability', 'Quality', null], ['sp-cells', 'Location history', p.analytics.cells_count ?? p.analytics.cells.length]] as [string, string, number | null][] : []),
     ['sp-devices', 'Phones', p.devices.length],
     ['sp-speed', 'Speed tests', speedCount], ['sp-sessions', 'Sessions', sessions], ['sp-reports', 'Problems', p.problem_reports.length],
-    ['sp-calls', 'Calls', callTotal], ['sp-photos', 'Photos', p.site_photos.length], ['sp-lookups', 'Lookups', p.lookups.length],
-    ['sp-bi', 'BI usage', null], ['sp-oss', 'OSS & Core', null],
+    ['sp-calls', 'Calls', callTotal], ['sp-photos', 'Photos', p.site_photos.length], ...(p.lookups ? [['sp-lookups', 'Lookups', p.lookups.length]] as [string, string, number | null][] : []),
+    ['sp-bi', 'BI usage', null],
   ]
 
   return (
@@ -565,17 +568,16 @@ function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
             )} />
         </Card>
 
-        <Card id="sp-lookups" icon="🛡️" title="Who looked this number up" count={p.lookups.length} empty={p.lookups.length === 0} emptyText="No earlier lookup" wide>
-          <LookupsList lookups={p.lookups} />
-        </Card>
+        {p.lookups && (
+          <Card id="sp-lookups" icon="🛡️" title="Who looked this number up" count={p.lookups.length} empty={p.lookups.length === 0} emptyText="No earlier lookup" wide>
+            <LookupsList lookups={p.lookups} />
+          </Card>
+        )}
 
-        {/* NTC's other systems last, after this system's own details (2026-10-19): BI, then OSS & Core. */}
-        <div className="spo-pair sp-wide">
-          <ProfileProvisioning kind="bi" msisdn={p.msisdn} reason={reason} analytics={analytics}
-            callsByOutcome={p.calls.by_outcome} emergency={p.emergency_declared} />
-          <ProfileProvisioning kind="core" msisdn={p.msisdn} reason={reason} analytics={analytics}
-            callsByOutcome={p.calls.by_outcome} emergency={p.emergency_declared} />
-        </div>
+        {/* NTC's other systems last, after this system's own details (2026-10-19). The OSS card
+            moved to a complaint's Site related analysis on 2026-10-29. */}
+        <ProfileProvisioning kind="bi" msisdn={p.msisdn} reason={reason} analytics={analytics}
+          callsByOutcome={p.calls.by_outcome} emergency={p.emergency_declared} />
       </div>
     </>
   )
@@ -583,7 +585,7 @@ function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
 
 // Collapsed until asked for (2026-10-16): who looked the number up matters
 // for an audit, rarely for the customer's problem.
-function LookupsList({ lookups }: { lookups: SubscriberProfile['lookups'] }) {
+function LookupsList({ lookups }: { lookups: NonNullable<SubscriberProfile['lookups']> }) {
   const [open, setOpen] = useState(false)
   const last = lookups[0]
   if (!open) {

@@ -18,6 +18,7 @@ import { ENV_LABEL } from '../components/EnvironmentTools'
 import { useSiteLinkBack } from '../lib/siteLinkBack'
 import { DT_SESSION_HISTORY_PATH, OPAQUE_PATHS } from '../constants/opaqueRoutes'
 import NeighbourBreakdown from '../components/NeighbourBreakdown'
+import ProblemOssKpi from '../components/ProblemOssKpi'
 
 // Problem Dashboard (2026-10-15; Problem Reports since 2026-10-14) --
 // problems people report from the mobile app, ones an engineer enters from a
@@ -453,7 +454,7 @@ function Reports({ params, set, days, statusAll, causes }: {
         <div className="cx-filters-grid">
           <label className="cx-wide">Search
             <input type="search" value={typed} onChange={(e) => setTyped(e.target.value)}
-              placeholder="Mobile number, PR-12, ticket or words" />
+              placeholder="Mobile number, complaint ID, ticket or words" />
           </label>
           <label>Source
             <select value={source} onChange={(e) => filter({ source: e.target.value })}>
@@ -516,7 +517,7 @@ function Reports({ params, set, days, statusAll, causes }: {
         <table className="cx-table" data-pager="off">
           <thead>
             <tr>
-              <th>ID</th><th>Customer</th><th>Problem</th><th>Site</th><th>Likely cause</th>
+              <th>Complaint ID</th><th>Customer</th><th>Problem</th><th>Site</th><th>Likely cause</th>
               <th>Source</th><th>Status</th><th>Created on</th><th>Checked</th>
             </tr>
           </thead>
@@ -524,7 +525,7 @@ function Reports({ params, set, days, statusAll, causes }: {
             {rows.map((r) => (
               <tr key={r.id} onClick={() => set({ report: r.id })} title="Open this complaint">
                 <td>
-                  <span className="cx-id">{r.reference ?? `PR-${r.id}`}</span>
+                  <span className="cx-id">{r.id}</span>
                   {r.external_ref && <span className="cx-badge">{r.external_system} #{r.external_ref}</span>}
                 </td>
                 <td>{r.phone_number
@@ -726,7 +727,7 @@ function ReportDetail({ id }: { id: number }) {
   if (isLoading) return <p className="muted">Checking the measurements around this spot…</p>
   if (error || !r) return <p className="error">{apiErrorMessage(error)}</p>
   const c = r.check
-  const reference = r.reference ?? `PR-${r.id}`
+  const reference = r.reference ?? `Complaint ID ${r.id}`
   // NTC staff (admin and superadmin) see every subscriber detail but the
   // position here and on the diagnosis dashboard (2026-10-27).
   const isSuper = user?.role === 'superadmin' || user?.role === 'admin'
@@ -734,7 +735,7 @@ function ReportDetail({ id }: { id: number }) {
   // carries the way back to this report (2026-10-19).
   // The dashboard itself is for NTC staff; others see the number here only.
   const profileLink = isSuper && r.phone_number ? `${OPAQUE_PATHS['/subscriber-profile']}?${new URLSearchParams({
-    msisdn: r.phone_number, reason: `Complaint ${reference}`, from: `${location.pathname}${location.search}`,
+    msisdn: r.phone_number, reason: reference.startsWith('Complaint') ? reference : `Complaint ${reference}`, from: `${location.pathname}${location.search}`,
   })}` : null
   const main = c?.findings[0]
 
@@ -785,6 +786,11 @@ function ReportDetail({ id }: { id: number }) {
             </dd>
             <dt>Source</dt>
             <dd>{r.source === 'app' ? 'Mobile app' : r.source === 'external' ? `${r.external_system}, ticket ${r.external_ref}` : `Entered by ${r.entered_by}`}</dd>
+            <dt>Complaint registered location</dt>
+            <dd>{r.reported_lat != null && r.reported_lng != null
+              ? <><span className="mono">{r.reported_lat.toFixed(6)}, {r.reported_lng.toFixed(6)}</span>{' '}
+                <CopyText text={`${r.reported_lat.toFixed(6)}, ${r.reported_lng.toFixed(6)}`} label="the registered location" /></>
+              : <span className="muted">Not given</span>}</dd>
             <dt>Problem location</dt>
             <dd><span className="mono">{r.lat.toFixed(6)}, {r.lng.toFixed(6)}</span> <CopyText text={`${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}`} label="the location" />
               {' '}<Link className="pdd-link" to={`${OPAQUE_PATHS['/sites']}?${new URLSearchParams({
@@ -834,6 +840,7 @@ function ReportDetail({ id }: { id: number }) {
         </section>
       </div>
       <RelatedSiteAndArea r={r} />
+      <ProblemOssKpi reportId={r.id} />
       <LiveAround r={r} />
       </>}
 
@@ -900,8 +907,12 @@ function levelText(network: string, rsrp: number | null, rscp: number | null | u
   return { l, text: `${l.tech ?? network ?? 'No service'}${l.value != null ? ` · ${l.name} ${l.value} dBm` : ''}` }
 }
 
-// Site related: ask the phones sharing around the spot for one reading each.
+// Site related: ask the phones sharing around the spot for one reading each,
+// and (admin, superadmin; 2026-10-29) registered phones seen there that are
+// not sharing, with Accept/Reject.
 function LiveAround({ r }: { r: ProblemReport }) {
+  const { user } = useAuth()
+  const staff = user?.role === 'admin' || user?.role === 'superadmin'
   const live = useProblemLive(r.id)
   const ask = useProblemLiveArea(r.id)
   const [radius, setRadius] = useState(1)
@@ -919,11 +930,12 @@ function LiveAround({ r }: { r: ProblemReport }) {
 
   return (
     <section className="pdd-card pdd-live">
-      <CardHead icon="📡" title="Live readings around this spot" sub="ask the phones sharing near the complaint" hue="green" />
+      <CardHead icon="📡" title="Live readings around this spot" sub="ask the phones near the complaint" hue="green" />
       <p className="muted pdd-small" style={{ marginTop: 0 }}>
         Asks the phones that shared their signal near this spot in the last 24 hours, and are sharing now, for one fresh
-        reading each. The phones show no notification: they take the reading quietly. Answers arrive within 15 minutes
-        and do not say which phone sent them.
+        reading each; they take it quietly.
+        {staff ? ' Registered phones seen here in the last 7 days that are not sharing get a notification with Accept and Reject, and send readings for 15 minutes only after the person accepts.' : ''}
+        {' '}Answers do not say which phone sent them.
       </p>
       <div className="pdd-live-bar">
         <label>Within <select value={radius} onChange={(e) => setRadius(Number(e.target.value))}>
@@ -935,8 +947,9 @@ function LiveAround({ r }: { r: ProblemReport }) {
         </button>
         {ask.data && (
           <span className="muted pdd-small">
-            {ask.data.devices_in_area === 0 ? 'No phone has shared near here in the last 24 hours.'
+            {ask.data.devices_in_area === 0 && !ask.data.registered_asked ? 'No phone has shared near here in the last 24 hours.'
               : `${ask.data.pushes_sent} of ${ask.data.devices_in_area} phones seen here were asked${ask.data.pushes_sent === 0 ? ' (none is sharing now)' : ''}.`}
+            {ask.data.registered_asked ? ` ${ask.data.registered_asked} registered phone(s) not sharing were asked to accept.` : ''}
           </span>
         )}
         {ask.error && <span className="error">{apiErrorMessage(ask.error)}</span>}
@@ -948,7 +961,7 @@ function LiveAround({ r }: { r: ProblemReport }) {
               <button key={q.id} type="button" className={`pdd-site${q.id === shown ? ' on' : ''}`} onClick={() => setPicked(q.id)}>
                 <b>{when(q.created_at)}</b>
                 <div className="muted pdd-small">
-                  {q.radius_km < 1 ? `${q.radius_km * 1000} m` : `${q.radius_km} km`} · {q.pushes_sent} asked · by {q.requested_by ?? '-'}
+                  {q.radius_km < 1 ? `${q.radius_km * 1000} m` : `${q.radius_km} km`} · {q.pushes_sent} asked{q.registered_asked ? ` · ${q.registered_asked} asked to accept` : ''} · by {q.requested_by ?? '-'}
                 </div>
               </button>
             ))}
@@ -958,6 +971,7 @@ function LiveAround({ r }: { r: ProblemReport }) {
               <p className="pdd-small" style={{ marginTop: 0 }}>
                 <b>{res.samples.length}</b> readings from <b>{res.devices}</b> phones
                 {levels.length > 0 && <> · 4G RSRP average <b>{Math.round(levels.reduce((a, b) => a + b, 0) / levels.length)} dBm</b></>}
+                {res.registered && res.registered.asked > 0 && <span className="muted"> · registered phones: {res.registered.accepted} accepted, {res.registered.declined} declined, {res.registered.waiting} not answered yet</span>}
                 {res.open ? <span className="muted"> · still collecting until {new Date(res.open_until).toLocaleTimeString()}</span> : null}
               </p>
             )}

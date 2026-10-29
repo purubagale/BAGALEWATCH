@@ -1778,11 +1778,75 @@ repo, not on prod):
   minus 10). Waiting for NTC's planning values; an admin types them in on
   the site map ("Change values"). Flat-ground check: B3 -94 dBm at 1 km,
   B20 -83. Tests `tests_coverage_prediction.py`.
+  Both committed and pushed as `4a88375` (2026-10-28); manuals and decks updated.
+
+- **OSS diagnostics (KPI) on a complaint** (2026-10-29, built, NOT
+  committed, not seen in a browser; the user's request). The diagnosis
+  dashboard's "Core network diagnostics (MME / MSC / PGW / HSS / SPR)" card
+  is gone; its two tabs (Subscription & provisioning, Device & bands) moved
+  into the BI card's window ("Subscriber usage, provisioning & location
+  history"). In its place, under a complaint's Site related analysis:
+  "OSS diagnostics (KPI)" (`components/ProblemOssKpi.tsx`, asked when
+  opened). `core/problem_oss.py`, `GET problem-reports/<id>/oss-kpi/
+  ?radius_km=1|2|3|5` (Problem Dashboard users): related sites = the
+  complaint's site (else nearest), sites serving phone readings within 1 km
+  (3 days either side) or drive-test readings there (last year), then the
+  nearest sites in the radius (8); each with the busiest cell around the
+  problem time (`load_at`), the week up to the problem day (busy days, worst
+  availability, highest drops, lowest speed per user) and a verdict (partly
+  down < 99% availability, busy, close to busy, normal, room to spare, no
+  KPIs). A site with no figures that week shows its newest week
+  (`figures_from`). A row's "Cells" opens `SiteCellKpis` for that site.
+  Locally the KPI demo covers EDR/WDR/FWDR only (22 Oct), so the KTM
+  complaints show "No KPIs". Tests `tests_problem_oss.py`.
+  `ProblemReportsPage.tsx` gains two lines (import + card) beside the AI
+  hunks: stage by hunk.
 
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an
 identified device. It was declined; Area Sample is the agreed
-replacement.
+replacement. Allowed since 2026-10-29 (the user's decision): Area Sample
+and a complaint's live readings also send registered, non-sharing phones
+an Accept/Reject request; nothing is sent until the person accepts.
+
+- **Registered phones in Area Sample** (2026-10-29, built, NOT committed,
+  not seen in a browser or on a phone). `_ask_registered` in
+  `core/area_sample.py`: phones with a registration (`DeviceCredential`,
+  push address, number) seen in the circle in the last 7 days (newest
+  readings from an earlier share, under the SDK id or key id), not sharing
+  now (no `TelemetryPushToken`) and with no open trace get an investigation
+  `TraceRequest` (15 min, case "Area sample <label>", `area_request` FK);
+  max 50. The app already shows that request's Accept/Reject notification
+  and, on Accept, sends signal and place every 10 s (`TraceSharingService`),
+  so no app change. Results add those trace readings inside the circle
+  (`source: registered`, no number) and `registered` counts (asked,
+  accepted, declined, waiting). Admin and superadmin only
+  (`can_ask_registered`); `ask_registered` on POST, default on; a tick box
+  on Area Sample. Migration 0152 (`registered_asked`, `area_request`; AI
+  migrations now 0153-0158, local history renamed, columns added by hand).
+  A phone with no reading in the circle in the last 7 days cannot be found
+  (the server does not know where it is). Tests `tests_area_registered.py`.
+  `ProblemReportsPage.tsx` changes sit beside AI hunks: stage by hunk.
+- **Complaint ID and superadmin-only details** (2026-10-29, built, NOT
+  committed). Complaints are named "Complaint ID 28" (was "PR-28",
+  Problem Report): `complaint_reference` / `complaint_labels` in
+  `core/problem_report.py`; live requests and traces are found by the new
+  label and the old "Complaint PR-28"; search takes "Complaint ID 28",
+  "ID 28", "28" and "PR-28"; the list column is "Complaint ID". On the
+  diagnosis dashboard "Who looked this number up" and the rescue beacon
+  (chip, phone role, last-location source) are superadmin only, removed on
+  the server for admins (`lookups` null; a beacon-only phone shows as
+  "Linked to this number").
+- **Complaint registered location** (2026-10-29, built, NOT committed).
+  `ProblemReport.reported_lat/reported_lng` (migration 0152; app reports
+  backfilled from their position): where the customer was when complaining,
+  beside the problem location (`lat`/`lng`). The app's position fills it;
+  staff entry and the external API take optional `reported_lat`/
+  `reported_lng`. Both shown, copyable, in Customer complaint details.
+  Option A (each phone checking its own position against an area request
+  sent to registered phones) was started and then dropped on 2026-10-29;
+  its code was removed. Area Sample still asks only phones seen in the
+  circle in the last 7 days.
 
 **Open items:**
 - Deploy to prod (back up the database, pull, `docker compose build

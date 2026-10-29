@@ -30,7 +30,7 @@ export default function BackToProfileBar() {
     const report = query.get('report')
     return (
       <div className="sp-backbar">
-        <Link to={back}>← Back to the complaint{report ? ` PR-${report}` : ''}</Link>
+        <Link to={back}>← Back to complaint{report ? ` ID ${report}` : ''}</Link>
         <span>Opened from the Problem Dashboard</span>
       </div>
     )

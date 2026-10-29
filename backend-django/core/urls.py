@@ -9,6 +9,7 @@ from . import (alarms, api_auth, area_sample, audit, auth_log, backup, call_cont
                telemetry_admin, telemetry_near, views, volte_quality)
 from . import cell_kpi
 from . import coverage_prediction
+from . import problem_oss
 
 router = DefaultRouter()
 router.register('sites', views.SiteViewSet, basename='site')
@@ -254,6 +255,8 @@ urlpatterns = [
     path('speedtest/settings/', speed_test.SpeedTestSettingsView.as_view(), name='speedtest-settings'),
     # Everything stored that relates to a complaint, for a chosen time range (2026-10-26).
     path('problem-reports/<int:pk>/related/', problem_related.ProblemRelatedView.as_view(), name='problem-related'),
+    # Network KPIs of the sites related to a complaint (2026-10-29) -- see core/problem_oss.py.
+    path('problem-reports/<int:pk>/oss-kpi/', problem_oss.ProblemOssKpiView.as_view(), name='problem-oss-kpi'),
     path('problem-reports/<int:pk>/live/area/', problem_live.ProblemLiveAreaView.as_view(), name='problem-live-area'),
     path('problem-reports/<int:pk>/live/area/<int:req_id>/', problem_live.ProblemLiveAreaResultsView.as_view(),
          name='problem-live-area-results'),

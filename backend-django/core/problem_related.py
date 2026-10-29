@@ -50,7 +50,7 @@ from .models import (
     CallContextSample, CollectionSession, DriveTestSample, ProblemReport, Site, TelemetrySample,
     TelemetrySpeedResult,
 )
-from .problem_report import CAUSE_LABELS, GOOD_DBM, WEAK_DBM, CanUseProblemDashboard, _TECH
+from .problem_report import CAUSE_LABELS, GOOD_DBM, WEAK_DBM, CanUseProblemDashboard, _TECH, complaint_reference
 from .subscriber_profile import complaint_windows, devices_of_number
 from .telemetry import _scope_by_operator
 from .telemetry_level import sample_level
@@ -281,7 +281,7 @@ def _complaints(qs, report, start, end):
         'count': qs.count(),
         'by_cause': [{'cause': k, 'label': CAUSE_LABELS.get(k, 'Not checked'), 'count': v}
                      for k, v in sorted(causes.items(), key=lambda kv: -kv[1])],
-        'recent': [{'id': p.pk, 'reference': f'{p.external_system} {p.external_ref}' if p.external_ref else f'PR-{p.pk}',
+        'recent': [{'id': p.pk, 'reference': complaint_reference(p),
                     'category': p.get_category_display(), 'happened_at': p.happened_at, 'status': p.status,
                     'cause_label': CAUSE_LABELS.get(p.cause, '')} for p in rows],
     }

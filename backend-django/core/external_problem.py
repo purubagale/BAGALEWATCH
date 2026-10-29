@@ -45,7 +45,7 @@ from .api_auth import ApiKeyAuthentication, ApiKeyRateThrottle, require_scope
 from .audit import log_audit_event
 from .dt_serving_cell import sectors_by_cell_identity
 from .models import ProblemReport, Site
-from .problem_report import _TECH, CAUSE_LABELS, CUSTOMER_REPLY, MAX_NOTE_CHARS, _num
+from .problem_report import _TECH, CAUSE_LABELS, CUSTOMER_REPLY, MAX_NOTE_CHARS, _num, _reported_place
 from .rescue import _clean_msisdn
 
 MAX_PER_REQUEST = 200
@@ -175,6 +175,7 @@ class ExternalProblemReportView(APIView):
                 category=category, note=_clean_note(item.get('note')), happened_at=happened_at,
                 lat=lat, lng=lng, located_by=located_by,
                 network_type=network if network in _TECH else '', msisdn=msisdn,
+                **_reported_place(item),
             )
             existing = ProblemReport.objects.filter(
                 source=ProblemReport.SOURCE_EXTERNAL, external_system=system, external_ref=ref).first()

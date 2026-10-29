@@ -2297,6 +2297,8 @@ export interface AreaSampleRequest {
   lookback_hours: number
   devices_in_area: number
   pushes_sent: number
+  // Registered phones not sharing, asked with Accept/Reject (2026-10-29).
+  registered_asked?: number
   created_at: string
   requested_by: string | null
   // Only on the create response: how many of devices_in_area are sharing now.
@@ -2308,6 +2310,8 @@ export interface AreaSampleCreateInput {
   lng: number
   radius_km: number
   label?: string
+  // Also ask registered phones that are not sharing (Accept/Reject). Server default: yes.
+  ask_registered?: boolean
 }
 
 export interface AreaSampleReading extends SampleCqiFields, SampleBandFields {
@@ -2328,11 +2332,14 @@ export interface AreaSampleReading extends SampleCqiFields, SampleBandFields {
   cqi_derived: number | null
   serving_site_id: string | null
   serving_sector: string | null
+  // 'registered': from a registered phone whose owner tapped Accept (2026-10-29).
+  source?: 'sharing' | 'registered'
 }
 
 export interface AreaSampleResults {
   request: AreaSampleRequest
   devices: number
+  registered?: { asked: number; accepted: number; declined: number; waiting: number }
   samples: AreaSampleReading[]
   open: boolean
   open_until: string
@@ -2922,6 +2929,28 @@ export interface SiteCellKpis {
   site_id: string; configured: boolean; newest_date: string | null; busy_prb: number; cells: SiteCellKpiCell[]
 }
 
+// GET /api/v2/problem-reports/<id>/oss-kpi/ (2026-10-29, core/problem_oss.py):
+// network KPIs of the sites related to a complaint.
+export type OssSiteRole = 'complaint' | 'served' | 'nearby'
+export type OssVerdict = 'outage' | 'busy' | 'near' | 'quiet' | 'ok' | 'none'
+export interface OssSiteWeek {
+  days: number; cells: number; prb_dl_max: number | null; busy_days: number
+  availability_min: number | null; availability_cell: string | null
+  service_drop_max: number | null; volte_drop_max: number | null
+  thr_dl_user_min: number | null; thr_cell: string | null
+}
+export interface OssSite {
+  site_id: string; roles: OssSiteRole[]; why: string; readings: number | null
+  name: string | null; district: string | null; distance_m: number | null; bearing_deg: number | null; has_4g: boolean
+  at_problem: CellLoad | null; week: OssSiteWeek | null; verdict: OssVerdict; verdict_text: string
+  /** Set when the complaint's week had no figures and the site's newest ones are shown. */
+  figures_from: string | null
+}
+export interface ProblemOssKpi {
+  configured: boolean; problem_date: string; week_from: string; radius_km: number; radii_km: number[]
+  busy_prb: number; newest_date: string | null; sites: OssSite[]
+}
+
 // GET/PUT /api/v2/coverage-prediction/settings/ (2026-10-28, core/coverage_prediction.py):
 // radio values for the predicted coverage on the site map.
 export type RadioBandKey = 'lte_b20' | 'lte_b3' | 'wcdma_b1' | 'gsm900' | 'gsm1800'
@@ -3031,6 +3060,9 @@ export interface ProblemReport {
   note: string
   happened_at: string
   created_at: string
+  // Complaint registered location (2026-10-29): where the customer was when complaining.
+  reported_lat?: number | null
+  reported_lng?: number | null
   lat: number
   lng: number
   network_type: string
@@ -3615,5 +3647,6 @@ export interface SubscriberProfile {
   calls: { by_outcome: Record<string, number>; latest: { started_at: string | null; duration_s: number | null; outcome: string; voice_networks: string; cell_id: number | null; level_dbm: number | null; end_level_dbm?: number | null; start_site?: string | null; end_site?: string | null }[] }
   volte: { ts: string | null; codec: string; mos_estimate: number | null; packet_loss_pct: number | null }[]
   site_photos: { id: number; site_id: string | null; status: string; taken_at: string | null }[]
-  lookups: { tool: string; by: string | null; at: string | null; reference: string; found: boolean | null }[]
+  // Superadmin only (2026-10-29); null for an admin.
+  lookups: { tool: string; by: string | null; at: string | null; reference: string; found: boolean | null }[] | null
 }

@@ -13,6 +13,9 @@ import { ColumnChart, ShareBar } from './ProfileCharts'
 //                 device with its bands, set against what the phone measured.
 // Both come from one source, asked only when a window is opened. On the
 // profile they sit at the end, after this system's own details.
+// 2026-10-29: the OSS & Core card left the profile (the user's request): its
+// place is now "OSS diagnostics (KPI)" under a complaint's Site related
+// analysis (ProblemOssKpi.tsx), and its two tabs moved into this one window.
 
 const pct = (a: number, b: number) => (b ? Math.round((100 * a) / b) : 0)
 const yesNo = (v: boolean | null | undefined, yes: string, no: string) => (v == null ? 'Not known' : v ? yes : no)
@@ -20,17 +23,14 @@ const yesNo = (v: boolean | null | undefined, yes: string, no: string) => (v == 
 const seenToken = (label: string) => label.split(' ')[0]
 const titleCase = (key: string) => key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
-type Kind = 'bi' | 'core'
+type Kind = 'bi'
 type Tab = 'usage' | 'location' | 'subscription' | 'device'
 
 const KINDS: Record<Kind, { id: string; icon: string; title: string; window: string; button: string; tabs: [Tab, string][] }> = {
   bi: {
-    id: 'sp-bi', icon: '📊', title: 'Subscriber usage & location history', window: 'BI system: usage & location history',
-    button: 'Open BI usage', tabs: [['usage', 'Usage'], ['location', 'Location history']],
-  },
-  core: {
-    id: 'sp-oss', icon: '🛰️', title: 'Core network diagnostics (MME / MSC / PGW / HSS / SPR)', window: 'OSS & Core',
-    button: 'Run core network diagnostics', tabs: [['subscription', 'Subscription & provisioning'], ['device', 'Device & bands']],
+    id: 'sp-bi', icon: '📊', title: 'Subscriber usage, provisioning & location history', window: 'BI system: usage, provisioning & location history',
+    button: 'Open BI usage',
+    tabs: [['usage', 'Usage'], ['subscription', 'Subscription & provisioning'], ['device', 'Device & bands'], ['location', 'Location history']],
   },
 }
 
@@ -50,9 +50,7 @@ export default function ProfileProvisioning({ kind, msisdn, reason, analytics, c
     return () => window.removeEventListener('keydown', onKey)
   }, [open])
 
-  const blurb = kind === 'bi'
-    ? `Daily data, voice and SMS, the 2G/3G/4G split and the cell sites used by ${msisdn}.`
-    : 'HSS profile, 4G and VoLTE provisioning, SIM, SPR package and quota, and the device with its bands, set against what the phone measured.'
+  const blurb = `Daily data, voice and SMS, the 2G/3G/4G split, 4G and VoLTE provisioning, the SIM and the phone's bands, and the cell sites used by ${msisdn}.`
 
   return (
     <>
