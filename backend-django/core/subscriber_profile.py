@@ -32,7 +32,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import neighbour_cells, radio_band
+from . import neighbour_cells, radio_band, speed_quality
 from .audit import log_audit_event
 from .call_cells import name_calls
 from .collection import NEPAL_TZ, decrypted_identity, msisdn_lookup_key
@@ -441,6 +441,8 @@ class SubscriberProfileView(APIView):
             'ts': _iso(r.ts), 'device_id': r.device_id, 'bearer': r.bearer, 'download_mbps': r.download_mbps,
             'upload_mbps': r.upload_mbps, 'ping_ms': r.ping_median_ms, 'jitter_ms': r.jitter_ms,
             'packet_loss_pct': r.packet_loss_pct, 'network_type': r.network_type, 'rsrp_dbm': r.rsrp_dbm,
+            **speed_quality.fields(r.download_mbps, r.upload_mbps, r.ping_median_ms, r.jitter_ms,
+                                   r.packet_loss_pct, r.latency_down_ms, r.latency_up_ms),
         } for r in TelemetrySpeedResult.objects.filter(device_id__in=ids).order_by('-ts')[:LIST_CAP]]
         trace_speed_tests = [{
             'ts': _iso(r.ran_at), 'trace_id': str(r.trace_id), 'download_mbps': r.download_mbps,

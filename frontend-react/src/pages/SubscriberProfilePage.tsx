@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import SpeedRatings, { loadedLabel } from '../components/SpeedRatings'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -495,13 +496,15 @@ function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
           <SpeedChart tests={p.speed_tests} />
           <Paged
             rows={[...p.speed_tests.map((r) => ({ ...r, trace: false })), ...p.trace_speed_tests.map((r) => ({ ...r, bearer: 'trace', jitter_ms: null, packet_loss_pct: null, rsrp_dbm: null, device_id: '', trace: true }))]}
-            head={<tr><th>Time</th><th>Over</th><th>Download</th><th>Upload</th><th>Ping</th><th>Jitter</th><th>Loss</th><th>Radio</th></tr>}
+            head={<tr><th>Time</th><th>Over</th><th>Download</th><th>Upload</th><th>Ping</th><th>Jitter</th><th>Loss</th><th title="Ping while the download / the upload runs">Under load</th><th title="Browsing, video streaming, gaming, video calls">Good for</th><th>Radio</th></tr>}
             row={(r, i) => (
               <tr key={i}>
                 <td>{fmt(r.ts)}</td>
                 <td><span className={`sp-chip ${r.bearer === 'wifi' ? 'info' : r.bearer === 'mobile' ? 'ok' : 'plain'}`}>{r.bearer === 'wifi' ? 'Wi-Fi' : r.bearer === 'mobile' ? 'Mobile data' : r.trace ? 'During a trace' : 'Not tagged'}</span></td>
                 <td className="mono">{num(r.download_mbps, ' Mbps')}</td><td className="mono">{num(r.upload_mbps, ' Mbps')}</td>
                 <td className="mono">{num(r.ping_ms, ' ms')}</td><td className="mono">{num(r.jitter_ms, ' ms')}</td><td className="mono">{num(r.packet_loss_pct, '%')}</td>
+                <td className="mono">{'latency_down_ms' in r ? loadedLabel(r.latency_down_ms, r.latency_up_ms) : '—'}</td>
+                <td>{'ratings' in r ? <SpeedRatings ratings={r.ratings} compact /> : '—'}</td>
                 <td>{[r.network_type, r.rsrp_dbm != null ? `${r.rsrp_dbm} dBm` : ''].filter(Boolean).join(' ') || '—'}</td>
               </tr>
             )}

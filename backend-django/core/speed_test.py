@@ -187,6 +187,8 @@ class TelemetrySpeedResultIngestView(APIView):
             packet_loss_pct=_speed_num(data, 'packet_loss_pct', 100),
             download_mbps=_speed_num(data, 'download_mbps', 10_000),
             upload_mbps=_speed_num(data, 'upload_mbps', 10_000),
+            latency_down_ms=_speed_num(data, 'latency_down_ms', 60_000),
+            latency_up_ms=_speed_num(data, 'latency_up_ms', 60_000),
             network_type=str(data.get('network_type') or '').strip().upper()[:8],
             rsrp_dbm=rsrp,
             bearer=_bearer(data.get('bearer')),

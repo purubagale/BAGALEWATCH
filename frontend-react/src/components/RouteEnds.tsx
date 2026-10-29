@@ -7,6 +7,9 @@ import L from 'leaflet'
 // at the last; the hover names the session and the time. One pair per
 // session on every session map (Collections, Telemetry Drive Test, DT
 // Session History, DT Explore).
+// 2026-10-29: while a session is still open the last reading is not its end,
+// so it gets a blue pin with L ("latest reading"); the red E pin appears only
+// once the session has ended.
 
 type Pt = { lat: number | null | undefined; lng: number | null | undefined; ts?: string | number | null }
 
@@ -24,6 +27,7 @@ function pin(letter: string, color: string): L.DivIcon {
 }
 const START = pin('S', '#16a34a')
 const END = pin('E', '#b91c1c')
+const LATEST = pin('L', '#1d4ed8')
 
 function when(ts: Pt['ts']) {
   if (ts == null || ts === '') return ''
@@ -38,7 +42,7 @@ export function routeEnds<T extends Pt>(points: T[]): { start: T; end: T } | nul
   return { start: placed[0], end: placed[placed.length - 1] }
 }
 
-export default function RouteEnds({ points, name }: { points: Pt[]; name?: string }) {
+export default function RouteEnds({ points, name, open = false }: { points: Pt[]; name?: string; open?: boolean }) {
   const ends = routeEnds(points)
   if (!ends) return null
   const label = name ? `${name}: ` : ''
@@ -46,11 +50,11 @@ export default function RouteEnds({ points, name }: { points: Pt[]; name?: strin
   return (
     <>
       <Marker position={[ends.start.lat as number, ends.start.lng as number]} icon={START} zIndexOffset={900}>
-        <Tooltip>{label}{same ? 'only reading' : 'start'}{ends.start.ts ? ` · ${when(ends.start.ts)}` : ''}</Tooltip>
+        <Tooltip>{label}{same && !open ? 'only reading' : 'start'}{ends.start.ts ? ` · ${when(ends.start.ts)}` : ''}</Tooltip>
       </Marker>
-      {!same && (
-        <Marker position={[ends.end.lat as number, ends.end.lng as number]} icon={END} zIndexOffset={900}>
-          <Tooltip>{label}end{ends.end.ts ? ` · ${when(ends.end.ts)}` : ''}</Tooltip>
+      {(!same || open) && (
+        <Marker position={[ends.end.lat as number, ends.end.lng as number]} icon={open ? LATEST : END} zIndexOffset={open ? 950 : 900}>
+          <Tooltip>{label}{open ? 'latest reading, still sharing' : 'end'}{ends.end.ts ? ` · ${when(ends.end.ts)}` : ''}</Tooltip>
         </Marker>
       )}
     </>
@@ -68,7 +72,7 @@ export function StackedNote({ points }: { points: Pt[] }) {
   return (
     <div className="route-stacked-note">
       {placed.length.toLocaleString()} readings at {places} place{places === 1 ? '' : 's'}: readings taken at the same spot are drawn as one dot
-      {places === 1 ? '. The phone did not move.' : ', so the phone hardly moved.'}
+      {places === 1 ? '. The phone did not move.' : places <= 20 ? ', so the phone hardly moved.' : ', so stops show as single dots.'}
     </div>
   )
 }

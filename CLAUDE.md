@@ -1909,6 +1909,23 @@ an Accept/Reject request; nothing is sent until the person accepts.
   "From" line naming it; when an open session or open sharing exists but the
   newest reading is not from it, a "Still open" line gives that one's last
   reading (position under the same rules).
+- **Loaded latency and use ratings, like Ookla** (2026-10-29, app 1.3.2,
+  built, NOT committed, not run on a phone). SDK `SpeedTest`: a second
+  thread pings `speedtest/empty` every 250 ms while the download and the
+  upload run (`withLoadedPings`); `Result.latencyDownMs/latencyUpMs`, sent
+  as `latency_down_ms/latency_up_ms` with speed results and problem reports.
+  `device/SpeedRatings.kt` and `core/speed_quality.py` (same table; keep in
+  step) grade browsing, video streaming, gaming and video calls from
+  download, upload, ping, jitter, loss and loaded latency. Phone result shows
+  "Ping under load" and the four ratings; ProblemHints adds "the delay rises
+  to X ms while data is moving" above 400 ms. Server: fields on
+  `TelemetrySpeedResult` and `ProblemReport` (migration 0155; AI migrations
+  now 0156-0161, local history renamed, columns by hand); lists return
+  `latency_*` and `ratings`; new complaint cause `loaded_latency` ("Delay
+  rises under load"). Shown on Live Samples, Telemetry Drive Test, the
+  diagnosis dashboard and the complaint's phone tiles
+  (`components/SpeedRatings.tsx`). Tests `tests_speed_quality.py`,
+  `SpeedRatingsTest`.
 
 **Open items:**
 - Deploy to prod (back up the database, pull, `docker compose build

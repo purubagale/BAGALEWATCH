@@ -3407,6 +3407,9 @@ class TelemetrySpeedResult(models.Model):
     jitter_ms = models.FloatField(null=True, blank=True)
     # Share of the test's pings that got no answer in time (2026-10-14).
     packet_loss_pct = models.FloatField(null=True, blank=True)
+    # Loaded latency (2026-10-29): median ping during the download and the upload.
+    latency_down_ms = models.FloatField(null=True, blank=True)
+    latency_up_ms = models.FloatField(null=True, blank=True)
     download_mbps = models.FloatField(null=True, blank=True)
     upload_mbps = models.FloatField(null=True, blank=True)
     network_type = models.CharField(max_length=8, blank=True, default='')
@@ -3478,6 +3481,9 @@ class ProblemReport(models.Model):
     ping_ms = models.FloatField(null=True, blank=True)
     jitter_ms = models.FloatField(null=True, blank=True)
     packet_loss_pct = models.FloatField(null=True, blank=True)
+    # Loaded latency (2026-10-29): median ping during the download and the upload.
+    latency_down_ms = models.FloatField(null=True, blank=True)
+    latency_up_ms = models.FloatField(null=True, blank=True)
     phone_model = models.CharField(max_length=80, blank=True, default='')
     android_version = models.CharField(max_length=16, blank=True, default='')
     app_version = models.CharField(max_length=40, blank=True, default='')

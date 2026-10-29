@@ -263,7 +263,7 @@ export default function CollectionsPage() {
                     positions={samples.data.results.map((s) => [s.lat, s.lng] as [number, number])}
                     pathOptions={{ color: '#0153A5', weight: 3 }}
                   />
-                  <RouteEnds points={samples.data.results} name={selected.name || undefined} />
+                  <RouteEnds points={samples.data.results} name={selected.name || undefined} open={!selected.ended_at} />
                   <StackedNote points={samples.data.results} />
                   {plotPoints.map((p, i) => {
                     const level = telemetryLevel({
