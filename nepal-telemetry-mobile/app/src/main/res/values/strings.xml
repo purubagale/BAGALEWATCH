@@ -126,7 +126,7 @@
     <string name="speed_over_wifi">Over Wi-Fi</string>
     <string name="speed_running">Testing. Keep the app open for about 20 seconds.</string>
     <string name="speed_not_run">Not run yet.</string>
-    <string name="speed_result">%7$s\nPing %1$s ms · jitter %2$s ms · loss %3$s%%\nDownload %4$s Mbps · Upload %5$s Mbps\nRadio at test: %6$s</string>
+    <string name="speed_result">%7$s\nPing %1$s ms · jitter %2$s ms · loss %3$s%%\nDownload %4$s Mbps · Upload %5$s Mbps\nPing under load: %8$s ms downloading · %9$s ms uploading\nRadio at test: %6$s\n\n%10$s</string>
     <string name="report_button">Report a problem</string>
     <string name="report_title">Report a problem</string>
     <string name="report_note_hint">What happens? (optional)</string>

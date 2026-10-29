@@ -553,6 +553,9 @@ object NetTelemetry {
         packetLossPct: Double? = null,
         // The connection the test used (2026-10-15): "mobile" or "wifi".
         bearer: String? = null,
+        // Loaded latency (2026-10-29): median ping during download and during upload.
+        latencyDownMs: Double? = null,
+        latencyUpMs: Double? = null,
     ) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before reportSpeedTest()" }
         if (!isSupported()) return
@@ -572,6 +575,8 @@ object NetTelemetry {
             networkType?.let { put("network_type", it) }
             rsrpDbm?.let { put("rsrp_dbm", it) }
             bearer?.takeIf { it.isNotEmpty() }?.let { put("bearer", it) }
+            latencyDownMs?.let { put("latency_down_ms", it) }
+            latencyUpMs?.let { put("latency_up_ms", it) }
         }.toString()
         SpeedResultQueue(appContext).append(body)
         val work = OneTimeWorkRequestBuilder<SpeedResultUploadWorker>()

@@ -145,6 +145,9 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
             R.string.speed_result,
             fmt(r.pingMedianMs), fmt(r.jitterMs), fmt(r.packetLossPct), fmt(r.downloadMbps), fmt(r.uploadMbps), radio,
             getString(if (r.onWifi) R.string.speed_over_wifi else R.string.speed_over_mobile),
+            // Ping under load and the four ratings (2026-10-29, like Ookla).
+            fmt(r.latencyDownMs), fmt(r.latencyUpMs),
+            np.nepaltelecom.telemetry.device.SpeedRatings.describe(r),
         )
         speedHint.text = ProblemHints.explain(lastSample, r)
         speedHint.visibility = View.VISIBLE
@@ -158,6 +161,7 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
             networkType = s?.networkType, rsrpDbm = s?.rsrpDbm ?: s?.rscpDbm ?: s?.rssiDbm,
             packetLossPct = r.packetLossPct,
             bearer = r.bearer,
+            latencyDownMs = r.latencyDownMs, latencyUpMs = r.latencyUpMs,
         )
     }
 

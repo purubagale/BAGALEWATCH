@@ -111,6 +111,8 @@ object NetProblem {
                 speed.uploadMbps?.let { put("upload_mbps", it) }
                 speed.pingMedianMs?.let { put("ping_ms", it) }
                 speed.jitterMs?.let { put("jitter_ms", it) }
+                speed.latencyDownMs?.let { put("latency_down_ms", it) }
+                speed.latencyUpMs?.let { put("latency_up_ms", it) }
                 speed.packetLossPct?.let { put("packet_loss_pct", it) }
             }
             put("phone_model", "${Build.MANUFACTURER} ${Build.MODEL}".take(80))

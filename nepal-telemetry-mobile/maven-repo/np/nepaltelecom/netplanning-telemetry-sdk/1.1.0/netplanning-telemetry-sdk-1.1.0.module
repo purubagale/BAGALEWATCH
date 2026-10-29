@@ -35,11 +35,11 @@
         {
           "name": "netplanning-telemetry-sdk-1.1.0.aar",
           "url": "netplanning-telemetry-sdk-1.1.0.aar",
-          "size": 335843,
-          "sha512": "d61febf521b8115d690de6cef8c10bdde2a7875c59794d389e78baef6a877b503214da5cdfb006a660bced12027c11f9cb3e69a88bb0eb93a9e3464e768507e9",
-          "sha256": "d23482ab062697de6a96b9a8c336b27b0de101bce73d140a042bc40f5c2801a1",
-          "sha1": "0640c374b226284671c76a3ae75d74f3e9332f23",
-          "md5": "a7bd547eb6190598d3a9120ce1d19860"
+          "size": 346005,
+          "sha512": "c75e69694c3f108ce29d11392eb07d1878a0bf5cd17e389a5435534579853244abdda3b505813674f1a45adf63adf623847e0781ce860678a347bc371474c479",
+          "sha256": "1b87bf55de8c3b62187b8f040135f1d5cde071ffa40446be067d18236d258c86",
+          "sha1": "527c86def44f655a2785b3b581d7c2cbbc247d82",
+          "md5": "12e3dea383e1e405a52f0719104ea523"
         }
       ]
     },
@@ -99,11 +99,11 @@
         {
           "name": "netplanning-telemetry-sdk-1.1.0.aar",
           "url": "netplanning-telemetry-sdk-1.1.0.aar",
-          "size": 335843,
-          "sha512": "d61febf521b8115d690de6cef8c10bdde2a7875c59794d389e78baef6a877b503214da5cdfb006a660bced12027c11f9cb3e69a88bb0eb93a9e3464e768507e9",
-          "sha256": "d23482ab062697de6a96b9a8c336b27b0de101bce73d140a042bc40f5c2801a1",
-          "sha1": "0640c374b226284671c76a3ae75d74f3e9332f23",
-          "md5": "a7bd547eb6190598d3a9120ce1d19860"
+          "size": 346005,
+          "sha512": "c75e69694c3f108ce29d11392eb07d1878a0bf5cd17e389a5435534579853244abdda3b505813674f1a45adf63adf623847e0781ce860678a347bc371474c479",
+          "sha256": "1b87bf55de8c3b62187b8f040135f1d5cde071ffa40446be067d18236d258c86",
+          "sha1": "527c86def44f655a2785b3b581d7c2cbbc247d82",
+          "md5": "12e3dea383e1e405a52f0719104ea523"
         }
       ]
     },
@@ -119,11 +119,11 @@
         {
           "name": "netplanning-telemetry-sdk-1.1.0-sources.jar",
           "url": "netplanning-telemetry-sdk-1.1.0-sources.jar",
-          "size": 100769,
-          "sha512": "9d677f50f48716020dc06aee72b76d572f240102d67fc85095a3d4cfcfb9a5ab7eea6e1b0307e0d66d0eba1641659e126dbbb4c85ac8afbdcdf49a1d3ad26a19",
-          "sha256": "cb29395a728c1f38b603db5630cc6647879663eb31cb3fad8bd0205a33a2a591",
-          "sha1": "c2fcc161f03f18765e3671aac1c62bae6868e3db",
-          "md5": "9a774c97ca445bc43edca36fa920fb9c"
+          "size": 102999,
+          "sha512": "92b0907c3907c0da327b176b345d00b56a978b844a5c358b5dc690cd4935e95ab50463699a11c9132dc436780f756a9e3cadbc421b7409efbc0aa624d5049a7b",
+          "sha256": "15449eced45bbf09667482748336c72b7d2aff568ede7931ba831d3f6b01fd4c",
+          "sha1": "786684f83f37b52c7a166c5838bee93490477285",
+          "md5": "d850aae74f87dcf5e5e86d8ed7986637"
         }
       ]
     }

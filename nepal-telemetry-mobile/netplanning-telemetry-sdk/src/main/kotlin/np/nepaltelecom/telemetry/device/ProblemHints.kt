@@ -17,6 +17,7 @@ object ProblemHints {
     private const val SLOW_DL_MBPS = 2.0
     private const val HIGH_PING_MS = 150.0
     private const val HIGH_LOSS_PCT = 5.0
+    private const val HIGH_LOADED_MS = 400.0
 
     private fun tech(networkType: String?): String? = when (networkType) {
         "LTE", "NR" -> "4G"
@@ -58,6 +59,14 @@ object ProblemHints {
             slow && good -> lines += "The signal is good but the speed is low: the network is probably busy here " +
                 "right now."
             slow -> lines += "The speed is low and the signal is only fair here."
+        }
+        // Loaded latency (2026-10-29): quick when idle, slow while data flows.
+        val loaded = listOfNotNull(speed?.latencyDownMs, speed?.latencyUpMs).maxOrNull()
+        if (speed != null && speed.error == null && speed.onMobileData && loaded != null && loaded > HIGH_LOADED_MS &&
+            (speed.pingMedianMs ?: 0.0) <= HIGH_PING_MS
+        ) {
+            lines += "The delay rises to ${loaded.toInt()} ms while data is moving (it is ${speed.pingMedianMs?.toInt() ?: "—"} ms " +
+                "when idle). Calls, video calls and games may lag even though the speed is fine."
         }
         if (t != "4G") {
             lines += "Your phone is on $t. If 4G is available here, check that the network mode is set to 4G/LTE " +

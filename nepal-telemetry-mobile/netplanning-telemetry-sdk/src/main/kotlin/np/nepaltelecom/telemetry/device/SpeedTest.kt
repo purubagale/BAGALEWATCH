@@ -106,6 +106,8 @@ object SpeedTest {
     private const val UPLOAD_REQUEST_BYTES = 8L * 1024 * 1024
     private const val CHUNK = 64 * 1024
     private const val MOBILE_WAIT_S = 10L
+    private const val LOADED_PING_GAP_MS = 250L
+    private const val LOADED_PING_TIMEOUT_MS = 3_000
 
     data class Result(
         val pingMedianMs: Double?,
@@ -122,6 +124,13 @@ object SpeedTest {
         val method: String = "",
         /** True when the test server could not be reached at all (2026-10-26). */
         val unreachable: Boolean = false,
+        /**
+         * Loaded latency (2026-10-29, like Ookla): median ping while the
+         * download runs, and while the upload runs. A line that is quick when
+         * idle but slow under load makes calls and games lag.
+         */
+        val latencyDownMs: Double? = null,
+        val latencyUpMs: Double? = null,
     ) {
         /** The connection the test used, as sent to NTC: "mobile", "wifi" or "" when unknown. */
         val bearer: String get() = when {
@@ -216,14 +225,18 @@ object SpeedTest {
         if (newEndpointsAvailable(network)) {
             val pings = measurePings(network, baseUrl() + "empty")
             val answered = pings.filterNotNull()
+            val (down, latencyDown) = withLoadedPings(network, baseUrl() + "empty") { measureDownloadMulti(network, profile) }
+            val (up, latencyUp) = withLoadedPings(network, baseUrl() + "empty") { measureUploadMulti(network, profile) }
             Result(
                 pingMedianMs = median(answered),
                 jitterMs = jitter(answered),
                 packetLossPct = 100.0 * (pings.size - answered.size) / pings.size,
-                downloadMbps = measureDownloadMulti(network, profile),
-                uploadMbps = measureUploadMulti(network, profile),
+                downloadMbps = down,
+                uploadMbps = up,
                 error = null,
                 method = "multi ${profile.downStreams}x${profile.durationMs / 1000}s",
+                latencyDownMs = latencyDown,
+                latencyUpMs = latencyUp,
             )
         } else {
             val pings = measurePings(network, legacyBaseUrl() + "ping/")
@@ -253,6 +266,44 @@ object SpeedTest {
             false
         } finally {
             conn.disconnect()
+        }
+    }
+
+    /**
+     * Runs [block] (a download or upload) while a second thread pings the
+     * server every [LOADED_PING_GAP_MS]; returns the block's result and the
+     * median of the pings answered meanwhile (null when none was).
+     */
+    private fun <T> withLoadedPings(network: Network?, url: String, block: () -> T): Pair<T, Double?> {
+        val rtts = java.util.Collections.synchronizedList(ArrayList<Double>())
+        val running = java.util.concurrent.atomic.AtomicBoolean(true)
+        val pinger = Thread {
+            while (running.get()) {
+                val start = System.nanoTime()
+                val conn = open("$url?r=${System.nanoTime()}", network).apply {
+                    connectTimeout = LOADED_PING_TIMEOUT_MS
+                    readTimeout = LOADED_PING_TIMEOUT_MS
+                }
+                try {
+                    if (conn.responseCode == HttpURLConnection.HTTP_NO_CONTENT) rtts.add((System.nanoTime() - start) / 1_000_000.0)
+                } catch (_: IOException) {
+                    // An unanswered ping under load is left out of the median.
+                } finally {
+                    conn.disconnect()
+                }
+                try {
+                    Thread.sleep(LOADED_PING_GAP_MS)
+                } catch (_: InterruptedException) {
+                    break
+                }
+            }
+        }.apply { isDaemon = true; start() }
+        try {
+            val result = block()
+            return result to median(synchronized(rtts) { rtts.toList() })
+        } finally {
+            running.set(false)
+            pinger.interrupt()
         }
     }
 

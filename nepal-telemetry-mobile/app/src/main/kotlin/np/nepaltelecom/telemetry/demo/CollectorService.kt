@@ -76,6 +76,7 @@ class CollectorService : Service() {
                         networkType = s?.networkType, rsrpDbm = s?.rsrpDbm ?: s?.rscpDbm ?: s?.rssiDbm,
                         packetLossPct = r.packetLossPct,
                         bearer = r.bearer,
+                        latencyDownMs = r.latencyDownMs, latencyUpMs = r.latencyUpMs,
                     )
                 }
             } finally {
