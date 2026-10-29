@@ -291,6 +291,12 @@ services:
       - django
     ports:
       - "5180:80"
+    # NTC's own Nepal street map (2026-10-29): one ~325 MB file,
+    # ./data/maps/nepal.pmtiles, served by nginx at /maps/ (nginx.conf). Not
+    # in the image; when the file is missing the web maps use the public
+    # OpenStreetMap tiles as before.
+    volumes:
+      - ./data/maps:/usr/share/nginx/maps:ro
 
 # No top-level `volumes:` block any more (2026-08-23). Every persistent path
 # is now a bind mount under ./data/, so it travels with the project folder

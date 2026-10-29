@@ -77,6 +77,7 @@ FROM (
          network_type, mnc, device_id, region, rsrp_dbm, rsrq_db, sinr_db, __CQI__ AS cqi, __LEVEL__ AS level, ts
   FROM {part}
   WHERE location IS NOT NULL
+    AND COALESCE(flag, '') = ''
     -- Skip whatever roll_telemetry_bins.py already merged (see this
     -- file's module docstring) — NULL watermark (that command has never
     -- run) means "aggregate everything," same as before it existed.

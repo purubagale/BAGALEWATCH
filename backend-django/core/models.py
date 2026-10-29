@@ -2481,6 +2481,10 @@ class TelemetrySample(models.Model):
     # a list of at most 8 {net, pci|psc|bcch, arfcn, level..., site, sector, km},
     # named at upload. Null when the phone sent none (older app builds).
     neighbours = models.JSONField(null=True, blank=True)
+    # Screening on arrival (2026-10-29, core/ingest_guard.py): signed by a
+    # registered phone or sent with the shared key, and '' / 'jump' / 'burst'.
+    signed = models.BooleanField(null=True, blank=True)
+    flag = models.CharField(max_length=8, blank=True, default='')
     battery_pct = models.SmallIntegerField(null=True, blank=True)
     trigger_reason = models.CharField(max_length=16, choices=TRIGGERS, default='periodic')
     # Groups a drive's fixes and markers (2026-10-04). Set by the phone, a UUID

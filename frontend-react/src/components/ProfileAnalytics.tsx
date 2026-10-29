@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
-import { CircleMarker, MapContainer, TileLayer, Tooltip } from 'react-leaflet'
+import BaseMap from './BaseMap'
+import { CircleMarker, MapContainer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { SubscriberAnalytics } from '../api/types'
 import { RSRP_BANDS, RSRQ_BANDS, RXLEV_BANDS, SINR_BANDS, bandColor, type Band } from '../lib/dtBands'
@@ -237,7 +238,7 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
           {mapSites.length > 0 && (
             <div className="spc-sites-map">
               <MapContainer center={[27.7, 85.3]} zoom={9} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false} attributionControl={false}>
-                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                <BaseMap />
                 <FitToPoints points={mapSites.map((s) => [s.lat as number, s.lng as number])} fitKey={mapSites.length} singleZoom={14} />
                 {mapSites.map((s) => (
                   <CircleMarker key={s.site_id} center={[s.lat as number, s.lng as number]} radius={Math.min(16, 5 + Math.log2(s.readings + 1))}

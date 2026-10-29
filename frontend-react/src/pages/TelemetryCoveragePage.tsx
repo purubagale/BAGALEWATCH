@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { MapContainer, TileLayer, useMap } from 'react-leaflet'
+import BaseMap from '../components/BaseMap'
+import { MapContainer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import CurrentLocationMarker from '../components/CurrentLocationMarker'
@@ -267,10 +268,7 @@ export default function TelemetryCoveragePage() {
               <CurrentLocationMarker />
               <SitePhotoLayer />
               <FitToBins bins={bins} />
-              <TileLayer
-                attribution="&copy; OpenStreetMap contributors"
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              />
+              <BaseMap />
               <CoverageBins bins={bins} metric={metric} />
             </MapContainer>
           )}

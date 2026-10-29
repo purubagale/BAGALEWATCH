@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import BaseMap from '../components/BaseMap'
 import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -10,7 +11,6 @@ import useMapInvalidateOnResize from '../lib/useMapInvalidateOnResize'
 // Same two base layers + same URLs as DtExploreTab.tsx's own street/satellite
 // toggle, for consistency across the app rather than introducing a second
 // satellite provider.
-const STREET_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
 const SATELLITE_URL = 'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
 
 // Bulk lookup input is capped at 500 numbers per call server-side
@@ -458,13 +458,9 @@ export default function RescueLookupPage() {
                 style={{ height: isFullscreen ? '100vh' : 560 }}
               >
                 <MapContainer key={mapLayer} center={[point.lat, point.lng]} zoom={16} className="dt-coverage-map">
-                  <TileLayer
-                    attribution={mapLayer === 'street' ? '&copy; OpenStreetMap contributors' : '&copy; Google'}
-                    url={mapLayer === 'street' ? STREET_URL : SATELLITE_URL}
-                    subdomains={mapLayer === 'street' ? 'abc' : '0123'}
-                    maxNativeZoom={mapLayer === 'street' ? 19 : 20}
-                    maxZoom={20}
-                  />
+                  {mapLayer === 'street'
+                    ? <BaseMap />
+                    : <TileLayer attribution="&copy; Google" url={SATELLITE_URL} subdomains="0123" maxNativeZoom={20} maxZoom={20} />}
                   <ResultMarker
                     lat={point.lat}
                     lng={point.lng}
@@ -623,13 +619,9 @@ export default function RescueLookupPage() {
                     style={{ height: bulkFullscreen ? '100vh' : 560 }}
                   >
                     <MapContainer key={bulkMapLayer} center={[bulkPoints[0].lat, bulkPoints[0].lng]} zoom={13} className="dt-coverage-map">
-                      <TileLayer
-                        attribution={bulkMapLayer === 'street' ? '&copy; OpenStreetMap contributors' : '&copy; Google'}
-                        url={bulkMapLayer === 'street' ? STREET_URL : SATELLITE_URL}
-                        subdomains={bulkMapLayer === 'street' ? 'abc' : '0123'}
-                        maxNativeZoom={bulkMapLayer === 'street' ? 19 : 20}
-                        maxZoom={20}
-                      />
+                      {bulkMapLayer === 'street'
+                        ? <BaseMap />
+                        : <TileLayer attribution="&copy; Google" url={SATELLITE_URL} subdomains="0123" maxNativeZoom={20} maxZoom={20} />}
                       <BulkResultMarkers points={bulkPoints} />
                       <FitToBulkPoints points={bulkPoints} />
                       <BulkFullscreenSync isFullscreen={bulkFullscreen} points={bulkPoints} />

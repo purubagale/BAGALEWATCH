@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import BaseMap from '../components/BaseMap'
 import SpeedRatings, { loadedLabel } from '../components/SpeedRatings'
-import { Circle, CircleMarker, MapContainer, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
+import { Circle, CircleMarker, MapContainer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
@@ -491,7 +492,7 @@ function NewSessionForm({ onCreated }: { onCreated: (id: number) => void }) {
         <div style={{ height: 260 }}>
           <MapContainer center={[resolved.lat, resolved.lng]} zoom={13} style={{ height: '100%', width: '100%' }}>
             <InvalidateOnResize />
-            <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <BaseMap />
             <ClickToSetPoint onPick={pickPoint} />
             <Circle center={[resolved.lat, resolved.lng]} radius={radiusKm * 1000} pathOptions={{ color: '#2563eb', fillOpacity: 0.08 }} />
             <CircleMarker center={[resolved.lat, resolved.lng]} radius={6} pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 1 }} />
@@ -864,7 +865,7 @@ export default function TelemetryDriveTestSessionsPage() {
               <MapContainer key={mapKey} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
                 <InvalidateOnResize />
                 <FitToSamples samples={samples} fitKey={mapKey} />
-                <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                <BaseMap />
                 <RouteLines samples={samples} />
                 <DeviceRouteEnds samples={samples} open={selectedSession?.status === 'active'} />
                 <StackedNote points={samples} />

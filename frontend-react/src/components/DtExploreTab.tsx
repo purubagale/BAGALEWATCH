@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import BaseMap from './BaseMap'
 import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
@@ -48,7 +49,6 @@ const PCI_LEGEND_CAP = 24
 const DEFAULT_CENTER: [number, number] = [28.3949, 84.124]
 const DEFAULT_ZOOM = 7
 const SATELLITE_URL = 'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
-const STREET_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
 
 /** Phase 4d — Explore-by-coordinate, ported from bts_monitor.html's RSRP
  * Manager "By Coordinates" pane (`rsrpCoordSearch`/`renderCoordCoverageMap`,
@@ -1888,13 +1888,9 @@ export default function DtExploreTab() {
             >
               <CurrentLocationMarker />
               <SitePhotoLayer />
-              <TileLayer
-                attribution={mapLayer === 'street' ? '&copy; OpenStreetMap contributors' : '&copy; Google'}
-                url={mapLayer === 'street' ? STREET_URL : SATELLITE_URL}
-                subdomains={mapLayer === 'street' ? 'abc' : '0123'}
-                maxNativeZoom={mapLayer === 'street' ? 19 : 20}
-                maxZoom={20}
-              />
+              {mapLayer === 'street'
+                ? <BaseMap />
+                : <TileLayer attribution="&copy; Google" url={SATELLITE_URL} subdomains="0123" maxNativeZoom={20} maxZoom={20} />}
               <SearchAreaLayer point={pointTuple as LatLng} radiusKm={radiusKm} shape={shape} label={pointLabel} />
               <NearSitesLayer sites={nearSites} onSelect={setSelectedSite} />
               {exploreView !== 'sessions' ? (

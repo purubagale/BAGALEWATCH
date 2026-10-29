@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { MapContainer, TileLayer } from 'react-leaflet'
+import BaseMap from '../components/BaseMap'
+import { MapContainer } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useSitePhotos } from '../api/queries'
 import CurrentLocationMarker from '../components/CurrentLocationMarker'
@@ -70,10 +71,7 @@ export default function SitePhotosPage() {
         <>
           <div className="site-photo-map">
             <MapContainer center={NEPAL_CENTER} zoom={7} style={{ height: '100%', width: '100%' }}>
-              <TileLayer
-                attribution="&copy; OpenStreetMap contributors"
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              />
+              <BaseMap />
               <CurrentLocationMarker />
               <SitePhotoLayer />
             </MapContainer>

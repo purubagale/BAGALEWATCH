@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { MapContainer, TileLayer, useMap } from 'react-leaflet'
+import BaseMap from './BaseMap'
+import { MapContainer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiErrorMessage } from '../api/client'
@@ -165,7 +166,7 @@ export default function DtCompareDeltaMap({
           ) : (
             <>
               <MapContainer center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
-                <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                <BaseMap />
                 <FitToCells cells={data.cells} />
                 {activeMetric && (
                   <DeltaDots

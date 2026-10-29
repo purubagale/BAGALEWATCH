@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
+import BaseMap from '../components/BaseMap'
 import SpeedRatings, { loadedLabel } from '../components/SpeedRatings'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
-import { Circle, CircleMarker, MapContainer, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
+import { Circle, CircleMarker, MapContainer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiErrorMessage } from '../api/client'
@@ -605,7 +606,7 @@ function ProblemMap({ d, onOpen }: { d: ProblemDashboard; onOpen: (id: number) =
       </div>
       <div className="pd-map">
         <MapContainer center={NEPAL_CENTER} zoom={7} style={{ height: '100%', width: '100%' }}>
-          <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <BaseMap />
           <FitPoints points={points.map((p) => [p.lat, p.lng] as [number, number])} />
           {points.map((p) => (
             <CircleMarker key={p.id} center={[p.lat, p.lng]} radius={p.status === 'new' ? 7 : 5}
@@ -888,7 +889,7 @@ function LiveMap({ r, points, radiusM }: { r: ProblemReport; points: LivePoint[]
   return (
     <div className="problem-map pdd-live-map">
       <MapContainer center={[r.lat, r.lng]} zoom={14} style={{ height: '100%', width: '100%' }}>
-        <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <BaseMap />
         <FitPoints points={[[r.lat, r.lng], ...points.map((p) => [p.lat, p.lng] as [number, number])]} />
         {radiusM && <Circle center={[r.lat, r.lng]} radius={radiusM} pathOptions={{ color: '#2563eb', weight: 1, fillOpacity: 0.05 }} />}
         <CircleMarker center={[r.lat, r.lng]} radius={7} pathOptions={{ color: '#dc2626', fillColor: '#dc2626', fillOpacity: 0.9 }}>
@@ -1296,7 +1297,7 @@ function NearbySites({ r }: { r: ProblemReport }) {
       <div className="pdd-sites">
         <div className="pdd-sites-map">
           <MapContainer center={[r.lat, r.lng]} zoom={15} style={{ height: '100%', width: '100%' }}>
-            <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <BaseMap />
             <FitPoints points={[[r.lat, r.lng], ...sites.map((s) => [s.lat, s.lng] as [number, number])]} />
             <Circle center={[r.lat, r.lng]} radius={radius * 1000} pathOptions={{ color: '#2563eb', weight: 1, fillOpacity: 0.04 }} />
             <CircleMarker center={[r.lat, r.lng]} radius={8} pathOptions={{ color: '#fff', weight: 2, fillColor: '#dc2626', fillOpacity: 1 }}>
@@ -1432,7 +1433,7 @@ function EnterComplaint({ onSaved }: { onSaved: (id: number) => void }) {
         onChange={(e) => setNote(e.target.value)} maxLength={500} />
       <div className="problem-map">
         <MapContainer center={NEPAL_CENTER} zoom={7} style={{ height: '100%', width: '100%' }}>
-          <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <BaseMap />
           <ClickToPick onPick={(lat, lng) => setPoint({ lat, lng })} />
           {point && (
             <>

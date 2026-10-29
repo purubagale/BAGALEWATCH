@@ -431,7 +431,7 @@ _COPY_COLS = (
     'service_state', 'cell_info_status', 'airplane_mode', 'sim_state',
     'environment', 'environment_source',
     'bandwidth_khz', 'total_bandwidth_khz', 'carrier_count',
-    'neighbours',
+    'neighbours', 'signed', 'flag',
 )
 _COPY_SQL = 'COPY v2_telemetry_samples (' + ', '.join(_COPY_COLS) + ') FROM STDIN WITH (FORMAT text)'
 
@@ -531,6 +531,7 @@ def bulk_insert_samples(rows):
             _cf(r.get('environment')), _cf(r.get('environment_source')),
             _cf(r.get('bandwidth_khz')), _cf(r.get('total_bandwidth_khz')), _cf(r.get('carrier_count')),
             _cf(json.dumps(r['neighbours'], separators=(',', ':')) if r.get('neighbours') else None),
+            _cf(None if r.get('signed') is None else ('t' if r['signed'] else 'f')), _cf(r.get('flag') or ''),
         )) + '\n')
     buf.seek(0)
     with connection.cursor() as cur:
@@ -633,9 +634,6 @@ class TelemetryIngestView(APIView):
             for r in rows:
                 r['device_id'] = ingest_row_device_id(device)
 
-        attach_telemetry_serving_cells(rows)
-        neighbour_cells.attach_sites(rows)
-
         _batch, created = TelemetryBatch.objects.get_or_create(
             batch_hash=digest,
             defaults={
@@ -646,6 +644,16 @@ class TelemetryIngestView(APIView):
         )
         if not created:
             return Response({'accepted': 0, 'duplicate': True}, status=status.HTTP_200_OK)
+
+        # Daily cap per phone, jump and burst flags, signed or not (2026-10-29).
+        # After the duplicate check, so a re-sent batch does not count twice.
+        from .ingest_guard import screen
+        rows, dropped = screen(rows, signed=device is not None)
+        if not rows:
+            return Response({'accepted': 0, 'dropped': dropped, 'detail': 'daily limit reached'},
+                            status=status.HTTP_429_TOO_MANY_REQUESTS)
+        attach_telemetry_serving_cells(rows)
+        neighbour_cells.attach_sites(rows)
 
         bulk_insert_samples(rows)
         try:
@@ -662,7 +670,8 @@ class TelemetryIngestView(APIView):
         if key:
             TelemetryIngestKey.objects.filter(pk=key.pk).update(last_used_at=now)
         opt_out = _check_and_fulfill_remote_optout({r['device_id'] for r in rows})
-        return Response({'accepted': len(rows), 'opt_out': opt_out}, status=status.HTTP_202_ACCEPTED)
+        return Response({'accepted': len(rows), 'dropped': dropped, 'opt_out': opt_out},
+                        status=status.HTTP_202_ACCEPTED)
 
 
 class TelemetryHealthView(APIView):

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
+import BaseMap from './BaseMap'
 import { Link } from 'react-router-dom'
-import { MapContainer, Polygon, Rectangle, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
+import { MapContainer, Polygon, Rectangle, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiErrorMessage } from '../api/client'
@@ -101,7 +102,7 @@ export default function ScheduledReadingsMap({ days }: { days: number }) {
         <>
           <div style={{ height: 460 }}>
             <MapContainer center={[28.2, 84.1]} zoom={7} style={{ height: '100%', width: '100%' }}>
-              <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+              <BaseMap />
               <FitOnce points={fitPoints} deps={`${slot}|${tech}|${district}|${days}|${fitPoints.length}`} />
               <TrackBounds onChange={setBounds} />
               {!district && data.squares.map((q) => (

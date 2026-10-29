@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
-import { CircleMarker, MapContainer, TileLayer, Tooltip } from 'react-leaflet'
+import BaseMap from './BaseMap'
+import { CircleMarker, MapContainer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiErrorMessage } from '../api/client'
 import { useSubscriberSignal } from '../api/queries'
@@ -415,7 +416,7 @@ export default function ProfileSignalHistory({ msisdn, reason, total, emergency,
           <div className="sp-sh-side">
             <div className="sp-sh-map">
               <MapContainer center={[27.7, 85.3]} zoom={7} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false} attributionControl={false}>
-                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                <BaseMap />
                 <FitToPoints points={fitPoints} fitKey={fitKey} singleZoom={15} />
                 {mapDots.map((p) => {
                   const i = pts.indexOf(p)

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { MapContainer, TileLayer, useMap } from 'react-leaflet'
+import BaseMap from './BaseMap'
+import { MapContainer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { DtSessionDetail } from '../api/types'
@@ -468,7 +469,7 @@ function MetricPanel({
       <div className="dt-compare-panel-resizable">
         {showMap ? (
           <MapContainer center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-compare-panel-map">
-            <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <BaseMap />
             <FitToMetricSessions sessions={sessions} metric={metric} />
             <CompareDots sessions={sessions} metric={metric} />
             <InvalidateOnResize />

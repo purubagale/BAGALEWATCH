@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { Circle, CircleMarker, MapContainer, TileLayer, Tooltip, useMapEvents } from 'react-leaflet'
+import BaseMap from '../components/BaseMap'
+import { Circle, CircleMarker, MapContainer, Tooltip, useMapEvents } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiErrorMessage } from '../api/client'
 import { useAreaSampleRequests, useAreaSampleResults, useCreateAreaSampleRequest, useSites } from '../api/queries'
@@ -185,7 +186,7 @@ export default function AreaSamplePage() {
               zoom={13}
               style={{ height: '100%', width: '100%' }}
             >
-              <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+              <BaseMap />
               <ClickToSetPoint
                 onPick={(lat, lng) => setResolved({ lat, lng, label: `${lat.toFixed(5)}, ${lng.toFixed(5)}` })}
               />
@@ -272,7 +273,7 @@ export default function AreaSamplePage() {
 
           <div style={{ height: 420, marginBottom: 12 }}>
             <MapContainer key={shown.id} center={[shown.lat, shown.lng]} zoom={14} style={{ height: '100%', width: '100%' }}>
-              <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+              <BaseMap />
               <Circle center={[shown.lat, shown.lng]} radius={shown.radius_km * 1000} pathOptions={{ color: '#2563eb', fillOpacity: 0.04 }} />
               {points.map((p, i) => {
                 const level = metric.key === 'rsrp_dbm' ? readingLevel(p.item) : null

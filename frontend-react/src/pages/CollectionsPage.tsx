@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
+import BaseMap from '../components/BaseMap'
 import { useSearchParams } from 'react-router-dom'
-import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet'
+import { CircleMarker, MapContainer, Polyline, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import CurrentLocationMarker from '../components/CurrentLocationMarker'
 import FitToPoints from '../components/FitToPoints'
@@ -255,10 +256,7 @@ export default function CollectionsPage() {
                   {/* A phone drive shows the photos taken during it; any other
                       session shows the photos in the area on screen. */}
                   <SitePhotoLayer driveSessionId={selected.drive_session_id} />
-                  <TileLayer
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    attribution="&copy; OpenStreetMap contributors"
-                  />
+                  <BaseMap />
                   <Polyline
                     positions={samples.data.results.map((s) => [s.lat, s.lng] as [number, number])}
                     pathOptions={{ color: '#0153A5', weight: 3 }}

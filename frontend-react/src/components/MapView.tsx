@@ -1,4 +1,5 @@
 import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap } from 'react-leaflet'
+import BaseMap from './BaseMap'
 import { useEffect } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -20,7 +21,6 @@ const DEFAULT_ZOOM = 7
 // DtExploreTab.tsx already uses (Google's hybrid imagery+roads layer;
 // `subdomains="0123"` is REQUIRED for it, not cosmetic — see that file's
 // own comment on why the tiles 404 as a blank grey map without it).
-const STREET_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
 const SATELLITE_URL = 'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
 // Rough bounding box covering all of Nepal — fallback target when a
 // scope has no sites with real coordinates to fit to. Same footprint
@@ -478,13 +478,9 @@ export default function MapView({
     <MapContainer key={mapLayer} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="site-map" preferCanvas>
       <CurrentLocationMarker />
       <SitePhotoLayer />
-      <TileLayer
-        attribution={mapLayer === 'street' ? '&copy; OpenStreetMap contributors' : '&copy; Google'}
-        url={mapLayer === 'street' ? STREET_URL : SATELLITE_URL}
-        subdomains={mapLayer === 'street' ? 'abc' : '0123'}
-        maxNativeZoom={mapLayer === 'street' ? 19 : 20}
-        maxZoom={20}
-      />
+      {mapLayer === 'street'
+        ? <BaseMap />
+        : <TileLayer attribution="&copy; Google" url={SATELLITE_URL} subdomains="0123" maxNativeZoom={20} maxZoom={20} />}
       <ClusteredMarkers sites={sites} onSelect={onSelect} canRelocate={canRelocate} onRelocateRequest={onRelocateRequest} showNames={showNames} />
       {scopeKey && <FitToScope sites={sites} scopeKey={scopeKey} />}
       <FocusPoint point={focusPoint} />

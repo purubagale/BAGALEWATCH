@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import BaseMap from '../components/BaseMap'
 import SpeedRatings, { loadedLabel } from '../components/SpeedRatings'
-import { MapContainer, TileLayer, useMap } from 'react-leaflet'
+import { MapContainer, useMap } from 'react-leaflet'
 import { useSearchParams } from 'react-router-dom'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -191,10 +192,7 @@ export default function TelemetryLiveSamplesPage() {
             <MapContainer key={mapKey} center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="dt-coverage-map">
               <InvalidateOnResize />
               <FitToSamples samples={samples} fitKey={mapKey} />
-              <TileLayer
-                attribution="&copy; OpenStreetMap contributors"
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              />
+              <BaseMap />
               <SamplePoints samples={samples} />
             </MapContainer>
           )}
@@ -215,6 +213,7 @@ export default function TelemetryLiveSamplesPage() {
                 <th>Lat</th>
                 <th>Lng</th>
                 <th>Trigger</th>
+                <th title="Signed: sent by a registered phone. Shared key: sent with the app's common key. Flagged readings (jump: moved impossibly fast; burst: too frequent) are left out of coverage and complaint checks">Check</th>
               </tr>
             </thead>
             <tbody>
@@ -236,6 +235,8 @@ export default function TelemetryLiveSamplesPage() {
                   <td>{s.lat?.toFixed(5)}</td>
                   <td>{s.lng?.toFixed(5)}</td>
                   <td>{s.trigger_reason}</td>
+                  <td>{s.flag ? <span className="error" title="Left out of coverage and complaint checks">{s.flag === 'jump' ? 'Jump' : 'Too frequent'}</span>
+                    : s.signed ? 'Signed' : s.signed === false ? 'Shared key' : '—'}</td>
                 </tr>
               ))}
             </tbody>

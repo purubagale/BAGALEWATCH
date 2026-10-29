@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { MapContainer, TileLayer, useMap } from 'react-leaflet'
+import BaseMap from '../components/BaseMap'
+import { MapContainer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiErrorMessage } from '../api/client'
@@ -218,10 +219,7 @@ export default function DeviceLocationTracePage() {
           <div style={{ height: 420, marginBottom: 12 }}>
             <MapContainer center={[result.lat, result.lng]} zoom={16} style={{ height: '100%', width: '100%' }}>
               <InvalidateOnResize />
-              <TileLayer
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                attribution="&copy; OpenStreetMap contributors"
-              />
+              <BaseMap />
               <ResultMarker lat={result.lat} lng={result.lng} networkType={result.network_type} ts={result.ts} />
             </MapContainer>
           </div>

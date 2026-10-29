@@ -1,7 +1,8 @@
 import { useEffect } from 'react'
+import BaseMap from './BaseMap'
 import { Link, useSearchParams } from 'react-router-dom'
 import L from 'leaflet'
-import { Circle, CircleMarker, MapContainer, TileLayer, Tooltip, useMap } from 'react-leaflet'
+import { Circle, CircleMarker, MapContainer, Tooltip, useMap } from 'react-leaflet'
 import { apiErrorMessage } from '../api/client'
 import { useProblemRelated } from '../api/queries'
 import type {
@@ -115,7 +116,7 @@ function RelatedMap({ r, points, radiusKm, site }: {
   return (
     <div className="problem-map pdd-rel-map">
       <MapContainer center={[r.lat, r.lng]} zoom={14} style={{ height: '100%', width: '100%' }}>
-        <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <BaseMap />
         <Fit points={all} />
         {radiusKm && <Circle center={[r.lat, r.lng]} radius={radiusKm * 1000} pathOptions={{ color: '#2563eb', weight: 1, fillOpacity: 0.04 }} />}
         {points.map((p, i) => (

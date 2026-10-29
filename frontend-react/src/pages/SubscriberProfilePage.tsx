@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import BaseMap from '../components/BaseMap'
 import SpeedRatings, { loadedLabel } from '../components/SpeedRatings'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
-import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet'
+import { CircleMarker, MapContainer, Polyline, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiErrorMessage } from '../api/client'
 import { useEmergencyStatus, useSubscriberProfile } from '../api/queries'
@@ -322,7 +323,7 @@ function SiteMap({ loc }: { loc: NonNullable<SubscriberProfile['last_location']>
   return (
     <div className="sp-map">
       <MapContainer center={points[0]} zoom={14} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false} attributionControl={false}>
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <BaseMap />
         <FitToPoints points={points} fitKey={points.map((p) => p.join(',')).join('|')} singleZoom={15} />
         {site && (
           <CircleMarker center={site} radius={8} pathOptions={{ color: '#4f46e5', fillColor: '#818cf8', fillOpacity: 0.9, weight: 2 }}>

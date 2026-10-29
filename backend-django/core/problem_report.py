@@ -104,6 +104,7 @@ def _phone_readings(report, user, radius_m=RADIUS_M, wide=False):
     qs = TelemetrySample.objects.filter(
         received_at__gte=start, ts__gte=start, ts__lte=end,
         lat__range=(report.lat - dlat, report.lat + dlat), lng__range=(report.lng - dlng, report.lng + dlng),
+        flag='',   # readings flagged on arrival (jump, burst) are not evidence (2026-10-29)
     ).exclude(trigger_reason__in=('drive_start', 'drive_stop'))
     rows = _scope_by_operator(qs, user).values_list(
         'ts', 'network_type', 'rsrp_dbm', 'rscp_dbm', 'rssi_dbm', 'rsrq_db', 'lat', 'lng',

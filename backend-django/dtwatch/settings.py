@@ -786,6 +786,9 @@ RESCUE_SHARED_KEY_ACCEPTED_UNTIL = _parse_datetime(os.environ.get('RESCUE_SHARED
 # Per-device batches/min for signed calls. Shared-key calls keep their
 # per-key limit (TelemetryIngestKey.rate_limit_per_min).
 TELEMETRY_DEVICE_RATE_PER_MIN = int(os.environ.get('TELEMETRY_DEVICE_RATE_PER_MIN', '60'))
+# Readings a day one phone may send (2026-10-29, core/ingest_guard.py). The
+# Collector edition sends about 5,800 a day, a trace about 8,600.
+TELEMETRY_DEVICE_DAILY_CAP = int(os.environ.get('TELEMETRY_DEVICE_DAILY_CAP', '20000'))
 
 # ── SMS gateway (2026-10-15, core/sms.py) ────────────────────────────────
 # Sends the code that proves a phone owns the number it registered with

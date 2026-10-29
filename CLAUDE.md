@@ -1926,6 +1926,39 @@ an Accept/Reject request; nothing is sent until the person accepts.
   diagnosis dashboard and the complaint's phone tiles
   (`components/SpeedRatings.tsx`). Tests `tests_speed_quality.py`,
   `SpeedRatingsTest`.
+  Committed and pushed: dtwatch `09605b7` (+ handoff `5378b2c`), mobile
+  `4e6bfac` (app 1.3.2).
+- **Own Nepal street map, web (option A)** (2026-10-29, built, NOT
+  committed, the pages not seen in a browser). No key, no paid licence: the
+  data is OpenStreetMap (ODbL, credit shown), cut to Nepal from the free
+  Protomaps daily build with the `pmtiles` tool (go-pmtiles 1.31.2, in the
+  scratchpad): `pmtiles extract https://build.protomaps.com/YYYYMMDD.pmtiles
+  data/maps/nepal.pmtiles --bbox=80.0,26.3,88.3,30.5 --maxzoom=14` (324 MB,
+  git-ignored). nginx serves `/maps/` from the mounted `./data/maps`
+  (docker-compose `volumes`, Range requests). `components/BaseMap.tsx`
+  (protomaps-leaflet 5.1.0, BSD) replaces the OpenStreetMap TileLayer on
+  every Leaflet map (20 files); it checks the file once and falls back to
+  the public OSM tiles when it is missing. Satellite views unchanged
+  (still Google tiles). Checked with headless Edge on a throwaway page:
+  Kathmandu draws from the file. On prod: copy the file to
+  /data/dtwatch/data/maps/ and add the same volume to prod's compose file.
+  The phone app's Map tab (osmdroid, public OSM tiles) is not changed:
+  phones on mobile data cannot reach the server yet.
+- **Screening of phone readings and the public front door** (2026-10-29,
+  for a public phone side with DT-WATCH private). `core/ingest_guard.py`,
+  run in the upload view after the duplicate-batch check: daily cap per
+  phone (`TELEMETRY_DEVICE_DAILY_CAP`, 20,000; excess dropped, 429 when none
+  left), `flag` 'jump' (more than 2 km from the previous reading at over
+  85 m/s) or 'burst' (under 1 s apart), `signed` (registered phone or
+  shared key); last position per phone in Redis. `TelemetrySample.signed`,
+  `.flag` (migration 0156; AI migrations now 0157-0162, local history
+  renamed, columns by hand). Flagged readings are left out of the coverage
+  roll-ups (roll_telemetry_bins, prune_telemetry), the on-the-fly coverage
+  and the complaint check; Live Samples shows a "Check" column. Tests
+  `tests_ingest_guard.py`. `docs/public-telemetry/front-door.nginx.conf`
+  (only /api/telemetry/v1/ and /speedtest/ passed, 404 for the rest, rate
+  limits, tighter on registration, 4 MB for site photos) and `README.md`
+  (plan for NTC's network team); checked in a throwaway nginx container.
 
 **Open items:**
 - Deploy to prod (back up the database, pull, `docker compose build

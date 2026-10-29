@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { CircleMarker, MapContainer, Polyline, TileLayer } from 'react-leaflet'
+import BaseMap from '../components/BaseMap'
+import { CircleMarker, MapContainer, Polyline } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { RSRP_BANDS, bandColor } from '../lib/dtBands'
 import { apiErrorMessage } from '../api/client'
@@ -335,10 +336,7 @@ export default function TraceRequestsPage() {
                   zoom={16}
                   style={{ height: '100%', width: '100%' }}
                 >
-                  <TileLayer
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    attribution="&copy; OpenStreetMap contributors"
-                  />
+                  <BaseMap />
                   <Polyline
                     positions={fixes.data.results.map((f) => [f.lat, f.lng] as [number, number])}
                     pathOptions={{ color: '#0153A5', weight: 3 }}

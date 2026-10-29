@@ -330,7 +330,7 @@ class TelemetryCoverageView(APIView):
         else:
             raw_qs = _scope_by_operator(
                 TelemetrySample.objects
-                .filter(received_at__gte=timezone.now() - timedelta(days=days))
+                .filter(received_at__gte=timezone.now() - timedelta(days=days), flag='')
                 .exclude(lat__isnull=True).exclude(lng__isnull=True),
                 request.user,
             )
@@ -508,6 +508,8 @@ class TelemetryLiveSamplesView(APIView):
                 'rscp_dbm': s.rscp_dbm,
                 'ecio_db': s.ecio_db,
                 'trigger_reason': s.trigger_reason,
+                # Screening on arrival (2026-10-29, core/ingest_guard.py).
+                'signed': s.signed, 'flag': s.flag,
                 # Serving-cell identity and attribution (2026-10-04). The
                 # physical-layer ids the phone reported, plus the site/sector
                 # they matched to within 5 km (blank when nothing matched).
@@ -953,6 +955,8 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 'rscp_dbm': s.rscp_dbm,
                 'ecio_db': s.ecio_db,
                 'trigger_reason': s.trigger_reason,
+                # Screening on arrival (2026-10-29, core/ingest_guard.py).
+                'signed': s.signed, 'flag': s.flag,
                 # GPS accuracy of this fix, in metres (see ROUTE_MAX_ACCURACY_M).
                 'gps_accuracy_m': s.gps_accuracy_m,
                 'drive_session_id': s.drive_session_id,

@@ -1,4 +1,5 @@
-import { MapContainer, TileLayer, useMap } from 'react-leaflet'
+import { MapContainer, useMap } from 'react-leaflet'
+import BaseMap from './BaseMap'
 import { useEffect, useMemo, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -403,10 +404,7 @@ export default function DtCoverageMap({
         {bounds && !viewReady && <FitToBounds bounds={bounds} onDone={() => setViewReady(true)} />}
         {viewReady && (
           <>
-            <TileLayer
-              attribution="&copy; OpenStreetMap contributors"
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
+            <BaseMap />
             <SectorBeamOverlay servingCells={servingCells} />
             <CoverageDots samples={drawnSamples} metric={activeMetric} servingCells={servingCells}
               counts={counts} squareM={grouped.squareM} />

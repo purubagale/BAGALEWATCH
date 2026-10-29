@@ -1963,6 +1963,9 @@ export interface TelemetryLiveSample extends SampleBandFields {
   lat_smooth?: number | null
   lng_smooth?: number | null
   trigger_reason: string
+  // Screening on arrival (2026-10-29): signed by a registered phone, and '' / 'jump' / 'burst'.
+  signed?: boolean | null
+  flag?: string
   // Serving-cell identity (already sent by the backend; added to this type
   // 2026-10-07 for lib/declusterPlot.ts -- tells "the same site measured
   // twice at one spot" apart from "two different sites happened to be
