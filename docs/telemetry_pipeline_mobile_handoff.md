@@ -4,7 +4,7 @@
 
 **From:** Puru (RAN O&M, owner of the DT-WATCH server and web application)
 
-**Last updated:** 2026-10-27 (push address retried until accepted, 3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
+**Last updated:** 2026-10-29 (app 1.3.0: "share my location until this is fixed" on a problem report, and the opt-in "Help improve NTC's network" readings; earlier: push address retried until accepted, 3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
 
 ## 1. Summary
 
@@ -597,6 +597,52 @@ The server checks the report against stored measurements; staff see the
 result on the Problem Reports page. The reference app also shows hints from
 the same rules on the phone (`ProblemHints.kt`).
 
+**Share until fixed (29 October 2026, app 1.3.0).** The report screen has a
+tick box, "Share my location with NTC until this is fixed". When the person
+ticks it, add `"share_until_fixed": true` to the report. The server then
+starts the customer's own sharing for this complaint and answers:
+
+```json
+{"id": 41, "stored": true,
+ "share": {"trace_id": "8a1f...", "expires_at": "2026-11-01T10:00:00+05:45", "interval_s": 300}}
+```
+
+Send readings to that trace exactly as for an accepted location request
+(section 9: `POST device/trace-requests/<trace_id>/samples/`, signed), every
+`interval_s` seconds, with a visible notification and a Stop action. Stop
+when `expires_at` passes (at most 72 hours), when the person taps Stop
+(`respond` with `stop`), or when the server answers 409 or 404: it does so
+once NTC closes the complaint. Run no speed tests during this sharing; the
+report already carried one. In the SDK: `NetProblem.send(context, category,
+note, shareUntilFixed = true)` returns `Outcome.share` (trace id, expiry in
+ms, interval in ms); the reference app passes it to its sharing service.
+
+## 10b. Help improve NTC's network (29 October 2026, app 1.3.0)
+
+An opt-in, off by default. The app asks once on the first start after install
+or after an update, before registration, and offers a switch in Settings.
+When on, the phone sends four readings a day, around 00:00, 10:00, 14:00 and
+19:00 local time, each at a random moment within 30 minutes of its slot
+(WorkManager, so Android may delay one while the phone sleeps).
+
+`POST /api/telemetry/v1/scheduled-readings/` with the shared key only
+(`Authorization: Bearer tel_...`). Do not sign it: a signed call is refused,
+because these readings must not name the phone.
+
+```json
+{"anon_id": "random id, renewed every 30 days", "ts": 1761710400000, "slot": 19,
+ "network_type": "LTE", "band": "B3 (1800)", "level_dbm": -104, "rsrq_db": -12,
+ "sinr_db": 6, "mcc": "429", "mnc": "01", "cell_id": 26385921, "tac": 1201, "pci": 120}
+```
+
+No position is read or sent: read the cell without a GPS fix. `anon_id` is a
+random value kept on the phone and replaced every 30 days; never send the
+device id, number or IMEI. The server keeps a hash of `anon_id`, the slot,
+the readings and the site and sector the cell belongs to; it does not keep
+the raw cell number. `201 {"stored": true}`; at most 8 a day per `anon_id`
+(429 after). In the SDK: `NetTelemetry.setScheduledReadings(true|false)`,
+`scheduledReadingsEnabled()`, `scheduledReadingsAsked()`.
+
 ## 11. Site photos
 
 A staff member points the phone along a sector and takes a photo. The server
@@ -866,6 +912,9 @@ NetTelemetry.enrollForRescue(msisdn); NetTelemetry.optOutOfRescue()
 NetTelemetry.setDriveTestConsent(true)
 NetTelemetry.setEnvironment(context, "indoor")   // "outdoor", "indoor", "vehicle" or null; cleared at stop
 NetTelemetry.environment(context)
+NetTelemetry.setScheduledReadings(true)    // "Help improve NTC's network" (10b); false turns it off
+NetTelemetry.scheduledReadingsEnabled(); NetTelemetry.scheduledReadingsAsked()
+NetProblem.send(context, category, note, shareUntilFixed = true)   // 10a; Outcome.share
 ```
 
 ### 14.3 Configuration (`TelemetryConfig`)
