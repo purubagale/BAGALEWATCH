@@ -1008,6 +1008,8 @@ class DriveTestSamplePlotSerializer(serializers.ModelSerializer):
             # map's hover connector reads; serving_dist_km is per-point so
             # the popup shows THIS sample's distance to its serving site.
             'serving_site_id', 'serving_dist_km',
+            # Place set on the web for a stretch (2026-10-28); null = the session's.
+            'environment',
         ]
 
 

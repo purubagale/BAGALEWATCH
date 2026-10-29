@@ -1667,6 +1667,118 @@ repo, not on prod):
   Change squares via the shared `recentSquareStyle`), with turn, tilt and
   height. "Street" on the flat map means place names on in 3D.
 
+- **"Where" on every session map, and start/end pins** (2026-10-28, built,
+  NOT committed). Drive-test readings got `environment` (migration 0149,
+  nullable; AI migrations now 0150-0155, local history renamed, column added
+  by hand): null means the session's test type (drive = vehicle, walk
+  outdoors, walk indoors; `withSessionPlace` in `EnvironmentTools.tsx`).
+  `POST telemetry/environment/` takes `dt_session` (times are text, each is
+  parsed; naive = UTC). The "Where" bar is now on DT Session History's map
+  (`DtCoverageMap` props `sessionId`, `sessionEnvironment`, `canTag`;
+  tagging for admin and superadmin), DT Explore (filter only, over drive
+  tests and phone points; Sessions view, not on square searches; the 3D view
+  follows it) and the diagnosis dashboard's signal analytics (pills; the
+  analysis cards do not follow it). Collections and Telemetry Drive Test had
+  it already. `components/RouteEnds.tsx`: green S pin at the first reading,
+  dark red E at the last, time on hover; on Collections, Telemetry Drive
+  Test (per phone), DT Session History and Explore (per ticked session, up
+  to 30). Collections' jump to the route keeps re-aligning for 2.5 s until
+  the user scrolls.
+
+- **One card per phone** (2026-10-28, built, NOT committed). Prod showed one
+  Samsung as "3 phones" and 8 cards: only some ids carry the hardware
+  fingerprint, and `_describe_phones` keyed on it first. Now make and model
+  is the key; the fingerprint splits a model only when two fingerprints were
+  seen for it. Diagnosis dashboard: one card per phone (current registration,
+  total readings, app now) with its records folded into a table. Registered
+  Devices marks a registration replaced by a newer one from the same number
+  and model (`replaced_at`, nothing revoked) and hides those by default.
+
+- **Stacked readings and pins** (2026-10-28, built, NOT committed). Local
+  Telemetry Drive Test "koteshwor chowk area" (2 September): 34 readings on
+  two spots (32 + 2), all RSRP -44, operator 310/260, i.e. a test phone that
+  did not move; one dot per spot, both under the S/E pins, so it looked like
+  "no plot". Pins now float 8 px above the reading; `StackedNote` in
+  `RouteEnds.tsx` says "34 readings at 2 places" on Collections, Telemetry
+  Drive Test and DT Session History maps when there are 3+ readings per
+  place. Telemetry Drive Test's reading table is in time order.
+
+- **Jump to the map on every session list** (2026-10-28, built, NOT
+  committed). Collections' scroll watch moved to
+  `lib/useScrollToSelection.ts` and is used on Collections, Telemetry Drive
+  Test (selected session in a section headed "Session — name" with "↑ Back to
+  the session list") and DT Session History (the detail panel).
+
+- **Network KPIs per cell** (2026-10-28). NTC's KPI team is building an
+  API for their dashboard's per-cell figures; no manual upload or mail
+  (the user's decision). `core/cell_kpi.py`: `CellKpi` (one row per cell
+  and day / busy hour / hour, `uniq_cell_kpi_period`, null = not measured,
+  never "/0") and `CellKpiSourceSettings` (singleton: off / demo / http,
+  address, encrypted key, field map their->ours, levels, fetch hour, keep
+  days, link pattern to their dashboard), migration 0150 (AI migrations
+  now 0151-0156, local history renamed, tables made from `sqlmigrate`).
+  Pull: `fetch_cell_kpis` in `run_maintenance` fetches yesterday after the
+  fetch hour, retries every 30 min; `GET <url>?date=&level=&page=&page_size=5000`,
+  answers a list or `results`/`data` with `next`. Push: `POST
+  /api/external/v1/cell-kpis/` with scope `kpis:write`. Demo: the daily
+  "Network 2" exports in `data/media/cell_kpi_demo/` (git-ignored; placed
+  here, not on prod). Matching: cell name, site + label, eNodeB + local
+  cell, site + local cell; 22 Oct export: 24,374 rows, 99.3% matched, 26 s.
+  After each import the site list's `prb`/`prb_dl`/`prb_ul` take the busiest
+  sector's newest busy hour (monthly report). Site page card "Network KPIs"
+  (`SiteCellKpis.tsx`: busy hour / whole day, 7-30 day DL PRB line, network
+  CQI beside drive-test CQI, link to their dashboard); Live Site Sync card
+  (`CellKpiSourceSection.tsx`). Complaint check: `cell_load` (serving cell,
+  else the site's busiest cell; hour row, else busy hour, else day, else up
+  to 3 days before), `busy_cell` quotes it, new cause `slow_not_busy` (DL
+  PRB under 50%), call-drop finding shows the cell's drop rates; Hotspots
+  "Cell load" column. Tested: 9 unit tests, rolled-back checks; pages not
+  seen in a browser. Network 2 covers EDR, WDR and FWDR only; its BBH is
+  20:00 for every cell.
+- **One card per phone; Registered Devices replaced rows** (2026-10-28):
+  see the diagnosis dashboard notes; stacked-readings note and route pins;
+  jump to the map on Telemetry Drive Test and DT Session History. All in
+  the same commit as the network KPIs.
+
+- **Antenna beams on the site map** (2026-10-28, built, NOT committed). The
+  site list's 4G `beamwidth`/`radius` are KML drawing values (40 or 60
+  degrees, 200 or 150 m; none on 2G/3G; no Tx power anywhere), so three
+  sectors showed 60-80 degree gaps. The "Diagram" switch is now "Beams": one
+  beam per antenna direction (same grouping as the 3D view), drawn from the
+  3GPP horizontal pattern (12 x (angle/HPBW)^2 dB, floor 25 dB) with path-loss
+  exponent 3.5, so the outline at 60 degrees off boresight is half the length
+  and neighbouring sectors meet. Strong fill = within 3 dB, light dashed = out
+  to the floor. HPBW from `Site.antenna_device` (`antennaHpbw`: CommScope
+  names carry it, Kathrein 80010865 taken as 65, Omni = circle, unknown = 65),
+  changeable on the page (localStorage `dtwatch_horizontal_beamwidth`). Length
+  = where the top of the vertical beam meets flat ground, 150 m to 1.5 km,
+  500 m when height or tilt is missing (`beamReachM`). Helpers in
+  `lib/sectorWedge.ts` (band group and beamwidth storage moved there too).
+  The DT coverage map (`SectorBeamOverlay` in `DtCoverageMap.tsx`) draws the
+  same beams; `serving-cells/` now also returns tech, site_band, carrier,
+  height, tilts and the site's antenna model.
+- **Predicted coverage on the site map** (2026-10-28, built, NOT committed,
+  not seen in a browser). "Predicted" switch: `lib/coveragePrediction.ts`
+  works out a 120 x 120 grid (1.5/3/5/8 km round the site, about 0.3 s) per
+  technology: power + gain - cable loss - 3GPP pattern (horizontal and
+  vertical, max 25 dB) - Hata (Okumura <= 1500 MHz, COST-231 above; antenna
+  height over the point's ground; urban/suburban/rural) - knife-edge loss
+  over the main ridge (ITU-R P.526, one walk per mast) + model offset, on the
+  terrain tiles (`heightSampler` in `lib/terrainProfile.ts`). Views: Level,
+  Best sector, Overlap (next sector within 3/6 dB). With Measured on, the
+  panel compares readings with the prediction for the same sector and an
+  admin can save the mean difference as the model offset. Radio values:
+  `CoveragePredictionSettings` singleton (migration 0151; AI migrations now
+  0152-0157, local history renamed, table created by hand),
+  `core/coverage_prediction.py` (`GET/PUT coverage-prediction/settings/`,
+  GET any user, PUT admin, audit `COVERAGE_PREDICTION.UPDATED`). Starting
+  values per band (B20 RS 18.2 dBm/15.5 dBi, B3 15.2/17.5, 3G CPICH 33/18,
+  2G BCCH 43 with 2 dB cable), only changed values are stored; a sector's
+  own `max_tx_power_dbm` comes first (4G: minus 10 log(12 x 5 x MHz); 3G
+  minus 10). Waiting for NTC's planning values; an admin types them in on
+  the site map ("Change values"). Flat-ground check: B3 -94 dBm at 1 km,
+  B20 -83. Tests `tests_coverage_prediction.py`.
+
 **Do not build** "ping to discover" in the form of silent registration,
 registration without a number, or server-triggered location of an
 identified device. It was declined; Area Sample is the agreed

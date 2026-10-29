@@ -768,6 +768,8 @@ export type DtTech = '4G' | '3G' | '2G'
 export type DtCellRole = 'serving' | 'neighbor'
 
 export interface DtSample {
+  // Place set on the web for a stretch (2026-10-28); null = the session's test type.
+  environment?: string | null
   // Set only on a 50 m square of Explore's wide search (2026-10-14): how many
   // readings it stands for; its values are the weakest of each measurement.
   square_n?: number
@@ -1349,6 +1351,14 @@ export interface DtServingCell {
   beamwidth: number | null
   radius: number | null
   max_tx_power_dbm: number | null
+  // For the antenna beam (2026-10-28, same drawing as the site map).
+  tech?: string | null
+  site_band?: string | null
+  carrier?: string | null
+  height?: number | null
+  mech_tilt?: number | null
+  elec_tilt?: number | null
+  antenna_device?: string | null
   sample_count: number
   mean_dist_km: number | null
 }
@@ -1720,7 +1730,7 @@ export interface BrandingSettingsWrite {
 // login, managed here only as plain superadmin CRUD over the ApiKey
 // model (same shape as UsersPage/MenuAdminPage's own hooks).
 export type ApiKeyScope = 'sites:read' | 'sites:write' | 'dt:read' | 'dt:write' | 'coverage:read'
-  | 'problems:write' | 'problems:read'
+  | 'problems:write' | 'problems:read' | 'kpis:write'
 
 export const API_KEY_SCOPES: { value: ApiKeyScope; label: string }[] = [
   { value: 'sites:read', label: 'Sites & Sectors — read' },
@@ -1731,6 +1741,8 @@ export const API_KEY_SCOPES: { value: ApiKeyScope; label: string }[] = [
   // Another NTC system's customer complaints (2026-10-15, core/external_problem.py).
   { value: 'problems:write', label: 'Problem reports — send' },
   { value: 'problems:read', label: 'Problem reports — read status' },
+  // The KPI team's system sends per-cell network KPIs (2026-10-28, core/cell_kpi.py).
+  { value: 'kpis:write', label: 'Cell KPIs — send' },
 ]
 
 export interface ApiKeyRow {
@@ -2343,6 +2355,8 @@ export interface RegisteredDeviceRow {
   revoked_at: string | null
   phone_model: string | null
   manufacturer: string | null
+  // A newer registration from the same number and phone model (2026-10-28).
+  replaced_at?: string | null
 }
 
 export interface RescueEnrolledRow {
@@ -2765,6 +2779,9 @@ export interface TelemetryNearPoint {
   rssi: number | null
   rxqual: number | null
   band_label?: string
+  // Outdoors / indoors / vehicle (2026-10-28), for Explore's "Where" filter.
+  environment?: string | null
+  environment_source?: string | null
 }
 
 export interface TelemetryNearResponse {
@@ -2815,6 +2832,8 @@ export interface ProblemCheck {
   nearest_sites: { site_id: string; name: string; km: number }[]
   // Neighbour cells phones heard around the spot (2026-10-27).
   neighbours?: NeighbourSummary
+  // The serving (or nearest site's busiest) cell's network KPIs around the time (2026-10-28).
+  cell_load?: CellLoad | null
   findings: ProblemFinding[]
   customer_reply: string
 }
@@ -2855,6 +2874,87 @@ export interface AlarmSource {
 }
 export interface AlarmSourceInput {
   api_url?: string; api_key?: string; clear_key?: boolean; auth_scheme?: 'Bearer' | 'Token'; cache_seconds?: number; enabled?: boolean
+}
+
+// Per-cell network KPIs (2026-10-28) -- core/cell_kpi.py.
+export type CellKpiLevel = 'day' | 'bbh' | 'hour'
+export interface CellLoad {
+  date: string; level: CellKpiLevel; hour: number | null; earlier_day: boolean; basis: string
+  cell_name: string; sector: string | null; site_id: string | null
+  prb_dl: number | null; prb_ul: number | null; users_avg: number | null; thr_dl_user: number | null
+  cqi_avg: number | null; service_drop: number | null; volte_drop: number | null; availability: number | null
+  busy: boolean; quiet: boolean
+}
+export interface CellKpiFetchResult {
+  ok: boolean; date: string; backend: string; error?: string; note?: string; seconds?: number
+  rows?: number; matched?: number; unmatched?: number; unmatched_cells?: string[]; rejected?: number
+  rejected_why?: Record<string, number>; dates?: string[]; levels?: string[]; files?: string[]; pruned?: number
+}
+export interface CellKpiSource {
+  backend: 'off' | 'demo' | 'http'; api_url: string; auth_scheme: 'Bearer' | 'Token'; has_key: boolean
+  field_map: Record<string, string>; levels: CellKpiLevel[]; fetch_hour: number; keep_days: number; dashboard_url: string
+  last_run_at: string | null; last_result: CellKpiFetchResult | Record<string, never>; last_success_date: string | null
+  running: boolean; demo_files: string[]; stored_rows: number; newest_date: string | null; fields: string[]
+  updated_by: string | null; updated_at: string | null
+}
+export interface CellKpiSourceInput {
+  backend?: CellKpiSource['backend']; api_url?: string; api_key?: string; clear_key?: boolean
+  auth_scheme?: 'Bearer' | 'Token'; field_map?: Record<string, string>; levels?: CellKpiLevel[]
+  fetch_hour?: number; keep_days?: number; dashboard_url?: string
+}
+export interface CellKpiFigures {
+  prb_dl: number | null; prb_dl_peak: number | null; prb_ul: number | null; users_avg: number | null
+  users_max: number | null; thr_dl_user: number | null; thr_dl_cell: number | null; traffic_gb: number | null
+  cqi_avg: number | null; rrc_sr: number | null; erab_sr: number | null; service_drop: number | null
+  volte_drop: number | null; availability: number | null; integrity: number | null; busy_hour: number | null
+}
+export interface CellKpiSeriesPoint {
+  prb_dl: number | null; prb_ul: number | null; thr_dl_user: number | null; users_avg: number | null; cqi_avg: number | null
+}
+export interface SiteCellKpiCell {
+  cell_name: string; sector_id: number | null; sector: string; band: string; azimuth: number | null; matched: boolean
+  day: CellKpiFigures | null; bbh: CellKpiFigures | null
+  series: { date: string; day?: CellKpiSeriesPoint; bbh?: CellKpiSeriesPoint }[]
+  drive_test_cqi: { n: number; avg: number | null } | null
+  dashboard_url: string | null
+}
+export interface SiteCellKpis {
+  site_id: string; configured: boolean; newest_date: string | null; busy_prb: number; cells: SiteCellKpiCell[]
+}
+
+// GET/PUT /api/v2/coverage-prediction/settings/ (2026-10-28, core/coverage_prediction.py):
+// radio values for the predicted coverage on the site map.
+export type RadioBandKey = 'lte_b20' | 'lte_b3' | 'wcdma_b1' | 'gsm900' | 'gsm1800'
+export type RadioValueKey = 'freq_mhz' | 'power_dbm' | 'bandwidth_mhz' | 'gain_dbi' | 'loss_db'
+export interface RadioBand {
+  label: string
+  tech: '2G' | '3G' | '4G'
+  freq_mhz: number
+  power_dbm: number
+  bandwidth_mhz: number | null
+  gain_dbi: number
+  loss_db: number
+  /** Values changed from the starting value. */
+  changed: RadioValueKey[]
+}
+export type PredictionEnvironment = 'urban' | 'suburban' | 'rural'
+export interface PredictionGlobals {
+  environment: PredictionEnvironment
+  rx_height_m: number
+  default_height_m: number
+  default_tilt_deg: number
+  offset_db: number
+}
+export interface PredictionSettings extends PredictionGlobals {
+  bands: Record<RadioBandKey, RadioBand>
+  defaults: PredictionGlobals & { bands: Record<RadioBandKey, Record<RadioValueKey, number | null>> }
+  is_default: boolean
+  updated_at: string | null
+  updated_by: string | null
+}
+export type PredictionSettingsInput = Partial<PredictionGlobals> & {
+  bands?: Partial<Record<RadioBandKey, Partial<Record<RadioValueKey, number | null>>>>
+  reset?: boolean
 }
 
 export interface AlarmSummary {
@@ -3098,6 +3198,8 @@ export interface ProblemHotspot {
   causes: ProblemCount[]
   sectors: ProblemCount[]
   level_mean: number | null
+  // Busy-hour DL PRB of the site's busiest cell over the last week (2026-10-28).
+  cell_load?: { prb_dl_max: number | null; cell_name: string; date: string; busy_days: number; days: number } | null
 }
 
 export interface ProblemDashboard {

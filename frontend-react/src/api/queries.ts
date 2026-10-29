@@ -6,6 +6,7 @@ import type { SitePhoto, SitePhotoList, TelemetryNearResponse,
 } from './types'
 import type {
   AlarmSource, AlarmSourceInput, AlarmSummary, SiteActiveAlarms, SitesActiveAlarms,
+  CellKpiSource, CellKpiSourceInput, SiteCellKpis, PredictionSettings, PredictionSettingsInput,
   LinkedSystem, ProblemDashboard, ProblemLive, ProblemLiveTrace, ProblemNearbySites, ProblemNotificationRow, ProblemRelated,
   ProblemReport, ProblemReportList,
   SecuritySettings,
@@ -2267,12 +2268,12 @@ export function useAlarmSummary() {
 export function useSetEnvironment() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { collection_session?: string; telemetry_session?: number; from: string; to: string; environment: string }) =>
+    mutationFn: (input: { collection_session?: string; telemetry_session?: number; dt_session?: number; from: string; to: string; environment: string }) =>
       apiJson<{ updated: number; environment: string | null }>('/api/v2/telemetry/environment/', {
         method: 'POST', body: JSON.stringify(input),
       }),
     onSuccess: () => {
-      for (const key of ['collection-session-samples', 'collection-session-sectors', 'telemetry-dt-session-samples', 'telemetry-dt-session-sectors']) {
+      for (const key of ['collection-session-samples', 'collection-session-sectors', 'telemetry-dt-session-samples', 'telemetry-dt-session-sectors', 'dt-session', 'dt-sessions-near']) {
         qc.invalidateQueries({ queryKey: [key] })
       }
     },
@@ -2312,6 +2313,62 @@ export function useSaveAlarmSource() {
       qc.invalidateQueries({ queryKey: ['alarm-summary'] })
       qc.invalidateQueries({ queryKey: ['site-alarms'] })
     },
+  })
+}
+
+// Per-cell network KPIs (2026-10-28) -- core/cell_kpi.py.
+export function useCellKpiSource() {
+  return useQuery({
+    queryKey: ['cell-kpi-source'],
+    queryFn: () => apiJson<CellKpiSource>('/api/v2/cell-kpis/source/'),
+    // Asked again every 5 s while a fetch runs on the server.
+    refetchInterval: (q) => (q.state.data?.running ? 5000 : false),
+  })
+}
+
+export function useSaveCellKpiSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: CellKpiSourceInput) =>
+      apiJson<CellKpiSource>('/api/v2/cell-kpis/source/', { method: 'PUT', body: JSON.stringify(input) }),
+    onSuccess: (d) => qc.setQueryData(['cell-kpi-source'], d),
+  })
+}
+
+export function useFetchCellKpis() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (date?: string) =>
+      apiJson<{ started: boolean }>('/api/v2/cell-kpis/source/fetch/', { method: 'POST', body: JSON.stringify(date ? { date } : {}) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cell-kpi-source'] }),
+  })
+}
+
+export function useSiteCellKpis(siteId: string | undefined, days = 7) {
+  return useQuery({
+    queryKey: ['site-cell-kpis', siteId, days],
+    queryFn: () => apiJson<SiteCellKpis>(`/api/v2/sites/${encodeURIComponent(siteId as string)}/cell-kpis/?days=${days}`),
+    enabled: !!siteId,
+    staleTime: 5 * 60_000,
+  })
+}
+
+// Radio values for the predicted coverage on the site map (2026-10-28).
+export function usePredictionSettings(enabled = true) {
+  return useQuery({
+    queryKey: ['coverage-prediction-settings'],
+    queryFn: () => apiJson<PredictionSettings>('/api/v2/coverage-prediction/settings/'),
+    enabled,
+    staleTime: 10 * 60_000,
+  })
+}
+
+export function useSavePredictionSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: PredictionSettingsInput) =>
+      apiJson<PredictionSettings>('/api/v2/coverage-prediction/settings/', { method: 'PUT', body: JSON.stringify(input) }),
+    onSuccess: (d) => qc.setQueryData(['coverage-prediction-settings'], d),
   })
 }
 

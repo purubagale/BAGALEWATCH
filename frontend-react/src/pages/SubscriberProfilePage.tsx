@@ -108,11 +108,111 @@ const LINKED_BY: Record<string, string> = {
   manual_link: 'a superadmin, by hand',
 }
 
-function sortDevices(devices: SubscriberProfile['devices']) {
-  return [...devices].sort((a, b) =>
-    a.phone_key.localeCompare(b.phone_key)
-    || ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role)
-    || Number(!!a.replaced_at) - Number(!!b.replaced_at))
+// One card per physical phone (2026-10-28). A phone collects several records
+// over time (each reinstall is a new app install, each re-registration a new
+// registration), which as separate cards looked like several phones. The card
+// shows the phone as it is now; the records fold into a table underneath.
+type ProfileDevice = SubscriberProfile['devices'][number]
+type PhoneGroup = {
+  key: string
+  name: string
+  records: ProfileDevice[]
+  current: ProfileDevice | null // newest registration still in force
+  reading: ProfileDevice | null // the install with the newest reading
+  readings: number
+  lastReading: string | null
+}
+const ms = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() : 0)
+
+function phoneGroups(devices: ProfileDevice[]): PhoneGroup[] {
+  const byKey = new Map<string, ProfileDevice[]>()
+  for (const d of devices) byKey.set(d.phone_key, [...(byKey.get(d.phone_key) ?? []), d])
+  const groups = [...byKey.entries()].map(([key, records]) => {
+    const regs = records.filter((d) => d.registered_at && !d.registration_revoked_at)
+    const current = regs.filter((d) => !d.replaced_at).sort((a, b) => ms(b.registered_at) - ms(a.registered_at))[0] ?? null
+    const reading = records.filter((d) => d.readings > 0).sort((a, b) => ms(b.last_reading) - ms(a.last_reading))[0] ?? null
+    const named = records.find((d) => d.manufacturer || d.phone_model)
+    records.sort((a, b) =>
+      ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role)
+      || Number(!!a.replaced_at) - Number(!!b.replaced_at)
+      || Math.max(ms(b.last_reading), ms(b.registered_at)) - Math.max(ms(a.last_reading), ms(a.registered_at)))
+    return {
+      key, records, current, reading,
+      name: named ? [named.manufacturer, named.phone_model].filter(Boolean).join(' ') : 'Unknown phone',
+      readings: records.reduce((n, d) => n + d.readings, 0),
+      lastReading: reading?.last_reading ?? null,
+    }
+  })
+  return groups.sort((a, b) => ms(b.lastReading) - ms(a.lastReading))
+}
+
+function PhoneCard({ g, isSuper, readingsTo }: { g: PhoneGroup; isSuper: boolean; readingsTo: (device: string) => string }) {
+  const now = g.current ?? g.reading ?? g.records[0]
+  const any = (pick: (d: ProfileDevice) => unknown) => g.records.some((d) => !d.replaced_at && pick(d))
+  const verified = any((d) => d.number_verified)
+  const rescue = g.records.find((d) => d.rescue_beacon)?.rescue_beacon
+  const app = g.reading?.app_version || g.current?.app_version || g.records.find((d) => d.app_version)?.app_version
+  const imei = g.records.find((d) => d.imei)?.imei
+  const replacedRegs = g.records.filter((d) => d.replaced_at).length
+  return (
+    <div className="sp-device sp-device-group">
+      <div className="sp-device-top">
+        <span className="sp-device-name">{g.name}</span>
+        <span className="sp-device-kind">{g.records.length} record{g.records.length === 1 ? '' : 's'}</span>
+      </div>
+      <div className="sp-device-chips">
+        <span className={`sp-chip ${g.current ? 'ok' : ''}`}>{g.current ? 'Registered' : 'Not registered'}</span>
+        <span className={`sp-chip ${verified ? 'ok' : ''}`} title="Proved by a code sent by SMS to this number">{verified ? 'Number verified' : 'Number not verified'}</span>
+        {rescue && <span className={`sp-chip ${rescue === 'on' ? 'ok' : 'bad'}`}>Rescue {rescue}</span>}
+        {any((d) => d.push_token) && <span className="sp-chip info">Push</span>}
+        {any((d) => d.signed_uploads_linked) && <span className="sp-chip info">Signed uploads</span>}
+        {now?.drive_test_consent && <span className={`sp-chip ${now.drive_test_consent === 'yes' ? 'ok' : ''}`}>DT consent {now.drive_test_consent}</span>}
+      </div>
+      <div className="sp-device-facts">
+        <div><span>Readings</span>{g.readings.toLocaleString()}</div>
+        <div><span>Last reading</span>{fmt(g.lastReading)}</div>
+        {app && <div><span>App now</span>{app}</div>}
+        {g.current && <div><span>Registered</span>{fmt(g.current.registered_at)}</div>}
+        {imei && <div><span>IMEI</span><b className="sp-mono">{imei}</b></div>}
+      </div>
+      {isSuper && g.reading && (
+        <Link className="sp-device-link" to={readingsTo(g.reading.device_id)}>
+          Open the latest install's {g.reading.readings.toLocaleString()} readings →
+        </Link>
+      )}
+      {g.records.length > 1 && (
+        <details className="sp-device-records">
+          <summary>
+            {g.records.length} records of this phone
+            {replacedRegs > 0 && ` · ${replacedRegs} older registration${replacedRegs === 1 ? '' : 's'} replaced`}
+          </summary>
+          <p className="sp-muted">A reinstall gives the app a new id and a new registration replaces the older one, so one phone collects several records. Readings stay under the id that took them.</p>
+          <table className="admin-table" data-pager="off">
+            <thead><tr><th>Record</th><th>Id</th><th>Readings</th><th>Last reading</th><th>App</th><th>Registered</th><th>Tied by</th><th></th></tr></thead>
+            <tbody>
+              {g.records.map((d) => (
+                <tr key={d.device_id} className={d.replaced_at ? 'sp-record-old' : undefined}>
+                  <td title={ROLE[d.role]?.hint}>
+                    {ROLE[d.role]?.label ?? d.kind}
+                    {d.replaced_at && <div className="sp-device-replaced">Replaced {fmt(d.replaced_at)}</div>}
+                    {d.registration_revoked_at && <div className="sp-device-replaced">Revoked</div>}
+                    {d.link_ended && <div className="sp-device-replaced">Link ended</div>}
+                  </td>
+                  <td className="sp-mono" title={d.device_id}>{d.device_id.slice(0, 10)}…</td>
+                  <td className="mono">{d.readings ? d.readings.toLocaleString() : '—'}</td>
+                  <td>{fmt(d.last_reading)}</td>
+                  <td>{d.app_version || '—'}</td>
+                  <td>{fmt(d.registered_at)}</td>
+                  <td>{d.linked_via.map((v) => LINKED_BY[v] ?? v.replace(/_/g, ' ')).join(', ') || '—'}</td>
+                  <td>{isSuper && d.readings > 0 && <Link to={readingsTo(d.device_id)}>Open →</Link>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+    </div>
+  )
 }
 
 // "1 phone · 4 records: …", and why Registered Devices shows fewer.
@@ -133,7 +233,7 @@ function PhonesSummary({ devices, phones, registeredLink }: {
   return (
     <div className="sp-muted" style={{ marginBottom: 8 }}>
       <b>{n} phone{n === 1 ? '' : 's'}</b> · {devices.length} record{devices.length === 1 ? '' : 's'}: {parts.join(', ')}.
-      {registeredLink && regs > 0 && ` Registered Devices lists the ${regs} registration${regs === 1 ? '' : 's'} only.`}
+      {registeredLink && regs > 0 && ` Registered Devices lists every registration, ${replaced ? `including the ${replaced} replaced` : 'one row each'}.`}
     </div>
   )
 }
@@ -356,37 +456,12 @@ function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
             })()} />
         )}
 
-        <Card id="sp-devices" icon="📱" title="Phones and app installs" count={p.devices.length} link={phonesLink}
-          empty={p.devices.length === 0} emptyText="No phone linked" wide={p.devices.length > 1}>
-          <PhonesSummary devices={p.devices} phones={s.phones} registeredLink={!!phonesLink && s.registered} />
+        <Card id="sp-devices" icon="📱" title="Phones and app installs" count={phoneGroups(p.devices).length} link={phonesLink}
+          empty={p.devices.length === 0} emptyText="No phone linked" wide={phoneGroups(p.devices).length > 1}>
+          <PhonesSummary devices={p.devices} phones={phoneGroups(p.devices).length} registeredLink={!!phonesLink && s.registered} />
           <div className="sp-devices">
-            {sortDevices(p.devices).map((d) => (
-              <div key={d.device_id} className={`sp-device${d.replaced_at ? ' sp-device-old' : ''}`}>
-                <div className="sp-device-top">
-                  <span className="sp-device-name">{[d.manufacturer, d.phone_model].filter(Boolean).join(' ') || 'Unknown phone'}</span>
-                  <span className="sp-device-kind" title={ROLE[d.role]?.hint}>{ROLE[d.role]?.label ?? d.kind}</span>
-                </div>
-                {d.replaced_at && <div className="sp-device-replaced">Replaced {fmt(d.replaced_at)} by a newer registration from this phone</div>}
-                <div className="sp-device-id" title={d.device_id}>{d.device_id}</div>
-                <div className="sp-device-chips">
-                  <span className={`sp-chip ${d.registered_at ? (d.registration_revoked_at ? 'bad' : 'ok') : ''}`}>{d.registered_at ? (d.registration_revoked_at ? 'Registration revoked' : 'Registered') : 'Not registered'}</span>
-                  <span className={`sp-chip ${d.number_verified ? 'ok' : ''}`} title="Proved by a code sent by SMS to this number">{d.number_verified ? 'Number verified' : 'Number not verified'}</span>
-                  {d.rescue_beacon && <span className={`sp-chip ${d.rescue_beacon === 'on' ? 'ok' : 'bad'}`}>Rescue {d.rescue_beacon}</span>}
-                  {d.push_token && <span className="sp-chip info">Push</span>}
-                  {d.signed_uploads_linked && <span className="sp-chip info">Signed uploads</span>}
-                  {d.drive_test_consent && <span className={`sp-chip ${d.drive_test_consent === 'yes' ? 'ok' : ''}`}>DT consent {d.drive_test_consent}</span>}
-                  {d.link_ended && <span className="sp-chip warn">Link ended</span>}
-                </div>
-                <div className="sp-device-facts">
-                  <div><span>Readings</span>{d.readings.toLocaleString()}</div>
-                  <div><span>Last reading</span>{fmt(d.last_reading)}</div>
-                  {d.app_version && <div><span>App</span>{d.app_version}</div>}
-                  {d.imei && <div><span>IMEI</span><b className="sp-mono">{d.imei}</b></div>}
-                  {d.registered_at && <div><span>Registered</span>{fmt(d.registered_at)}</div>}
-                  {d.linked_via.length > 0 && <div><span>Tied to this number by</span>{d.linked_via.map((v) => LINKED_BY[v] ?? v.replace(/_/g, ' ')).join(', ')}</div>}
-                </div>
-                {isSuper && d.readings > 0 && <Link className="sp-device-link" to={readings(d.device_id)}>Open all {d.readings.toLocaleString()} readings →</Link>}
-              </div>
+            {phoneGroups(p.devices).map((g) => (
+              <PhoneCard key={g.key} g={g} isSuper={isSuper} readingsTo={readings} />
             ))}
           </div>
           {isSuper && <LinkEarlierReadings msisdn={p.msisdn} reason={reason} onChanged={onChanged}

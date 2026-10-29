@@ -231,7 +231,7 @@ NEAR_OUTLINE_MAX_POINTS = 400
 NEAR_PLOT_FIELDS = (
     'ts', 'date', 'lat', 'lng', 'rsrp', 'rsrq', 'sinr', 'dl', 'pci', 'band', 'cqi',
     'cqi_estimated', 'cell_id', 'serving_site_name', 'rx_qual', 'bcch', 'bsic', 'rscp', 'ecno',
-    'scrambling_code', 'serving_site_id', 'serving_dist_km',
+    'scrambling_code', 'serving_site_id', 'serving_dist_km', 'environment',
 )
 
 
@@ -532,6 +532,14 @@ class DriveTestSessionViewSet(
                 'beamwidth': sec.beamwidth if sec else None,
                 'radius': sec.radius if sec else None,
                 'max_tx_power_dbm': sec.max_tx_power_dbm if sec else None,
+                # For the antenna beam (2026-10-28, same drawing as the site map).
+                'tech': sec.tech if sec else None,
+                'site_band': sec.site_band if sec else None,
+                'carrier': sec.carrier if sec else None,
+                'height': sec.height if sec else None,
+                'mech_tilt': sec.mech_tilt if sec else None,
+                'elec_tilt': sec.elec_tilt if sec else None,
+                'antenna_device': (site.antenna_device or None) if site else None,
                 'sample_count': g['sample_count'],
                 'mean_dist_km': round(g['mean_dist_km'], 2) if g['mean_dist_km'] is not None else None,
             })

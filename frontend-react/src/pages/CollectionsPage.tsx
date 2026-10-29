@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -11,6 +11,8 @@ import { useCollectionSectors, useCollectionSessionSamples, useCollectionSession
 import SectorBreakdown from '../components/SectorBreakdown'
 import NeighbourCellsCell from '../components/NeighbourCellsCell'
 import EnvironmentTools, { environmentText, filterByEnvironment, type EnvFilter } from '../components/EnvironmentTools'
+import RouteEnds, { StackedNote } from '../components/RouteEnds'
+import { useScrollToSelection } from '../lib/useScrollToSelection'
 import { useAuth } from '../auth/AuthContext'
 import { CQI_COLUMN_HINT, CQI_MODULATION_HINT, cqiLabel, cqiModulationLabel } from '../lib/cqiDisplay'
 
@@ -58,11 +60,8 @@ export default function CollectionsPage() {
   // The section is at least a screen tall, so its heading can reach the top
   // even before the route has loaded; once it has, the heading is put there
   // again in case the page moved meanwhile.
-  const routeRef = useRef<HTMLElement>(null)
-  const routeLoaded = !!samples.data
-  useEffect(() => {
-    if (selectedId) routeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [selectedId, routeLoaded])
+  // Kept in view by the shared hook (lib/useScrollToSelection.ts).
+  const routeRef = useScrollToSelection<HTMLElement>(selectedId, !!samples.data)
 
   // Filters beyond source (2026-10-07) -- client-side over the <=200 rows
   // the list endpoint already caps, same reasoning as the Telemetry Drive
@@ -264,6 +263,8 @@ export default function CollectionsPage() {
                     positions={samples.data.results.map((s) => [s.lat, s.lng] as [number, number])}
                     pathOptions={{ color: '#0153A5', weight: 3 }}
                   />
+                  <RouteEnds points={samples.data.results} name={selected.name || undefined} />
+                  <StackedNote points={samples.data.results} />
                   {plotPoints.map((p, i) => {
                     const level = telemetryLevel({
                       network_type: p.item.network_type, rsrp: p.item.rsrp_dbm, rscp: p.item.rscp_dbm, rssi: p.item.rssi_dbm,

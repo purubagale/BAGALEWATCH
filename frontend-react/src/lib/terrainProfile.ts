@@ -200,3 +200,43 @@ export async function beamFan(
     return { bearing, runs: coverRuns(points, antenna, tiltDeg, verticalBeamwidth) }
   }))
 }
+
+/** Ground heights of a whole area, read without waiting point by point
+ * (2026-10-28, for the predicted coverage): the tiles covering the box are
+ * loaded once, then `at(lat, lng)` answers at once (bilinear, metres), or
+ * null outside the box or where a tile could not be read. */
+export async function heightSampler(
+  south: number, west: number, north: number, east: number,
+): Promise<{ at: (lat: number, lng: number) => number | null; missing: number }> {
+  const [x0, y1] = worldPixel(south, west)
+  const [x1, y0] = worldPixel(north, east)
+  const tx0 = Math.floor(x0 / SIZE), tx1 = Math.floor(x1 / SIZE)
+  const ty0 = Math.floor(y0 / SIZE), ty1 = Math.floor(y1 / SIZE)
+  const loaded = new Map<string, Float32Array | null>()
+  const jobs: Promise<void>[] = []
+  for (let tx = tx0; tx <= tx1 + 1; tx++) {
+    for (let ty = ty0; ty <= ty1 + 1; ty++) {
+      jobs.push(tileOf(tx, ty).then((t) => { loaded.set(tileKey(tx, ty), t) }))
+    }
+  }
+  await Promise.all(jobs)
+  const missing = [...loaded.values()].filter((t) => t == null).length
+  const px = (x: number, y: number) => {
+    const t = loaded.get(tileKey(Math.floor(x / SIZE), Math.floor(y / SIZE)))
+    if (!t) return null
+    return t[(((y % SIZE) + SIZE) % SIZE) * SIZE + (((x % SIZE) + SIZE) % SIZE)]
+  }
+  const at = (lat: number, lng: number) => {
+    const [wx, wy] = worldPixel(lat, lng)
+    const ax = Math.floor(wx - 0.5)
+    const ay = Math.floor(wy - 0.5)
+    const fx = wx - 0.5 - ax
+    const fy = wy - 0.5 - ay
+    const a = px(ax, ay), b = px(ax + 1, ay), c = px(ax, ay + 1), d = px(ax + 1, ay + 1)
+    if (a == null || b == null || c == null || d == null) return null
+    return a * (1 - fx) * (1 - fy) + b * fx * (1 - fy) + c * (1 - fx) * fy + d * fx * fy
+  }
+  return { at, missing }
+}
+
+export { EFFECTIVE_EARTH_M }

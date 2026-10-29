@@ -38,7 +38,7 @@ MAX_NAMED_SESSIONS = 200
 MAX_POINTS = 4000
 _POINT_FIELDS = (
     'lat', 'lng', 'ts', 'network_type', 'rsrp_dbm', 'rsrq_db', 'sinr_db', 'cqi', 'pci',
-    'rscp_dbm', 'ecio_db', 'rssi_dbm', 'rx_qual', 'band', 'band_mhz',
+    'rscp_dbm', 'ecio_db', 'rssi_dbm', 'rx_qual', 'band', 'band_mhz', 'environment', 'environment_source',
 )
 # Explore's technology buttons, as the network types a phone reports.
 _TECH_NETWORKS = {'4G': ('LTE', 'NR'), '3G': ('UMTS',), '2G': ('GSM',)}
@@ -64,6 +64,8 @@ def _points(qs, key, room):
             'rscp': s['rscp_dbm'], 'ecio': s['ecio_db'], 'rssi': s['rssi_dbm'], 'rxqual': s['rx_qual'],
             'band_label': radio_band.label(s['network_type'], s['band'], s['band_mhz']),
             'cqi': sample_cqi_fields(s['cqi'], s['sinr_db'], s['rsrq_db'], s['network_type'])['cqi_value'],
+            # Outdoors / indoors / vehicle (2026-10-28), for Explore's "Where" filter.
+            'environment': s['environment'], 'environment_source': s['environment_source'],
         })
     return rows
 

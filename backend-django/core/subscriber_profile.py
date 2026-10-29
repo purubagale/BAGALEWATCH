@@ -86,10 +86,29 @@ def _describe_phones(devices, by_link, credentials):
     rescue, identity), `phone_key` (the phone's hardware fingerprint, else its
     make and model) and, on a registration key, `replaced_at` when a newer
     registration from the same phone exists."""
+    # Which phone each id is (2026-10-28). Only some ids carry the hardware
+    # fingerprint, so keying on it first split one Samsung into three
+    # "phones". The make and model is the key; the fingerprint splits a model
+    # only when two different fingerprints were seen for it (two phones of
+    # the same model on one number).
+    hw_of, models = {}, {}
     for d in devices:
         link = by_link.get(d['device_id'])
+        hw_of[d['device_id']] = link.hardware_hash if link and link.hardware_hash else None
         model = ' '.join(filter(None, [d['manufacturer'], d['phone_model']])).strip().lower()
-        d['phone_key'] = (link and link.hardware_hash) or model or d['device_id']
+        if model and hw_of[d['device_id']]:
+            models.setdefault(model, set()).add(hw_of[d['device_id']])
+    for d in devices:
+        model = ' '.join(filter(None, [d['manufacturer'], d['phone_model']])).strip().lower()
+        hw = hw_of[d['device_id']]
+        if model and len(models.get(model, ())) > 1:
+            d['phone_key'] = f'{model}|{hw}' if hw else model
+        else:
+            same = next((m for m, hws in models.items() if hw and hw in hws), None) if not model else None
+            if same:
+                d['phone_key'] = f'{same}|{hw}' if len(models[same]) > 1 else same
+            else:
+                d['phone_key'] = model or hw or d['device_id']
         if d['kind'] == 'registration key':
             d['role'] = 'registration'
         elif 'manual_link' in d['linked_via']:

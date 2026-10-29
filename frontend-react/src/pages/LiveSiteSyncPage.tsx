@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
+import CellKpiSourceSection from '../components/CellKpiSourceSection'
 import { apiErrorMessage } from '../api/client'
 import {
   useAlarmSource,
@@ -440,6 +441,7 @@ export default function LiveSiteSyncPage() {
       </section>
 
       <AlarmFeedSection />
+      <CellKpiSourceSection />
     </div>
   )
 }

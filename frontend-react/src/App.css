@@ -4515,6 +4515,14 @@ tr[hidden] { display: none !important; }
 /* Phones card roles (2026-10-16): a registration replaced by a newer one. */
 .sp-device-old { opacity: 0.72; }
 .sp-device-replaced { font-size: 11.5px; color: var(--sp-amber); margin: 2px 0 4px; }
+/* One card per phone, its records folded underneath (2026-10-28). */
+.sp-device-group { grid-column: 1 / -1; }
+.sp-device-records { margin-top: 8px; }
+.sp-device-records summary { cursor: pointer; font-size: 12.5px; color: var(--sp-accent, #1e4fa0); }
+.sp-device-records p { margin: 6px 0; font-size: 12px; }
+.sp-device-records table { font-size: 12px; }
+.sp-device-records .sp-record-old td { opacity: 0.65; }
+.sp-device-records .sp-device-replaced { margin: 0; }
 
 /* Signal history (2026-10-16, ProfileSignalHistory.tsx): chart with a hover
    card and range pick on the left, map of the picked readings on the right. */
@@ -5176,3 +5184,55 @@ tr.rel-st-no_coverage td:first-child { color: #be123c; font-weight: 600; }
 .sites-alarm-device { color: #2563eb; font-size: 11px; word-break: break-word; }
 .sites-alarm-more { background: none; border: 0; color: #0b4ea2; cursor: pointer; font-size: 11px; padding: 0; text-align: left; }
 .dt-explore-3d { position: relative; height: 100%; width: 100%; border-radius: var(--radius-md, 8px); overflow: hidden; }
+
+/* Start (S) and end (E) of a session's route (2026-10-28, components/RouteEnds.tsx). */
+.route-end-pin { background: none; border: 0; }
+.route-end-pin span { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); color: #fff; font: 700 11px/1 system-ui, sans-serif; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
+.route-end-pin b { transform: rotate(45deg); }
+.route-stacked-note { position: absolute; left: 10px; bottom: 22px; z-index: 1000; max-width: calc(100% - 20px); padding: 4px 8px; border-radius: 6px; background: rgba(255,255,255,0.92); color: #1f2937; font-size: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.25); pointer-events: none; }
+
+/* Network KPIs per cell (2026-10-28): site page card and the Live Site Sync connection. */
+.ck-sub { font-weight: 400; margin-left: 8px; font-size: 12px; }
+.ck-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 4px 0 8px; font-size: 12px; }
+.ck-controls select { margin-left: 6px; }
+.ck-seg { display: inline-flex; border: 1px solid var(--border, #d0d7e2); border-radius: 6px; overflow: hidden; }
+.ck-seg button { border: 0; background: transparent; padding: 3px 10px; font-size: 12px; cursor: pointer; color: inherit; }
+.ck-seg button.on { background: var(--brand, #1e4fa0); color: #fff; }
+.ck-seg button:disabled { opacity: 0.45; cursor: default; }
+.ck-scroll { overflow-x: auto; }
+.ck-table td, .ck-table th { white-space: nowrap; }
+.ck-table .ck-note { font-size: 10.5px; }
+.ck-bad { color: #b91c1c; font-weight: 600; }
+.ck-warn { color: #b45309; font-weight: 600; }
+.ck-ok { color: #15803d; }
+.ck-spark { display: block; }
+.ck-spark-line { fill: none; stroke: #64748b; stroke-width: 1.4; }
+.ck-spark-limit { stroke: #dc2626; stroke-width: 1; stroke-dasharray: 3 2; opacity: 0.6; }
+.ck-spark circle.ck-bad { fill: #dc2626; }
+.ck-spark circle.ck-warn { fill: #d97706; }
+.ck-spark circle.ck-ok { fill: #16a34a; }
+.cellkpi-result { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--border, #d0d7e2); border-radius: 8px; font-size: 13px; }
+.cellkpi-result.bad { border-color: #fca5a5; }
+.cellkpi-unmatched { max-height: 140px; overflow: auto; font-size: 12px; line-height: 1.6; }
+.cellkpi-levels { border: 0; padding: 0; margin: 0; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.cellkpi-levels legend { float: left; margin-right: 6px; font-size: 12px; }
+.pd-load { font-size: 12px; white-space: nowrap; }
+
+
+/* Predicted coverage on the site map (2026-10-28, components/CoveragePrediction.tsx). */
+.prediction-overlay { image-rendering: pixelated; }
+.pred-panel { display: grid; gap: 6px; }
+.pred-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pred-controls select { font-size: 12px; padding: 1px 4px; }
+.pred-calib { color: var(--text-primary); }
+.pred-values { border-top: 1px solid var(--border-color, #e2e8f0); padding-top: 6px; display: grid; gap: 4px; }
+.pred-values-head { line-height: 1.4; }
+.pred-values-scroll { overflow-x: auto; }
+.pred-table { font-size: 11px; }
+.pred-table th, .pred-table td { padding: 3px 6px; white-space: nowrap; }
+.pred-table input { width: 64px; font-size: 11px; padding: 1px 3px; }
+.pred-changed { font-weight: 700; }
+.pred-globals { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+.pred-globals input { width: 56px; font-size: 11px; padding: 1px 3px; }
+.pred-globals select { font-size: 11px; }
+.pred-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

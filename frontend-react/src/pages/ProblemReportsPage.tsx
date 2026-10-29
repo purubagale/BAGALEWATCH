@@ -46,6 +46,7 @@ const CAUSE_COLOR: Record<string, string> = {
   call_fallback: '#7c3aed',
   call_weak_end: '#be123c',
   busy_cell: '#eab308',
+  slow_not_busy: '#14b8a6',
   lower_tech: '#0ea5e9',
   lower_tech_weak_4g: '#6366f1',
   worse_than_usual: '#db2777',
@@ -639,7 +640,9 @@ function Hotspots({ d, onOpen }: { d: ProblemDashboard; onOpen: (h: ProblemHotsp
           <thead>
             <tr>
               <th>Site or area</th><th>District</th><th>Reports</th><th>New</th><th>Main cause</th>
-              <th>All causes</th><th>Sectors</th><th>Average level</th><th>Latest</th><th />
+              <th>All causes</th><th>Sectors</th><th>Average level</th>
+              <th title="Busy-hour DL PRB of the site's busiest cell, newest day; and on how many of the last 7 days it was 80% or more">Cell load</th>
+              <th>Latest</th><th />
             </tr>
           </thead>
           <tbody>
@@ -655,6 +658,12 @@ function Hotspots({ d, onOpen }: { d: ProblemDashboard; onOpen: (h: ProblemHotsp
                 </td>
                 <td>{h.sectors.length ? h.sectors.map((s) => `${s.key} (${s.count})`).join(', ') : '—'}</td>
                 <td>{fmt(h.level_mean, ' dBm')}</td>
+                <td className="pd-load" title={h.cell_load ? `${h.cell_load.cell_name}, ${h.cell_load.date}` : 'No network KPIs for this site'}>
+                  {h.cell_load?.prb_dl_max != null
+                    ? <><b style={{ color: h.cell_load.prb_dl_max >= 80 ? '#b91c1c' : undefined }}>{h.cell_load.prb_dl_max}%</b>
+                      {h.cell_load.days > 1 ? ` · busy ${h.cell_load.busy_days} of ${h.cell_load.days} days` : ''}</>
+                    : '—'}
+                </td>
                 <td>{when(h.latest_at)}</td>
                 <td><button type="button" className="btn-secondary btn-small" onClick={() => onOpen(h)}>Complaints</button></td>
               </tr>
@@ -1159,12 +1168,36 @@ function CauseTab({ c }: { c: NonNullable<ProblemReport['check']>; reportId: num
           </td></tr>
         </tbody>
       </table>
+      {c.cell_load && <CellLoadTiles load={c.cell_load} />}
       {c.neighbours && (
         <>
           <Band icon="🛰">Other cells phones heard here</Band>
           <NeighbourBreakdown data={c.neighbours} siteLink={siteLink} limitRows={8} />
         </>
       )}
+    </>
+  )
+}
+
+// The cell's own network KPIs around the problem time (2026-10-28, core/cell_kpi.py).
+function CellLoadTiles({ load }: { load: NonNullable<NonNullable<ProblemReport['check']>['cell_load']> }) {
+  const period = load.level === 'hour' ? `hour ${String(load.hour ?? 0).padStart(2, '0')}:00`
+    : load.level === 'bbh' ? `busy hour${load.hour != null ? ` ${String(load.hour).padStart(2, '0')}:00` : ''}` : 'whole day'
+  return (
+    <>
+      <Band icon="📡">Cell load at that time</Band>
+      <p className="muted" style={{ margin: '4px 0 8px' }}>
+        {load.cell_name || load.site_id}{load.basis !== 'serving cell' ? ' (the busiest cell of the site)' : ''}: {period} of {load.date}
+        {load.earlier_day ? ', the nearest day with figures' : ''}.
+      </p>
+      <div className="pd-tiles">
+        <Tile icon="📊" label="DL PRB in use" value={round(load.prb_dl)} unit="%"
+          verdict={load.prb_dl == null ? undefined : load.busy ? { text: 'Busy', tone: 'bad' } : load.quiet ? { text: 'Room to spare', tone: 'good' } : { text: 'Moderate', tone: 'fair' }} />
+        <Tile icon="⬆" label="UL PRB in use" value={round(load.prb_ul)} unit="%" />
+        <Tile icon="👥" label="Users on average" value={round(load.users_avg)} />
+        <Tile icon="⚡" label="Speed per user" value={round(load.thr_dl_user)} unit="Mbps" verdict={rate(load.thr_dl_user, 5, 2)} />
+        <Tile icon="📞" label="Drops (service / VoLTE)" value={`${load.service_drop ?? '—'} / ${load.volte_drop ?? '—'}`} unit="%" />
+      </div>
     </>
   )
 }

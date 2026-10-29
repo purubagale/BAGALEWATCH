@@ -20,6 +20,7 @@ import { DT_EXPLORE_PATH, DT_SESSION_HISTORY_PATH, OPAQUE_PATHS, RF_REPORTS_PATH
 import { useSearchModal } from '../contexts/SearchModalContext'
 import SiteLocationMiniMap from '../components/SiteLocationMiniMap'
 import ActiveAlarmsButton from '../components/ActiveAlarmsButton'
+import SiteCellKpis from '../components/SiteCellKpis'
 import { ISSUE_SEVERITY_LABELS, ISSUE_STATUS_LABELS, ISSUE_STATUS_ORDER } from '../lib/issueLabels'
 
 const KPI_FIELDS: [keyof SiteWrite, string][] = [
@@ -901,11 +902,14 @@ export default function SiteDetailPage() {
 
         <div className="site-sidebar-card site-sidebar-card-grow">
           <div className="site-sidebar-card-title" data-icon="📍">Location</div>
-          <SiteLocationMiniMap siteId={site.id} lat={site.lat} lng={site.lng} status={site.status} sectors={site.sectors} />
+          <SiteLocationMiniMap siteId={site.id} lat={site.lat} lng={site.lng} status={site.status} sectors={site.sectors}
+            antennaModel={site.antenna_device} />
         </div>
       </aside>
 
       </div>
+
+      <SiteCellKpis siteId={site.id} />
 
       <div className="site-card-pair">
       {/* -- Drive Tests Near This Site --------------------------------

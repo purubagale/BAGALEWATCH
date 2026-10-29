@@ -699,7 +699,21 @@ class RegisteredDeviceListView(APIView):
                 'revoked_at': r.revoked_at,
                 'phone_model': identity.phone_model if identity else None,
                 'manufacturer': identity.manufacturer if identity else None,
+                'replaced_at': None,
             })
+        # A phone that registers again (reinstall, app update to a new build)
+        # leaves its older registration behind, still "Active" (2026-10-28).
+        # Same number + same make and model + a newer registration = replaced;
+        # nothing is revoked, the list only says so.
+        newest = {}
+        for row in results:
+            key = (row['msisdn'], ' '.join(filter(None, [row['manufacturer'], row['phone_model']])).lower())
+            if row['msisdn'] and key[1] and not row['revoked_at']:
+                newest.setdefault(key, []).append(row)
+        for same in newest.values():
+            same.sort(key=lambda x: x['created_at'])
+            for older, newer in zip(same, same[1:]):
+                older['replaced_at'] = newer['created_at']
         # Audited the same way DeviceIdentityLookupView audits a single
         # lookup -- this reveals the same category of identity-adjacent
         # data (msisdn + device hash), just for everyone registered at

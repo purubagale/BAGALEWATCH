@@ -7,7 +7,7 @@
 # authentication_classes individually.
 from django.urls import path
 
-from . import external_api, external_problem
+from . import cell_kpi, external_api, external_problem
 
 urlpatterns = [
     path('sites/', external_api.ExternalSiteListCreateView.as_view(), name='ext-sites'),
@@ -17,4 +17,5 @@ urlpatterns = [
     path('dt-sessions/<int:session_id>/samples/', external_api.ExternalDtSampleListCreateView.as_view(), name='ext-dt-session-samples'),
     path('coverage/', external_api.ExternalCoverageBinListView.as_view(), name='ext-coverage'),
     path('problem-reports/', external_problem.ExternalProblemReportView.as_view(), name='ext-problem-reports'),
+    path('cell-kpis/', cell_kpi.ExternalCellKpiView.as_view(), name='ext-cell-kpis'),
 ]
