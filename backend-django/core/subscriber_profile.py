@@ -24,7 +24,7 @@ import uuid
 from collections import Counter
 from datetime import timedelta
 
-from django.db.models import Count, Max, Min, Q
+from django.db.models import Count, F, Max, Min, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import status
@@ -32,7 +32,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import neighbour_cells, radio_band
+from . import neighbour_cells, radio_band, speed_quality
 from .audit import log_audit_event
 from .call_cells import name_calls
 from .collection import NEPAL_TZ, decrypted_identity, msisdn_lookup_key
@@ -241,8 +241,7 @@ class SubscriberProfileView(APIView):
         # them; an admin only in an emergency or a complaint window.
         open_positions = emergency is not None or request.user.role == 'superadmin'
         windows = [] if open_positions else complaint_windows(canonical, credentials)
-        last = (TelemetrySample.objects.filter(device_id__in=[i for i in ids if i not in withdrawn])
-                .order_by('-ts').first())
+        last, last_origin, open_one = _last_reading(ids, withdrawn, credentials)
         last_location = None
         complaint_report = _in_windows(last.ts, windows) if last is not None and last.lat is not None else None
         if complaint_report:
@@ -330,6 +329,20 @@ class SubscriberProfileView(APIView):
         # without a GPS fix, a rescue beacon that has not reported one). In an
         # emergency the newest reading that does carry a position is offered.
         if last_location is not None:
+            # Where the newest reading came from, and the open session or sharing
+            # when the newest reading is not from it (2026-10-29).
+            if last_location.get('source') == 'reading' and last_origin is not None:
+                last_location['origin'] = last_origin
+                if open_one is not None:
+                    r, o = open_one
+                    last_location['open_one'] = {
+                        **o, 'ts': _iso(r.ts),
+                        'level_dbm': r.rsrp_dbm if r.rsrp_dbm is not None else (
+                            r.rscp_dbm if r.rscp_dbm is not None else r.rssi_dbm),
+                        'network_type': r.network_type,
+                        'lat': r.lat if (open_positions or complaint_report) else None,
+                        'lng': r.lng if (open_positions or complaint_report) else None,
+                    }
             last_location['position_withheld'] = not open_positions and not complaint_report
             last_location['position_basis'] = ('emergency' if emergency else 'superadmin' if open_positions else
                                                'complaint' if complaint_report else None)
@@ -428,6 +441,8 @@ class SubscriberProfileView(APIView):
             'ts': _iso(r.ts), 'device_id': r.device_id, 'bearer': r.bearer, 'download_mbps': r.download_mbps,
             'upload_mbps': r.upload_mbps, 'ping_ms': r.ping_median_ms, 'jitter_ms': r.jitter_ms,
             'packet_loss_pct': r.packet_loss_pct, 'network_type': r.network_type, 'rsrp_dbm': r.rsrp_dbm,
+            **speed_quality.fields(r.download_mbps, r.upload_mbps, r.ping_median_ms, r.jitter_ms,
+                                   r.packet_loss_pct, r.latency_down_ms, r.latency_up_ms),
         } for r in TelemetrySpeedResult.objects.filter(device_id__in=ids).order_by('-ts')[:LIST_CAP]]
         trace_speed_tests = [{
             'ts': _iso(r.ran_at), 'trace_id': str(r.trace_id), 'download_mbps': r.download_mbps,
@@ -714,14 +729,102 @@ PERIOD_GAP = timedelta(minutes=30)
 PERIODS_MAX = 40
 
 
+_READING_FIELDS = (
+    'ts', 'lat', 'lng', 'network_type', 'band_mhz', 'cell_id', 'pci', 'tac', 'mcc', 'mnc', 'rsrp_dbm', 'rscp_dbm',
+    'rssi_dbm', 'rsrq_db', 'sinr_db', 'cqi', 'ecio_db', 'arfcn', 'band', 'bandwidth_khz', 'total_bandwidth_khz',
+    'carrier_count', 'gps_accuracy_m', 'trigger_reason', 'device_id', 'scrambling_code', 'bcch', 'bsic',
+    'serving_site_id', 'serving_cell_name', 'serving_dist_km', 'serving_sector',
+)
+
+
+def _trace_reading(sample, trace):
+    """A request or share-until-fixed reading in the shape of a phone reading."""
+    from types import SimpleNamespace
+    values = {f: None for f in _READING_FIELDS}
+    values.update(
+        ts=sample.ts, lat=sample.lat, lng=sample.lng, network_type=sample.network_type, cell_id=sample.cell_id,
+        pci=sample.pci, tac=sample.tac, mcc=sample.mcc, mnc=sample.mnc, rsrp_dbm=sample.rsrp_dbm,
+        rsrq_db=sample.rsrq_db, sinr_db=sample.sinr_db, rssi_dbm=sample.rssi_dbm, cqi=sample.cqi,
+        gps_accuracy_m=sample.accuracy_m, trigger_reason='shared on request',
+        device_id=trace.device.sdk_device_hash or trace.device.device_hash, serving_site_id='',
+        serving_cell_name='', serving_sector='',
+    )
+    return SimpleNamespace(**values)
+
+
+def _last_reading(ids, withdrawn, credentials):
+    """The latest position (2026-10-29, agreed with the user): the newest
+    reading of any kind -- an open or closed session, a reading outside any
+    session, an accepted request or a share until fixed -- with where it came
+    from. Returns (reading, origin, open_one): `origin` names the kind
+    ('open_session', 'closed_session', 'outside', 'request', 'share'), name
+    and reference; `open_one` is the open session or open sharing, with its
+    newest reading, when the newest reading is not from it."""
+    from .collection import _inferred_ended_at
+    from .models import CollectionSession, TraceLocationSample, TraceRequest
+    allowed = [i for i in ids if i not in withdrawn]
+    candidates = []   # (reading, origin)
+
+    phone = TelemetrySample.objects.filter(device_id__in=allowed).order_by('-ts').first()
+    sessions = {s.drive_session_id: s for s in CollectionSession.objects.filter(
+        device_hash__in=allowed, trace__isnull=True).exclude(drive_session_id__isnull=True).exclude(drive_session_id='')}
+    if phone is not None:
+        session = sessions.get(phone.drive_session_id) if phone.drive_session_id else None
+        if session is None:
+            candidates.append((phone, {'kind': 'outside'}))
+        else:
+            is_open = _inferred_ended_at(session) is None
+            candidates.append((phone, {'kind': 'open_session' if is_open else 'closed_session', 'open': is_open,
+                                       'session_id': str(session.pk), 'name': session.name or None}))
+
+    traces = [t for t in TraceRequest.objects.filter(device__in=credentials).select_related('device')
+              .order_by('-created_at')[:LIST_CAP]
+              if (t.device.sdk_device_hash or t.device.device_hash) not in withdrawn]
+    now = timezone.now()
+    trace_newest = {}
+    for t in traces:
+        sample = TraceLocationSample.objects.filter(trace=t).order_by('-ts').first()
+        if sample is None:
+            continue
+        is_open = t.status == TraceRequest.STATUS_ACCEPTED and (t.expires_at is None or t.expires_at > now)
+        kind = 'share' if t.policy_mode == 'customer_share' else 'request'
+        origin = {'kind': kind, 'open': is_open, 'name': t.case_reference or None, 'trace_id': str(t.id)}
+        trace_newest[t.id] = (_trace_reading(sample, t), origin)
+    candidates.extend(trace_newest.values())
+    if not candidates:
+        return None, None, None
+    reading, origin = max(candidates, key=lambda c: c[0].ts)
+
+    # The open session or sharing, when the newest reading came from elsewhere.
+    open_one = None
+    open_sessions = [s for s in sessions.values() if _inferred_ended_at(s) is None]
+    opens = []
+    for s in open_sessions:
+        r = (TelemetrySample.objects.filter(device_id=s.device_hash, drive_session_id=s.drive_session_id)
+             .order_by('-ts').first())
+        if r is not None:
+            opens.append((r, {'kind': 'open_session', 'open': True, 'session_id': str(s.pk), 'name': s.name or None}))
+    opens.extend(c for c in trace_newest.values() if c[1]['open'])
+
+    def same(o):
+        return bool((o.get('session_id') and o.get('session_id') == origin.get('session_id')) or
+                    (o.get('trace_id') and o.get('trace_id') == origin.get('trace_id')))
+    others = [c for c in opens if not same(c[1])]
+    if others:
+        open_one = max(others, key=lambda c: c[0].ts)
+    return reading, origin, open_one
+
+
 def sharing_periods(ids):
     """Stretches of readings without a session tag, split wherever the phone
     sent nothing for PERIOD_GAP, newest first, as picker entries named like
     the sessions: "<district> · Sharing · <start>"."""
     from .collection import district_at
+    # The newest readings, in time order (2026-10-29): the oldest first left
+    # out the latest periods of a phone with a long history.
     rows = list(TelemetrySample.objects.filter(device_id__in=ids)
                 .filter(Q(drive_session_id='') | Q(drive_session_id__isnull=True))
-                .order_by('ts').values('ts', 'serving_site_id', 'lat', 'lng')[:SIGNAL_MAX * 4])
+                .order_by('-ts').values('ts', 'serving_site_id', 'lat', 'lng')[:SIGNAL_MAX * 4])[::-1]
     periods, current = [], []
     for r in rows:
         if current and r['ts'] - current[-1]['ts'] > PERIOD_GAP:

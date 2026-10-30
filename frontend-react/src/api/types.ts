@@ -2125,6 +2125,10 @@ export interface TelemetryDriveTestSpeedResult {
   upload_mbps: number | null
   network_type: string
   rsrp_dbm: number | null
+  // Ping during download / upload and the four use ratings (2026-10-29).
+  latency_down_ms?: number | null
+  latency_up_ms?: number | null
+  ratings?: import('../components/SpeedRatings').SpeedRatingMap
 }
 
 // The phone's speed tests beside Live Samples (2026-10-15).
@@ -3096,6 +3100,10 @@ export interface ProblemReport {
   ping_ms: number | null
   jitter_ms: number | null
   packet_loss_pct: number | null
+  // Ping during download / upload and the four use ratings (2026-10-29).
+  latency_down_ms?: number | null
+  latency_up_ms?: number | null
+  ratings?: import('../components/SpeedRatings').SpeedRatingMap
   phone_model: string
   android_version: string
   app_version: string
@@ -3616,6 +3624,13 @@ export interface SubscriberProfile {
     earlier_position?: { ts: string | null; lat: number; lng: number; gps_accuracy_m: number | null }
     // Why a position is shown (2026-10-16): an emergency, or the customer's own complaint.
     position_basis?: 'emergency' | 'superadmin' | 'complaint' | null
+    // Where the newest reading came from (2026-10-29), and the open session or
+    // sharing when the newest reading is not from it.
+    origin?: { kind: 'open_session' | 'closed_session' | 'outside' | 'request' | 'share'; open?: boolean;
+      session_id?: string; trace_id?: string; name?: string | null }
+    open_one?: { kind: 'open_session' | 'request' | 'share'; open: boolean; session_id?: string; trace_id?: string;
+      name?: string | null; ts: string | null; level_dbm: number | null; network_type: string;
+      lat: number | null; lng: number | null }
     complaint_report_id?: number | null
     network_type?: string
     band_mhz?: number | null
@@ -3660,7 +3675,7 @@ export interface SubscriberProfile {
   collections: { id: string; source: string; device_id: string; samples: number; started_at: string | null; last_sample_at: string | null; ended_at: string | null; name?: string | null; district?: string | null }[]
   drive_test_sessions: { id: number; name: string; status: string; started_at: string | null; ended_at: string | null; devices: number }[]
   trace_requests: { id: string; kind: string; status: string; case_reference: string; requested_by: string | null; created_at: string | null; ended_at: string | null; positions: number }[]
-  speed_tests: { ts: string | null; device_id: string; bearer: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; jitter_ms: number | null; packet_loss_pct: number | null; network_type: string; rsrp_dbm: number | null }[]
+  speed_tests: { ts: string | null; device_id: string; bearer: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; jitter_ms: number | null; packet_loss_pct: number | null; network_type: string; rsrp_dbm: number | null; latency_down_ms?: number | null; latency_up_ms?: number | null; ratings?: import('../components/SpeedRatings').SpeedRatingMap }[]
   trace_speed_tests: { ts: string | null; trace_id: string; download_mbps: number | null; upload_mbps: number | null; ping_ms: number | null; network_type: string }[]
   problem_reports: { id: number; category: string; status: string; happened_at: string | null; network_type: string; level_dbm: number | null; download_mbps: number | null; note: string; source: string; external_system: string; external_ref: string; cause: string }[]
   calls: { by_outcome: Record<string, number>; latest: { started_at: string | null; duration_s: number | null; outcome: string; voice_networks: string; cell_id: number | null; level_dbm: number | null; end_level_dbm?: number | null; start_site?: string | null; end_site?: string | null }[] }

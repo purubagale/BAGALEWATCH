@@ -520,7 +520,7 @@ export function useCollectionSessions(source: string, q = '') {
 export function useCollectionSessionSamples(id: string | null) {
   return useQuery({
     queryKey: ['collection-session-samples', id],
-    queryFn: () => apiJson<{ results: CollectionSessionSample[] }>(`/api/v2/collection-sessions/${id}/samples/`),
+    queryFn: () => apiJson<{ results: CollectionSessionSample[]; total?: number }>(`/api/v2/collection-sessions/${id}/samples/`),
     enabled: !!id,
   })
 }

@@ -41,7 +41,7 @@ from .models import (
     TelemetrySample,
     TelemetrySpeedResult,
 )
-from . import neighbour_cells, radio_band
+from . import neighbour_cells, radio_band, speed_quality
 from .audit import log_audit_event
 from .cqi import sample_cqi_fields
 from .telemetry_level import sample_level
@@ -598,6 +598,8 @@ class TelemetrySpeedResultsView(APIView):
                     'network_type': r.network_type,
                     'rsrp_dbm': r.rsrp_dbm,
                     'bearer': r.bearer,
+                    **speed_quality.fields(r.download_mbps, r.upload_mbps, r.ping_median_ms, r.jitter_ms,
+                                           r.packet_loss_pct, r.latency_down_ms, r.latency_up_ms),
                 }
                 for r in qs.order_by('-ts')[:200]
             ],
@@ -1014,6 +1016,8 @@ class TelemetryDriveTestSessionSamplesView(APIView):
                 'upload_mbps': r.upload_mbps,
                 'network_type': r.network_type,
                 'rsrp_dbm': r.rsrp_dbm,
+                **speed_quality.fields(r.download_mbps, r.upload_mbps, r.ping_median_ms, r.jitter_ms,
+                                       r.packet_loss_pct, r.latency_down_ms, r.latency_up_ms),
                 'bearer': r.bearer,
             }
             for r in speed_qs.order_by('-ts')[:200]

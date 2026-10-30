@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import SpeedRatings, { loadedLabel } from '../components/SpeedRatings'
 import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import { useSearchParams } from 'react-router-dom'
 import L from 'leaflet'
@@ -276,6 +277,8 @@ function SpeedResultsSection({ minutes, deviceId }: { minutes: number; deviceId:
               <th>Ping (ms)</th>
               <th>Jitter (ms)</th>
               <th>Loss (%)</th>
+              <th title="Ping while the download / the upload runs">Ping under load</th>
+              <th title="Browsing, video streaming, gaming, video calls">Good for</th>
               <th>Radio</th>
             </tr>
           </thead>
@@ -290,6 +293,8 @@ function SpeedResultsSection({ minutes, deviceId }: { minutes: number; deviceId:
                 <td>{r.ping_median_ms ?? '-'}</td>
                 <td>{r.jitter_ms ?? '-'}</td>
                 <td>{r.packet_loss_pct ?? '-'}</td>
+                <td className="mono">{loadedLabel(r.latency_down_ms, r.latency_up_ms)}</td>
+                <td><SpeedRatings ratings={r.ratings} compact /></td>
                 <td>{[r.network_type, r.rsrp_dbm != null ? `${r.rsrp_dbm} dBm` : ''].filter(Boolean).join(' ') || '-'}</td>
               </tr>
             ))}

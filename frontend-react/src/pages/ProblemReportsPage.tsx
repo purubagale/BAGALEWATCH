@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
+import SpeedRatings, { loadedLabel } from '../components/SpeedRatings'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { Circle, CircleMarker, MapContainer, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
@@ -48,6 +49,7 @@ const CAUSE_COLOR: Record<string, string> = {
   call_weak_end: '#be123c',
   busy_cell: '#eab308',
   slow_not_busy: '#14b8a6',
+  loaded_latency: '#a855f7',
   lower_tech: '#0ea5e9',
   lower_tech_weak_4g: '#6366f1',
   worse_than_usual: '#db2777',
@@ -1238,8 +1240,15 @@ function PhoneTab({ r }: { r: ProblemReport }) {
           <Tile icon="⏱" label="Ping" value={round(r.ping_ms, 0)} unit="ms" verdict={rate(r.ping_ms, 50, 150, false, ['Good', 'Fair', 'High'])} />
           <Tile icon="〽" label="Jitter" value={round(r.jitter_ms)} unit="ms" verdict={rate(r.jitter_ms, 20, 50, false, ['Good', 'Fair', 'High'])} />
           <Tile icon="📉" label="Packet loss" value={round(r.packet_loss_pct)} unit="%" verdict={rate(r.packet_loss_pct, 1, 5, false, ['Good', 'Fair', 'High'])} />
+          <Tile icon="⏳" label="Ping under load" value={r.latency_down_ms != null || r.latency_up_ms != null ? loadedLabel(r.latency_down_ms, r.latency_up_ms) : null}
+            hint="while downloading / uploading"
+            verdict={rate(Math.max(r.latency_down_ms ?? 0, r.latency_up_ms ?? 0) || null, 200, 400, false, ['Good', 'Fair', 'High'])} />
         </div>
-      ) : <p className="muted">No speed test came with this report.</p>}
+      ) : null}
+      {hasSpeed && r.ratings && Object.keys(r.ratings).length > 0 ? (
+        <div style={{ margin: '6px 0 10px' }}><SpeedRatings ratings={r.ratings} /></div>
+      ) : null}
+      {!hasSpeed && <p className="muted">No speed test came with this report.</p>}
       <Band icon="📱">Phone</Band>
       <div className="pd-tiles">
         <Tile icon="📱" hue="slate" label="Model" value={r.phone_model || null} />

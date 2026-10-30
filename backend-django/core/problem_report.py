@@ -38,7 +38,7 @@ from .dt_serving_cell import _candidate_sectors, choose_sector, sectors_by_cell_
 from .models import DriveTestSample, ProblemReport, Site, TelemetrySample
 from .problem_notify import queue_update, report_notify_info
 from .telemetry import TELEMETRY_MATCH_MAX_KM, _scope_by_operator
-from . import neighbour_cells
+from . import neighbour_cells, speed_quality
 from .call_cells import call_findings
 from .telemetry_level import sample_level
 from rest_framework.permissions import BasePermission
@@ -422,6 +422,22 @@ def check_report(report, user):
             [_load_line(load)],
         ))
 
+    # Delay rising under load (2026-10-29, the phone's loaded latency): the
+    # speed and idle ping look fine, but calls, video calls and games lag.
+    loaded = speed_quality.loaded_latency(report.latency_down_ms, report.latency_up_ms)
+    if not slow and loaded is not None and loaded > speed_quality.HIGH_LOADED_MS and             (report.ping_ms is None or report.ping_ms <= HIGH_PING_MS):
+        findings.append(_finding(
+            'loaded_latency', 'Delay rises under load',
+            f'The speed is fine, but the delay rises to {round(loaded)} ms while data is moving'
+            + (f' ({round(report.ping_ms)} ms when idle)' if report.ping_ms is not None else '')
+            + '. Queues fill up under load, so calls, video calls and games lag.',
+            f'Check the queue and scheduler settings of the serving cell of {site_name} and the load on its '
+            'transmission link; compare with a test on another site.',
+            [f'ping during download {report.latency_down_ms} ms' if report.latency_down_ms is not None else '',
+             f'ping during upload {report.latency_up_ms} ms' if report.latency_up_ms is not None else '',
+             f'idle ping {report.ping_ms} ms' if report.ping_ms is not None else ''],
+        ))
+
     four_g_nearby = [v for v, n in ((before['rsrp_4g_mean'], before['readings_4g']),
                                     (dt['rsrp_4g_mean'], dt['readings_4g'])) if v is not None and n >= MIN_READINGS]
     lower_tech = tech in ('2G', '3G') or report.category == 'stuck_2g3g'
@@ -530,6 +546,9 @@ CUSTOMER_REPLY = {
                      'check further.',
     'busy_cell': 'Thank you for telling us. The network at your location is busy at this time of day; we are '
                  'working to add capacity.',
+    'loaded_latency': 'Thank you for telling us. Your connection is fast, but its delay rises while data is '
+                      'moving, which makes calls and games lag. Our engineers are checking the tower and its '
+                      'link.',
     'lower_tech': 'Thank you for telling us. 4G is available at your location. Please set your phone\'s network '
                   'mode to 4G/LTE and restart it. If it still stays on 3G, please visit an NTC service centre.',
     'lower_tech_weak_4g': 'Thank you for telling us. 4G coverage at your location is weak; our engineers are '
@@ -559,6 +578,7 @@ CAUSE_LABELS = {
     'no_dominant_cell': 'No dominant cell',
     'busy_cell': 'Good signal, slow (busy cell)',
     'slow_not_busy': 'Slow, cell not busy',
+    'loaded_latency': 'Delay rises under load',
     'lower_tech': 'Phone on 2G/3G where 4G is usable',
     'lower_tech_weak_4g': 'Little 4G here',
     'worse_than_usual': 'Worse than usual',
@@ -749,6 +769,9 @@ def _row(report, user, with_check=False):
         'level_dbm': report.level_dbm, 'rsrq_db': report.rsrq_db, 'sinr_db': report.sinr_db,
         'download_mbps': report.download_mbps, 'upload_mbps': report.upload_mbps,
         'ping_ms': report.ping_ms, 'jitter_ms': report.jitter_ms, 'packet_loss_pct': report.packet_loss_pct,
+        # Loaded latency and the four ratings of the report's speed test (2026-10-29).
+        **speed_quality.fields(report.download_mbps, report.upload_mbps, report.ping_ms, report.jitter_ms,
+                               report.packet_loss_pct, report.latency_down_ms, report.latency_up_ms),
         'phone_model': report.phone_model, 'android_version': report.android_version,
         'app_version': report.app_version,
         'environment': report.environment or None,
@@ -829,6 +852,8 @@ class DeviceProblemReportView(APIView):
             download_mbps=_num(data.get('download_mbps'), 0, 10_000),
             upload_mbps=_num(data.get('upload_mbps'), 0, 10_000),
             ping_ms=_num(data.get('ping_ms'), 0, 60_000), jitter_ms=_num(data.get('jitter_ms'), 0, 60_000),
+            latency_down_ms=_num(data.get('latency_down_ms'), 0, 60_000),
+            latency_up_ms=_num(data.get('latency_up_ms'), 0, 60_000),
             packet_loss_pct=_num(data.get('packet_loss_pct'), 0, 100),
             phone_model=str(data.get('phone_model') or '')[:80],
             android_version=str(data.get('android_version') or '')[:16],

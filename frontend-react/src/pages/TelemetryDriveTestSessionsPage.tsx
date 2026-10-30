@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import SpeedRatings, { loadedLabel } from '../components/SpeedRatings'
 import { Circle, CircleMarker, MapContainer, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -229,7 +230,7 @@ function RouteLines({ samples }: { samples: TelemetryLiveSample[] }) {
 }
 
 // Start and end of each phone's route in the session (2026-10-28).
-function DeviceRouteEnds({ samples }: { samples: TelemetryLiveSample[] }) {
+function DeviceRouteEnds({ samples, open = false }: { samples: TelemetryLiveSample[]; open?: boolean }) {
   const byDevice = useMemo(() => {
     const m = new Map<string, TelemetryLiveSample[]>()
     for (const s of samples) {
@@ -245,7 +246,7 @@ function DeviceRouteEnds({ samples }: { samples: TelemetryLiveSample[] }) {
     <>
       {byDevice.map(([device, list]) => (
         <RouteEnds key={device} points={list.map((s) => ({ lat: s.lat_smooth ?? s.lat, lng: s.lng_smooth ?? s.lng, ts: s.ts }))}
-          name={byDevice.length > 1 ? `Phone ${device.slice(0, 6)}` : undefined} />
+          name={byDevice.length > 1 ? `Phone ${device.slice(0, 6)}` : undefined} open={open} />
       ))}
     </>
   )
@@ -865,7 +866,7 @@ export default function TelemetryDriveTestSessionsPage() {
                 <FitToSamples samples={samples} fitKey={mapKey} />
                 <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 <RouteLines samples={samples} />
-                <DeviceRouteEnds samples={samples} />
+                <DeviceRouteEnds samples={samples} open={selectedSession?.status === 'active'} />
                 <StackedNote points={samples} />
                 <MetricPoints samples={techSamples} metric={metric} />
               </MapContainer>
@@ -877,7 +878,8 @@ export default function TelemetryDriveTestSessionsPage() {
               <SectorBreakdown data={sectorStats} siteLink={(id) => `/sites/${encodeURIComponent(id)}`} />
             </div>
           )}
-          <table className="admin-table" style={{ marginTop: 16 }}>
+          <p className="muted" style={{ margin: '16px 0 4px' }}>The 50 newest readings, newest first.</p>
+          <table className="admin-table">
             <thead>
               <tr>
                 <th>Device</th>
@@ -893,7 +895,7 @@ export default function TelemetryDriveTestSessionsPage() {
               </tr>
             </thead>
             <tbody>
-              {[...samples].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()).slice(0, 50).map((s, i) => (
+              {[...samples].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()).slice(0, 50).map((s, i) => (
                 <tr key={i}>
                   <td>{s.device_id.slice(0, 12)}...</td>
                   <td>{new Date(s.ts).toLocaleTimeString()}</td>
@@ -931,6 +933,8 @@ export default function TelemetryDriveTestSessionsPage() {
                   <th>Loss (%)</th>
                   <th>Download (Mbps)</th>
                   <th>Upload (Mbps)</th>
+                  <th title="Ping while the download / the upload runs">Ping under load</th>
+                  <th title="Browsing, video streaming, gaming, video calls">Good for</th>
                   <th>Radio</th>
                 </tr>
               </thead>
@@ -945,6 +949,8 @@ export default function TelemetryDriveTestSessionsPage() {
                     <td>{r.packet_loss_pct ?? '-'}</td>
                     <td>{r.download_mbps ?? '-'}</td>
                     <td>{r.upload_mbps ?? '-'}</td>
+                    <td className="mono">{loadedLabel(r.latency_down_ms, r.latency_up_ms)}</td>
+                    <td><SpeedRatings ratings={r.ratings} compact /></td>
                     <td>{[r.network_type, r.rsrp_dbm != null ? `${r.rsrp_dbm} dBm` : ''].filter(Boolean).join(' ') || '-'}</td>
                   </tr>
                 ))}
