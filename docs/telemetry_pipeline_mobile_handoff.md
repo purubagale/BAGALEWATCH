@@ -4,7 +4,7 @@
 
 **From:** Puru (RAN O&M, owner of the DT-WATCH server and web application)
 
-**Last updated:** 2026-10-29 (app 1.3.2: ping under load and use ratings in the speed test; app 1.3.1: optional rough area with the time-of-day readings; app 1.3.0: "share my location until this is fixed" on a problem report, and the opt-in "Help improve NTC's network" readings; earlier: push address retried until accepted, 3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
+**Last updated:** 2026-10-30 (app 1.3.3: exact position with the time-of-day readings, kept 90 days; background readings ask for location "Allow all the time" and use a fix up to 2 minutes old; app 1.3.2: ping under load and use ratings in the speed test; app 1.3.1: optional rough area with the time-of-day readings; app 1.3.0: "share my location until this is fixed" on a problem report, and the opt-in "Help improve NTC's network" readings; earlier: push address retried until accepted, 3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
 
 ## 1. Summary
 
@@ -243,7 +243,7 @@ target phones and send it whenever the modem reports it.
 
 | Value | Sent when |
 |---|---|
-| `periodic` | The background job runs, every 15 minutes while sharing |
+| `periodic` | The background job runs, every 15 minutes while sharing. Android gives it a GPS position only with location "Allow all the time"; without it the reading carries network, level and quality but no position. When no fresh fix arrives, use a position the phone knew in the last 2 minutes (app 1.3.3) |
 | `handover` | The serving cell changes, at most once every 2 minutes |
 | `manual` | The user asks for a reading |
 | `drive` | A fix during a phone drive test, every 2 seconds |
@@ -662,19 +662,22 @@ Read the cell without waiting for a GPS fix. `anon_id` is a random value kept
 on the phone and replaced every 30 days; never send the device id, number or
 IMEI.
 
-**Rough area (app 1.3.1), optional.** Only when the person allowed location
-"Allow all the time" (`ACCESS_BACKGROUND_LOCATION`, asked after they said yes
-to the readings, and from Settings), add `"area_lat"` and `"area_lng"`: the
-centre of the 0.005-degree square the phone is in (about 550 m north-south and
-500 m east-west in Nepal), rounded on the phone:
-`centre = (floor(value / 0.005) + 0.5) * 0.005`. Never send the exact
-position. Without that permission leave both out; the reading is then placed
-by its cell. The server rounds again to the same grid and drops any area
-outside Nepal. An app on Google Play that declares background location must
+**Position (app 1.3.3; app 1.3.1 sent only the rough area), optional.** Only
+when the person allowed location "Allow all the time"
+(`ACCESS_BACKGROUND_LOCATION`, asked after they said yes to the readings, and
+from Settings), add `"lat"`, `"lng"` and `"gps_accuracy_m"` (a fresh
+high-accuracy fix, else the last known one), plus `"area_lat"` and
+`"area_lng"`: the centre of the 0.005-degree square the phone is in (about
+550 m north-south and 500 m east-west in Nepal):
+`centre = (floor(value / 0.005) + 0.5) * 0.005`. The consent text must say
+that the position is sent and that NTC keeps the readings 90 days. Without
+that permission leave all of them out; the reading is then placed by its
+cell. The server drops a position outside Nepal and works out the square
+itself when only `lat`/`lng` arrive. An app on Google Play that declares background location must
 justify it in the Play Console; the reference app declares it in its own
 manifest, not in the SDK, so a host app chooses. The server keeps a hash of `anon_id`, the slot,
-the readings, the site and sector the cell belongs to and the rough area when
-sent; it does not keep the raw cell number. `201 {"stored": true}`; at most 8 a day per `anon_id`
+the readings, the site and sector the cell belongs to and the position and
+square when sent, for 90 days; it does not keep the raw cell number. `201 {"stored": true}`; at most 8 a day per `anon_id`
 (429 after). In the SDK: `NetTelemetry.setScheduledReadings(true|false)`,
 `scheduledReadingsEnabled()`, `scheduledReadingsAsked()`.
 
@@ -979,7 +982,10 @@ and service and the site photo screen stay in the reference app
 - App: `POST_NOTIFICATIONS`, `CAMERA` (asked only when the photo screen opens),
   `ACCESS_WIFI_STATE`, `CHANGE_WIFI_STATE`, `CHANGE_NETWORK_STATE` (speed test
   over mobile data), `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
-- Not requested: `ACCESS_BACKGROUND_LOCATION`.
+- `ACCESS_BACKGROUND_LOCATION` is declared by the app, not the SDK. The app
+  asks for it when sharing starts (readings with the app closed then carry a
+  position) and after a yes to "Help improve NTC's network"; a host app on
+  Google Play must justify it in the Play Console.
 
 ### 14.5 Behaviour to know when testing
 
