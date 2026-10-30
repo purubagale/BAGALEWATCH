@@ -20,7 +20,7 @@ val keystoreProps = Properties().apply {
 }
 
 // See defaultConfig: major.minor.patch.
-val appVersionName = "1.3.2"
+val appVersionName = "1.3.3"
 
 android {
     namespace = "np.nepaltelecom.telemetry.demo"

@@ -35,6 +35,9 @@ import kotlin.coroutines.resume
 private const val TAG = "NetTelemetry.Cells"
 private const val GOOD_FIX_ACCURACY_M = 15f
 private const val LOCATION_ATTEMPTS = 3
+// When no fresh fix arrives (indoors, or GPS slow to start), a position the
+// phone already knew this recently is used instead (2026-10-30).
+private const val RECENT_FIX_MAX_AGE_MS = 2 * 60_000L
 
 /**
  * Turns "what's the phone's current cell/signal/location state" into one
@@ -67,7 +70,7 @@ internal class CellSampleCollector(
     ): Sample? {
         if (!identity.optedIn) return null // defense in depth -- see NetTelemetry.optIn/optOut
         if (!hasLocationPermission()) return null
-        return sampleFrom(readLocationWithTimeout(), triggerReason, driveSessionId = driveSessionId)
+        return sampleFrom(readLocationWithTimeout() ?: recentFix(), triggerReason, driveSessionId = driveSessionId)
     }
 
     /**
@@ -161,6 +164,27 @@ internal class CellSampleCollector(
         }
         return best
     }
+
+    /**
+     * The phone's last known position when it is at most [RECENT_FIX_MAX_AGE_MS]
+     * old. A reading taken with the app closed gets one only when location is
+     * allowed all the time; Android withholds it otherwise.
+     */
+    @SuppressLint("MissingPermission") // callers check location permission first
+    private suspend fun recentFix(): android.location.Location? =
+        suspendCancellableCoroutine { cont ->
+            try {
+                fusedLocationClient.lastLocation
+                    .addOnSuccessListener { loc ->
+                        val fresh = loc != null &&
+                            System.currentTimeMillis() - loc.time in 0..RECENT_FIX_MAX_AGE_MS
+                        if (cont.isActive) cont.resume(if (fresh) loc else null)
+                    }
+                    .addOnFailureListener { if (cont.isActive) cont.resume(null) }
+            } catch (e: SecurityException) {
+                if (cont.isActive) cont.resume(null)
+            }
+        }
 
     /** A short-lived, one-shot location request -- not a continuous fix, to keep GPS-on time minimal. */
     private suspend fun requestOneFix(): android.location.Location? =

@@ -82,6 +82,14 @@
             android:text="@string/opt_in" />
 
         <Button
+            android:id="@+id/shareBackgroundButton"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/share_background_button"
+            android:visibility="gone" />
+
+        <Button
             android:id="@+id/optOutButton"
             style="@style/Widget.App.OutlinedButton"
             android:layout_width="match_parent"

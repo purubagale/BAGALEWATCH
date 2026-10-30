@@ -38,11 +38,11 @@ import kotlin.random.Random
  *
  * A reading holds the network, band, signal and the serving cell's number.
  * Only when the person has allowed location "all the time" (the reading is
- * taken while the app is closed) does it add a rough area: the centre of the
- * [AREA_DEG] square the phone is in (about 500 m), rounded on the phone; the
- * exact position never leaves it. It goes with the shared key under a random
- * id that changes every [ANON_DAYS] days, never with the phone's
- * registration, so the server cannot tie it to a number.
+ * taken while the app is closed) does it add the position, with its accuracy
+ * and the centre of the [AREA_DEG] square it is in (exact position since
+ * 2026-10-30, the user's decision; the app says so when it asks). It goes
+ * with the shared key under a random id that changes every [ANON_DAYS] days,
+ * never with the phone's registration, so it carries no number.
  * Off by default; [setEnabled] false cancels the next reading.
  */
 object ScheduledReadings {
@@ -165,7 +165,12 @@ internal class ScheduledReadingWorker(context: Context, params: WorkerParameters
                     s.cellId?.let { put("cell_id", it) }
                     s.tac?.let { put("tac", it) }
                     s.pci?.let { put("pci", it) }
-                    roughPosition(app)?.let { (lat, lng) -> put("area_lat", lat); put("area_lng", lng) }
+                    position(app)?.let { loc ->
+                        put("lat", loc.latitude); put("lng", loc.longitude)
+                        if (loc.hasAccuracy()) put("gps_accuracy_m", loc.accuracy.toDouble())
+                        val (alat, alng) = ScheduledReadings.roughArea(loc.latitude, loc.longitude)
+                        put("area_lat", alat); put("area_lng", alng)
+                    }
                 }.toString().toByteArray(StandardCharsets.UTF_8)
                 val sent = try {
                     val connection = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -192,15 +197,14 @@ internal class ScheduledReadingWorker(context: Context, params: WorkerParameters
         return Result.success()
     }
 
-    /** The rough area, only with "Allow all the time"; null otherwise or without a fix in 20 s. */
+    /** The position, only with "Allow all the time"; null otherwise or without a fix in 20 s. */
     @android.annotation.SuppressLint("MissingPermission")
-    private fun roughPosition(context: Context): Pair<Double, Double>? {
+    private fun position(context: Context): android.location.Location? {
         if (!ScheduledReadings.hasBackgroundLocation(context)) return null
         return runCatching {
             val client = LocationServices.getFusedLocationProviderClient(context)
-            val loc = Tasks.await(client.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, com.google.android.gms.tasks.CancellationTokenSource().token), 20, TimeUnit.SECONDS)
+            Tasks.await(client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, com.google.android.gms.tasks.CancellationTokenSource().token), 20, TimeUnit.SECONDS)
                 ?: Tasks.await(client.lastLocation, 5, TimeUnit.SECONDS)
-            loc?.let { ScheduledReadings.roughArea(it.latitude, it.longitude) }
         }.getOrNull()
     }
 

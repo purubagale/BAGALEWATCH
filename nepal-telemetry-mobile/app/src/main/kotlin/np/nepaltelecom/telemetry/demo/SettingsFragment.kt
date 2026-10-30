@@ -34,6 +34,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true) {
             Collector.startSharing(requireContext())
             refresh()
+            offerBackground()
         } else {
             toast("Location permission is required for telemetry sampling")
         }
@@ -49,6 +50,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             if (hasLocationPermission()) {
                 Collector.startSharing(requireContext())
                 refresh()
+                offerBackground()
             } else {
                 permissionLauncher.launch(
                     arrayOf(
@@ -81,6 +83,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         areaButton.setOnClickListener {
             (activity as? androidx.appcompat.app.AppCompatActivity)?.let { NetworkHelpPrompt.offerArea(it) }
         }
+
+        view.findViewById<Button>(R.id.shareBackgroundButton).setOnClickListener { offerBackground() }
 
         view.findViewById<Button>(R.id.optOutButton).setOnClickListener {
             Collector.stopSharing(requireContext())
@@ -206,8 +210,15 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             requireContext(), Manifest.permission.ACCESS_FINE_LOCATION,
         ) == PackageManager.PERMISSION_GRANTED
 
+    /** Readings taken with the app closed get a position only with "Allow all the time" (2026-10-30). */
+    private fun offerBackground() {
+        (activity as? androidx.appcompat.app.AppCompatActivity)?.let { BackgroundLocation.offer(it) }
+    }
+
     private fun refresh() {
         val status = NetTelemetry.getStatus()
+        view?.findViewById<Button>(R.id.shareBackgroundButton)?.visibility =
+            if (status.optedIn && !BackgroundLocation.has(requireContext())) View.VISIBLE else View.GONE
         statusText.text = buildString {
             append("Opted in: ${status.optedIn}\n")
             append("Queued samples: ${status.queuedSampleCount}\n")
