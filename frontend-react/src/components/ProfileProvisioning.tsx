@@ -34,11 +34,17 @@ const KINDS: Record<Kind, { id: string; icon: string; title: string; window: str
   },
 }
 
-export default function ProfileProvisioning({ kind, msisdn, reason, analytics, callsByOutcome, emergency }: {
+export default function ProfileProvisioning({ kind, msisdn, reason, analytics, callsByOutcome, emergency, showLocation }: {
   kind: Kind; msisdn: string; reason: string; analytics: SubscriberAnalytics | null | undefined
   callsByOutcome: Record<string, number>; emergency: boolean
+  // Location history: superadmin only (2026-10-30).
+  showLocation: boolean
 }) {
-  const k = KINDS[kind]
+  const base = KINDS[kind]
+  const k = showLocation ? base : {
+    ...base, title: 'Subscriber usage & provisioning', window: 'BI system: usage & provisioning',
+    tabs: base.tabs.filter(([t]) => t !== 'location'),
+  }
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<Tab>(k.tabs[0][0])
   const { data, isLoading, error, refetch, isFetching } = useSubscriberProvisioning(msisdn, reason, open, emergency)
@@ -50,7 +56,7 @@ export default function ProfileProvisioning({ kind, msisdn, reason, analytics, c
     return () => window.removeEventListener('keydown', onKey)
   }, [open])
 
-  const blurb = `Daily data, voice and SMS, the 2G/3G/4G split, 4G and VoLTE provisioning, the SIM and the phone's bands, and the cell sites used by ${msisdn}.`
+  const blurb = `Daily data, voice and SMS, the 2G/3G/4G split, 4G and VoLTE provisioning, the SIM and the phone's bands${showLocation ? ', and the cell sites used by ' : ' for '}${msisdn}.`
 
   return (
     <>

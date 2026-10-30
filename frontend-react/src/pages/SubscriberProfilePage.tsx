@@ -46,21 +46,29 @@ const OUTCOME: Record<string, { label: string; color: string }> = {
   unknown: { label: 'Unknown', color: '#64748b' },
 }
 
-function Card({ id, icon, title, count, link, wide, empty, emptyText, children }: {
+function Card({ id, icon, title, count, link, wide, empty, emptyText, collapsed, onToggle, children }: {
   id: string; icon: string; title: string; count?: number; link?: { to: string; label: string } | null
-  wide?: boolean; empty?: boolean; emptyText?: string; children?: ReactNode
+  wide?: boolean; empty?: boolean; emptyText?: string
+  // A card that opens on a click (2026-10-30: the last known location).
+  collapsed?: boolean; onToggle?: () => void; children?: ReactNode
 }) {
-  const cls = ['sp-card', wide && !empty ? 'sp-wide' : '', empty ? 'sp-card-empty' : ''].filter(Boolean).join(' ')
+  const shut = !!collapsed && !empty
+  const cls = ['sp-card', wide && !empty && !shut ? 'sp-wide' : '', empty || shut ? 'sp-card-empty' : ''].filter(Boolean).join(' ')
   return (
     <section className={cls} id={id}>
       <div className="sp-card-head">
         <span className="sp-card-icon" aria-hidden>{icon}</span>
-        <span className="sp-card-title">{title}</span>
+        {onToggle && !empty
+          ? <button type="button" className="sp-card-title sp-card-toggle" aria-expanded={!shut} onClick={onToggle}>
+              {shut ? '▸' : '▾'} {title}
+            </button>
+          : <span className="sp-card-title">{title}</span>}
         {count != null && <span className={`sp-count${count === 0 ? ' zero' : ''}`}>{count}</span>}
         {link && !empty && <Link className="sp-card-link" to={link.to}>{link.label} →</Link>}
         {empty && <span className="sp-card-none">{emptyText ?? 'None stored'}</span>}
+        {shut && <span className="sp-card-none">Click to show</span>}
       </div>
-      {!empty && <div className="sp-card-body">{children}</div>}
+      {!empty && !shut && <div className="sp-card-body">{children}</div>}
     </section>
   )
 }
@@ -353,6 +361,8 @@ function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
 }) {
   const s = p.summary
   const loc = p.last_location
+  // Superadmin only, and shut until clicked (2026-10-30).
+  const [locOpen, setLocOpen] = useState(false)
   // The analysis cards follow the signal filter (2026-10-19); until it has
   // answered, and when its choice has no readings, they show every reading.
   const [selection, setSelection] = useState<SignalSelection | null>(null)
@@ -382,8 +392,10 @@ function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
     : s.rescue_beacon ? { to: out('/rescue-enrolled', { msisdn: p.msisdn }), label: 'Rescue Enrolled Devices' } : null
 
   const nav: [string, string, number | null][] = [
-    ['sp-location', 'Location', null], ['sp-signal', 'Signal', s.readings],
-    ...(p.analytics ? [['sp-capability', 'Quality', null], ['sp-cells', 'Location history', p.analytics.cells_count ?? p.analytics.cells.length]] as [string, string, number | null][] : []),
+    ...(isSuper ? [['sp-location', 'Location', null]] as [string, string, number | null][] : []),
+    ['sp-signal', 'Signal', s.readings],
+    ...(p.analytics ? [['sp-capability', 'Quality', null]] as [string, string, number | null][] : []),
+    ...(p.analytics?.location_shown ? [['sp-cells', 'Location history', p.analytics.cells_count ?? p.analytics.cells.length]] as [string, string, number | null][] : []),
     ['sp-devices', 'Phones', p.devices.length],
     ['sp-speed', 'Speed tests', speedCount], ['sp-sessions', 'Sessions', sessions], ['sp-reports', 'Problems', p.problem_reports.length],
     ['sp-calls', 'Calls', callTotal], ['sp-photos', 'Photos', p.site_photos.length], ...(p.lookups ? [['sp-lookups', 'Lookups', p.lookups.length]] as [string, string, number | null][] : []),
@@ -411,7 +423,9 @@ function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
       </div>
 
       <div className="sp-flow">
-        <Card id="sp-location" icon="📍" title="Last known location" empty={!loc && !s.location_hidden} emptyText="No location stored" wide>
+        {isSuper && (
+        <Card id="sp-location" icon="📍" title="Last known location" empty={!loc && !s.location_hidden} emptyText="No location stored" wide
+          collapsed={!locOpen} onToggle={() => setLocOpen((v) => !v)}>
           {s.location_hidden && <div className="sp-locked" style={{ marginBottom: 8 }}>Rescue consent withdrawn on one phone: its location is not shown</div>}
           {loc && (
             <div className={(loc.site_lat != null && loc.site_lng != null) || loc.lat != null || loc.earlier_position ? 'sp-loc' : 'sp-loc sp-loc-nomap'}>
@@ -463,6 +477,7 @@ function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
             </div>
           )}
         </Card>
+        )}
 
         <Card id="sp-signal" icon="📶" title="Signal analytics" count={s.readings} empty={s.readings === 0} emptyText="No readings shared" wide>
           <ProfileSignalHistory msisdn={p.msisdn} reason={reason} total={s.readings} emergency={p.emergency_declared}
@@ -570,9 +585,9 @@ function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
                 {Object.entries(p.calls.by_outcome).map(([k, v]) => <span key={k}><i style={{ background: OUTCOME[k]?.color ?? '#64748b' }} />{OUTCOME[k]?.label ?? k} · {v}</span>)}
               </div>
               <Paged rows={p.calls.latest}
-                head={<tr><th>Started</th><th>Length</th><th>Voice network</th><th>Cell at start</th><th>Level</th><th>At the end</th></tr>}
+                head={<tr><th>Started</th>{isSuper && <th>Length</th>}<th>Voice network</th><th>Cell at start</th><th>Level</th><th>At the end</th></tr>}
                 row={(c, i) => (
-                  <tr key={i}><td>{fmt(c.started_at)}</td><td className="mono">{num(c.duration_s, ' s')}</td><td>{c.voice_networks.replace(/,/g, ' → ') || '—'}</td>
+                  <tr key={i}><td>{fmt(c.started_at)}</td>{isSuper && <td className="mono">{num(c.duration_s, ' s')}</td>}<td>{c.voice_networks.replace(/,/g, ' → ') || '—'}</td>
                     <td>{c.start_site ? <b>{c.start_site}</b> : null}{c.cell_id != null ? <span className="mono sp-muted"> {c.cell_id}</span> : (c.start_site ? null : '—')}</td>
                     <td className="mono">{num(c.level_dbm, ' dBm')}</td>
                     <td className="mono">{num(c.end_level_dbm ?? null, ' dBm')}{c.end_site && c.end_site !== c.start_site ? <span className="sp-muted"> · {c.end_site}</span> : null}</td></tr>
@@ -600,7 +615,7 @@ function Profile({ p, out, siteLink, reason, onChanged, isSuper }: {
         {/* NTC's other systems last, after this system's own details (2026-10-19). The OSS card
             moved to a complaint's Site related analysis on 2026-10-29. */}
         <ProfileProvisioning kind="bi" msisdn={p.msisdn} reason={reason} analytics={analytics}
-          callsByOutcome={p.calls.by_outcome} emergency={p.emergency_declared} />
+          callsByOutcome={p.calls.by_outcome} emergency={p.emergency_declared} showLocation={isSuper} />
       </div>
     </>
   )

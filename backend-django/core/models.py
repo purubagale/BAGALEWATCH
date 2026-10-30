@@ -2613,10 +2613,11 @@ class VolteCallSample(models.Model):
 class ScheduledReading(models.Model):
     """"Help improve NTC's network" (2026-10-29, core/scheduled_readings.py):
     one of the four readings a day a phone sends after its owner opted in.
-    No exact position, no number and no device id: `anon_hash` is a hash of
-    a random id the phone changes every 30 days. The serving cell is kept
-    only as the site and sector it belongs to; `area_lat/lng` is at most a
-    ~500 m square."""
+    No number and no device id: `anon_hash` is a hash of a random id the
+    phone changes every 30 days. The serving cell is kept as the site and
+    sector it belongs to. The position (`lat/lng`, exact since 2026-10-30)
+    and its ~500 m square (`area_lat/lng`) come only when the owner allowed
+    location "all the time"."""
     anon_hash = models.CharField(max_length=32, db_index=True)
     ts = models.DateTimeField(db_index=True)
     received_at = models.DateTimeField(auto_now_add=True)
@@ -2634,6 +2635,11 @@ class ScheduledReading(models.Model):
     # sent only when its owner allowed location "all the time"; rounded again here.
     area_lat = models.FloatField(null=True, blank=True)
     area_lng = models.FloatField(null=True, blank=True)
+    # Exact position (2026-10-30, the user's decision; explained in the app
+    # and to Google Play). Same condition as the area.
+    lat = models.FloatField(null=True, blank=True)
+    lng = models.FloatField(null=True, blank=True)
+    gps_accuracy_m = models.FloatField(null=True, blank=True)
 
     class Meta:
         db_table = 'v2_scheduled_reading'

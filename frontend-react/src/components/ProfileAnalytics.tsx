@@ -198,26 +198,8 @@ export default function ProfileAnalytics({ a, callsByOutcome, phone, siteLink, s
         <div className="sp-muted spc-foot">Bars coloured by the drive-test colour scale of each measure.</div>
       </Section>
 
-      {a.location_shown === false ? (
-        <section className="sp-card sp-card-empty" id="sp-cells">
-          <div className="sp-card-head">
-            <span className="sp-card-icon" aria-hidden>🗼</span>
-            <span className="sp-card-title">Location history: sites, sectors and cells</span>
-            <span className="sp-count">{a.cells_count ?? 0}</span>
-            <span className="sp-card-none" style={{ fontStyle: 'normal' }}>
-              🔒 {a.cells_count ?? 0} cells, {a.sectors_count ?? 0} sectors at {a.sites_count ?? 0} sites; shown only while an emergency is declared
-            </span>
-          </div>
-          {/* Neighbour cells (2026-10-27): counts only outside an emergency. */}
-          {a.neighbours && a.neighbours.with_neighbours > 0 && (
-            <div className="sp-muted spc-foot">
-              Other cells heard: {a.neighbours.cells_count ?? 0} cells in {a.neighbours.with_neighbours} readings
-              {a.neighbours.avg_cells_heard != null ? `, ${a.neighbours.avg_cells_heard} per reading` : ''}
-              {a.neighbours.same_tech_readings ? `; a cell ${a.neighbours.stronger_db} dB or more stronger than the serving one in ${a.neighbours.stronger_readings_pct ?? 0}% of readings, no dominant cell in ${a.neighbours.crowded_readings_pct ?? 0}%` : ''}.
-            </div>
-          )}
-        </section>
-      ) : (
+      {/* Location history is for superadmin only (2026-10-30); others see nothing of it. */}
+      {a.location_shown !== false && (
       <Section id="sp-cells" icon="🗼" title="Location history: sites, sectors and cells"
         note={`Serving cells${a.cells_capped ? ', busiest 60' : ''}${scope ? ` · ${scope}` : ''}`}>
         <div className="spc-sites">

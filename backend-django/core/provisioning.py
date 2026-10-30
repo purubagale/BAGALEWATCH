@@ -225,7 +225,10 @@ class SubscriberProvisioningView(APIView):
             return Response({'enabled': False, 'data': None, 'error': None, 'ntc_bands': NTC_BANDS})
         log_audit_event(request, AUDIT_ACTION, resource='subscriber_profile', resource_id=canonical, detail=reason)
         data, error = lookup(canonical)
-        # The cells the other system lists carry no position, so they are
-        # shown to NTC staff at all times (2026-10-27, the user's decision).
+        # Location history is for superadmin only (2026-10-30, the user's
+        # rule; it replaces the 2026-10-27 "all staff" decision).
+        shown = request.user.role == 'superadmin'
+        if data is not None and not shown:
+            data = {**data, 'location_history': []}
         return Response({'enabled': True, 'data': data, 'error': error, 'ntc_bands': NTC_BANDS,
-                         'location_shown': True})
+                         'location_shown': shown})

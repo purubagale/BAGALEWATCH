@@ -5255,3 +5255,7 @@ tr.rel-st-no_coverage td:first-child { color: #be123c; font-weight: 600; }
 .oss-on > td { background: #f5f8fc; }
 .oss-detail > td { padding: 6px 0 10px; background: #f5f8fc; }
 .oss-detail .site-card { margin: 0; box-shadow: none; }
+
+/* A profile card that opens on a click (2026-10-30: last known location). */
+.sp-card-toggle { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; }
+.sp-card-toggle:hover { color: var(--sp-accent, #2563eb); }

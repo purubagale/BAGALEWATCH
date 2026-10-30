@@ -3,12 +3,12 @@
 A phone whose owner turned this on in the app sends four short readings a
 day, around 00:00, 10:00, 14:00 and 19:00 Nepal time (quiet and busy hours):
 the network, band, signal and the serving cell's number, and, only when the
-owner allowed location "all the time", the centre of the ~500 m square the
-phone was in (rounded on the phone and again here; never the exact spot). It
-uses the shared ingest key, never its registration, under a random id it
+owner allowed location "all the time", the phone's position and the centre
+of the ~500 m square it is in (exact position since 2026-10-30, the user's
+decision; the map still draws squares). It uses the shared ingest key, never its registration, under a random id it
 changes every 30 days; the server keeps only a hash of that id, and keeps
 the serving cell only as its site and sector. So a reading says how the
-network was at a site or a square and an hour, not who measured it.
+network was at a site, a place and an hour, with no number attached.
 
     POST /api/telemetry/v1/scheduled-readings/   one reading (shared key)
     GET  /api/v2/telemetry/scheduled-readings/?days=30   summary (admin, superadmin)
@@ -36,7 +36,7 @@ from .views import IsAdminOrSuperadmin
 SLOTS = (0, 10, 14, 19)
 SLOT_LABELS = {0: 'Midnight', 10: '10 am', 14: '2 pm', 19: '7 pm'}
 MAX_PER_PHONE_PER_DAY = 8
-KEEP_DAYS = 365
+KEEP_DAYS = 90      # 90 days since the exact position came (2026-10-30, the user's choice)
 _TECH = {'LTE': '4G', 'NR': '5G', 'UMTS': '3G', 'GSM': '2G'}
 _NETWORKS = {'4G': ('LTE',), '5G': ('NR',), '3G': ('UMTS',), '2G': ('GSM',)}
 AREA_DEG = 0.005     # the ~500 m square; the same grid as the phone's
@@ -55,6 +55,17 @@ def _area(lat_raw, lng_raw):
             round((math.floor(lng / AREA_DEG) + 0.5) * AREA_DEG, 4))
 
 
+def _position(lat_raw, lng_raw):
+    """The exact position inside Nepal and its edges, or (None, None)."""
+    try:
+        lat, lng = float(lat_raw), float(lng_raw)
+    except (TypeError, ValueError):
+        return None, None
+    if not (26 <= lat <= 31 and 80 <= lng <= 89):
+        return None, None
+    return round(lat, 6), round(lng, 6)
+
+
 def _int(value, low, high):
     try:
         v = int(float(value))
@@ -69,6 +80,24 @@ def _slot(raw, ts):
         return slot
     hour = ts.astimezone(NEPAL_TZ).hour
     return min(SLOTS, key=lambda s: min(abs(s - hour), 24 - abs(s - hour)))
+
+
+def _place(data):
+    """Exact position and its square (2026-10-30). Older apps send only the
+    square; a new one sends both, and the square is worked out here when
+    only the position came."""
+    lat, lng = _position(data.get('lat'), data.get('lng'))
+    area = _area(data.get('area_lat'), data.get('area_lng'))
+    if area == (None, None) and lat is not None:
+        area = _area(lat, lng)
+    acc = None
+    try:
+        acc = float(data.get('gps_accuracy_m'))
+        acc = acc if 0 <= acc <= 100_000 else None
+    except (TypeError, ValueError):
+        pass
+    return {'lat': lat, 'lng': lng, 'gps_accuracy_m': acc if lat is not None else None,
+            'area_lat': area[0], 'area_lng': area[1]}
 
 
 def _prune():
@@ -114,7 +143,7 @@ class ScheduledReadingIngestView(APIView):
             rsrq_db=_int(data.get('rsrq_db'), -40, 10), sinr_db=_int(data.get('sinr_db'), -30, 50),
             mcc=str(data.get('mcc') or '')[:6], mnc=str(data.get('mnc') or '')[:6],
             serving_site_id=(site or {}).get('site_id') or '', serving_sector=(site or {}).get('sector') or '',
-            **dict(zip(('area_lat', 'area_lng'), _area(data.get('area_lat'), data.get('area_lng')))),
+            **_place(data),
         )
         _prune()
         return Response({'stored': True}, status=201)
@@ -133,7 +162,7 @@ class ScheduledReadingSummaryView(APIView):
 
     def get(self, request):
         try:
-            days = max(1, min(int(request.query_params.get('days', 30)), 365))
+            days = max(1, min(int(request.query_params.get('days', 30)), KEEP_DAYS))
         except ValueError:
             days = 30
         since = timezone.now() - timedelta(days=days)
@@ -191,7 +220,7 @@ class ScheduledReadingMapView(APIView):
 
     def get(self, request):
         try:
-            days = max(1, min(int(request.query_params.get('days', 30)), 365))
+            days = max(1, min(int(request.query_params.get('days', 30)), KEEP_DAYS))
         except ValueError:
             days = 30
         qs = ScheduledReading.objects.filter(ts__gte=timezone.now() - timedelta(days=days))

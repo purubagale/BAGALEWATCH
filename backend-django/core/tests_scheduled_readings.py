@@ -30,7 +30,14 @@ class ScheduledReadingTests(TestCase):
         r = ScheduledReading.objects.get()
         self.assertEqual((r.slot, r.network_type, r.level_dbm), (19, 'LTE', -112))
         self.assertNotEqual(r.anon_hash, self.anon)
-        self.assertFalse(any(f.name in ('device_id', 'lat', 'lng', 'msisdn') for f in ScheduledReading._meta.fields))
+        self.assertFalse(any(f.name in ('device_id', 'msisdn') for f in ScheduledReading._meta.fields))
+        self.assertIsNone(r.lat)
+
+    def test_exact_position_kept_with_its_square(self):
+        self._send(lat=27.70123, lng=85.32456, gps_accuracy_m=12)
+        r = ScheduledReading.objects.get()
+        self.assertEqual((r.lat, r.lng, r.gps_accuracy_m, r.area_lat, r.area_lng),
+                         (27.70123, 85.32456, 12.0, 27.7025, 85.3225))
 
     def test_key_needed_and_signed_calls_refused(self):
         self.assertEqual(self.client.post(URL, {'anon_id': 'x', 'network_type': 'LTE'}, format='json').status_code, 401)

@@ -504,6 +504,11 @@ class SubscriberProfileView(APIView):
                     d['role'] = 'linked'
             if last_location and last_location.get('source') == 'rescue':
                 last_location['source'] = 'location_report'
+            # Superadmin only (2026-10-30, the user's rule): the last known
+            # location card, the location history and how long each call was.
+            last_location = None
+            for c in calls['latest']:
+                c['duration_s'] = None
         return Response({
             'msisdn': canonical,
             'found': found,
@@ -531,7 +536,7 @@ class SubscriberProfileView(APIView):
             'last_location': last_location,
             'signal_series': signal_series,
             # Cells and sites served, shares, daily trend, histograms (2026-10-16).
-            'analytics': profile_analytics([i for i in ids if i not in withdrawn], include_location=True),
+            'analytics': profile_analytics([i for i in ids if i not in withdrawn], include_location=is_super),
             'devices': devices,
             'collections': collections,
             'drive_test_sessions': drive_test_sessions,
@@ -694,7 +699,8 @@ class SubscriberSignalView(APIView):
         shown_qs = qs
         if scope == 'newest' and rows and total > len(rows):
             shown_qs = qs.filter(ts__gte=rows[0]['ts'])
-        analytics = profile_analytics(ids, include_location=True, qs=shown_qs)
+        # Location history: superadmin only (2026-10-30).
+        analytics = profile_analytics(ids, include_location=request.user.role == 'superadmin', qs=shown_qs)
 
         site_ids = {p['serving_site_id'] for p in points if p['serving_site_id']}
         sites = {s['id']: {'name': s['name'] or None, 'lat': s['lat'], 'lng': s['lng']}
