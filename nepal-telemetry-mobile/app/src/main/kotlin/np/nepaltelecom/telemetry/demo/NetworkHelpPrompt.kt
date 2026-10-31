@@ -38,7 +38,9 @@ object NetworkHelpPrompt {
 
     /** The optional rough area: asks for location "Allow all the time" when it is not granted yet. */
     fun offerArea(activity: AppCompatActivity, then: () -> Unit = {}) {
-        if (ScheduledReadings.hasBackgroundLocation(activity) || !hasForegroundLocation(activity)) return then()
+        if (ScheduledReadings.hasBackgroundLocation(activity) || !hasForegroundLocation(activity) ||
+            BackgroundLocation.askedJustNow()
+        ) return then()
         AlertDialog.Builder(activity)
             .setTitle(R.string.network_area_title)
             .setMessage(R.string.network_area_body)

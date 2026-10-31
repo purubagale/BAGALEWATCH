@@ -25,6 +25,8 @@ import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
+import org.osmdroid.events.MapEventsReceiver
+import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.OverlayWithIW
 import org.osmdroid.views.overlay.infowindow.BasicInfoWindow
@@ -57,6 +59,21 @@ class MapFragment : Fragment(R.layout.fragment_map) {
     private lateinit var statusText: TextView
     private lateinit var deleteButton: Button
     private var centred = false
+    // The spot marked by hand for an indoor test (2026-10-30) and the
+    // press-and-hold that sets it; both go back on the map after each redraw.
+    private var pinMarker: Marker? = null
+    private val pinTouch by lazy {
+        MapEventsOverlay(object : MapEventsReceiver {
+            override fun singleTapConfirmedHelper(p: GeoPoint?) = false
+            override fun longPressHelper(p: GeoPoint?): Boolean {
+                if (p == null || NetTelemetry.environment(requireContext()) != Environment.INDOOR) return false
+                NetTelemetry.setManualPosition(requireContext(), p.latitude, p.longitude)
+                drawPin()
+                toast(getString(R.string.map_pin_set))
+                return true
+            }
+        })
+    }
 
     /** Id of the saved drive on screen, or null for the live drive. */
     private var viewingId: String? = null
@@ -116,6 +133,8 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         map.controller.setZoom(16.0)
         map.controller.setCenter(GeoPoint(KATHMANDU_LAT, KATHMANDU_LNG))
         askForLocationOnce()
+        map.overlays.add(0, pinTouch)
+        drawPin()
 
         statusText = view.findViewById(R.id.mapStatus)
         view.findViewById<TextView>(R.id.mapLegend).text = RouteColor.legend()
@@ -133,7 +152,8 @@ class MapFragment : Fragment(R.layout.fragment_map) {
                 val next = if (NetTelemetry.environment(requireContext()) == value) null else value
                 NetTelemetry.setEnvironment(requireContext(), next)
                 paintEnvironment()
-                toast(if (next == null) getString(R.string.env_cleared) else getString(R.string.env_set, envLabel(value)))
+                if (next == Environment.INDOOR) askForPin()
+                else toast(if (next == null) getString(R.string.env_cleared) else getString(R.string.env_set, envLabel(value)))
             }
         }
         paintEnvironment()
@@ -257,10 +277,38 @@ class MapFragment : Fragment(R.layout.fragment_map) {
             button.text = if (value == current) "✓ ${envLabel(value)}" else envLabel(value)
             button.alpha = if (current == null || value == current) 1f else 0.6f
         }
+        drawPin()
     }
 
-    /** "Where are you starting?" once per drive; the buttons change it later. */
+    /** Inside a building: GPS is often 20 to 50 m off, so the person marks their spot. */
+    private fun askForPin() {
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.map_pin_title)
+            .setMessage(R.string.map_pin_body)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
+    /** Draws the marked spot, or removes it when there is none. */
+    private fun drawPin() {
+        pinMarker?.let { map.overlays.remove(it) }
+        pinMarker = null
+        val spot = NetTelemetry.manualPosition(requireContext())
+        if (spot != null) {
+            pinMarker = Marker(map).apply {
+                position = GeoPoint(spot.first, spot.second)
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                title = getString(R.string.map_pin_marker)
+            }
+            map.overlays.add(pinMarker)
+        }
+        map.invalidate()
+    }
+
+    /** "Where are you starting?" once per drive unless a place is already chosen; the buttons change it later. */
     private fun askEnvironmentThen(then: () -> Unit) {
+        // Already chosen with the buttons before Start: not asked again (2026-10-30).
+        if (NetTelemetry.environment(requireContext()) != null) return then()
         val values = listOf(Environment.OUTDOOR, Environment.INDOOR, Environment.VEHICLE, null)
         AlertDialog.Builder(requireContext())
             .setTitle(R.string.env_start_title)
@@ -268,6 +316,7 @@ class MapFragment : Fragment(R.layout.fragment_map) {
                 NetTelemetry.setEnvironment(requireContext(), values[which])
                 paintEnvironment()
                 then()
+                if (values[which] == Environment.INDOOR) askForPin()
             }
             .setNegativeButton(R.string.map_share_cancel, null)
             .show()
@@ -389,6 +438,8 @@ class MapFragment : Fragment(R.layout.fragment_map) {
         map.overlays.clear()
         // The position marker is an overlay too; put it back after the clear.
         myLocation?.let { map.overlays.add(it) }
+        map.overlays.add(0, pinTouch)
+        drawPin()
         if (points.isEmpty()) {
             statusText.text = getString(if (saved == null) R.string.map_no_trail else R.string.map_saved_empty)
             map.invalidate()
@@ -481,8 +532,12 @@ class MapFragment : Fragment(R.layout.fragment_map) {
 
         val metres = points.zipWithNext { a, b -> RfMath.distanceM(a.lat, a.lng, b.lat, b.lng) }.sum()
         val prefix = if (saved == null) "Live drive" else "Saved drive"
-        statusText.text = "$prefix · ${points.size} fixes · ${"%.0f".format(metres)} m · " +
+        val place = if (saved == null && NetTelemetry.manualPosition(requireContext()) != null) {
+            getString(R.string.map_pin_status)
+        } else {
             "last accuracy ${"%.0f".format(points.last().accuracyM)} m"
+        }
+        statusText.text = "$prefix · ${points.size} fixes · ${"%.0f".format(metres)} m · $place"
     }
 
     private fun describe(s: DriveSession): String {

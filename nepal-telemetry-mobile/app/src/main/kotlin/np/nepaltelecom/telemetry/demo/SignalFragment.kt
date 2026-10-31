@@ -12,7 +12,10 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
+import com.google.android.material.button.MaterialButtonToggleGroup
 import np.nepaltelecom.telemetry.NetTelemetry
+import np.nepaltelecom.telemetry.collector.SimInfo
+import np.nepaltelecom.telemetry.collector.SimSlots
 import np.nepaltelecom.telemetry.device.ProblemHints
 import np.nepaltelecom.telemetry.device.SpeedTest
 import np.nepaltelecom.telemetry.model.Operators
@@ -59,6 +62,9 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
 
     /** The last reading, kept so a speed test can record the radio it ran on. */
     private var lastSample: Sample? = null
+
+    /** The SIM on show on a two-SIM phone; null with one SIM. */
+    private var shownSim: SimInfo? = null
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -169,6 +175,7 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
 
     override fun onResume() {
         super.onResume()
+        view?.let { showSimPicker(it) }
         updateBanner()
         handler.post(poll)
     }
@@ -211,8 +218,41 @@ class SignalFragment : Fragment(R.layout.fragment_signal) {
         startActivity(intent)
     }
 
+    /**
+     * SIM 1, SIM 2 and Wi-Fi under the meter, on a phone with two active SIMs
+     * (2026-10-31). The screen starts on the SIM set for mobile data; Wi-Fi
+     * opens the Wi-Fi tab.
+     */
+    private fun showSimPicker(view: View) {
+        val picker = view.findViewById<MaterialButtonToggleGroup>(R.id.simPicker)
+        val sims = NetTelemetry.activeSims()
+        if (sims.size < 2) {
+            shownSim = null
+            picker.visibility = View.GONE
+            return
+        }
+        picker.visibility = View.VISIBLE
+        val first = sims[0]
+        val second = sims[1]
+        picker.clearOnButtonCheckedListeners()
+        if (shownSim == null) shownSim = SimSlots.dataSim(sims) ?: first
+        picker.check(if (shownSim?.subId == second.subId) R.id.simButton2 else R.id.simButton1)
+        picker.addOnButtonCheckedListener { _, id, checked ->
+            if (!checked) return@addOnButtonCheckedListener
+            when (id) {
+                R.id.simButton1 -> shownSim = first
+                R.id.simButton2 -> shownSim = second
+                R.id.simButtonWifi -> {
+                    (activity as? MainActivity)?.showWifi()
+                    return@addOnButtonCheckedListener
+                }
+            }
+            readCell()
+        }
+    }
+
     private fun readCell() {
-        NetTelemetry.readLiveCell { sample ->
+        NetTelemetry.readLiveCell(shownSim) { sample ->
             activity?.runOnUiThread {
                 if (isAdded && view != null) render(sample)
             }

@@ -82,6 +82,11 @@ data class Sample(
     // said so or it was estimated (2026-10-26, collector/Environment.kt).
     val environment: String? = null,
     val environmentSource: String? = null,
+    // "manual" when the spot was marked by hand on the map (2026-10-30,
+    // collector/ManualPosition.kt); null when the position is GPS.
+    val positionSource: String? = null,
+    // Which SIM slot, on a phone with two active SIMs (2026-10-31); else null.
+    val simSlot: Int? = null,
     // The other cells heard at this moment, capped and ordered by
     // NeighbourCells (2026-10-27). Null or empty when none qualify.
     val neighbours: List<CellReading>? = null,
@@ -122,6 +127,8 @@ data class Sample(
         putOpt("sim_state", simState)
         putOpt("environment", environment)
         putOpt("environment_source", environmentSource)
+        putOpt("position_source", positionSource)
+        putOpt("sim_slot", simSlot)
         neighbours?.takeIf { it.isNotEmpty() }?.let { put("neighbours", NeighbourCells.toJson(it)) }
     }
 
@@ -162,6 +169,8 @@ data class Sample(
             simState = o.optString("sim_state", "").takeIf { it.isNotEmpty() },
             environment = o.optString("environment", "").takeIf { it.isNotEmpty() },
             environmentSource = o.optString("environment_source", "").takeIf { it.isNotEmpty() },
+            positionSource = o.optString("position_source", "").takeIf { it.isNotEmpty() },
+            simSlot = o.optInt("sim_slot", 0).takeIf { it > 0 },
             neighbours = o.optJSONArray("neighbours")?.let { NeighbourCells.fromJson(it) },
         )
     }

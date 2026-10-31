@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Line icon (2026-10-31): 24dp, round ends, tinted by its view. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M3,17h3v4H3z M8,13h3v8H8z M13,9h3v12h-3z M18,4h3v17h-3z" />
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000"
+        android:pathData="M5,19v-2 M9.5,19v-5 M14,19v-8 M18.5,19V6" />
 </vector>

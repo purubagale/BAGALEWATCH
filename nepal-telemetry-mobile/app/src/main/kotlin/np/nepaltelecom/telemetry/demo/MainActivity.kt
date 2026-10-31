@@ -52,7 +52,7 @@ class MainActivity : AppCompatActivity() {
                 // it and the registration check follows when setup closes.
                 AppLaunch.Kind.UPDATED -> {
                     openFirstScreen()
-                    if (hasLocation()) checkRegistrationAfterUpdate()
+                    if (hasLocation()) afterInstallOrUpdate(AppLaunch.Kind.UPDATED)
                 }
                 AppLaunch.Kind.NORMAL -> openFirstScreen()
             }
@@ -70,15 +70,27 @@ class MainActivity : AppCompatActivity() {
      */
     fun onSetupFinished() {
         showSignal()
-        when (AppLaunch.kind(this)) {
-            AppLaunch.Kind.FIRST_INSTALL -> {
-                AppLaunch.markHandled(this)
-                NetworkHelpPrompt.askIfNeeded(this) {
+        afterInstallOrUpdate(AppLaunch.kind(this))
+    }
+
+    /**
+     * Every question of the first start after install or update, in one go
+     * (2026-10-31, the user's rule): location "all the time" if missing, the
+     * "Help improve NTC's network" question (once), then registration. Later
+     * actions ask again only for a permission that is still missing or was
+     * withdrawn.
+     */
+    private fun afterInstallOrUpdate(kind: AppLaunch.Kind) {
+        if (kind == AppLaunch.Kind.NORMAL) return
+        BackgroundLocation.offer(this) {
+            NetworkHelpPrompt.askIfNeeded(this) {
+                if (kind == AppLaunch.Kind.FIRST_INSTALL) {
+                    AppLaunch.markHandled(this)
                     if (!Registration.isRegistered(this)) RegisterPrompt.ask(this)
+                } else {
+                    checkRegistrationAfterUpdate()
                 }
             }
-            AppLaunch.Kind.UPDATED -> NetworkHelpPrompt.askIfNeeded(this) { checkRegistrationAfterUpdate() }
-            AppLaunch.Kind.NORMAL -> Unit
         }
     }
 
@@ -100,6 +112,11 @@ class MainActivity : AppCompatActivity() {
         if (BatteryAccess.takePendingPrompt(this)) {
             runCatching { startActivity(BatteryAccess.requestUnrestrictedIntent(this)) }
         }
+    }
+
+    /** Opens the Wi-Fi tab. */
+    fun showWifi() {
+        bottomNav.selectedItemId = R.id.nav_wifi
     }
 
     /** Opens the Signal tab. */

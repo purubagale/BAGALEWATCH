@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true">
@@ -55,10 +56,43 @@
             <np.nepaltelecom.telemetry.demo.GaugeView
                 android:id="@+id/gauge"
                 android:layout_width="match_parent"
-                android:layout_height="200dp" />
+                android:layout_height="230dp" />
+
+            <!-- SIM 1, SIM 2 and Wi-Fi: shown only with two active SIMs (2026-10-31). -->
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/simPicker"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:visibility="gone"
+                app:selectionRequired="true"
+                app:singleSelection="true">
+
+                <Button
+                    android:id="@+id/simButton1"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sim_one" />
+
+                <Button
+                    android:id="@+id/simButton2"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sim_two" />
+
+                <Button
+                    android:id="@+id/simButtonWifi"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sim_wifi" />
+            </com.google.android.material.button.MaterialButtonToggleGroup>
 
             <TextView
                 android:id="@+id/qualityText"
+                android:visibility="gone"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center"
@@ -143,6 +177,9 @@
 
         <Button
             android:id="@+id/detailsButton"
+            app:icon="@drawable/ic_btn_list"
+            app:iconGravity="textStart"
+            app:iconSize="18dp"
             style="@style/Widget.App.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -175,6 +212,9 @@
 
             <Button
                 android:id="@+id/speedStartButton"
+                app:icon="@drawable/ic_btn_speed"
+                app:iconGravity="textStart"
+                app:iconSize="18dp"
                 style="@style/Widget.App.OutlinedButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -184,6 +224,9 @@
             <!-- Wi-Fi test (2026-10-15): sent to NTC too, tagged as Wi-Fi. -->
             <Button
                 android:id="@+id/speedWifiButton"
+                app:icon="@drawable/ic_nav_wifi"
+                app:iconGravity="textStart"
+                app:iconSize="18dp"
                 style="@style/Widget.App.OutlinedButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -211,6 +254,9 @@
 
             <Button
                 android:id="@+id/reportProblemButton"
+                app:icon="@drawable/ic_btn_flag"
+                app:iconGravity="textStart"
+                app:iconSize="18dp"
                 style="@style/Widget.App.OutlinedButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

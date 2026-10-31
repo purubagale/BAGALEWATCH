@@ -1,0 +1,7 @@
+<resources>
+    <!-- Opening screen (2026-10-31): the emblem on NT blue while the app starts. -->
+    <style name="Theme.NetTelemetryDemo" parent="Base.Theme.NetTelemetryDemo">
+        <item name="android:windowSplashScreenBackground">@color/launcher_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+    </style>
+</resources>

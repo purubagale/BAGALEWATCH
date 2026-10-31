@@ -36,6 +36,8 @@ object Environment {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)?.takeIf { it in ALL }
 
     fun setManual(context: Context, value: String?) {
+        // A spot marked by hand belongs to an indoor test only (2026-10-30).
+        if (value != INDOOR) ManualPosition.clear(context)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().apply {
             if (value != null && value in ALL) putString(KEY, value) else remove(KEY)
         }.apply()

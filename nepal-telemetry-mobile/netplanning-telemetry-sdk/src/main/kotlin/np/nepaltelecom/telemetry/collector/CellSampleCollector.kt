@@ -54,8 +54,14 @@ private const val RECENT_FIX_MAX_AGE_MS = 2 * 60_000L
 internal class CellSampleCollector(
     private val context: Context,
     private val identity: DeviceIdentity,
+    // One SIM of a two-SIM phone; null means the SIM set for mobile data (2026-10-31).
+    private val sim: SimInfo? = null,
 ) {
-    private val telephonyManager = defaultDataTelephony(context)
+    private val telephonyManager = defaultDataTelephony(context).let { base ->
+        sim?.let { base.createForSubscriptionId(it.subId) } ?: base
+    }
+    private val sims by lazy { SimSlots.active(context) }
+    private val ownSim by lazy { sim ?: SimSlots.dataSim(sims) }
     private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
 
     private fun hasLocationPermission() =
@@ -93,6 +99,7 @@ internal class CellSampleCollector(
         triggerReason: String,
         driveSessionId: String? = null,
         requireOptIn: Boolean = true,
+        positionSource: String? = null,
     ): Sample? {
         // Uploads need opt-in. A local live read (requireOptIn = false) only
         // shows the phone its own readings and never queues anything.
@@ -143,6 +150,8 @@ internal class CellSampleCollector(
             simState = status.simState,
             environment = environment,
             environmentSource = environmentSource,
+            positionSource = positionSource,
+            simSlot = if (sims.size > 1) ownSim?.slot else null,
             neighbours = neighbours.takeIf { it.isNotEmpty() },
         )
     }
@@ -216,7 +225,10 @@ internal class CellSampleCollector(
         // Prefer the registered (serving) cell; if none is flagged registered
         // (seen on a few OEMs), fall back to the first entry rather than
         // reporting nothing.
-        val serving = allCellInfo.firstOrNull { it.isRegistered } ?: allCellInfo.firstOrNull()
+        val registered = allCellInfo.filter { it.isRegistered }
+        val mine = SimSlots.pick(registered, { c -> parseCellInfo(c)?.let { SimSlots.opKey(it.mcc, it.mnc) } }, sims, ownSim)
+        // A SIM picked by hand shows its own cell or nothing, never the other SIM's.
+        val serving = mine ?: if (sim != null && sims.size > 1) null else allCellInfo.firstOrNull()
         val parsed = serving?.let { parseCellInfo(it) }?.let { cell ->
             when {
                 tm == null -> cell
@@ -535,6 +547,7 @@ internal class CellSampleCollector(
 
     private fun activeSimTelephonyManagers(): List<TelephonyManager> {
         val base = telephonyManager
+        if (sim != null) return listOf(base)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try {
                 val subs = SubscriptionManager.from(context).getActiveSubscriptionInfoList().orEmpty()

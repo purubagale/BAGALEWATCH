@@ -350,16 +350,20 @@ object NetTelemetry {
      * location permission, not opt-in. Passes null when permission is missing.
      * Nothing is queued or uploaded.
      */
-    fun readLiveCell(onResult: (Sample?) -> Unit) {
+    fun readLiveCell(sim: np.nepaltelecom.telemetry.collector.SimInfo? = null, onResult: (Sample?) -> Unit) {
         check(::appContext.isInitialized) { "NetTelemetry.init() must be called before readLiveCell()" }
         if (!isSupported()) return onResult(null)
         scope.launch {
             onResult(
-                CellSampleCollector(appContext, DeviceIdentity(appContext))
+                CellSampleCollector(appContext, DeviceIdentity(appContext), sim)
                     .sampleFrom(null, "manual", requireOptIn = false),
             )
         }
     }
+
+    /** The phone's active SIMs in slot order (2026-10-31); empty without a SIM or the phone permission. */
+    fun activeSims(): List<np.nepaltelecom.telemetry.collector.SimInfo> =
+        np.nepaltelecom.telemetry.collector.SimSlots.active(appContext)
 
     /**
      * Reads every cell the modem reports right now, serving cell and
@@ -432,6 +436,21 @@ object NetTelemetry {
      * until the drive or sharing session ends.
      */
     fun setEnvironment(context: Context, value: String?) = Environment.setManual(context.applicationContext, value)
+
+    /**
+     * Marks the person's spot on the map for an indoor test (2026-10-30):
+     * drive readings then take it instead of GPS. Cleared by choosing
+     * anything but indoors, or by stopping the drive.
+     */
+    fun setManualPosition(context: Context, lat: Double, lng: Double) =
+        np.nepaltelecom.telemetry.collector.ManualPosition.set(context.applicationContext, lat, lng)
+
+    fun clearManualPosition(context: Context) =
+        np.nepaltelecom.telemetry.collector.ManualPosition.clear(context.applicationContext)
+
+    /** The marked spot (lat, lng), or null when readings use GPS. */
+    fun manualPosition(context: Context): Pair<Double, Double>? =
+        np.nepaltelecom.telemetry.collector.ManualPosition.get(context.applicationContext)
 
     /** The person's current choice, or null when it is estimated. */
     fun environment(context: Context): String? = Environment.manual(context.applicationContext)

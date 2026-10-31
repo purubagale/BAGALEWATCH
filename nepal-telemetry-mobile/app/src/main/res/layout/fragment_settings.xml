@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
@@ -52,8 +53,11 @@
 
         <Button
             android:id="@+id/networkAreaButton"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:layout_width="wrap_content"
+            app:icon="@drawable/ic_btn_location"
+            app:iconGravity="textStart"
+            app:iconSize="18dp"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="8dp"
             android:text="@string/network_area_button"
@@ -76,6 +80,9 @@
 
         <Button
             android:id="@+id/optInButton"
+            app:icon="@drawable/ic_btn_share"
+            app:iconGravity="textStart"
+            app:iconSize="18dp"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
@@ -83,14 +90,20 @@
 
         <Button
             android:id="@+id/shareBackgroundButton"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:layout_width="wrap_content"
+            app:icon="@drawable/ic_btn_location"
+            app:iconGravity="textStart"
+            app:iconSize="18dp"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/share_background_button"
             android:visibility="gone" />
 
         <Button
             android:id="@+id/optOutButton"
+            app:icon="@drawable/ic_btn_stop"
+            app:iconGravity="textStart"
+            app:iconSize="18dp"
             style="@style/Widget.App.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -99,6 +112,9 @@
 
         <Button
             android:id="@+id/sampleNowButton"
+            app:icon="@drawable/ic_nav_signal"
+            app:iconGravity="textStart"
+            app:iconSize="18dp"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
@@ -106,6 +122,9 @@
 
         <Button
             android:id="@+id/refreshStatusButton"
+            app:icon="@drawable/ic_btn_refresh"
+            app:iconGravity="textStart"
+            app:iconSize="18dp"
             style="@style/Widget.App.TextButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -114,6 +133,9 @@
 
         <Button
             android:id="@+id/uploadNowButton"
+            app:icon="@drawable/ic_btn_upload"
+            app:iconGravity="textStart"
+            app:iconSize="18dp"
             style="@style/Widget.App.TextButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -121,6 +143,9 @@
 
         <Button
             android:id="@+id/driveTestConsentButton"
+            app:icon="@drawable/ic_btn_doc"
+            app:iconGravity="textStart"
+            app:iconSize="18dp"
             style="@style/Widget.App.TextButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -128,6 +153,9 @@
 
         <Button
             android:id="@+id/rescueEnrollButton"
+            app:icon="@drawable/ic_btn_rescue"
+            app:iconGravity="textStart"
+            app:iconSize="18dp"
             style="@style/Widget.App.TextButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -179,6 +207,9 @@
 
                 <Button
                     android:id="@+id/registerDeviceButton"
+                    app:icon="@drawable/ic_btn_phone"
+                    app:iconGravity="textStart"
+                    app:iconSize="18dp"
                     style="@style/Widget.App.OutlinedButton"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"

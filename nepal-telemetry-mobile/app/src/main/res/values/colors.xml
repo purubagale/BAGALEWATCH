@@ -6,6 +6,8 @@
     <color name="brand_primary">#023A8E</color>
     <color name="brand_primary_dark">#012C6E</color>
     <color name="brand_accent">#F2C21B</color>
+    <!-- Behind the app icon and the opening screen: the pale tone around the web login emblem. -->
+    <color name="launcher_background">#E6EDF4</color>
     <color name="on_brand">#FFFFFF</color>
 
     <color name="surface">#F2F5FA</color>

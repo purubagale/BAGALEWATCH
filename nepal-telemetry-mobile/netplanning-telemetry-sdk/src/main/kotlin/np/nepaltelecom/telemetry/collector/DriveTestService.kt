@@ -49,6 +49,10 @@ class DriveTestService : Service() {
     private var sessionId: String? = null
     private lateinit var history: DriveHistoryStore
     private val unsaved = ArrayList<RouteTrail.Point>()
+    /** Position the route last moved to; held while the phone is still (see place). */
+    private var lastPoint: Location? = null
+    private var lastFixMs = 0L
+    private val candidates = ArrayList<Location>()
     private val scope = CoroutineScope(Dispatchers.Default)
 
     /** False for a drive the user chose to keep on the phone: nothing is queued for upload. */
@@ -85,6 +89,8 @@ class DriveTestService : Service() {
 
         val id = UUID.randomUUID().toString()
         sessionId = id
+        lastPoint = null
+        candidates.clear()
         activeSessionId = id
         history = DriveHistoryStore(this)
         RouteTrail.clear()
@@ -109,9 +115,19 @@ class DriveTestService : Service() {
         }
     }
 
-    private fun onFix(location: Location) {
-        if (!location.hasAccuracy() || location.accuracy > MAX_TRACK_ACCURACY_M) return
+    private fun onFix(fix: Location) {
         val id = sessionId ?: return
+        // A spot marked by hand (indoor test) replaces GPS for every reading;
+        // the fix only paces the readings, so its accuracy does not matter.
+        val pinned = ManualPosition.get(this)
+        val location = if (pinned != null) {
+            lastPoint = null
+            candidates.clear()
+            Location(fix).apply { latitude = pinned.first; longitude = pinned.second; accuracy = 0f }
+        } else {
+            if (!fix.hasAccuracy() || fix.accuracy > MAX_TRACK_ACCURACY_M) return
+            place(fix) ?: return
+        }
         val point = RouteTrail.Point(location.latitude, location.longitude, location.accuracy, location.time)
         // Save the earlier fixes before adding this one: this fix's signal is
         // read just below and is not known yet, the earlier ones' is.
@@ -122,12 +138,66 @@ class DriveTestService : Service() {
         scope.launch {
             // Cell state is read on a background thread, off the location callback.
             val sample = CellSampleCollector(this@DriveTestService, DeviceIdentity(this@DriveTestService))
-                .sampleFrom(location, triggerReason = TRIGGER_REASON, driveSessionId = id)
+                .sampleFrom(location, triggerReason = TRIGGER_REASON, driveSessionId = id,
+                    positionSource = if (pinned != null) ManualPosition.SOURCE else null)
             sample?.let {
                 point.signal = RouteTrail.Signal.from(it)
                 if (share) SampleQueue(this@DriveTestService).append(it)
             }
         }
+    }
+
+    /**
+     * Where a fix goes on the route (2026-10-30, seen on a tablet indoors).
+     * Indoors the fused location swings 20 to 30 m between GPS and Wi-Fi
+     * positions and even reports a speed of about 1 m/s while the phone lies
+     * still, and the first fix can be a coarse one far away. So:
+     * - the route starts only when two fixes in a row agree;
+     * - a fix that would mean moving faster than [MAX_SPEED_MS] since the last
+     *   one is dropped, unless three such fixes agree (then the route moves there);
+     * - while the phone is still (no confident speed of [MOVING_SPEED_MS] or more,
+     *   and within [STILL_RADIUS_M] or both fixes' accuracy of the last route
+     *   point), the reading keeps that point's position.
+     * Null means the fix is skipped.
+     */
+    private fun place(fix: Location): Location? {
+        val held = lastPoint
+        if (held == null) {
+            remember(fix)
+            val prev = candidates.getOrNull(candidates.size - 2) ?: return null
+            if (prev.distanceTo(fix) > maxOf(WARMUP_AGREE_M, prev.accuracy + fix.accuracy)) return null
+            return moveTo(fix)
+        }
+        val dist = held.distanceTo(fix)
+        val seconds = maxOf(1.0, (fix.time - lastFixMs) / 1000.0)
+        if (dist / seconds > MAX_SPEED_MS) {
+            remember(fix)
+            val agree = candidates.size >= 3 && candidates.all { a ->
+                candidates.all { b -> a.distanceTo(b) <= maxOf(WARMUP_AGREE_M, a.accuracy + b.accuracy) }
+            }
+            return if (agree) moveTo(fix) else null
+        }
+        candidates.clear()
+        lastFixMs = fix.time
+        val confidentSpeed = fix.hasSpeed() && fix.speed >= MOVING_SPEED_MS &&
+            (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !fix.hasSpeedAccuracy() ||
+                fix.speedAccuracyMetersPerSecond < fix.speed / 2)
+        if (!confidentSpeed && dist <= maxOf(STILL_RADIUS_M, fix.accuracy + held.accuracy)) {
+            return Location(fix).apply { latitude = held.latitude; longitude = held.longitude }
+        }
+        return moveTo(fix)
+    }
+
+    private fun remember(fix: Location) {
+        candidates.add(Location(fix))
+        while (candidates.size > 3) candidates.removeAt(0)
+    }
+
+    private fun moveTo(fix: Location): Location {
+        candidates.clear()
+        lastPoint = Location(fix)
+        lastFixMs = fix.time
+        return fix
     }
 
     /** Saves fixes not yet written to the phone's history for this drive. */
@@ -217,6 +287,10 @@ class DriveTestService : Service() {
         private const val NOTIFICATION_ID = 4201
         private const val FIX_INTERVAL_MS = 2_000L
         private const val MAX_TRACK_ACCURACY_M = 30f
+        private const val STILL_RADIUS_M = 20f
+        private const val MOVING_SPEED_MS = 2.0f
+        private const val MAX_SPEED_MS = 70.0
+        private const val WARMUP_AGREE_M = 50f
         private const val SAVE_EVERY = 10
 
         /** Tracked fixes are uploaded as "drive" samples, so the server can tell them from other kinds. */
