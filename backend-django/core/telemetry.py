@@ -368,6 +368,10 @@ def coerce_sample(raw, received_at):
         'environment': _choice(raw.get('environment'), _ENVIRONMENTS),
         'environment_source': _choice(raw.get('environment_source'), {'user', 'estimated'})
         if _choice(raw.get('environment'), _ENVIRONMENTS) else None,
+        # Spot marked by hand on the map (2026-10-30), else null (GPS).
+        'position_source': _choice(raw.get('position_source'), {'manual'}),
+        # Which SIM slot on a two-SIM phone (2026-10-31), else null.
+        'sim_slot': raw.get('sim_slot') if raw.get('sim_slot') in (1, 2, 3, 4) else None,
         # The other cells heard, capped and checked (2026-10-27, core/neighbour_cells.py).
         'neighbours': neighbour_cells.coerce(raw.get('neighbours')),
         'region': '',
@@ -429,7 +433,7 @@ _COPY_COLS = (
     'serving_site_id', 'serving_cell_name', 'serving_sector', 'serving_local_cell_id', 'serving_dist_km',
     'drive_session_id',
     'service_state', 'cell_info_status', 'airplane_mode', 'sim_state',
-    'environment', 'environment_source',
+    'environment', 'environment_source', 'position_source', 'sim_slot',
     'bandwidth_khz', 'total_bandwidth_khz', 'carrier_count',
     'neighbours', 'signed', 'flag',
 )
@@ -528,7 +532,8 @@ def bulk_insert_samples(rows):
             _cf(r.get('service_state')), _cf(r.get('cell_info_status')),
             _cf(None if r.get('airplane_mode') is None else ('t' if r['airplane_mode'] else 'f')),
             _cf(r.get('sim_state')),
-            _cf(r.get('environment')), _cf(r.get('environment_source')),
+            _cf(r.get('environment')), _cf(r.get('environment_source')), _cf(r.get('position_source')),
+            _cf(r.get('sim_slot')),
             _cf(r.get('bandwidth_khz')), _cf(r.get('total_bandwidth_khz')), _cf(r.get('carrier_count')),
             _cf(json.dumps(r['neighbours'], separators=(',', ':')) if r.get('neighbours') else None),
             _cf(None if r.get('signed') is None else ('t' if r['signed'] else 'f')), _cf(r.get('flag') or ''),

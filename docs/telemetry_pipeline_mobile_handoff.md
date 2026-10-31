@@ -4,7 +4,7 @@
 
 **From:** Puru (RAN O&M, owner of the DT-WATCH server and web application)
 
-**Last updated:** 2026-10-30 (app 1.3.3: exact position with the time-of-day readings, kept 90 days; background readings ask for location "Allow all the time" and use a fix up to 2 minutes old; app 1.3.2: ping under load and use ratings in the speed test; app 1.3.1: optional rough area with the time-of-day readings; app 1.3.0: "share my location until this is fixed" on a problem report, and the opt-in "Help improve NTC's network" readings; earlier: push address retried until accepted, 3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
+**Last updated:** 2026-10-31 (app 1.3.17: two-SIM phones with `sim_slot`, marked indoor spot with `position_source`, cleaner drive routes, all permissions asked at the first start after install or update, new app icon and signal meter; app 1.3.3: exact position with the time-of-day readings, kept 90 days; background readings ask for location "Allow all the time" and use a fix up to 2 minutes old; app 1.3.2: ping under load and use ratings in the speed test; app 1.3.1: optional rough area with the time-of-day readings; app 1.3.0: "share my location until this is fixed" on a problem report, and the opt-in "Help improve NTC's network" readings; earlier: push address retried until accepted, 3G/2G level fill-in, neighbour cells with every reading, 10-digit registration number, site names on the Cells tab, reading status, indoor/outdoor tag, channel bandwidth; earlier: signed rescue sharing, serving-site lookup, SINR fill-in, upload queue). This version replaces the guide of 2026-09-21 and its two addenda.
 
 ## 1. Summary
 
@@ -173,6 +173,8 @@ Android ID or phone number.
 | `sim_state` | string | `ready`, `absent`, `locked` or `other`. Added 2026-10-26 |
 | `environment` | string | Where the person is: `outdoor`, `indoor` or `vehicle`; leave it out when unknown. Added 2026-10-26 |
 | `environment_source` | string | `user` (tapped in the app) or `estimated` (from movement and GPS accuracy). Sent only with `environment`. Added 2026-10-26 |
+| `position_source` | string | `manual` when the person marked their spot on the map for an indoor test; leave out for GPS. Added 2026-10-30 |
+| `sim_slot` | int | 1 to 4: the SIM slot, only on a phone with two active SIMs. Leave out with one SIM. Added 2026-10-31 |
 | `neighbours` | array of objects | The other cells heard at the same moment, at most 8 (see below). Leave it out when there are none. Added 2026-10-27 |
 
 **Readings without a network (2026-10-26).** Always send a reading, even when
@@ -992,6 +994,26 @@ and service and the site photo screen stay in the reference app
 - Battery restrictions stop push messages reaching an idle phone. The app
   offers a button to lift them, and a second one for Huawei start-up settings.
 - A drive test records a fix every 2 seconds and drops fixes worse than 30 m.
+- Drive routes (app 1.3.6): the route starts when two fixes in a row agree
+  within 50 m; a fix implying more than 70 m/s is dropped unless three agree;
+  while the phone is still (no confident speed of 2 m/s or more, and within
+  20 m or both fixes' accuracy of the last point) readings keep that point's
+  position. Indoors the reported speed can be about 1 m/s on a phone lying still.
+- Indoor spot (app 1.3.7): with "Inside a building" chosen, press and hold on
+  the Map tab marks the spot. Every drive reading then uses it instead of GPS
+  and carries `position_source: manual`, until Outdoors, In a vehicle or
+  automatic is chosen, or the drive stops. SDK: `setManualPosition`,
+  `clearManualPosition`, `manualPosition`.
+- Two SIMs (app 1.3.17): `getAllCellInfo()` returns the registered cells of
+  every SIM whichever SIM asks, so match a SIM's cell by operator, and for two
+  SIMs of one operator by slot order. The periodic job also reads a second
+  Nepal Telecom SIM; another operator's second SIM stays on the phone. The two
+  readings arrive under a second apart, which the server does not count as a
+  burst when `sim_slot` differs. SDK: `activeSims()`, `readLiveCell(sim)`.
+- Permissions (app 1.3.9): all are asked at the first start after install or
+  update: location, phone state and notifications, then "Allow all the time".
+  Later actions ask only for one still missing or withdrawn. The camera is
+  asked when Site photo first opens.
 - Past drives stay on the phone. Deleting one there does not delete it on the server.
 - Error messages shown to the user are general. Details go to the device log.
 - SINR and CQI: many modems leave them blank in `getAllCellInfo()` but report

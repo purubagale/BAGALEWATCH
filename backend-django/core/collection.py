@@ -465,6 +465,7 @@ class CollectionSessionSamplesView(APIView):
                     'serving_site_id': r.serving_site_id, 'serving_sector': r.serving_sector,
                     # Outdoors / indoors / in a vehicle and who said so (2026-10-26).
                     'environment': r.environment, 'environment_source': r.environment_source,
+                    'position_source': r.position_source, 'sim_slot': r.sim_slot,
                 }
                 for r in rows
             ]

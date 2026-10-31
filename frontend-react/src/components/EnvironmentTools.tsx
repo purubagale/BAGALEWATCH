@@ -12,7 +12,7 @@ export type EnvFilter = '' | 'outdoor' | 'indoor' | 'vehicle' | 'none'
 export const ENV_LABEL: Record<string, string> = { outdoor: 'Outdoors', indoor: 'Inside a building', vehicle: 'In a vehicle' }
 const SOURCE_LABEL: Record<string, string> = { user: 'set on the phone', estimated: 'estimated', edited: 'set on the web', session: "from the session's test type" }
 
-interface Item { ts: string | number; environment?: string | null; environment_source?: string | null }
+interface Item { ts: string | number; environment?: string | null; environment_source?: string | null; position_source?: string | null; sim_slot?: number | null }
 
 // A drive test's own place (2026-10-28): a reading with none set on the web
 // takes its session's test type.
@@ -37,8 +37,10 @@ export function filterByEnvironment<T extends Item>(items: T[], filter: EnvFilte
 
 /** "Inside a building (set on the phone)" for a hover card, or ''. */
 export function environmentText(s: Item): string {
-  if (!s.environment) return ''
-  return `${ENV_LABEL[s.environment] ?? s.environment}${s.environment_source ? ` (${SOURCE_LABEL[s.environment_source] ?? s.environment_source})` : ''}`
+  // A spot marked by hand on the phone's map, not GPS (2026-10-30, indoor tests).
+  const spot = `${s.position_source === 'manual' ? ' · spot marked by hand' : ''}${s.sim_slot ? ` · SIM ${s.sim_slot}` : ''}`
+  if (!s.environment) return spot.slice(3)
+  return `${ENV_LABEL[s.environment] ?? s.environment}${s.environment_source ? ` (${SOURCE_LABEL[s.environment_source] ?? s.environment_source})` : ''}${spot}`
 }
 
 /** Share of tagged readings by place, e.g. "Inside a building 62% · Outdoors 38%"; null when none is tagged. */

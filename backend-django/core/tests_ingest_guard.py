@@ -46,3 +46,20 @@ class IngestGuardTests(TestCase):
         r = self._post([_sample(self.dev, ts_ms=t + 200_000)])
         self.assertEqual(r.status_code, 429)
         self.assertEqual(len(self._flags()), 3)
+
+    def test_two_sims_read_together_are_not_a_burst(self):
+        t = int(time.time() * 1000) - 600_000
+        self._post([dict(_sample(self.dev, ts_ms=t), sim_slot=1),
+                    dict(_sample(self.dev, ts_ms=t + 100), sim_slot=2),
+                    dict(_sample(self.dev, ts_ms=t + 200), sim_slot=2)])
+        rows = list(TelemetrySample.objects.filter(device_id=hash_device_id(self.dev))
+                    .order_by('ts').values_list('sim_slot', 'flag'))
+        self.assertEqual(rows, [(1, ''), (2, ''), (2, 'burst')])
+
+    def test_spot_marked_by_hand_is_kept(self):
+        t = int(time.time() * 1000) - 600_000
+        self._post([dict(_sample(self.dev, ts_ms=t), position_source='manual'),
+                    dict(_sample(self.dev, ts_ms=t + 60_000), position_source='bogus')])
+        rows = list(TelemetrySample.objects.filter(device_id=hash_device_id(self.dev))
+                    .order_by('ts').values_list('position_source', flat=True))
+        self.assertEqual(rows, ['manual', None])

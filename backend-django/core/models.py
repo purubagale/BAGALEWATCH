@@ -2477,6 +2477,12 @@ class TelemetrySample(models.Model):
     # (set afterwards on the web). Null on readings before then.
     environment = models.CharField(max_length=10, null=True, blank=True)       # outdoor / indoor / vehicle
     environment_source = models.CharField(max_length=10, null=True, blank=True)
+    # 'manual' when the person marked their spot on the map instead of GPS
+    # (2026-10-30, indoor tests: SDK collector/ManualPosition.kt). Null = GPS.
+    position_source = models.CharField(max_length=10, null=True, blank=True)
+    # Which SIM slot on a phone with two active SIMs (2026-10-31, SDK
+    # collector/SimSlots.kt). Null with one SIM, and on older app builds.
+    sim_slot = models.SmallIntegerField(null=True, blank=True)
     # The other cells heard at this moment (2026-10-27, core/neighbour_cells.py):
     # a list of at most 8 {net, pci|psc|bcch, arfcn, level..., site, sector, km},
     # named at upload. Null when the phone sent none (older app builds).

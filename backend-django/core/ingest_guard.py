@@ -66,6 +66,7 @@ def screen(rows, signed):
         last = cache.get(f'ingestlast:{device_id}')   # (iso ts, lat, lng) or None
         prev_ts = datetime.fromisoformat(last[0]) if last else None
         prev_pos = (last[1], last[2]) if last else None
+        prev_slot = last[3] if last and len(last) > 3 else None
         for r in items:
             flag = ''
             if prev_ts is not None:
@@ -74,16 +75,20 @@ def screen(rows, signed):
                     km = _km(prev_pos[0], prev_pos[1], r['lat'], r['lng'])
                     if km > JUMP_MIN_KM and (gap <= 0 or km * 1000 / gap > JUMP_SPEED_MS):
                         flag = 'jump'
-                if not flag and 0 <= gap < BURST_GAP_S and r.get('trigger_reason') not in ('drive_start', 'drive_stop'):
+                # The two SIMs of one phone are read together: not a burst (2026-10-31).
+                if (not flag and 0 <= gap < BURST_GAP_S and r.get('sim_slot') == prev_slot
+                        and r.get('trigger_reason') not in ('drive_start', 'drive_stop')):
                     flag = 'burst'
             r['signed'] = bool(signed)
             r['flag'] = flag
             prev_ts = r['ts']
+            prev_slot = r.get('sim_slot')
             if r['lat'] is not None and r['lng'] is not None:
                 prev_pos = (r['lat'], r['lng'])
             kept.append(r)
         if items:
             cache.set(f'ingestlast:{device_id}',
-                      (prev_ts.isoformat(), prev_pos[0] if prev_pos else None, prev_pos[1] if prev_pos else None),
+                      (prev_ts.isoformat(), prev_pos[0] if prev_pos else None, prev_pos[1] if prev_pos else None,
+                       prev_slot),
                       LAST_TTL_S)
     return kept, dropped
